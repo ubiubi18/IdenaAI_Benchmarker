@@ -8,6 +8,11 @@ const TIME_DRIFT_THRESHOLD = 10 * 1000
 
 const TimingStateContext = React.createContext()
 
+function logError(...args) {
+  const logger = global.logger || console
+  logger.error(...args)
+}
+
 export function TimingProvider(props) {
   const [timing, setTiming] = React.useState({
     validation: null,
@@ -37,7 +42,7 @@ export function TimingProvider(props) {
         setInterval(1000 * 60 * 1)
       } catch (error) {
         setInterval(1000 * 5 * 1)
-        global.logger.error(
+        logError(
           'An error occured while fetching ceremony intervals',
           error.message
         )
@@ -62,7 +67,7 @@ export function TimingProvider(props) {
             TIME_DRIFT_THRESHOLD
         )
       } catch {
-        global.logger.error('An error occured while fetching time API')
+        logError('An error occured while fetching time API')
       }
     },
     1000 * 60 * 1,

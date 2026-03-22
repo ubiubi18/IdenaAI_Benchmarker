@@ -9,7 +9,7 @@ export function getRpcParams() {
   if (!state) {
     return {
       url: `http://localhost:${BASE_INTERNAL_API_PORT}`,
-      key: state.internalApiKey,
+      key: '',
     }
   }
   if (!state.useExternalNode) {

@@ -82,6 +82,15 @@ function nodeReducer(state, action) {
 const NodeStateContext = React.createContext()
 const NodeDispatchContext = React.createContext()
 
+function hasIpcRenderer() {
+  return (
+    global.ipcRenderer &&
+    typeof global.ipcRenderer.on === 'function' &&
+    typeof global.ipcRenderer.send === 'function' &&
+    typeof global.ipcRenderer.removeListener === 'function'
+  )
+}
+
 // eslint-disable-next-line react/prop-types
 export function NodeProvider({children}) {
   const settings = useSettingsState()
@@ -91,6 +100,10 @@ export function NodeProvider({children}) {
   )
 
   useEffect(() => {
+    if (!hasIpcRenderer()) {
+      return undefined
+    }
+
     const onEvent = (_sender, event, data) => {
       switch (event) {
         case 'node-failed':
@@ -148,6 +161,10 @@ export function NodeProvider({children}) {
   }, [settings.runInternalNode, dispatch])
 
   useEffect(() => {
+    if (!hasIpcRenderer()) {
+      return
+    }
+
     if (
       state.nodeReady &&
       !state.nodeFailed &&
@@ -176,6 +193,10 @@ export function NodeProvider({children}) {
   ])
 
   useEffect(() => {
+    if (!hasIpcRenderer()) {
+      return
+    }
+
     if (state.nodeReady || state.nodeFailed || state.runningTroubleshooter) {
       return
     }
@@ -199,6 +220,10 @@ export function NodeProvider({children}) {
   }, [dispatch])
 
   const importNodeKey = (shouldResetNode) => {
+    if (!hasIpcRenderer()) {
+      return
+    }
+
     global.ipcRenderer.send(
       NODE_COMMAND,
       shouldResetNode ? 'clean-state' : 'restart-node'

@@ -37,3 +37,16 @@
   - `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install --no-audit --no-fund`
 - Result:
   - Install succeeded; local linting became available.
+
+## 2026-03-22 - Issue 4: Next.js dev runtime failed with OpenSSL hash error on Node 20
+- Command:
+  - `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && ./node_modules/.bin/next dev renderer -p 3105`
+- Error summary:
+  - `ERR_OSSL_EVP_UNSUPPORTED` from webpack hash creation.
+- Root cause hypothesis:
+  - Legacy webpack/next stack in this tag is incompatible with Node 20 OpenSSL defaults.
+- Fix attempt:
+  - Launch with OpenSSL legacy provider:
+  - `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && env NODE_OPTIONS=--openssl-legacy-provider ./node_modules/.bin/next dev renderer -p 3105`
+- Result:
+  - Dev server starts and page previews can be captured.

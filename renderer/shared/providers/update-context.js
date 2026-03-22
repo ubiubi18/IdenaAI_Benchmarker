@@ -99,6 +99,15 @@ function updateReducer(state, action) {
 const AutoUpdateStateContext = React.createContext()
 const AutoUpdateDispatchContext = React.createContext()
 
+function hasIpcRenderer() {
+  return (
+    global.ipcRenderer &&
+    typeof global.ipcRenderer.on === 'function' &&
+    typeof global.ipcRenderer.send === 'function' &&
+    typeof global.ipcRenderer.removeListener === 'function'
+  )
+}
+
 // eslint-disable-next-line react/prop-types
 export function AutoUpdateProvider({children}) {
   const settings = useSettingsState()
@@ -106,6 +115,10 @@ export function AutoUpdateProvider({children}) {
   const [state, dispatch] = React.useReducer(updateReducer, initialState)
 
   useEffect(() => {
+    if (!hasIpcRenderer()) {
+      return undefined
+    }
+
     const onEvent = (_sender, event, data) => {
       switch (event) {
         case 'node-update-available':
@@ -145,6 +158,10 @@ export function AutoUpdateProvider({children}) {
   })
 
   useEffect(() => {
+    if (!hasIpcRenderer()) {
+      return
+    }
+
     if (state.nodeCurrentVersion !== '0.0.0') {
       global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'start-checking', {
         nodeCurrentVersion: state.nodeCurrentVersion,
@@ -179,6 +196,9 @@ export function AutoUpdateProvider({children}) {
       (settings.useExternalNode && state.nodeUpdateAvailable))
 
   const updateClient = () => {
+    if (!hasIpcRenderer()) {
+      return
+    }
     global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'update-ui')
   }
 
@@ -186,6 +206,9 @@ export function AutoUpdateProvider({children}) {
     if (settings.useExternalNode) {
       dispatch({type: SHOW_EXTERNAL_UPDATE_MODAL})
     } else {
+      if (!hasIpcRenderer()) {
+        return
+      }
       global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'update-node')
       dispatch({type: NODE_UPDATE_START})
     }

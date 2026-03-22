@@ -21,6 +21,11 @@ export const EpochPeriod = {
 const EpochStateContext = React.createContext()
 const EpochDispatchContext = React.createContext()
 
+function logError(...args) {
+  const logger = global.logger || console
+  logger.error(...args)
+}
+
 // eslint-disable-next-line react/prop-types
 export function EpochProvider({children}) {
   const [epoch, setEpoch] = React.useState(null)
@@ -37,10 +42,7 @@ export function EpochProvider({children}) {
         }
       } catch (error) {
         setInterval(1000 * 5)
-        global.logger.error(
-          'An error occured while fetching epoch',
-          error.message
-        )
+        logError('An error occured while fetching epoch', error.message)
       }
     }
 
@@ -58,10 +60,7 @@ export function EpochProvider({children}) {
         setEpoch(nextEpoch)
       }
     } catch (error) {
-      global.logger.error(
-        'An error occured while fetching epoch',
-        error.message
-      )
+      logError('An error occured while fetching epoch', error.message)
     }
   }, interval)
 

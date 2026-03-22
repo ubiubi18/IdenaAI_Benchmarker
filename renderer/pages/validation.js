@@ -87,10 +87,25 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
 }
 
 export default function ValidationPage() {
+  const router = useRouter()
   const epoch = useEpochState()
   const timing = useTimingState()
 
   useAutoCloseValidationToast()
+
+  const previewAi = router.query?.previewAi === '1'
+
+  if (previewAi) {
+    return (
+      <ValidationSession
+        epoch={999}
+        validationStart={Date.now() + 60 * 1000}
+        shortSessionDuration={80}
+        longSessionDuration={180}
+        forceAiPreview
+      />
+    )
+  }
 
   if (epoch && timing && timing.shortSession)
     return (
@@ -110,6 +125,7 @@ function ValidationSession({
   validationStart,
   shortSessionDuration,
   longSessionDuration,
+  forceAiPreview = false,
 }) {
   const router = useRouter()
 
@@ -117,8 +133,12 @@ function ValidationSession({
   const toast = useToast()
   const settings = useSettingsState()
   const aiSolverSettings = useMemo(
-    () => ({...DEFAULT_AI_SOLVER_SETTINGS, ...(settings.aiSolver || {})}),
-    [settings.aiSolver]
+    () => ({
+      ...DEFAULT_AI_SOLVER_SETTINGS,
+      ...(settings.aiSolver || {}),
+      ...(forceAiPreview ? {enabled: true} : {}),
+    }),
+    [forceAiPreview, settings.aiSolver]
   )
   const [aiSolving, setAiSolving] = useState(false)
   const [aiProgress, setAiProgress] = useState(null)

@@ -1,7 +1,5 @@
 import React from 'react'
 
-const {logger} = global
-
 const EXPLICIT_REDACTIONS = ['SET_EXTERNAL_KEY', 'SET_INTERNAL_KEY']
 
 // TODO: pass log fn default to console.log
@@ -24,6 +22,8 @@ export default function useLogger([state, dispatch]) {
       console.log('Action:', plainAction)
       console.log('State:', plainState)
       console.groupEnd()
+
+      const logger = global.logger || console
 
       logger.debug('--- START DISPATCH ---')
       logger.debug('Action', plainAction)

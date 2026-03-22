@@ -37,3 +37,39 @@
 ### Result
 - Desktop AI-helper baseline is integrated and lint-clean on edited files.
 - Remaining work moved to next step: richer benchmark UI telemetry and tests.
+
+## 2026-03-22 - Step 2: Validation UI preview harness and browser-safe guards
+
+### Inspected
+- `renderer/shared/providers/node-context.js`
+- `renderer/shared/providers/update-context.js`
+- `renderer/shared/providers/timing-context.js`
+- `renderer/shared/providers/epoch-context.js`
+- `renderer/shared/hooks/use-logger.js`
+- `renderer/pages/_app.js`
+- `renderer/pages/validation.js`
+- `renderer/shared/api/api-client.js`
+
+### Changed
+- Added a preview route mode for validation:
+  - `http://localhost:3105/validation?previewAi=1`
+- Added browser-safe fallbacks/guards for non-Electron preview mode:
+  - missing `global.ipcRenderer`
+  - missing `global.logger`
+  - missing `global.env`
+- Fixed null-state key access in RPC param defaults.
+- Captured validation screenshots showing the new `AI solve short session` action in UI.
+
+### Why
+- Needed an inspectable validation UI without a fully running Electron + node stack, so the AI helper action can be visually verified quickly.
+
+### Commands
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && env NODE_OPTIONS=--openssl-legacy-provider ./node_modules/.bin/next dev renderer -p 3105`
+- `npx --yes playwright install chromium`
+- `npx --yes playwright screenshot --browser=chromium --full-page --wait-for-timeout 2500 'http://localhost:3105/validation?previewAi=1' /tmp/idena-validation-ai-preview-desktop.png`
+- `npx --yes playwright screenshot --browser=chromium --viewport-size="390,844" --full-page --wait-for-timeout 2500 'http://localhost:3105/validation?previewAi=1' /tmp/idena-validation-ai-preview-mobile.png`
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && ./node_modules/.bin/eslint renderer/pages/validation.js renderer/pages/_app.js renderer/shared/api/api-client.js renderer/shared/hooks/use-logger.js renderer/shared/providers/node-context.js renderer/shared/providers/update-context.js renderer/shared/providers/timing-context.js renderer/shared/providers/epoch-context.js`
+
+### Result
+- Validation page preview now renders in browser mode and exposes the AI helper action for UX review.
+- Desktop runtime changes remain modular and isolated from consensus/protocol code.

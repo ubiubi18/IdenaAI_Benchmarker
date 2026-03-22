@@ -38,6 +38,40 @@ export default function App({Component, err, ...pageProps}) {
 }
 
 function AppProviders(props) {
+  React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    if (!global.env) {
+      global.env = {}
+    }
+
+    if (!global.logger) {
+      const noop = () => {}
+      global.logger = {
+        debug: noop,
+        info: noop,
+        warn: noop,
+        error: noop,
+      }
+    }
+
+    if (!global.ipcRenderer) {
+      const noop = () => {}
+      global.ipcRenderer = {
+        on: noop,
+        send: noop,
+        removeListener: noop,
+        invoke: async () => ({}),
+      }
+    }
+
+    if (!global.toggleFullScreen) {
+      global.toggleFullScreen = () => {}
+    }
+  }, [])
+
   return (
     <QueryClientProvider client={queryClient}>
       <SettingsProvider>
