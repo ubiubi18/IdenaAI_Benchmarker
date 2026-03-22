@@ -13,6 +13,7 @@ const UPDATE_UI_VERSION = 'UPDATE_UI_VERSION'
 const SET_INTERNAL_KEY = 'SET_INTERNAL_KEY'
 const SET_CONNECTION_DETAILS = 'SET_CONNECTION_DETAILS'
 const TOGGLE_AUTO_ACTIVATE_MINING = 'TOGGLE_AUTO_ACTIVATE_MINING'
+const UPDATE_AI_SOLVER_SETTINGS = 'UPDATE_AI_SOLVER_SETTINGS'
 
 const randomKey = () =>
   Math.random().toString(36).substring(2, 13) +
@@ -20,6 +21,19 @@ const randomKey = () =>
   Math.random().toString(36).substring(2, 15)
 
 const CHANGE_LANGUAGE = 'CHANGE_LANGUAGE'
+
+const DEFAULT_AI_SOLVER_SETTINGS = {
+  enabled: false,
+  provider: 'openai',
+  model: 'gpt-4o-mini',
+  mode: 'manual',
+  benchmarkProfile: 'strict',
+  deadlineMs: 80 * 1000,
+  requestTimeoutMs: 9 * 1000,
+  maxConcurrency: 2,
+  maxRetries: 1,
+  maxOutputTokens: 120,
+}
 
 const initialState = {
   url: BASE_API_URL,
@@ -33,6 +47,7 @@ const initialState = {
   externalApiKey: '',
   lng: AVAILABLE_LANGS[0],
   autoActivateMining: true,
+  aiSolver: DEFAULT_AI_SOLVER_SETTINGS,
 }
 
 if (global.env && global.env.NODE_ENV === 'e2e') {
@@ -57,6 +72,10 @@ function settingsReducer(state, action) {
       return {
         ...initialState,
         ...state,
+        aiSolver: {
+          ...DEFAULT_AI_SOLVER_SETTINGS,
+          ...(state.aiSolver || {}),
+        },
         initialized: true,
       }
     case UPDATE_UI_VERSION: {
@@ -91,6 +110,16 @@ function settingsReducer(state, action) {
         autoActivateMining: !state.autoActivateMining,
       }
     }
+    case UPDATE_AI_SOLVER_SETTINGS: {
+      return {
+        ...state,
+        aiSolver: {
+          ...DEFAULT_AI_SOLVER_SETTINGS,
+          ...(state.aiSolver || {}),
+          ...action.data,
+        },
+      }
+    }
     default:
       return state
   }
@@ -105,6 +134,7 @@ export function SettingsProvider({children}) {
     useLogger(
       React.useReducer(settingsReducer, {
         autoActivateMining: initialState.autoActivateMining,
+        aiSolver: DEFAULT_AI_SOLVER_SETTINGS,
         ...(loadPersistentState('settings') || initialState),
       })
     ),
@@ -165,6 +195,13 @@ export function SettingsProvider({children}) {
     [dispatch]
   )
 
+  const updateAiSolverSettings = useCallback(
+    (data) => {
+      dispatch({type: UPDATE_AI_SOLVER_SETTINGS, data})
+    },
+    [dispatch]
+  )
+
   return (
     <SettingsStateContext.Provider value={state}>
       <SettingsDispatchContext.Provider
@@ -175,6 +212,7 @@ export function SettingsProvider({children}) {
             changeLanguage,
             setConnectionDetails,
             toggleAutoActivateMining,
+            updateAiSolverSettings,
           }),
           [
             changeLanguage,
@@ -182,6 +220,7 @@ export function SettingsProvider({children}) {
             toggleAutoActivateMining,
             toggleRunInternalNode,
             toggleUseExternalNode,
+            updateAiSolverSettings,
           ]
         )}
       >

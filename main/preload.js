@@ -21,10 +21,21 @@ const invites = require('./stores/invites')
 const contacts = require('./stores/contacts')
 const logger = require('./logger')
 const {prepareDb, dbPath} = require('./stores/setup')
+const {AI_SOLVER_COMMAND} = require('./channels')
 
 process.once('loaded', () => {
   global.ipcRenderer = ipcRenderer
   global.openExternal = shell.openExternal
+  global.aiSolver = {
+    setProviderKey: (payload) =>
+      ipcRenderer.invoke(AI_SOLVER_COMMAND, 'setProviderKey', payload),
+    clearProviderKey: (payload) =>
+      ipcRenderer.invoke(AI_SOLVER_COMMAND, 'clearProviderKey', payload),
+    testProvider: (payload) =>
+      ipcRenderer.invoke(AI_SOLVER_COMMAND, 'testProvider', payload),
+    solveFlipBatch: (payload) =>
+      ipcRenderer.invoke(AI_SOLVER_COMMAND, 'solveFlipBatch', payload),
+  }
 
   global.flipStore = flips
   global.invitesDb = invites

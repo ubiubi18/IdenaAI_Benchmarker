@@ -359,6 +359,28 @@ export const createValidationMachine = ({
                             log(),
                           ],
                         },
+                        APPLY_AI_ANSWERS: {
+                          actions: [
+                            assign({
+                              shortFlips: ({shortFlips}, {answers = []}) => {
+                                const byHash = answers.reduce(
+                                  (map, answer) =>
+                                    map.set(answer.hash, answer.option),
+                                  new Map()
+                                )
+                                return shortFlips.map((flip) =>
+                                  byHash.has(flip.hash)
+                                    ? {
+                                        ...flip,
+                                        option: byHash.get(flip.hash),
+                                      }
+                                    : flip
+                                )
+                              },
+                            }),
+                            log(),
+                          ],
+                        },
                         SUBMIT: {
                           target: 'submitShortSession',
                         },

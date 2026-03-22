@@ -48,7 +48,9 @@ const {
   AUTO_UPDATE_COMMAND,
   NODE_COMMAND,
   NODE_EVENT,
+  AI_SOLVER_COMMAND,
 } = require('./channels')
+const {createAiProviderBridge} = require('./ai-providers')
 const {
   startNode,
   stopNode,
@@ -64,6 +66,8 @@ const {
 } = require('./idena-node')
 
 const NodeUpdater = require('./node-updater')
+
+const aiProviderBridge = createAiProviderBridge(logger)
 
 let mainWindow
 let node
@@ -705,6 +709,27 @@ ipcMain.handle('search-image', async (_, query) =>
     moderate: true,
   })
 )
+
+ipcMain.handle(AI_SOLVER_COMMAND, async (_event, command, payload) => {
+  logger.info(`new ai solver command`, command, {
+    provider: payload && payload.provider,
+    model: payload && payload.model,
+    benchmarkProfile: payload && payload.benchmarkProfile,
+  })
+
+  switch (command) {
+    case 'setProviderKey':
+      return aiProviderBridge.setProviderKey(payload)
+    case 'clearProviderKey':
+      return aiProviderBridge.clearProviderKey(payload)
+    case 'testProvider':
+      return aiProviderBridge.testProvider(payload)
+    case 'solveFlipBatch':
+      return aiProviderBridge.solveFlipBatch(payload)
+    default:
+      throw new Error(`Unsupported AI solver command: ${command}`)
+  }
+})
 
 const KEY_VALUE = {}
 

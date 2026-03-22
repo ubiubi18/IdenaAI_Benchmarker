@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, {useMemo, useEffect, useState} from 'react'
+import React, {useMemo, useEffect, useState, useRef, useCallback} from 'react'
 import {useMachine} from '@xstate/react'
 import {useRouter} from 'next/router'
 import {useTranslation} from 'react-i18next'
@@ -13,6 +13,7 @@ import {
   Divider,
   SlideFade,
   useDisclosure,
+  useToast,
 } from '@chakra-ui/react'
 import {createValidationMachine} from '../screens/validation/machine'
 import {
@@ -56,15 +57,34 @@ import {rem} from '../shared/theme'
 import {AnswerType, RelevanceType} from '../shared/types'
 import {useEpochState} from '../shared/providers/epoch-context'
 import {useTimingState} from '../shared/providers/timing-context'
-import {InfoButton, PrimaryButton} from '../shared/components/button'
-import {FloatDebug, Tooltip} from '../shared/components/components'
+import {
+  InfoButton,
+  PrimaryButton,
+  SecondaryButton,
+} from '../shared/components/button'
+import {FloatDebug, Toast, Tooltip} from '../shared/components/components'
 import {useChainState} from '../shared/providers/chain-context'
+import {useSettingsState} from '../shared/providers/settings-context'
 import {
   FullscreenIcon,
   HollowStarIcon,
   NewStarIcon,
 } from '../shared/components/icons'
 import {useAutoCloseValidationToast} from '../screens/validation/hooks/use-validation-toast'
+import {solveShortSessionWithAi} from '../screens/validation/ai/solver-orchestrator'
+
+const DEFAULT_AI_SOLVER_SETTINGS = {
+  enabled: false,
+  provider: 'openai',
+  model: 'gpt-4o-mini',
+  mode: 'manual',
+  benchmarkProfile: 'strict',
+  deadlineMs: 80 * 1000,
+  requestTimeoutMs: 9 * 1000,
+  maxConcurrency: 2,
+  maxRetries: 1,
+  maxOutputTokens: 120,
+}
 
 export default function ValidationPage() {
   const epoch = useEpochState()
@@ -94,6 +114,15 @@ function ValidationSession({
   const router = useRouter()
 
   const {t, i18n} = useTranslation()
+  const toast = useToast()
+  const settings = useSettingsState()
+  const aiSolverSettings = useMemo(
+    () => ({...DEFAULT_AI_SOLVER_SETTINGS, ...(settings.aiSolver || {})}),
+    [settings.aiSolver]
+  )
+  const [aiSolving, setAiSolving] = useState(false)
+  const [aiProgress, setAiProgress] = useState(null)
+  const autoSolveStartedRef = useRef(false)
 
   const {
     isOpen: isExceededTooltipOpen,
@@ -193,6 +222,108 @@ function ValidationSession({
       }, 5000)
     }
   }, [bestRewardTipOpen, currentFlip])
+
+  const notifyAi = useCallback(
+    (title, description, status = 'info') => {
+      toast({
+        render: () => (
+          <Toast title={title} description={description} status={status} />
+        ),
+      })
+    },
+    [toast]
+  )
+
+  const canRunAiSolve =
+    aiSolverSettings.enabled &&
+    state.matches('shortSession.solve.answer.normal') &&
+    state.matches('shortSession.fetch.done') &&
+    !isSubmitting(state)
+
+  const runAiSolve = useCallback(async () => {
+    if (!canRunAiSolve || aiSolving) return
+
+    setAiSolving(true)
+    setAiProgress(t('Preparing flip payloads...'))
+
+    try {
+      const result = await solveShortSessionWithAi({
+        shortFlips: state.context.shortFlips,
+        aiSolver: aiSolverSettings,
+        sessionMeta: {
+          epoch,
+          startedAt: new Date().toISOString(),
+        },
+        onProgress: ({index, total}) => {
+          setAiProgress(
+            t('Preparing flip payloads: {{current}}/{{total}}', {
+              current: index,
+              total,
+            })
+          )
+        },
+      })
+
+      send({
+        type: 'APPLY_AI_ANSWERS',
+        answers: result.answers.map(({hash, option}) => ({hash, option})),
+      })
+
+      notifyAi(
+        t('AI helper completed'),
+        t('{{answers}} answers applied ({{provider}} {{model}})', {
+          answers: result.answers.length,
+          provider: result.provider,
+          model: result.model,
+        })
+      )
+
+      if (result.answers.length > 0) {
+        send('SUBMIT')
+      }
+    } catch (error) {
+      notifyAi(
+        t('AI helper failed'),
+        error?.message || error.toString(),
+        'error'
+      )
+    } finally {
+      setAiSolving(false)
+      setAiProgress(null)
+    }
+  }, [
+    aiSolverSettings,
+    aiSolving,
+    canRunAiSolve,
+    epoch,
+    notifyAi,
+    send,
+    state.context.shortFlips,
+    t,
+  ])
+
+  useEffect(() => {
+    if (
+      aiSolverSettings.enabled &&
+      aiSolverSettings.mode === 'session-auto' &&
+      canRunAiSolve &&
+      !autoSolveStartedRef.current
+    ) {
+      autoSolveStartedRef.current = true
+      runAiSolve()
+    }
+  }, [
+    aiSolverSettings.enabled,
+    aiSolverSettings.mode,
+    canRunAiSolve,
+    runAiSolve,
+  ])
+
+  useEffect(() => {
+    if (!state.matches('shortSession')) {
+      autoSolveStartedRef.current = false
+    }
+  }, [state])
 
   return (
     <ValidationScene bg={isShortSession(state) ? 'black' : 'white'}>
@@ -441,6 +572,25 @@ function ValidationSession({
           />
         </ActionBarItem>
         <ActionBarItem justify="flex-end">
+          {isShortSession(state) && aiSolverSettings.enabled && (
+            <Stack isInline spacing={2} align="center" mr={3}>
+              {aiProgress && (
+                <Text
+                  fontSize="xs"
+                  color={isShortSession(state) ? 'whiteAlpha.800' : 'muted'}
+                >
+                  {aiProgress}
+                </Text>
+              )}
+              <SecondaryButton
+                isDisabled={!canRunAiSolve}
+                isLoading={aiSolving}
+                onClick={runAiSolve}
+              >
+                {t('AI solve short session')}
+              </SecondaryButton>
+            </Stack>
+          )}
           {(isShortSession(state) || isLongSessionKeywords(state)) &&
             (hasAllRelevanceMarks(state) || isLastFlip(state) ? (
               <PrimaryButton
