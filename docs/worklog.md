@@ -119,3 +119,33 @@
   - 3 test suites
   - 7 tests
   - all passing
+
+## 2026-03-23 - Step 4: Validation telemetry panel for AI benchmark runs
+
+### Inspected
+- `renderer/pages/validation.js`
+
+### Changed
+- Added an in-session telemetry panel visible during short session when AI helper is enabled.
+- Captured telemetry state per run:
+  - status (`running|completed|failed`)
+  - provider/model
+  - summary counters (left/right/skipped/applied/elapsed)
+  - per-flip rows (hash, answer, confidence, latency, error marker)
+- Kept existing one-click and auto-run behavior unchanged.
+- Captured updated UI screenshots:
+  - `/tmp/idena-validation-ai-telemetry-desktop.png`
+  - `/tmp/idena-validation-ai-telemetry-mobile.png`
+
+### Why
+- Benchmark users need immediate visibility into what the AI helper actually did per session and per flip, without exporting logs first.
+
+### Commands
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && ./node_modules/.bin/eslint renderer/pages/validation.js`
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && env NODE_OPTIONS=--openssl-legacy-provider ./node_modules/.bin/next dev renderer -p 3111`
+- `npx --yes playwright screenshot --browser=chromium --full-page --wait-for-timeout 2500 'http://localhost:3111/validation?previewAi=1' /tmp/idena-validation-ai-telemetry-desktop.png`
+- `npx --yes playwright screenshot --browser=chromium --viewport-size=\"390,844\" --full-page --wait-for-timeout 2500 'http://localhost:3111/validation?previewAi=1' /tmp/idena-validation-ai-telemetry-mobile.png`
+
+### Result
+- Validation UI now includes a persistent benchmark telemetry card for AI helper runs.
+- Renderer changes lint clean.

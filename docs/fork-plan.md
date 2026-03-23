@@ -27,12 +27,15 @@
    - benchmark profile normalization
    - provider decision parsing/normalization
    - deadline-exceeded behavior in batch solving
+3. Added short-session AI benchmark telemetry panel in validation UI:
+   - provider/model summary
+   - applied answers and elapsed time
+   - per-flip confidence/latency/error rows
 
 ## Next desktop steps
 1. Add explicit benchmark warning banner in global layout (not only settings screen).
-2. Add validation UI cards showing provider/model/latency outcome per flip.
-3. Add orchestrator integration tests for image compose + deadline flow.
-4. Add export/import format for local benchmark logs.
+2. Add orchestrator integration tests for image compose + deadline flow.
+3. Add export/import format for local benchmark logs.
 
 ## Next chain steps (after desktop MVP)
 1. Implement previous-epoch eligibility in `idena-go v1.1.2`:

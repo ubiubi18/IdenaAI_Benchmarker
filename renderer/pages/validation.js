@@ -142,6 +142,7 @@ function ValidationSession({
   )
   const [aiSolving, setAiSolving] = useState(false)
   const [aiProgress, setAiProgress] = useState(null)
+  const [aiLastRun, setAiLastRun] = useState(null)
   const autoSolveStartedRef = useRef(false)
 
   const {
@@ -265,6 +266,12 @@ function ValidationSession({
 
     setAiSolving(true)
     setAiProgress(t('Preparing flip payloads...'))
+    setAiLastRun({
+      status: 'running',
+      provider: aiSolverSettings.provider,
+      model: aiSolverSettings.model,
+      startedAt: new Date().toISOString(),
+    })
 
     try {
       const result = await solveShortSessionWithAi({
@@ -298,15 +305,31 @@ function ValidationSession({
         })
       )
 
+      setAiLastRun({
+        status: 'completed',
+        provider: result.provider,
+        model: result.model,
+        profile: result.profile,
+        summary: result.summary,
+        flips: result.results || [],
+        appliedAnswers: result.answers.length,
+        completedAt: new Date().toISOString(),
+      })
+
       if (result.answers.length > 0) {
         send('SUBMIT')
       }
     } catch (error) {
-      notifyAi(
-        t('AI helper failed'),
-        error?.message || error.toString(),
-        'error'
-      )
+      const errorMessage = error?.message || error.toString()
+
+      notifyAi(t('AI helper failed'), errorMessage, 'error')
+
+      setAiLastRun((prev) => ({
+        ...(prev || {}),
+        status: 'failed',
+        error: errorMessage,
+        completedAt: new Date().toISOString(),
+      }))
     } finally {
       setAiSolving(false)
       setAiProgress(null)
@@ -579,6 +602,13 @@ function ValidationSession({
             )}
         </FlipChallenge>
       </CurrentStep>
+      {isShortSession(state) && aiSolverSettings.enabled && (
+        <AiTelemetryPanel
+          isShortSessionMode={isShortSession(state)}
+          telemetry={aiLastRun}
+          aiProgress={aiProgress}
+        />
+      )}
       <ActionBar>
         <ActionBarItem />
         <ActionBarItem justify="center">
@@ -751,6 +781,107 @@ function ValidationSession({
 
       {global.isDev && <FloatDebug>{state.value}</FloatDebug>}
     </ValidationScene>
+  )
+}
+
+function toPct(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '0%'
+  return `${Math.round(Math.max(0, Math.min(1, num)) * 100)}%`
+}
+
+function formatLatency(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num < 0) return '-'
+  return `${num}ms`
+}
+
+function shortenHash(hash) {
+  const value = String(hash || '')
+  if (value.length <= 12) return value
+  return `${value.slice(0, 6)}...${value.slice(-4)}`
+}
+
+function AiTelemetryPanel({isShortSessionMode, telemetry, aiProgress}) {
+  const cardBg = isShortSessionMode ? 'whiteAlpha.100' : 'gray.50'
+  const cardBorder = isShortSessionMode ? 'whiteAlpha.300' : 'gray.100'
+  const titleColor = isShortSessionMode ? 'whiteAlpha.900' : 'brandGray.500'
+  const bodyColor = isShortSessionMode ? 'whiteAlpha.800' : 'muted'
+
+  return (
+    <Stack
+      spacing={2}
+      px={4}
+      py={3}
+      mx={6}
+      mb={3}
+      borderWidth="1px"
+      borderColor={cardBorder}
+      borderRadius="md"
+      bg={cardBg}
+    >
+      <Text fontSize="xs" fontWeight={600} color={titleColor}>
+        AI benchmark telemetry
+      </Text>
+
+      {aiProgress && (
+        <Text fontSize="xs" color={bodyColor}>
+          {aiProgress}
+        </Text>
+      )}
+
+      {!telemetry && (
+        <Text fontSize="xs" color={bodyColor}>
+          No AI run yet in this validation session.
+        </Text>
+      )}
+
+      {telemetry && (
+        <Stack spacing={1}>
+          <Text fontSize="xs" color={bodyColor}>
+            {`${telemetry.provider || '-'} ${telemetry.model || '-'}`}
+          </Text>
+
+          {telemetry.status === 'running' && (
+            <Text fontSize="xs" color={bodyColor}>
+              Preparing and solving flips...
+            </Text>
+          )}
+
+          {telemetry.status === 'failed' && (
+            <Text fontSize="xs" color="red.300">
+              {telemetry.error || 'AI run failed'}
+            </Text>
+          )}
+
+          {telemetry.summary && (
+            <Text fontSize="xs" color={bodyColor}>
+              {`applied ${telemetry.appliedAnswers || 0}, left ${
+                telemetry.summary.left || 0
+              }, right ${telemetry.summary.right || 0}, skipped ${
+                telemetry.summary.skipped || 0
+              }, elapsed ${formatLatency(telemetry.summary.elapsedMs)}`}
+            </Text>
+          )}
+
+          {Array.isArray(telemetry.flips) &&
+            telemetry.flips.slice(0, 6).map((flip) => (
+              <Flex key={flip.hash} justify="space-between" gap={3}>
+                <Text fontSize="xs" color={bodyColor} noOfLines={1}>
+                  {`${shortenHash(flip.hash)} ${String(
+                    flip.answer || 'skip'
+                  ).toUpperCase()}`}
+                </Text>
+                <Text fontSize="xs" color={bodyColor}>
+                  {`${toPct(flip.confidence)} ${formatLatency(flip.latencyMs)}${
+                    flip.error ? ' ERR' : ''
+                  }`}
+                </Text>
+              </Flex>
+            ))}
+        </Stack>
+      )}
+    </Stack>
   )
 }
 

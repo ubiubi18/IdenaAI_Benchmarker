@@ -16,6 +16,7 @@
 - Local benchmark logging to `userData/ai-benchmark/session-metrics.jsonl`.
 - Modular AI provider architecture under `main/ai-providers/`.
 - Focused unit tests for AI profile normalization, decision parsing, and deadline handling.
+- Validation UI telemetry panel for AI short-session runs (provider/model/summary/per-flip rows).
 
 ## Preview/testing support
 - Validation visual preview URL:
@@ -23,11 +24,10 @@
 - Browser-safe guards added for non-Electron preview mode.
 
 ## Not implemented yet
-- Per-flip benchmark telemetry widgets in validation UI.
 - Orchestrator integration tests with realistic image payload generation.
 - Full desktop branding/network fork separation.
 
 ## Next priority
-1. Add validation telemetry UI (per flip/provider/latency/error summary).
-2. Desktop fork separation (branding + network defaults + warning banners).
+1. Desktop fork separation (branding + network defaults + warning banners).
+2. Orchestrator integration tests with image compose/deadline flow.
 3. Start chain rule implementation in `idena-go v1.1.2`.
