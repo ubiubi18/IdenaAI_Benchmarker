@@ -360,6 +360,7 @@ function NormalApp({skipBanner, children}) {
   return (
     <Flex as="section" direction="column" flex={1} h="100vh" overflowY="auto">
       {hasRotatingAds && !skipBanner && <AdBanner />}
+      <BenchmarkResearchBanner />
 
       {children}
 
@@ -409,6 +410,47 @@ function NormalApp({skipBanner, children}) {
         {...dnaSendFailedDisclosure}
       />
     </Flex>
+  )
+}
+
+function BenchmarkResearchBanner() {
+  const {t} = useTranslation()
+  const settings = useSettingsState()
+  const aiEnabled = Boolean(settings?.aiSolver?.enabled)
+
+  return (
+    <Alert
+      status="warning"
+      borderRadius={0}
+      bg="orange.50"
+      borderBottomWidth={1}
+      borderBottomColor="orange.100"
+      alignItems="center"
+      py={2}
+    >
+      <Flex
+        w="full"
+        px={4}
+        justify="space-between"
+        align="center"
+        flexWrap="wrap"
+        gap={2}
+      >
+        <Text fontSize="sm" color="orange.700">
+          {t(
+            'Research benchmark fork. This app is not Idena mainnet. AI helper uploads flip images to your selected AI provider.'
+          )}
+        </Text>
+        <Stack isInline spacing={3} align="center">
+          <Text fontSize="xs" color="orange.700" fontWeight={600}>
+            {aiEnabled ? t('AI helper: enabled') : t('AI helper: disabled')}
+          </Text>
+          <Link as={NextLink} href="/settings/ai" color="orange.800">
+            {t('AI settings')}
+          </Link>
+        </Stack>
+      </Flex>
+    </Alert>
   )
 }
 

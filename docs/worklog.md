@@ -149,3 +149,33 @@
 ### Result
 - Validation UI now includes a persistent benchmark telemetry card for AI helper runs.
 - Renderer changes lint clean.
+
+## 2026-03-23 - Step 5: Persistent benchmark warning banners
+
+### Inspected
+- `renderer/shared/components/layout.js`
+- `renderer/pages/validation.js`
+
+### Changed
+- Added a global warning banner in `Layout` pages:
+  - explicitly states this is a research benchmark fork
+  - explicitly states this is not Idena mainnet
+  - links directly to `/settings/ai`
+  - shows current AI-helper enabled/disabled status
+- Added a top warning strip in validation session page:
+  - `Research benchmark fork. Not Idena mainnet.`
+- Captured updated screenshots:
+  - `/tmp/idena-validation-warning-telemetry-desktop.png`
+  - `/tmp/idena-settings-ai-warning-banner-desktop.png`
+
+### Why
+- The fork must be visually impossible to confuse with upstream production defaults.
+
+### Commands
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && ./node_modules/.bin/eslint renderer/pages/validation.js renderer/shared/components/layout.js`
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && env NODE_OPTIONS=--openssl-legacy-provider ./node_modules/.bin/next dev renderer -p 3112`
+- `npx --yes playwright screenshot --browser=chromium --full-page --wait-for-timeout 2500 'http://localhost:3112/validation?previewAi=1' /tmp/idena-validation-warning-telemetry-desktop.png`
+- `npx --yes playwright screenshot --browser=chromium --full-page --wait-for-timeout 2500 'http://localhost:3112/settings/ai' /tmp/idena-settings-ai-warning-banner-desktop.png`
+
+### Result
+- Warning messaging is now always visible on normal app routes and on validation UI.

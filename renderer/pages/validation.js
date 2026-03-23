@@ -370,6 +370,18 @@ function ValidationSession({
 
   return (
     <ValidationScene bg={isShortSession(state) ? 'black' : 'white'}>
+      <Flex
+        align="center"
+        justify="center"
+        bg="orange.500"
+        color="white"
+        py={1}
+        fontSize="xs"
+        fontWeight={600}
+      >
+        {t('Research benchmark fork. Not Idena mainnet.')}
+      </Flex>
+
       {syncing && (
         <SynchronizingValidationAlert>
           {t('Synchronizing...')}

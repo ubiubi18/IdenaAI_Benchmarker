@@ -17,6 +17,7 @@
 - Modular AI provider architecture under `main/ai-providers/`.
 - Focused unit tests for AI profile normalization, decision parsing, and deadline handling.
 - Validation UI telemetry panel for AI short-session runs (provider/model/summary/per-flip rows).
+- Persistent research warning banners on layout routes and validation session.
 
 ## Preview/testing support
 - Validation visual preview URL:
@@ -28,6 +29,6 @@
 - Full desktop branding/network fork separation.
 
 ## Next priority
-1. Desktop fork separation (branding + network defaults + warning banners).
+1. Desktop fork separation (branding + network defaults).
 2. Orchestrator integration tests with image compose/deadline flow.
 3. Start chain rule implementation in `idena-go v1.1.2`.

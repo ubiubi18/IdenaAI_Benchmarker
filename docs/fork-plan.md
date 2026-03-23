@@ -31,11 +31,14 @@
    - provider/model summary
    - applied answers and elapsed time
    - per-flip confidence/latency/error rows
+4. Added persistent research warning banners:
+   - global layout banner with AI settings link
+   - validation top warning strip
 
 ## Next desktop steps
-1. Add explicit benchmark warning banner in global layout (not only settings screen).
-2. Add orchestrator integration tests for image compose + deadline flow.
-3. Add export/import format for local benchmark logs.
+1. Add orchestrator integration tests for image compose + deadline flow.
+2. Add export/import format for local benchmark logs.
+3. Apply full fork branding and default network separation in desktop package/runtime metadata.
 
 ## Next chain steps (after desktop MVP)
 1. Implement previous-epoch eligibility in `idena-go v1.1.2`:
