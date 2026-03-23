@@ -3,6 +3,7 @@
 ## Branch and commits
 - Branch: `research/benchmark-desktop`
 - Latest commits:
+  - `9eb742ac` `refactor(ai-helper): modularize providers and add focused tests`
   - `45aeeac7` `chore(preview): add browser-safe validation ai preview harness`
   - `02064cda` `feat(ai-helper): add ui-first cloud solver integration`
 
