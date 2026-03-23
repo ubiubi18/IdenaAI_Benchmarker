@@ -3,9 +3,9 @@
 ## Branch and commits
 - Branch: `research/benchmark-desktop`
 - Latest commits:
+  - `65b2e1ad` `feat(desktop): add persistent research warning banners`
   - `26070ecc` `feat(ai-helper): add validation telemetry panel`
   - `9eb742ac` `refactor(ai-helper): modularize providers and add focused tests`
-  - `45aeeac7` `chore(preview): add browser-safe validation ai preview harness`
 
 ## Implemented scope
 - AI provider bridge in main process (OpenAI + Gemini).
