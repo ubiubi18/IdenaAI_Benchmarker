@@ -13,6 +13,8 @@
 - Validation short-session AI orchestration and apply-answers event.
 - Settings UI route: `/settings/ai`.
 - Local benchmark logging to `userData/ai-benchmark/session-metrics.jsonl`.
+- Modular AI provider architecture under `main/ai-providers/`.
+- Focused unit tests for AI profile normalization, decision parsing, and deadline handling.
 
 ## Preview/testing support
 - Validation visual preview URL:
@@ -21,10 +23,10 @@
 
 ## Not implemented yet
 - Per-flip benchmark telemetry widgets in validation UI.
-- Automated tests for provider adapters/orchestrator.
+- Orchestrator integration tests with realistic image payload generation.
 - Full desktop branding/network fork separation.
 
 ## Next priority
-1. Finalize AI helper modular boundaries and tests.
-2. Desktop fork separation (branding + network defaults).
+1. Add validation telemetry UI (per flip/provider/latency/error summary).
+2. Desktop fork separation (branding + network defaults + warning banners).
 3. Start chain rule implementation in `idena-go v1.1.2`.

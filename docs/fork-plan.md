@@ -21,10 +21,17 @@
    - optional auto-run per short session (`session-auto` mode)
 5. Local benchmark metrics logging in user data.
 
+## Additional implemented milestone
+1. Modularized AI provider implementation into dedicated main-process modules under `main/ai-providers/`.
+2. Added focused Jest coverage for:
+   - benchmark profile normalization
+   - provider decision parsing/normalization
+   - deadline-exceeded behavior in batch solving
+
 ## Next desktop steps
 1. Add explicit benchmark warning banner in global layout (not only settings screen).
 2. Add validation UI cards showing provider/model/latency outcome per flip.
-3. Add adapter tests and orchestration deadline tests.
+3. Add orchestrator integration tests for image compose + deadline flow.
 4. Add export/import format for local benchmark logs.
 
 ## Next chain steps (after desktop MVP)

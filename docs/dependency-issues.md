@@ -50,3 +50,17 @@
   - `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && env NODE_OPTIONS=--openssl-legacy-provider ./node_modules/.bin/next dev renderer -p 3105`
 - Result:
   - Dev server starts and page previews can be captured.
+
+## 2026-03-23 - Issue 5: Jest bridge test failed due Electron binary requirement
+- Command:
+  - `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/profile.test.js main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
+- Error summary:
+  - `Electron failed to install correctly, please delete node_modules/electron and try installing again`
+  - stack originated from `main/app-data-path.js` during import.
+- Root cause hypothesis:
+  - Legacy Electron binary is intentionally skipped on this environment (`ELECTRON_SKIP_BINARY_DOWNLOAD=1`), but `bridge.js` imported `app-data-path` at module load time during Jest tests.
+- Fix attempt:
+  - Avoid hard import-time dependency by making `app-data-path` optional at startup and requiring it only for default runtime path resolution.
+  - Keep test flow using injected `writeBenchmarkLog` and `now` dependencies.
+- Result:
+  - Jest suites for `main/ai-providers/*.test.js` pass without requiring Electron runtime binaries.

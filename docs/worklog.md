@@ -73,3 +73,49 @@
 ### Result
 - Validation page preview now renders in browser mode and exposes the AI helper action for UX review.
 - Desktop runtime changes remain modular and isolated from consensus/protocol code.
+
+## 2026-03-23 - Step 3: AI provider modularization and focused tests
+
+### Inspected
+- `main/ai-providers.js`
+- `main/index.js`
+- `main/app-data-path.js`
+- `renderer/screens/validation/ai/solver-orchestrator.js`
+
+### Changed
+- Split monolithic AI bridge into modular files:
+  - `main/ai-providers/bridge.js`
+  - `main/ai-providers/constants.js`
+  - `main/ai-providers/profile.js`
+  - `main/ai-providers/decision.js`
+  - `main/ai-providers/concurrency.js`
+  - `main/ai-providers/prompt.js`
+  - `main/ai-providers/providers/openai.js`
+  - `main/ai-providers/providers/gemini.js`
+- Kept compatibility entrypoint:
+  - `main/ai-providers.js` now re-exports from `main/ai-providers/bridge.js`.
+- Added test-oriented dependency injection hooks in bridge:
+  - `invokeProvider`
+  - `writeBenchmarkLog`
+  - `now`
+  - `httpClient`
+  - `getUserDataPath`
+- Added focused unit tests:
+  - `main/ai-providers/profile.test.js`
+  - `main/ai-providers/decision.test.js`
+  - `main/ai-providers/bridge.test.js`
+
+### Why
+- The previous single-file implementation was harder to maintain and difficult to test deterministically for benchmark timing behavior.
+- Modular boundaries reduce regression risk while preserving runtime behavior.
+
+### Commands
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && ./node_modules/.bin/eslint main/ai-providers.js main/ai-providers/bridge.js main/ai-providers/constants.js main/ai-providers/profile.js main/ai-providers/decision.js main/ai-providers/concurrency.js main/ai-providers/prompt.js main/ai-providers/providers/openai.js main/ai-providers/providers/gemini.js main/ai-providers/profile.test.js main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/profile.test.js main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
+
+### Result
+- New AI provider module tree is in place with backward-compatible exports.
+- Focused tests pass:
+  - 3 test suites
+  - 7 tests
+  - all passing
