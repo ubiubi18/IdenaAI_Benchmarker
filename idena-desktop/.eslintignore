@@ -1,0 +1,4 @@
+renderer/.next
+renderer/out
+**/dist
+**/shared/models/proto/**

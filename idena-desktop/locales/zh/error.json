@@ -1,0 +1,16 @@
+{
+  "Can not submit flip": "无法提交翻转",
+  "Keywords are not specified": "未知Keywords",
+  "Error while uploading flip": "上传翻转时出错",
+  "Something went wrong": "出现异常",
+  "Maximum image size exceeded": "超出最大图像大小",
+  "Error while importing key": "导入私钥时出错",
+  "Internal node is not available, try again in a few seconds": "内部节点不可用，请在几秒钟后重试",
+  "You can not submit flips having 'Candidate' status": "账号“候选”状态时，你无法提交翻转",
+  "You cannot submit more flips until the next validation": "在下次验证之前，你无法提交更多翻转",
+  "Can not submit flip during the validation session": "无法在验证会话期间提交翻转",
+  "Error while sending transaction": "发送交易时出错",
+  "Transaction sent": "已提交的交易",
+  "Error while deleting flip": "删除翻转时出错",
+  "It's not allowed to submit flips with your identity status": "不允许提交带有你身份信息的翻转"
+}

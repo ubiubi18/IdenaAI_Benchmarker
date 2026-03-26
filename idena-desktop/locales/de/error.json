@@ -1,0 +1,16 @@
+{
+  "Can not submit flip": "Flip kann nicht übertragen werden",
+  "Keywords are not specified": "Schlüsselwörter sind nicht angegeben",
+  "Error while uploading flip": "Fehler beim Hochladen des Flips",
+  "Something went wrong": "Etwas ist schief gelaufen",
+  "Maximum image size exceeded": "Maximale Bildgröße überschritten",
+  "Error while importing key": "Fehler beim Importieren des Schlüssels",
+  "Internal node is not available, try again in a few seconds": "Interner Netzknoten ist nicht verfügbar, versuche es in ein paar Sekunden erneut",
+  "You can not submit flips having 'Candidate' status": "Du kannst im Status 'Kandidat' keine Flips einreichen",
+  "You cannot submit more flips until the next validation": "Bis zur nächsten Validierung können keine weiteren Flips eingereicht werden",
+  "Can not submit flip during the validation session": "Während der Validierungssitzung kann kein Flip eingereicht werden",
+  "Error while sending transaction": "Fehler beim Senden der Transaktion",
+  "Transaction sent": "Transaktion gesendet",
+  "Error while deleting flip": "Fehler beim Löschen des Flips",
+  "It's not allowed to submit flips with your identity status": "Es ist nicht erlaubt, Flips mit Deinem Identitätsstatus einzureichen"
+}

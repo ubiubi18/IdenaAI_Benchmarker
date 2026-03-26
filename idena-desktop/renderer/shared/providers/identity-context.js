@@ -1,0 +1,196 @@
+/* eslint-disable react/prop-types */
+import React, {useCallback, useMemo} from 'react'
+import deepEqual from 'dequal'
+import {useInterval} from '../hooks/use-interval'
+import {fetchIdentity, killIdentity} from '../api/dna'
+import useRpc from '../hooks/use-rpc'
+import {IdentityStatus} from '../types'
+
+export function mapToFriendlyStatus(status) {
+  switch (status) {
+    case IdentityStatus.Undefined:
+      return 'Not validated'
+    default:
+      return status
+  }
+}
+
+const IdentityStateContext = React.createContext()
+const IdentityDispatchContext = React.createContext()
+
+export function IdentityProvider({children}) {
+  const [identity, setIdentity] = React.useState(null)
+  const [{result: balanceResult}, callRpc] = useRpc()
+
+  React.useEffect(() => {
+    let ignore = false
+
+    async function fetchData() {
+      try {
+        const fetchedIdentity = await fetchIdentity()
+        if (!ignore) {
+          setIdentity(fetchedIdentity)
+        }
+      } catch (error) {
+        global.logger.error(
+          'An error occured while fetching identity',
+          error.message
+        )
+      }
+    }
+
+    fetchData()
+
+    return () => {
+      ignore = true
+    }
+  }, [callRpc])
+
+  useInterval(
+    async () => {
+      async function fetchData() {
+        try {
+          const nextIdentity = await fetchIdentity()
+
+          if (!deepEqual(identity, nextIdentity)) {
+            const state =
+              identity &&
+              identity.state === IdentityStatus.Terminating &&
+              nextIdentity &&
+              nextIdentity.state !== IdentityStatus.Undefined // still mining
+                ? identity.state
+                : nextIdentity.state
+            setIdentity({...nextIdentity, state})
+          }
+        } catch (error) {
+          global.logger.error(
+            'An error occured while fetching identity',
+            error.message
+          )
+        }
+      }
+
+      await fetchData()
+    },
+    identity ? 1000 * 5 : 1000 * 10
+  )
+
+  useInterval(
+    () => callRpc('dna_getBalance', identity.address),
+    identity && identity.address ? 1000 * 10 : null,
+    true
+  )
+
+  const canActivateInvite =
+    identity &&
+    [IdentityStatus.Undefined, IdentityStatus.Invite].includes(identity.state)
+
+  const canSubmitFlip =
+    identity &&
+    [
+      IdentityStatus.Newbie,
+      IdentityStatus.Verified,
+      IdentityStatus.Human,
+    ].includes(identity.state) &&
+    identity.requiredFlips > 0 &&
+    (identity.flips || []).length < identity.availableFlips
+
+  const canTerminate =
+    identity &&
+    [
+      IdentityStatus.Verified,
+      IdentityStatus.Suspended,
+      IdentityStatus.Zombie,
+      IdentityStatus.Human,
+    ].includes(identity.state)
+
+  const canMine =
+    identity &&
+    ([
+      IdentityStatus.Newbie,
+      IdentityStatus.Verified,
+      IdentityStatus.Human,
+    ].includes(identity.state) ||
+      identity.isPool)
+
+  const killMe = useCallback(
+    async ({to}) => {
+      const resp = await killIdentity(identity.address, to)
+      const {result} = resp
+
+      if (result) {
+        setIdentity({...identity, state: IdentityStatus.Terminating})
+        return result
+      }
+      return resp
+    },
+    [identity]
+  )
+
+  const forceUpdate = React.useCallback(async () => {
+    if (identity.address) {
+      const nextIdentity = await fetchIdentity()
+
+      if (!deepEqual(identity, nextIdentity)) {
+        setIdentity({...identity, ...nextIdentity})
+      }
+    }
+  }, [identity])
+
+  return (
+    <IdentityStateContext.Provider
+      value={useMemo(
+        () => ({
+          ...identity,
+          ...balanceResult,
+          canActivateInvite,
+          canSubmitFlip,
+          canMine,
+          canTerminate,
+          isValidated: [
+            IdentityStatus.Newbie,
+            IdentityStatus.Verified,
+            IdentityStatus.Human,
+          ].includes(identity?.state),
+          canInvite: identity?.invites > 0,
+        }),
+        [
+          balanceResult,
+          canActivateInvite,
+          canMine,
+          canSubmitFlip,
+          canTerminate,
+          identity,
+        ]
+      )}
+    >
+      <IdentityDispatchContext.Provider
+        value={useMemo(() => ({killMe, forceUpdate}), [forceUpdate, killMe])}
+      >
+        {children}
+      </IdentityDispatchContext.Provider>
+    </IdentityStateContext.Provider>
+  )
+}
+
+export function useIdentityState() {
+  const context = React.useContext(IdentityStateContext)
+  if (context === undefined) {
+    throw new Error('useIdentityState must be used within a IdentityProvider')
+  }
+  return context
+}
+
+export function useIdentityDispatch() {
+  const context = React.useContext(IdentityDispatchContext)
+  if (context === undefined) {
+    throw new Error(
+      'useIdentityDispatch must be used within a IdentityProvider'
+    )
+  }
+  return context
+}
+
+export function useIdentity() {
+  return [useIdentityState(), useIdentityDispatch()]
+}

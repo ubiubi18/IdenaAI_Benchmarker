@@ -1,0 +1,144 @@
+{
+  "name": "idena-desktop",
+  "productName": "Idena",
+  "version": "0.0.1",
+  "main": "main/index.js",
+  "repository": "idena-network/idena-desktop",
+  "license": "MIT",
+  "scripts": {
+    "start": "NODE_OPTIONS= dotenv -e .env.local electron .",
+    "build": "next build renderer && next export renderer",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win --publish onTag",
+    "dist:mac": "npm run build && electron-builder --mac --publish onTag",
+    "dist:linux": "npm run build && electron-builder --linux --publish onTag",
+    "pack": "npm run build && electron-builder --dir",
+    "clean": "rm -rf renderer/out renderer/.next dist",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "jest",
+    "i18n:init": "npm run i18n:clean && npm run i18n:scan",
+    "i18n:scan": "i18next-scanner",
+    "i18n:clean": "rm -rf locales/en locales/id locales/fr locales/de locales/es locales/ru locales/zh locales/ko locales/hr locales/hi locales/ro locales/uk locales/sr locales/it locales/pt locales/pl locales/si locales/tr locales/bg locales/sv locales/ja locales/el",
+    "e2e": "dotenv -e .env.e2e testcafe electron"
+  },
+  "build": {
+    "appId": "io.idena",
+    "artifactName": "idena-client-${os}-${version}.${ext}",
+    "files": [
+      "**/*",
+      "!renderer",
+      "renderer/out"
+    ],
+    "protocols": {
+      "name": "idena",
+      "schemes": [
+        "dna"
+      ]
+    },
+    "win": {
+      "publish": [
+        "github"
+      ],
+      "icon": "main/static/icons/icon_512_2x.ico"
+    },
+    "mac": {
+      "publish": [
+        "github"
+      ],
+      "icon": "main/static/icons/icon-512@2x.icns"
+    },
+    "linux": {
+      "target": [
+        "deb"
+      ],
+      "publish": [
+        "github"
+      ],
+      "icon": "main/static/icons/icon-512@2x.icns",
+      "maintainer": "Idena <info@idena.io> (https://idena.io/)"
+    }
+  },
+  "devDependencies": {
+    "@babel/core": "^7.6.0",
+    "@testing-library/react": "^9.1.4",
+    "babel-eslint": "^10.0.1",
+    "babel-jest": "^24.9.0",
+    "cors": "^2.8.5",
+    "dotenv-cli": "^3.1.0",
+    "electron": "^9.4.0",
+    "electron-builder": "^23.6.0",
+    "eslint-config-wesbos": "^3.2.3",
+    "eslint-plugin-testcafe": "^0.2.1",
+    "i18next-scanner": "^2.10.3",
+    "jest": "^24.9.0",
+    "react-dom": "^16.8.4",
+    "testcafe": "^1.8.2",
+    "testcafe-browser-provider-electron": "0.0.14",
+    "testcafe-react-selectors": "^4.0.0"
+  },
+  "dependencies": {
+    "@chakra-ui/react": "^1.0.0",
+    "@emotion/react": "^11.0.0",
+    "@emotion/styled": "^11.0.0",
+    "@react-hook/hover": "^4.0.0",
+    "@toast-ui/react-image-editor": "^1.2.0",
+    "@xstate/react": "^3.2.1",
+    "ansi-to-react": "^6.0.5",
+    "axios": "^0.21.1",
+    "canvas-confetti": "^1.4.0",
+    "color-convert": "^2.0.1",
+    "dayjs": "^1.9.6",
+    "dequal": "^1.0.0",
+    "dexie": "^3.2.2",
+    "duckduckgo-images-api": "^1.0.5",
+    "electron-is-dev": "^1.0.1",
+    "electron-next": "^3.1.5",
+    "electron-store": "^3.2.0",
+    "electron-updater": "^4.0.14",
+    "eslint": "^8.36.0",
+    "express": "^4.17.1",
+    "extract-colors": "^1.1.22",
+    "follow-redirects": "^1.9.0",
+    "framer-motion": "^4.0.0",
+    "fs-extra": "^8.1.0",
+    "google-protobuf": "^3.14.0",
+    "i18next": "^19.0.1",
+    "idena-sdk-js": "^0.1.0",
+    "jimp": "^0.9.6",
+    "leveldown": "^5.6.0",
+    "levelup": "^4.4.0",
+    "lowdb": "^1.0.0",
+    "macos-version": "^5.2.1",
+    "mousetrap": "^1.6.3",
+    "multiformats": "^9.7.1",
+    "nanoid": "^2.0.1",
+    "next": "^9.5.1",
+    "next-google-fonts": "^1.2.1",
+    "pino": "^5.13.2",
+    "prettier": "^2.8.7",
+    "progress-stream": "^2.0.0",
+    "qrcode.react": "^0.9.3",
+    "react": "^16.8.4",
+    "react-beautiful-dnd": "^10.0.4",
+    "react-i18next": "^11.2.5",
+    "react-query": "^3.39.0",
+    "react-scroll": "^1.8.7",
+    "react-swipeable": "^7.0.0",
+    "reverse-line-reader": "^0.2.6",
+    "rlp": "^2.2.2",
+    "semver": "^6.3.0",
+    "stackblur-canvas": "^2.5.0",
+    "subleveldown": "^5.0.1",
+    "tree-kill": "^1.2.2",
+    "url-regex-safe": "^3.0.0",
+    "use-deep-compare-effect": "^1.2.0",
+    "xstate": "^4.37.1"
+  },
+  "prettier": {
+    "trailingComma": "es5",
+    "semi": false,
+    "singleQuote": true,
+    "bracketSpacing": false
+  }
+}

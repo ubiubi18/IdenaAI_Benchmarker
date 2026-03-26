@@ -1,0 +1,26 @@
+# general
+.DS_Store
+*.log
+
+# node
+audit-report.json
+node_modules/
+.next/
+out/
+dist/
+build/
+
+# local env/config
+.env
+.env.*
+
+# temp/cache
+.tmp/
+tmp/
+
+# binaries
+*.exe
+*.dll
+*.so
+*.dylib
+idena-go

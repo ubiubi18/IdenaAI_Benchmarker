@@ -1,0 +1,16 @@
+{
+  "Can not submit flip": "Невозможно загрузить флип в сеть",
+  "Keywords are not specified": "Ключевые слова не указаны",
+  "Error while uploading flip": "Ошибка во время загрузки флипа",
+  "Something went wrong": "Что-то пошло не так",
+  "Maximum image size exceeded": "Превышен максимально допустимый размер изображения",
+  "Error while importing key": "Ошибка во время импорта ключа",
+  "Internal node is not available, try again in a few seconds": "Встроенная нода (узел) не доступна, попробуйте снова через несколько секунд",
+  "You can not submit flips having 'Candidate' status": "Вы не можете предлагать флипы имея статус 'Кандидат'",
+  "You cannot submit more flips until the next validation": "Вы не можете предложить больше флипов до следующей валидации",
+  "Can not submit flip during the validation session": "Нельзя предлагать флипы непосредственно во время валидации",
+  "Error while sending transaction": "Ошибка при отправке транзакции",
+  "Transaction sent": "Транзакция отправлена",
+  "Error while deleting flip": "Ошибка во время удаления флипа",
+  "It's not allowed to submit flips with your identity status": "С Вашим статусом нельзя загружать флипы в сеть"
+}
