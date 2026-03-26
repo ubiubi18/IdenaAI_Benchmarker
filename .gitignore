@@ -23,4 +23,5 @@ tmp/
 *.dll
 *.so
 *.dylib
-idena-go
+# ignore only optional standalone node binary at repo root
+/idena-go-bin
