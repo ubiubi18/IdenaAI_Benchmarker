@@ -1112,6 +1112,7 @@ export default function NewFlipPage() {
     useState(false)
   const [storyOptions, setStoryOptions] = useState([])
   const [selectedStoryId, setSelectedStoryId] = useState('')
+  const [storyOptionCount, setStoryOptionCount] = useState(1)
   const [storyPanelsDraft, setStoryPanelsDraft] = useState(
     coerceStoryPanelsDraft([])
   )
@@ -1683,6 +1684,7 @@ export default function NewFlipPage() {
         fastStoryMode: isFastMode,
         provider: aiSolverSettings.provider,
         model: reasoningModel,
+        storyOptionCount,
         keywords: [keywordA, keywordB],
         includeNoise: storyIncludeNoise,
         noisePanelIndex: storyNoisePanelIndex,
@@ -1739,15 +1741,21 @@ export default function NewFlipPage() {
       const fallbackWasUsed = Boolean(
         response && response.metrics && response.metrics.fallback_used
       )
-
-      notify(
-        t('Story options generated'),
-        fallbackStorySeed || fallbackWasUsed
-          ? t(
-              'The AI returned a rough storyboard starter. Rewrite any weak panel text directly before building the flip.'
-            )
-          : t('Choose the better option, customize if needed, then build flip.')
+      let storyOptionsMessage = t(
+        'Choose the better option, customize if needed, then build flip.'
       )
+      if (storyOptionCount === 1) {
+        storyOptionsMessage = t(
+          'Review the story draft, rewrite any weak panel text, then build flip.'
+        )
+      }
+      if (fallbackStorySeed || fallbackWasUsed) {
+        storyOptionsMessage = t(
+          'The AI returned a rough storyboard starter. Rewrite any weak panel text directly before building the flip.'
+        )
+      }
+
+      notify(t('Story options generated'), storyOptionsMessage)
     } catch (error) {
       const message = formatAiRunError(error)
       notify(t('Unable to generate story options'), message, 'error')
@@ -3072,7 +3080,7 @@ export default function NewFlipPage() {
                           </Text>
                           <Text fontSize="xs" color="muted">
                             {t(
-                              'Keyword source: {{source}}. Keywords: {{a}} / {{b}}. Generate two story alternatives, choose one, customize panel text, then build flip panels.',
+                              'Keyword source: {{source}}. Keywords: {{a}} / {{b}}. Generate one or two story drafts, customize panel text, then build flip panels.',
                               {
                                 source: isRandomKeywordSource
                                   ? 'local random test (off-chain)'
@@ -3082,7 +3090,7 @@ export default function NewFlipPage() {
                               }
                             )}
                           </Text>
-                          <SimpleGrid columns={[1, 5]} spacing={2}>
+                          <SimpleGrid columns={[1, 6]} spacing={2}>
                             <Box>
                               <Text fontSize="xs" color="muted" mb={1}>
                                 {t('Generation mode')}
@@ -3231,6 +3239,44 @@ export default function NewFlipPage() {
                             </Box>
                             <Box>
                               <Text fontSize="xs" color="muted" mb={1}>
+                                {t('Story options')}
+                              </Text>
+                              <Select
+                                value={String(storyOptionCount)}
+                                onChange={(e) =>
+                                  setStoryOptionCount(
+                                    Math.max(
+                                      1,
+                                      Math.min(
+                                        2,
+                                        toInt(
+                                          e && e.target
+                                            ? e.target.value
+                                            : storyOptionCount,
+                                          1
+                                        )
+                                      )
+                                    )
+                                  )
+                                }
+                              >
+                                <option value="1">
+                                  {t('1 strong editable draft')}
+                                </option>
+                                <option value="2">{t('2 alternatives')}</option>
+                              </Select>
+                              <Text fontSize="xs" color="muted" mt={1}>
+                                {storyOptionCount === 1
+                                  ? t(
+                                      'Recommended for live use when you want one stronger draft and less fallback pressure.'
+                                    )
+                                  : t(
+                                      'Use two options when you want comparison and can tolerate stricter reranking.'
+                                    )}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="xs" color="muted" mb={1}>
                                 {t('Noise panel index (0-3)')}
                               </Text>
                               <Input
@@ -3282,7 +3328,9 @@ export default function NewFlipPage() {
                                 generateStoryAlternatives({optimize: false})
                               }
                             >
-                              {t('Generate 2 story options')}
+                              {storyOptionCount === 1
+                                ? t('Generate 1 story draft')
+                                : t('Generate 2 story options')}
                             </SecondaryButton>
                             <SecondaryButton
                               isLoading={isGeneratingStoryOptions}

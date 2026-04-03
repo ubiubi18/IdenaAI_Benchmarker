@@ -21,9 +21,10 @@ const {
 const {selectSensePair} = require('./senseSelector')
 const {
   STORY_COMPLIANCE_KEYS,
-  STORY_OPTIONS_GEMINI_RESPONSE_SCHEMA,
-  STORY_OPTIONS_OPENAI_RESPONSE_FORMAT,
   STORY_PANEL_ROLES,
+  createStoryOptionsGeminiResponseSchema,
+  createStoryOptionsOpenAiResponseFormat,
+  normalizeStoryOptionCount,
   validateStoryOptionsPayload,
 } = require('./storySchema')
 const {evaluateStoryQuality} = require('./storyQuality')
@@ -1241,8 +1242,9 @@ function normalizeStoryOption(value, index) {
   }
 }
 
-function parseStrictStoryOptions(rawText) {
+function parseStrictStoryOptions(rawText, expectedStoryCount = 2) {
   const text = String(rawText || '').trim()
+  const normalizedStoryCount = normalizeStoryOptionCount(expectedStoryCount)
   if (!text) {
     return {
       ok: false,
@@ -1264,7 +1266,7 @@ function parseStrictStoryOptions(rawText) {
     }
   }
 
-  const validation = validateStoryOptionsPayload(parsed)
+  const validation = validateStoryOptionsPayload(parsed, normalizedStoryCount)
   if (!validation.ok) {
     return {
       ok: false,
@@ -1279,7 +1281,7 @@ function parseStrictStoryOptions(rawText) {
     ok: true,
     parsed,
     stories: parsed.stories
-      .slice(0, 2)
+      .slice(0, normalizedStoryCount)
       .map((story, index) => normalizeStoryOption(story, index)),
   }
 }
@@ -1293,16 +1295,19 @@ const STORY_PROVIDER_OUTCOMES = {
   TRANSPORT_ERROR: 'transport_error',
 }
 
-function createStoryStructuredOutputOptions(provider) {
+function createStoryStructuredOutputOptions(provider, expectedStoryCount = 2) {
+  const normalizedStoryCount = normalizeStoryOptionCount(expectedStoryCount)
   if (isOpenAiCompatibleProvider(provider)) {
     return {
-      responseFormat: STORY_OPTIONS_OPENAI_RESPONSE_FORMAT,
+      responseFormat:
+        createStoryOptionsOpenAiResponseFormat(normalizedStoryCount),
     }
   }
 
   if (provider === PROVIDERS.Gemini) {
     return {
-      responseSchema: STORY_OPTIONS_GEMINI_RESPONSE_SCHEMA,
+      responseSchema:
+        createStoryOptionsGeminiResponseSchema(normalizedStoryCount),
     }
   }
 
@@ -1317,11 +1322,16 @@ function sanitizeStoryLogText(value, limit = 280) {
     .slice(0, max)
 }
 
-function buildStorySchemaRetryPrompt(basePrompt, strictParseResult) {
+function buildStorySchemaRetryPrompt(
+  basePrompt,
+  strictParseResult,
+  expectedStoryCount = 2
+) {
   const parseResult =
     strictParseResult && typeof strictParseResult === 'object'
       ? strictParseResult
       : {}
+  const normalizedStoryCount = normalizeStoryOptionCount(expectedStoryCount)
   const errorDetail = sanitizeStoryLogText(
     parseResult.error || parseResult.errorType || 'schema validation failed',
     220
@@ -1332,7 +1342,9 @@ function buildStorySchemaRetryPrompt(basePrompt, strictParseResult) {
     '',
     'Schema retry:',
     'The previous response did not match the required strict JSON schema.',
-    'Return exactly 2 story options and nothing else.',
+    `Return exactly ${normalizedStoryCount} story option${
+      normalizedStoryCount === 1 ? '' : 's'
+    } and nothing else.`,
     'Each story must include title, story_summary, 4 panel objects, compliance_report, risk_flags, and revision_if_risky.',
     'Each panel must be an object with: panel, role, description, required_visibles, state_change_from_previous.',
     'Panel roles must be exactly: before, trigger, reaction, after.',
@@ -1379,11 +1391,15 @@ function buildStoryOptionRepairPrompt({
   keywordB,
   existingStories = [],
   missingCount = 1,
+  requestedStoryCount = 2,
 }) {
   const safeKeywordA = normalizeKeywordValue(keywordA) || '-'
   const safeKeywordB = normalizeKeywordValue(keywordB) || '-'
+  const normalizedRequestedCount =
+    normalizeStoryOptionCount(requestedStoryCount)
+  const normalizedMissingCount = Math.max(1, Number(missingCount) || 1)
   const keptConcepts = (Array.isArray(existingStories) ? existingStories : [])
-    .slice(0, 2)
+    .slice(0, normalizedRequestedCount)
     .map((story, index) => {
       const concept = storyOptionToMainPromptConcept(
         story,
@@ -1398,13 +1414,18 @@ function buildStoryOptionRepairPrompt({
     basePrompt,
     '',
     'Option repair retry:',
-    `The previous attempt produced fewer than 2 usable story options after validation. We still need ${Math.max(
-      1,
-      Number(missingCount) || 1
-    )} more strong option(s).`,
+    `The previous attempt produced fewer than ${normalizedRequestedCount} usable story option${
+      normalizedRequestedCount === 1 ? '' : 's'
+    } after validation. We still need ${normalizedMissingCount} more strong option${
+      normalizedMissingCount === 1 ? '' : 's'
+    }.`,
     `Keep both keywords visible: "${safeKeywordA}" and "${safeKeywordB}".`,
     'Preserve the locked senses already provided above.',
-    'Return 2 fresh options in the same strict JSON schema, but make them genuinely different from any kept concept listed below.',
+    `Return exactly ${normalizedMissingCount} fresh option${
+      normalizedMissingCount === 1 ? '' : 's'
+    } in the same strict JSON schema, but make ${
+      normalizedMissingCount === 1 ? 'it' : 'them'
+    } genuinely different from any kept concept listed below.`,
     'Change the scene, trigger, prop, or aftermath instead of rephrasing the same setup.',
     keptConcepts
       ? `Already kept concepts to avoid duplicating:\n${keptConcepts}`
@@ -2313,9 +2334,13 @@ function buildStoryOptionsPrompt({
   customStory,
   senseSelection,
   exemplarsEnabled = true,
+  requestedStoryCount = 2,
 }) {
   const safeKeywordA = normalizeKeywordValue(keywordA) || '-'
   const safeKeywordB = normalizeKeywordValue(keywordB) || '-'
+  const normalizedStoryCount = normalizeStoryOptionCount(requestedStoryCount)
+  const storyCountLabel =
+    normalizedStoryCount === 1 ? 'one strong' : 'two distinct'
   const baseStory = normalizeStoryPanels(customStory)
   const hasCustomStory = Array.isArray(customStory) && customStory.length > 0
   const lockedSenseLines = formatSensePromptLines(
@@ -2330,6 +2355,17 @@ function buildStoryOptionsPrompt({
     fastMode: false,
     enabled: exemplarsEnabled,
   })
+  const outputEnvelopeLines =
+    normalizedStoryCount === 1
+      ? ['{', '  "stories": [', '    <concept_1_in_schema_below>', '  ]', '}']
+      : [
+          '{',
+          '  "stories": [',
+          '    <concept_1_in_schema_below>,',
+          '    <concept_2_in_schema_below>',
+          '  ]',
+          '}',
+        ]
 
   const outputSchema = `{
   "keywords": ["<keyword1>", "<keyword2>"],
@@ -2396,7 +2432,9 @@ function buildStoryOptionsPrompt({
   return [
     'You are an Idena flip storyline planner and compliance checker.',
     'Goal:',
-    'Create two distinct 4-panel, wordless, single-story flip concepts from two Idena keywords.',
+    `Create ${storyCountLabel} 4-panel, wordless, single-story flip concept${
+      normalizedStoryCount === 1 ? '' : 's'
+    } from two Idena keywords.`,
     'Your priority is clear compliance plus creative quality. Your priority order is:',
     '1. rule compliance,',
     '2. avoid clearly extreme/provider-triggering content while keeping normal tension,',
@@ -2492,16 +2530,13 @@ function buildStoryOptionsPrompt({
     '   - the least ambiguity,',
     '   - the most literal keyword visibility,',
     '   - the lowest report risk.',
-    '6. Output exactly two final concepts with different actions/scenes.',
+    `6. Output exactly ${normalizedStoryCount} final concept${
+      normalizedStoryCount === 1 ? '' : 's'
+    }${normalizedStoryCount === 1 ? '.' : ' with different actions/scenes.'}`,
     '',
     'Output format:',
     'Return strict JSON with this exact envelope schema:',
-    '{',
-    '  "stories": [',
-    '    <concept_1_in_schema_below>,',
-    '    <concept_2_in_schema_below>',
-    '  ]',
-    '}',
+    ...outputEnvelopeLines,
     'Concept schema:',
     outputSchema,
     '',
@@ -2514,7 +2549,9 @@ function buildStoryOptionsPrompt({
     'Avoid stock phrases like "in a stable everyday setting", "still clearly visible", or "in the same scene".',
     'Use concrete visual actions and vary wording across panels.',
     'Return story beats a human could quickly rewrite into something better, not compliance filler.',
-    'Never duplicate concept_1 as concept_2.',
+    normalizedStoryCount === 1
+      ? 'Focus on one strong, editable storyboard a human can quickly personalize.'
+      : 'Never duplicate concept_1 as concept_2.',
     ...exemplarConfig.lines,
     '',
     'Extra design heuristics:',
@@ -2544,9 +2581,11 @@ function buildStoryOptionsPromptFast({
   customStory,
   senseSelection,
   exemplarsEnabled = true,
+  requestedStoryCount = 2,
 }) {
   const safeKeywordA = normalizeKeywordValue(keywordA) || '-'
   const safeKeywordB = normalizeKeywordValue(keywordB) || '-'
+  const normalizedStoryCount = normalizeStoryOptionCount(requestedStoryCount)
   const baseStory = normalizeStoryPanels(customStory)
   const hasCustomStory = Array.isArray(customStory) && customStory.length > 0
   const lockedSenseLines = formatSensePromptLines(
@@ -2572,7 +2611,11 @@ function buildStoryOptionsPromptFast({
     ? 'Noise is added later to one panel. Keep one coherent story.'
     : ''
   return [
-    'Generate exactly 2 distinct flip story options as strict JSON only.',
+    `Generate exactly ${normalizedStoryCount} ${
+      normalizedStoryCount === 1
+        ? 'strong editable flip story option'
+        : 'distinct flip story options'
+    } as strict JSON only.`,
     'Goal: fast, vivid, editable 4-panel story seeds for Idena flips.',
     'Rules:',
     '- one single story chain only',
@@ -2581,7 +2624,9 @@ function buildStoryOptionsPromptFast({
     '- no text overlays, letters, numbers, labels, logos, or watermarks',
     ...contentSafetyBoundaryLines,
     '- no counting puzzles, no symbolism, no surreal jokes',
-    '- keep the two options meaningfully different in scene, action, or outcome',
+    normalizedStoryCount === 1
+      ? '- make the one option vivid, specific, and easy for a human to tweak'
+      : '- keep the two options meaningfully different in scene, action, or outcome',
     '- panel 4 must be a visible consequence of panel 3',
     '- each panel must show a visible state progression from the previous panel',
     '- avoid repeated stock phrases; use natural concise wording',
@@ -2615,32 +2660,36 @@ function buildStoryOptionsPromptFast({
     '      },',
     '      "risk_flags": [],',
     '      "revision_if_risky": ""',
-    '    },',
-    '    {',
-    '      "title": "Option 2",',
-    '      "story_summary": "...",',
-    '      "panels": [',
-    '        {"panel":1,"role":"before","description":"...","required_visibles":["...","..."],"state_change_from_previous":"n/a"},',
-    '        {"panel":2,"role":"trigger","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."},',
-    '        {"panel":3,"role":"reaction","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."},',
-    '        {"panel":4,"role":"after","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."}',
-    '      ],',
-    '      "compliance_report": {',
-    '        "keyword_relevance": "pass",',
-    '        "no_text_needed": "pass",',
-    '        "no_order_labels": "pass",',
-    '        "no_inappropriate_content": "pass",',
-    '        "single_story_only": "pass",',
-    '        "no_waking_up_template": "pass",',
-    '        "no_thumbs_up_down": "pass",',
-    '        "no_enumeration_logic": "pass",',
-    '        "no_screen_or_page_keyword_cheat": "pass",',
-    '        "causal_clarity": "pass",',
-    '        "consensus_clarity": "pass"',
-    '      },',
-    '      "risk_flags": [],',
-    '      "revision_if_risky": ""',
-    '    }',
+    normalizedStoryCount === 1 ? '    }' : '    },',
+    ...(normalizedStoryCount === 1
+      ? []
+      : [
+          '    {',
+          '      "title": "Option 2",',
+          '      "story_summary": "...",',
+          '      "panels": [',
+          '        {"panel":1,"role":"before","description":"...","required_visibles":["...","..."],"state_change_from_previous":"n/a"},',
+          '        {"panel":2,"role":"trigger","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."},',
+          '        {"panel":3,"role":"reaction","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."},',
+          '        {"panel":4,"role":"after","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."}',
+          '      ],',
+          '      "compliance_report": {',
+          '        "keyword_relevance": "pass",',
+          '        "no_text_needed": "pass",',
+          '        "no_order_labels": "pass",',
+          '        "no_inappropriate_content": "pass",',
+          '        "single_story_only": "pass",',
+          '        "no_waking_up_template": "pass",',
+          '        "no_thumbs_up_down": "pass",',
+          '        "no_enumeration_logic": "pass",',
+          '        "no_screen_or_page_keyword_cheat": "pass",',
+          '        "causal_clarity": "pass",',
+          '        "consensus_clarity": "pass"',
+          '      },',
+          '      "risk_flags": [],',
+          '      "revision_if_risky": ""',
+          '    }',
+        ]),
     '  ]',
     '}',
     `Keyword 1: ${safeKeywordA}`,
@@ -3985,7 +4034,9 @@ function createAiProviderBridge(logger, dependencies = {}) {
   }
 
   async function generateStoryOptions(payload = {}) {
-    const requestedStoryCount = 2
+    const requestedStoryCount = normalizeStoryOptionCount(
+      payload.storyOptionCount
+    )
     const fastStoryMode = payload.fastStoryMode === true
     const provider = normalizeProvider(payload.provider)
     const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
@@ -4397,6 +4448,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
           customStory: hasCustomStory ? customStory : null,
           senseSelection,
           exemplarsEnabled: storyExemplarsEnabled,
+          requestedStoryCount,
         })
       : buildStoryOptionsPrompt({
           provider,
@@ -4406,9 +4458,9 @@ function createAiProviderBridge(logger, dependencies = {}) {
           customStory: hasCustomStory ? customStory : null,
           senseSelection,
           exemplarsEnabled: storyExemplarsEnabled,
+          requestedStoryCount,
         })
     const apiKey = getApiKey(provider)
-    const structuredOutput = createStoryStructuredOutputOptions(provider)
     let combinedUsage = createEmptyTokenUsage()
     const attemptHistory = []
 
@@ -4418,7 +4470,12 @@ function createAiProviderBridge(logger, dependencies = {}) {
       attemptLabel,
       profileOverride = profile,
       requestHash = `story-option-${startedAt}`,
+      expectedStoryCount = requestedStoryCount,
     }) {
+      const structuredOutput = createStoryStructuredOutputOptions(
+        provider,
+        expectedStoryCount
+      )
       try {
         const providerResponse = await invokeProvider({
           provider,
@@ -4444,7 +4501,10 @@ function createAiProviderBridge(logger, dependencies = {}) {
           combinedUsage,
           normalizedResponse.tokenUsage
         )
-        const strictParse = parseStrictStoryOptions(normalizedResponse.rawText)
+        const strictParse = parseStrictStoryOptions(
+          normalizedResponse.rawText,
+          expectedStoryCount
+        )
         const classification = classifyStoryProviderOutcome({
           normalizedResponse,
           strictParse,
@@ -4573,6 +4633,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       logMessage = 'AI story retry path',
       profileOverride = profile,
       requestHash = `story-option-${startedAt}`,
+      expectedStoryCount = requestedStoryCount,
     }) {
       storyMetrics.retries_per_story += 1
       logger.info(logMessage, {
@@ -4588,6 +4649,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
         attemptLabel,
         profileOverride,
         requestHash,
+        expectedStoryCount,
       })
       recordStoryAttemptOutcome(retryAttempt)
       return retryAttempt
@@ -4617,11 +4679,13 @@ function createAiProviderBridge(logger, dependencies = {}) {
           keywordB,
           existingStories,
           missingCount,
+          requestedStoryCount,
         }),
         promptPhase: repairPromptPhase,
         attemptLabel: repairAttemptLabel,
         reason: `usable_story_count_${existingStories.length}`,
         logMessage: 'AI story repair path',
+        expectedStoryCount: missingCount,
       })
 
       if (repairAttempt.outcome === STORY_PROVIDER_OUTCOMES.SCHEMA_INVALID) {
@@ -4629,11 +4693,13 @@ function createAiProviderBridge(logger, dependencies = {}) {
           fromAttempt: repairAttempt,
           retryPromptText: buildStorySchemaRetryPrompt(
             repairAttempt.promptText,
-            repairAttempt.strictParse
+            repairAttempt.strictParse,
+            missingCount
           ),
           promptPhase: `${repairPromptPhase}_schema_retry`,
           attemptLabel: `${repairAttemptLabel}_schema_retry`,
           reason: 'schema_invalid_after_repair_missing',
+          expectedStoryCount: missingCount,
         })
       } else if (repairAttempt.outcome === STORY_PROVIDER_OUTCOMES.TRUNCATION) {
         const expandedProfile = {
@@ -4650,6 +4716,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
           attemptLabel: `${repairAttemptLabel}_truncation_retry`,
           reason: 'truncation_after_repair_missing',
           profileOverride: expandedProfile,
+          expectedStoryCount: missingCount,
         })
       }
 
@@ -4723,11 +4790,13 @@ function createAiProviderBridge(logger, dependencies = {}) {
         fromAttempt: selectedAttempt,
         retryPromptText: buildStorySchemaRetryPrompt(
           promptText,
-          selectedAttempt.strictParse
+          selectedAttempt.strictParse,
+          requestedStoryCount
         ),
         promptPhase: 'story_options_schema_retry',
         attemptLabel: 'provider_story_options_schema_retry',
         reason: 'schema_invalid',
+        expectedStoryCount: requestedStoryCount,
       })
     } else if (
       selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.REFUSAL ||
@@ -4747,6 +4816,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
         attemptLabel: 'provider_story_options_safe_replan',
         reason: selectedAttempt.outcome,
         logMessage: 'AI story safe reinterpretation path',
+        expectedStoryCount: requestedStoryCount,
       })
 
       if (selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SCHEMA_INVALID) {
@@ -4754,11 +4824,13 @@ function createAiProviderBridge(logger, dependencies = {}) {
           fromAttempt: selectedAttempt,
           retryPromptText: buildStorySchemaRetryPrompt(
             selectedAttempt.promptText,
-            selectedAttempt.strictParse
+            selectedAttempt.strictParse,
+            requestedStoryCount
           ),
           promptPhase: 'story_options_safe_replan_schema_retry',
           attemptLabel: 'provider_story_options_safe_replan_schema_retry',
           reason: 'schema_invalid_after_safe_replan',
+          expectedStoryCount: requestedStoryCount,
         })
       }
     } else if (selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.TRUNCATION) {
@@ -4776,6 +4848,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
         attemptLabel: 'provider_story_options_truncation_retry',
         reason: 'truncation',
         profileOverride: expandedProfile,
+        expectedStoryCount: requestedStoryCount,
       })
     }
 
@@ -4847,8 +4920,9 @@ function createAiProviderBridge(logger, dependencies = {}) {
       storyFallbackReasonText =
         'provider output did not match the required story format'
     } else if (initialQuality.accepted.length < requestedStoryCount) {
-      storyFallbackReasonText =
-        'provider did not produce enough strong story options after repair attempts'
+      storyFallbackReasonText = `provider did not produce enough strong story option${
+        requestedStoryCount === 1 ? '' : 's'
+      } after repair attempts`
     } else {
       storyFallbackReasonText = 'provider output could not be parsed reliably'
     }
@@ -4887,6 +4961,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
             promptPhase: 'story_audit',
             attemptLabel: `story_audit_option_${index + 1}`,
             requestHash: `story-audit-${startedAt}-${index + 1}`,
+            expectedStoryCount: 1,
           })
           const auditedCandidates =
             auditAttempt.outcome === STORY_PROVIDER_OUTCOMES.SUCCESS &&
@@ -4939,8 +5014,12 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     const fallbackQuality = getFallbackCandidateQuality()
+    const shouldMixFallbackIntoSelection =
+      requestedStoryCount > 1 || stories.length < requestedStoryCount
     const selectionPool = dedupeStoriesForSelection(
-      stories.concat(fallbackQuality.accepted)
+      shouldMixFallbackIntoSelection
+        ? stories.concat(fallbackQuality.accepted)
+        : stories
     )
     const diversitySelection = rerankStoriesForDiversity(selectionPool, stories)
 

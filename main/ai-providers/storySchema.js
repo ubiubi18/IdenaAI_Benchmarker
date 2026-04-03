@@ -15,114 +15,122 @@ const STORY_COMPLIANCE_KEYS = [
 ]
 
 const STORY_OPTIONS_SCHEMA_NAME = 'idena_story_options_v2'
+function normalizeStoryOptionCount(value) {
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed)) return 2
+  return Math.max(1, Math.min(2, parsed))
+}
 
-const STORY_OPTIONS_JSON_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['stories'],
-  properties: {
-    stories: {
-      type: 'array',
-      minItems: 2,
-      maxItems: 2,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: [
-          'title',
-          'story_summary',
-          'panels',
-          'compliance_report',
-          'risk_flags',
-          'revision_if_risky',
-        ],
-        properties: {
-          title: {
-            type: 'string',
-            minLength: 1,
-            maxLength: 64,
-          },
-          story_summary: {
-            type: 'string',
-            minLength: 10,
-            maxLength: 220,
-          },
-          panels: {
-            type: 'array',
-            minItems: 4,
-            maxItems: 4,
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              required: [
-                'panel',
-                'role',
-                'description',
-                'required_visibles',
-                'state_change_from_previous',
-              ],
-              properties: {
-                panel: {
-                  type: 'integer',
-                  minimum: 1,
-                  maximum: 4,
-                },
-                role: {
-                  type: 'string',
-                  enum: STORY_PANEL_ROLES,
-                },
-                description: {
-                  type: 'string',
-                  minLength: 12,
-                  maxLength: 240,
-                },
-                required_visibles: {
-                  type: 'array',
-                  minItems: 2,
-                  maxItems: 5,
-                  items: {
-                    type: 'string',
-                    minLength: 1,
-                    maxLength: 64,
+function createStoryOptionsJsonSchema(storyCount = 2) {
+  const normalizedStoryCount = normalizeStoryOptionCount(storyCount)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['stories'],
+    properties: {
+      stories: {
+        type: 'array',
+        minItems: normalizedStoryCount,
+        maxItems: normalizedStoryCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'title',
+            'story_summary',
+            'panels',
+            'compliance_report',
+            'risk_flags',
+            'revision_if_risky',
+          ],
+          properties: {
+            title: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 64,
+            },
+            story_summary: {
+              type: 'string',
+              minLength: 10,
+              maxLength: 220,
+            },
+            panels: {
+              type: 'array',
+              minItems: 4,
+              maxItems: 4,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'panel',
+                  'role',
+                  'description',
+                  'required_visibles',
+                  'state_change_from_previous',
+                ],
+                properties: {
+                  panel: {
+                    type: 'integer',
+                    minimum: 1,
+                    maximum: 4,
                   },
-                },
-                state_change_from_previous: {
-                  type: 'string',
-                  minLength: 3,
-                  maxLength: 140,
+                  role: {
+                    type: 'string',
+                    enum: STORY_PANEL_ROLES,
+                  },
+                  description: {
+                    type: 'string',
+                    minLength: 12,
+                    maxLength: 240,
+                  },
+                  required_visibles: {
+                    type: 'array',
+                    minItems: 2,
+                    maxItems: 5,
+                    items: {
+                      type: 'string',
+                      minLength: 1,
+                      maxLength: 64,
+                    },
+                  },
+                  state_change_from_previous: {
+                    type: 'string',
+                    minLength: 3,
+                    maxLength: 140,
+                  },
                 },
               },
             },
-          },
-          compliance_report: {
-            type: 'object',
-            additionalProperties: false,
-            required: STORY_COMPLIANCE_KEYS,
-            properties: STORY_COMPLIANCE_KEYS.reduce((acc, key) => {
-              acc[key] = {
-                type: 'string',
-                enum: ['pass', 'fail'],
-              }
-              return acc
-            }, {}),
-          },
-          risk_flags: {
-            type: 'array',
-            maxItems: 6,
-            items: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 120,
+            compliance_report: {
+              type: 'object',
+              additionalProperties: false,
+              required: STORY_COMPLIANCE_KEYS,
+              properties: STORY_COMPLIANCE_KEYS.reduce((acc, key) => {
+                acc[key] = {
+                  type: 'string',
+                  enum: ['pass', 'fail'],
+                }
+                return acc
+              }, {}),
             },
-          },
-          revision_if_risky: {
-            type: 'string',
-            maxLength: 320,
+            risk_flags: {
+              type: 'array',
+              maxItems: 6,
+              items: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 120,
+              },
+            },
+            revision_if_risky: {
+              type: 'string',
+              maxLength: 320,
+            },
           },
         },
       },
     },
-  },
+  }
 }
 
 function toGeminiSchema(schema) {
@@ -171,18 +179,26 @@ function toGeminiSchema(schema) {
   return result
 }
 
-const STORY_OPTIONS_OPENAI_RESPONSE_FORMAT = {
-  type: 'json_schema',
-  json_schema: {
-    name: STORY_OPTIONS_SCHEMA_NAME,
-    strict: true,
-    schema: STORY_OPTIONS_JSON_SCHEMA,
-  },
+function createStoryOptionsOpenAiResponseFormat(storyCount = 2) {
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: STORY_OPTIONS_SCHEMA_NAME,
+      strict: true,
+      schema: createStoryOptionsJsonSchema(storyCount),
+    },
+  }
 }
 
-const STORY_OPTIONS_GEMINI_RESPONSE_SCHEMA = toGeminiSchema(
-  STORY_OPTIONS_JSON_SCHEMA
-)
+function createStoryOptionsGeminiResponseSchema(storyCount = 2) {
+  return toGeminiSchema(createStoryOptionsJsonSchema(storyCount))
+}
+
+const STORY_OPTIONS_JSON_SCHEMA = createStoryOptionsJsonSchema(2)
+const STORY_OPTIONS_OPENAI_RESPONSE_FORMAT =
+  createStoryOptionsOpenAiResponseFormat(2)
+const STORY_OPTIONS_GEMINI_RESPONSE_SCHEMA =
+  createStoryOptionsGeminiResponseSchema(2)
 
 function createValidationResult(errors) {
   const list = Array.isArray(errors) ? errors.filter(Boolean) : []
@@ -332,8 +348,9 @@ function validateStoryItem(item, storyIndex, errors) {
   }
 }
 
-function validateStoryOptionsPayload(value) {
+function validateStoryOptionsPayload(value, storyCount = 2) {
   const errors = []
+  const normalizedStoryCount = normalizeStoryOptionCount(storyCount)
   if (!isPlainObject(value)) {
     return createValidationResult(['root payload must be an object'])
   }
@@ -342,8 +359,15 @@ function validateStoryOptionsPayload(value) {
     errors.push(`root.${key} is not allowed`)
   })
 
-  if (!Array.isArray(value.stories) || value.stories.length !== 2) {
-    errors.push('root.stories must contain exactly 2 story options')
+  if (
+    !Array.isArray(value.stories) ||
+    value.stories.length !== normalizedStoryCount
+  ) {
+    errors.push(
+      `root.stories must contain exactly ${normalizedStoryCount} story option${
+        normalizedStoryCount === 1 ? '' : 's'
+      }`
+    )
   } else {
     value.stories.forEach((story, storyIndex) =>
       validateStoryItem(story, storyIndex, errors)
@@ -360,5 +384,9 @@ module.exports = {
   STORY_OPTIONS_OPENAI_RESPONSE_FORMAT,
   STORY_OPTIONS_SCHEMA_NAME,
   STORY_PANEL_ROLES,
+  createStoryOptionsGeminiResponseSchema,
+  createStoryOptionsJsonSchema,
+  createStoryOptionsOpenAiResponseFormat,
+  normalizeStoryOptionCount,
   validateStoryOptionsPayload,
 }

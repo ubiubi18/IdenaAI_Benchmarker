@@ -1176,6 +1176,103 @@ describe('createAiProviderBridge', () => {
     expect(result.stories[1].panels.join(' ')).toContain('focus')
   })
 
+  it('supports a single strong story option without forcing a second fallback path', async () => {
+    const invokeProvider = jest.fn().mockResolvedValue({
+      rawText: JSON.stringify({
+        stories: [
+          {
+            title: 'Porch giant curl',
+            story_summary:
+              'A person hangs a curled garden hose on a porch rail before a giant bends the rail and knocks it loose.',
+            compliance_report: makeComplianceReport(),
+            risk_flags: [],
+            revision_if_risky: '',
+            panels: [
+              {
+                panel: 1,
+                role: 'before',
+                description:
+                  'A person hangs a curled garden hose on a porch rail beside a watering can.',
+                required_visibles: [
+                  'person',
+                  'curled garden hose',
+                  'porch rail',
+                ],
+                state_change_from_previous: 'n/a',
+              },
+              {
+                panel: 2,
+                role: 'trigger',
+                description:
+                  'A giant grabs the porch rail from the yard and the rail bends downward.',
+                required_visibles: ['giant', 'bent porch rail', 'hose curl'],
+                state_change_from_previous:
+                  'The giant is now pulling on the rail and the rail has bent.',
+              },
+              {
+                panel: 3,
+                role: 'reaction',
+                description:
+                  'The curled hose slips free, uncoils across the porch, and knocks over the watering can as the person ducks.',
+                required_visibles: [
+                  'uncoiling hose',
+                  'fallen watering can',
+                  'person',
+                ],
+                state_change_from_previous:
+                  'The hose has come loose, stretched across the porch, and knocked the can over.',
+              },
+              {
+                panel: 4,
+                role: 'after',
+                description:
+                  'Water spreads across the porch while the uncoiled hose lies on the boards and the giant still looms beyond the bent rail.',
+                required_visibles: ['water puddle', 'uncoiled hose', 'giant'],
+                state_change_from_previous:
+                  'A puddle now covers the porch and the hose remains fully uncoiled.',
+              },
+            ],
+          },
+        ],
+      }),
+      usage: {
+        promptTokens: 44,
+        completionTokens: 41,
+        totalTokens: 85,
+      },
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['curl', 'giant'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(1)
+    const callPayload = invokeProvider.mock.calls[0][0]
+    expect(callPayload.promptText).toContain(
+      'Generate exactly 1 strong editable flip story option as strict JSON only.'
+    )
+    expect(callPayload.promptText).toContain(
+      '- make the one option vivid, specific, and easy for a human to tweak'
+    )
+    expect(
+      callPayload.promptOptions.structuredOutput.responseFormat.json_schema
+        .schema.properties.stories.maxItems
+    ).toBe(1)
+    expect(result.stories).toHaveLength(1)
+    expect(result.stories[0].panels[0].toLowerCase()).toContain('curl')
+    expect(result.stories[0].panels[1].toLowerCase()).toContain('giant')
+    expect(result.metrics.fallback_used).toBe(false)
+  })
+
   it('salvages readable unstructured story text before dropping to local fallback', async () => {
     const invokeProvider = jest
       .fn()
