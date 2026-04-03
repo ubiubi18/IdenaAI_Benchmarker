@@ -1,7 +1,5 @@
 const {callOpenAi, testOpenAiProvider} = require('./openai')
-const {
-  STORY_OPTIONS_OPENAI_RESPONSE_FORMAT,
-} = require('../storySchema')
+const {STORY_OPTIONS_OPENAI_RESPONSE_FORMAT} = require('../storySchema')
 
 function makeUnsupportedParameterError(param, message = '') {
   return {

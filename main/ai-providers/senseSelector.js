@@ -300,9 +300,10 @@ function uniqueTrimmedStrings(values, maxItems = 5) {
   const result = []
   for (const value of values) {
     const normalized = String(value || '').trim()
-    if (!normalized || result.includes(normalized)) continue
-    result.push(normalized)
-    if (result.length >= maxItems) break
+    if (normalized && !result.includes(normalized)) {
+      result.push(normalized)
+      if (result.length >= maxItems) break
+    }
   }
   return result
 }
@@ -368,7 +369,13 @@ function hasTag(sense, tag) {
   return Boolean(
     sense &&
       Array.isArray(sense.tags) &&
-      sense.tags.some((entry) => entry === String(tag || '').trim().toLowerCase())
+      sense.tags.some(
+        (entry) =>
+          entry ===
+          String(tag || '')
+            .trim()
+            .toLowerCase()
+      )
   )
 }
 
@@ -396,17 +403,19 @@ function getSenseCandidates(keyword) {
   const rejected = []
 
   if (Array.isArray(source) && source.length > 0) {
-    source.map((entry, index) => cloneSense(normalizedKeyword, entry, index)).forEach((sense) => {
-      const rejectionReason = shouldRejectSense(sense)
-      if (rejectionReason) {
-        rejected.push({
-          ...sense,
-          rejection_reason: rejectionReason,
-        })
-      } else {
-        accepted.push(sense)
-      }
-    })
+    source
+      .map((entry, index) => cloneSense(normalizedKeyword, entry, index))
+      .forEach((sense) => {
+        const rejectionReason = shouldRejectSense(sense)
+        if (rejectionReason) {
+          rejected.push({
+            ...sense,
+            rejection_reason: rejectionReason,
+          })
+        } else {
+          accepted.push(sense)
+        }
+      })
   }
 
   if (!accepted.length) {
@@ -495,8 +504,10 @@ function scoreSensePair(firstSense, secondSense) {
   }
 
   if (
-    (isToolSense(firstSense) && (isActorSense(secondSense) || secondIsVisibleTrigger)) ||
-    (isToolSense(secondSense) && (isActorSense(firstSense) || firstIsVisibleTrigger))
+    (isToolSense(firstSense) &&
+      (isActorSense(secondSense) || secondIsVisibleTrigger)) ||
+    (isToolSense(secondSense) &&
+      (isActorSense(firstSense) || firstIsVisibleTrigger))
   ) {
     causalFit += 0.14
     naturalness += 0.08
@@ -531,7 +542,10 @@ function scoreSensePair(firstSense, secondSense) {
     awkwardPenalty += 0.28 * abstractCount
   }
 
-  if (hasAnyTag(firstSense, ['elevated_risk']) || hasAnyTag(secondSense, ['elevated_risk'])) {
+  if (
+    hasAnyTag(firstSense, ['elevated_risk']) ||
+    hasAnyTag(secondSense, ['elevated_risk'])
+  ) {
     awkwardPenalty += 0.08
   }
 
@@ -644,13 +658,14 @@ function selectSensePair({keywordA, keywordB}) {
 
   for (let index = 0; index < scoredPairs.length; index += 1) {
     const pair = scoredPairs[index]
-    if (!pair) continue
-    if (index > 0) {
-      attemptedNextBestPair = true
-    }
-    if (!pair.weak_pair) {
-      chosenPair = pair
-      break
+    if (pair) {
+      if (index > 0) {
+        attemptedNextBestPair = true
+      }
+      if (!pair.weak_pair) {
+        chosenPair = pair
+        break
+      }
     }
   }
 
@@ -661,7 +676,10 @@ function selectSensePair({keywordA, keywordB}) {
   if (!chosenPair) {
     const fallbackFirstSense = buildRawKeywordFallbackSense(firstKeyword)
     const fallbackSecondSense = buildRawKeywordFallbackSense(secondKeyword)
-    const fallbackScore = scoreSensePair(fallbackFirstSense, fallbackSecondSense)
+    const fallbackScore = scoreSensePair(
+      fallbackFirstSense,
+      fallbackSecondSense
+    )
     chosenPair = {
       keyword_1_sense: fallbackFirstSense,
       keyword_2_sense: fallbackSecondSense,

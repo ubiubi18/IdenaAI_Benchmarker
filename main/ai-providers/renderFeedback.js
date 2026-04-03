@@ -93,7 +93,9 @@ function evaluateRenderedStoryFeedback({
   while (normalizedPanels.length < 4) {
     normalizedPanels.push('')
   }
-  const rendered = Array.isArray(renderedPanels) ? renderedPanels.slice(0, 4) : []
+  const rendered = Array.isArray(renderedPanels)
+    ? renderedPanels.slice(0, 4)
+    : []
   while (rendered.length < 4) {
     rendered.push({})
   }
@@ -112,7 +114,8 @@ function evaluateRenderedStoryFeedback({
 
   rendered.forEach((panel, index) => {
     const audit =
-      validatorAuditByPanel[index] && typeof validatorAuditByPanel[index] === 'object'
+      validatorAuditByPanel[index] &&
+      typeof validatorAuditByPanel[index] === 'object'
         ? validatorAuditByPanel[index]
         : {}
     const visibility =
@@ -145,30 +148,19 @@ function evaluateRenderedStoryFeedback({
 
     normalizedKeywords.forEach((keyword) => {
       const entry = keywordEntries.find(
-        (item) =>
-          normalizeText(item && item.keyword) === normalizeText(keyword)
+        (item) => normalizeText(item && item.keyword) === normalizeText(keyword)
       )
-      if (
-        entry &&
-        entry.visible === true &&
-        Number(entry.confidence) >= 0.55
-      ) {
+      if (entry && entry.visible === true && Number(entry.confidence) >= 0.55) {
         keywordCoverage[keyword] += 1
       }
     })
 
-    if (
-      visibility.passed === false ||
-      visibility.status === 'fail'
-    ) {
+    if (visibility.passed === false || visibility.status === 'fail') {
       visibilityFailPanels.push(index)
       repairPanels.add(index)
     }
 
-    if (
-      aligned.passed === false ||
-      aligned.status === 'fail'
-    ) {
+    if (aligned.passed === false || aligned.status === 'fail') {
       alignmentFailPanels.push(index)
       repairPanels.add(index)
     }
@@ -187,7 +179,11 @@ function evaluateRenderedStoryFeedback({
     buildImageFingerprint(panel && panel.imageDataUrl)
   )
   for (let leftIndex = 0; leftIndex < fingerprints.length - 1; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < fingerprints.length; rightIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < fingerprints.length;
+      rightIndex += 1
+    ) {
       const similarity = computeFingerprintSimilarity(
         fingerprints[leftIndex],
         fingerprints[rightIndex]
@@ -250,14 +246,25 @@ function evaluateRenderedStoryFeedback({
 
   let verdict = 'accept_rendered_story'
   if (failureReasons.length > 0) {
-    if (repairPanelIndices.length === 1 && !severeKeywordFailure && !severeAlignmentFailure && !severeRepetition) {
+    if (
+      repairPanelIndices.length === 1 &&
+      !severeKeywordFailure &&
+      !severeAlignmentFailure &&
+      !severeRepetition
+    ) {
       verdict = 'repair_selected_panels'
     } else if (
       hasAlternativeOption &&
-      (severeKeywordFailure || severeAlignmentFailure || severeRepetition || repairPanelIndices.length >= 2)
+      (severeKeywordFailure ||
+        severeAlignmentFailure ||
+        severeRepetition ||
+        repairPanelIndices.length >= 2)
     ) {
       verdict = 'reject_story_and_use_alternative_option'
-    } else if (repairPanelIndices.length > 0 && repairPanelIndices.length <= 2) {
+    } else if (
+      repairPanelIndices.length > 0 &&
+      repairPanelIndices.length <= 2
+    ) {
       verdict = 'repair_selected_panels'
     } else {
       verdict = 'replan_story'
@@ -290,14 +297,18 @@ function evaluateRenderedStoryFeedback({
 
 function recordRenderedStoryMetrics(metrics, report) {
   const target =
-    metrics && typeof metrics === 'object' ? metrics : createEmptyRenderedStoryMetrics()
+    metrics && typeof metrics === 'object'
+      ? metrics
+      : createEmptyRenderedStoryMetrics()
   const item = report && typeof report === 'object' ? report : {}
 
   if (item.verdict === 'accept_rendered_story') {
     target.rendered_story_accept += 1
   } else if (item.verdict === 'repair_selected_panels') {
     target.rendered_story_repair += 1
-    target.panel_repair_count += normalizePanelIndices(item.repairPanelIndices).length
+    target.panel_repair_count += normalizePanelIndices(
+      item.repairPanelIndices
+    ).length
   } else if (
     item.verdict === 'reject_story_and_use_alternative_option' ||
     item.verdict === 'replan_story'

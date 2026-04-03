@@ -241,12 +241,17 @@ function validateStoryPanel(panel, storyIndex, panelIndex, errors) {
   if (!Array.isArray(panel.required_visibles)) {
     errors.push(`${path}.required_visibles must be an array`)
   } else {
-    if (panel.required_visibles.length < 2 || panel.required_visibles.length > 5) {
+    if (
+      panel.required_visibles.length < 2 ||
+      panel.required_visibles.length > 5
+    ) {
       errors.push(`${path}.required_visibles must contain 2 to 5 items`)
     }
     panel.required_visibles.forEach((item, index) => {
       if (!isNonEmptyString(item)) {
-        errors.push(`${path}.required_visibles[${index}] must be a non-empty string`)
+        errors.push(
+          `${path}.required_visibles[${index}] must be a non-empty string`
+        )
       }
     })
   }

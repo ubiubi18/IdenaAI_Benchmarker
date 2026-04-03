@@ -1047,7 +1047,8 @@ describe('createAiProviderBridge', () => {
                   "The note has left the person's hand and is flying away.",
               },
               {
-                description: 'The note lands by a tree and the person grabs it.',
+                description:
+                  'The note lands by a tree and the person grabs it.',
                 required_visibles: ['note', 'tree', 'person'],
                 state_change_from_previous:
                   'The note has landed and is being recovered at the tree.',
@@ -1077,7 +1078,9 @@ describe('createAiProviderBridge', () => {
     expect(invokeProvider).toHaveBeenCalledTimes(4)
     const callPayload = invokeProvider.mock.calls[0][0]
     const auditPayload = invokeProvider.mock.calls.find(
-      ([payload]) => payload.promptOptions && payload.promptOptions.promptPhase === 'story_audit'
+      ([payload]) =>
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase === 'story_audit'
     )[0]
     expect(callPayload.promptOptions).toMatchObject({
       promptPhase: 'story_options',
@@ -1109,7 +1112,9 @@ describe('createAiProviderBridge', () => {
     expect(callPayload.promptText).not.toContain(
       'Do not include inappropriate, sexual, violent, or shocking content.'
     )
-    expect(callPayload.promptText).not.toContain('Optimize for "boringly clear".')
+    expect(callPayload.promptText).not.toContain(
+      'Optimize for "boringly clear".'
+    )
     expect(auditPayload.promptText).toContain(
       'Audit this concept and hard-reject only clearly extreme or provider-triggering content.'
     )
@@ -1219,7 +1224,9 @@ describe('createAiProviderBridge', () => {
     expect(
       result.stories.some(
         (story) =>
-          !/local fallback/i.test(String(story && story.rationale ? story.rationale : ''))
+          !/local fallback/i.test(
+            String(story && story.rationale ? story.rationale : '')
+          )
       )
     ).toBe(true)
     expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('mirror')
@@ -1283,7 +1290,8 @@ describe('createAiProviderBridge', () => {
                 state_change_from_previous: 'n/a',
               },
               {
-                description: 'The same room repeats with a slightly different face.',
+                description:
+                  'The same room repeats with a slightly different face.',
                 required_visibles: ['person', 'mirror', 'ghost'],
                 state_change_from_previous: 'The face changes a little.',
               },
@@ -1325,7 +1333,11 @@ describe('createAiProviderBridge', () => {
               {
                 description:
                   'The crate edge bumps the hanging sculpture as the elevator gate starts closing.',
-                required_visibles: ['hardware crate', 'sculpture', 'elevator gate'],
+                required_visibles: [
+                  'hardware crate',
+                  'sculpture',
+                  'elevator gate',
+                ],
                 state_change_from_previous:
                   'The sculpture has been struck and starts twisting sideways.',
               },
@@ -1398,7 +1410,9 @@ describe('createAiProviderBridge', () => {
     expect(result.metrics.fallback_used).toBe(false)
     expect(result.stories).toHaveLength(2)
     expect(
-      result.stories.some((story) => /local fallback/i.test(String(story.rationale || '')))
+      result.stories.some((story) =>
+        /local fallback/i.test(String(story.rationale || ''))
+      )
     ).toBe(false)
     expect(result.stories.map((story) => story.title)).toEqual(
       expect.arrayContaining(['Gallery mishap', 'Freight elevator scrape'])
@@ -1449,8 +1463,9 @@ describe('createAiProviderBridge', () => {
     expect(result.stories[0].rationale).toMatch(/storyboard starter/i)
     expect(result.stories[0].editingTip).toMatch(/Rewrite all 4 panels/i)
     expect(
-      result.stories[0].panels[0].includes('Pick one specific actor or object') ||
-        result.stories[0].panels[0].includes('Choose a concrete room')
+      result.stories[0].panels[0].includes(
+        'Pick one specific actor or object'
+      ) || result.stories[0].panels[0].includes('Choose a concrete room')
     ).toBe(true)
     expect(result.stories[0].panels.join(' ')).not.toContain(
       'The person makes one concrete move'
@@ -1469,8 +1484,7 @@ describe('createAiProviderBridge', () => {
               'A ghost appears in a hallway, a person jolts in shock, drops a cup, and ends beside a puddle.',
             panels: [
               {
-                description:
-                  'A calm person carries a cup through a hallway.',
+                description: 'A calm person carries a cup through a hallway.',
                 required_visibles: ['person', 'cup', 'hallway'],
                 state_change_from_previous: 'n/a',
               },
@@ -1796,7 +1810,9 @@ describe('createAiProviderBridge', () => {
       promptPhase: 'story_options_schema_retry',
       structuredOutput: expect.any(Object),
     })
-    expect(invokeProvider.mock.calls[1][0].promptText).toContain('Schema retry:')
+    expect(invokeProvider.mock.calls[1][0].promptText).toContain(
+      'Schema retry:'
+    )
     expect(result.metrics.parse_fail).toBe(1)
     expect(result.metrics.safe_replan_used).toBe(false)
     expect(result.metrics.fallback_used).toBe(false)
@@ -2026,7 +2042,11 @@ describe('createAiProviderBridge', () => {
               {
                 description:
                   'The clown presents the completed wooden figure with the chainsaw resting on the table.',
-                required_visibles: ['clown', 'completed wooden figure', 'chainsaw'],
+                required_visibles: [
+                  'clown',
+                  'completed wooden figure',
+                  'chainsaw',
+                ],
                 state_change_from_previous:
                   'The carving is complete and the chainsaw is no longer in use.',
               },
@@ -2274,7 +2294,11 @@ describe('createAiProviderBridge', () => {
                 role: 'after',
                 description:
                   'The clown presents the completed wooden figure with the chainsaw resting on the table.',
-                required_visibles: ['clown', 'completed wooden figure', 'chainsaw'],
+                required_visibles: [
+                  'clown',
+                  'completed wooden figure',
+                  'chainsaw',
+                ],
                 state_change_from_previous:
                   'The carving is complete and the chainsaw is no longer in use.',
               },
@@ -2445,7 +2469,9 @@ describe('createAiProviderBridge', () => {
     })
 
     expect(result.stories).toHaveLength(2)
-    expect(result.stories.map((story) => story.title)).toContain('Mirror scare A')
+    expect(result.stories.map((story) => story.title)).toContain(
+      'Mirror scare A'
+    )
     expect(
       result.stories.some((story) =>
         /local fallback/i.test(String(story.rationale || ''))
@@ -2688,80 +2714,82 @@ describe('createAiProviderBridge', () => {
     const runPythonFlipStoryPipeline = jest
       .fn()
       .mockRejectedValue(new Error('python failed'))
-    const invokeProvider = jest
-      .fn()
-      .mockResolvedValueOnce(
-        makeStrictStoryResponse([
-          makeStrictStoryOption({
-            title: 'Workshop carving',
-            storySummary:
-              'A clown prepares a log, carves it with a chainsaw, and presents the finished sculpture.',
-            panels: [
-              {
-                description:
-                  'A clown enters a bright workshop with a chainsaw and log.',
-                required_visibles: ['clown', 'chainsaw', 'log'],
-                state_change_from_previous: 'n/a',
-              },
-              {
-                description:
-                  'The clown positions the log and starts the chainsaw on the workbench.',
-                required_visibles: ['clown', 'chainsaw', 'log'],
-                state_change_from_previous:
-                  'The chainsaw starts and the log is now positioned for cutting.',
-              },
-              {
-                description:
-                  'Wood chips scatter as the clown safely carves the log with the chainsaw.',
-                required_visibles: ['clown', 'chainsaw', 'wood chips'],
-                state_change_from_previous:
-                  'The log is being carved and wood chips now fly from the cut.',
-              },
-              {
-                description:
-                  'The clown shows the finished sculpture on the workbench with the chainsaw set down.',
-                required_visibles: ['clown', 'sculpture', 'chainsaw'],
-                state_change_from_previous:
-                  'The sculpture is finished and the chainsaw is no longer in use.',
-              },
-            ],
-          }),
-          makeStrictStoryOption({
-            title: 'Outdoor carving',
-            storySummary:
-              'A clown starts a chainsaw at a carving booth, shapes a wooden block, and presents the finished figure.',
-            panels: [
-              {
-                description:
-                  'A clown arrives at an outdoor carving booth with a chainsaw and wooden block.',
-                required_visibles: ['clown', 'chainsaw', 'wooden block'],
-                state_change_from_previous: 'n/a',
-              },
-              {
-                description:
-                  'The clown starts shaping the wooden block with the chainsaw.',
-                required_visibles: ['clown', 'chainsaw', 'wooden block'],
-                state_change_from_previous:
-                  'The chainsaw is now cutting into the block.',
-              },
-              {
-                description:
-                  'The carving takes form as wood chips scatter around the booth.',
-                required_visibles: ['chainsaw', 'wood chips', 'carving'],
-                state_change_from_previous:
-                  'A partial carving is now visible and chips have scattered.',
-              },
-              {
-                description:
-                  'The clown presents the completed wooden figure with the chainsaw resting on the table.',
-                required_visibles: ['clown', 'completed wooden figure', 'chainsaw'],
-                state_change_from_previous:
-                  'The carving is complete and the chainsaw is no longer in use.',
-              },
-            ],
-          }),
-        ])
-      )
+    const invokeProvider = jest.fn().mockResolvedValueOnce(
+      makeStrictStoryResponse([
+        makeStrictStoryOption({
+          title: 'Workshop carving',
+          storySummary:
+            'A clown prepares a log, carves it with a chainsaw, and presents the finished sculpture.',
+          panels: [
+            {
+              description:
+                'A clown enters a bright workshop with a chainsaw and log.',
+              required_visibles: ['clown', 'chainsaw', 'log'],
+              state_change_from_previous: 'n/a',
+            },
+            {
+              description:
+                'The clown positions the log and starts the chainsaw on the workbench.',
+              required_visibles: ['clown', 'chainsaw', 'log'],
+              state_change_from_previous:
+                'The chainsaw starts and the log is now positioned for cutting.',
+            },
+            {
+              description:
+                'Wood chips scatter as the clown safely carves the log with the chainsaw.',
+              required_visibles: ['clown', 'chainsaw', 'wood chips'],
+              state_change_from_previous:
+                'The log is being carved and wood chips now fly from the cut.',
+            },
+            {
+              description:
+                'The clown shows the finished sculpture on the workbench with the chainsaw set down.',
+              required_visibles: ['clown', 'sculpture', 'chainsaw'],
+              state_change_from_previous:
+                'The sculpture is finished and the chainsaw is no longer in use.',
+            },
+          ],
+        }),
+        makeStrictStoryOption({
+          title: 'Outdoor carving',
+          storySummary:
+            'A clown starts a chainsaw at a carving booth, shapes a wooden block, and presents the finished figure.',
+          panels: [
+            {
+              description:
+                'A clown arrives at an outdoor carving booth with a chainsaw and wooden block.',
+              required_visibles: ['clown', 'chainsaw', 'wooden block'],
+              state_change_from_previous: 'n/a',
+            },
+            {
+              description:
+                'The clown starts shaping the wooden block with the chainsaw.',
+              required_visibles: ['clown', 'chainsaw', 'wooden block'],
+              state_change_from_previous:
+                'The chainsaw is now cutting into the block.',
+            },
+            {
+              description:
+                'The carving takes form as wood chips scatter around the booth.',
+              required_visibles: ['chainsaw', 'wood chips', 'carving'],
+              state_change_from_previous:
+                'A partial carving is now visible and chips have scattered.',
+            },
+            {
+              description:
+                'The clown presents the completed wooden figure with the chainsaw resting on the table.',
+              required_visibles: [
+                'clown',
+                'completed wooden figure',
+                'chainsaw',
+              ],
+              state_change_from_previous:
+                'The carving is complete and the chainsaw is no longer in use.',
+            },
+          ],
+        }),
+      ])
+    )
 
     const bridge = createAiProviderBridge(mockLogger(), {
       invokeProvider,
@@ -2977,7 +3005,9 @@ describe('createAiProviderBridge', () => {
       expect(panel.panelPrompt).toContain(
         'Keyword 2 "ghost" -> visible ghost figure or floating spirit'
       )
-      expect(panel.panelPrompt).not.toContain('electric shock or electrical jolt')
+      expect(panel.panelPrompt).not.toContain(
+        'electric shock or electrical jolt'
+      )
     })
   })
 

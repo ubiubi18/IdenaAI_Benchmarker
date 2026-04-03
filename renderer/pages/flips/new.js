@@ -1035,16 +1035,21 @@ function normalizeStoryOptionFromBackend(item, index) {
     revisionIfRisky: String(
       next.revisionIfRisky || next.revision_if_risky || ''
     ).trim(),
-    senseSelection:
-      next.senseSelection && typeof next.senseSelection === 'object'
-        ? next.senseSelection
-        : next.sense_selection && typeof next.sense_selection === 'object'
-        ? next.sense_selection
-        : next.semanticLock && typeof next.semanticLock === 'object'
-        ? next.semanticLock
-        : next.semantic_lock && typeof next.semantic_lock === 'object'
-        ? next.semantic_lock
-        : null,
+    senseSelection: (() => {
+      if (next.senseSelection && typeof next.senseSelection === 'object') {
+        return next.senseSelection
+      }
+      if (next.sense_selection && typeof next.sense_selection === 'object') {
+        return next.sense_selection
+      }
+      if (next.semanticLock && typeof next.semanticLock === 'object') {
+        return next.semanticLock
+      }
+      if (next.semantic_lock && typeof next.semantic_lock === 'object') {
+        return next.semantic_lock
+      }
+      return null
+    })(),
   }
 }
 
@@ -1732,9 +1737,7 @@ export default function NewFlipPage() {
 
       const fallbackStorySeed = options.some((item) => item.isStoryboardStarter)
       const fallbackWasUsed = Boolean(
-        response &&
-          response.metrics &&
-          response.metrics.fallback_used
+        response && response.metrics && response.metrics.fallback_used
       )
 
       notify(
@@ -1954,7 +1957,7 @@ export default function NewFlipPage() {
             )
           : t(
               'Panels were applied and shuffled for submit. You can still reshuffle or regenerate panels.'
-          )
+            )
       )
       if (
         response &&

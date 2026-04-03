@@ -7,7 +7,9 @@ const STORY_PROMPT_VARIANTS = {
 }
 
 function resolveStoryPromptVariant(provider) {
-  const normalized = String(provider || '').trim().toLowerCase()
+  const normalized = String(provider || '')
+    .trim()
+    .toLowerCase()
   if (normalized === PROVIDERS.Gemini) {
     return STORY_PROMPT_VARIANTS.GEMINI
   }
@@ -62,7 +64,8 @@ function buildStoryPromptExemplarLines({
     },
   }
 
-  const selected = variants[variant] || variants[STORY_PROMPT_VARIANTS.OPENAI_LIKE]
+  const selected =
+    variants[variant] || variants[STORY_PROMPT_VARIANTS.OPENAI_LIKE]
   const lines = [heading, selected.positive, selected.negative, selected.cue]
 
   return {

@@ -18,12 +18,47 @@ const LOCATION_GROUPS = {
 const TRIGGER_GROUPS = {
   appearance: ['appear', 'appears', 'appeared', 'emerge', 'emerges', 'emerged'],
   opening: ['open', 'opens', 'opened', 'swing', 'swings', 'unlock', 'unlocks'],
-  drop_spill: ['drop', 'drops', 'dropped', 'spill', 'spills', 'spilled', 'knock', 'knocks'],
+  drop_spill: [
+    'drop',
+    'drops',
+    'dropped',
+    'spill',
+    'spills',
+    'spilled',
+    'knock',
+    'knocks',
+  ],
   fall: ['fall', 'falls', 'fell', 'topple', 'topples', 'collapse', 'collapses'],
-  cut_carve: ['cut', 'cuts', 'cutting', 'carve', 'carves', 'carving', 'slice', 'slices'],
-  movement: ['run', 'runs', 'move', 'moves', 'rush', 'rushes', 'slide', 'slides'],
+  cut_carve: [
+    'cut',
+    'cuts',
+    'cutting',
+    'carve',
+    'carves',
+    'carving',
+    'slice',
+    'slices',
+  ],
+  movement: [
+    'run',
+    'runs',
+    'move',
+    'moves',
+    'rush',
+    'rushes',
+    'slide',
+    'slides',
+  ],
   release: ['release', 'releases', 'released', 'escape', 'escapes', 'escaped'],
-  ignition: ['ignite', 'ignites', 'burn', 'burns', 'burning', 'light', 'lights'],
+  ignition: [
+    'ignite',
+    'ignites',
+    'burn',
+    'burns',
+    'burning',
+    'light',
+    'lights',
+  ],
   reveal: ['reveal', 'reveals', 'revealed', 'show', 'shows', 'shown'],
   growth: ['grow', 'grows', 'grown', 'rise', 'rises', 'sprout', 'sprouts'],
   break: ['break', 'breaks', 'broke', 'broken', 'shatter', 'shatters'],
@@ -32,13 +67,49 @@ const TRIGGER_GROUPS = {
 const ACTION_GROUPS = {
   carry: ['carry', 'carries', 'carried', 'hold', 'holds', 'held'],
   write: ['write', 'writes', 'wrote', 'draw', 'draws'],
-  pick_up: ['pick', 'picks', 'picked', 'grab', 'grabs', 'grabbed', 'retrieve', 'retrieves'],
-  step_back: ['step', 'steps', 'stepped', 'back', 'recoil', 'recoils', 'retreat', 'retreats'],
-  cut_carve: ['cut', 'cuts', 'cutting', 'carve', 'carves', 'carving', 'shape', 'shapes'],
+  pick_up: [
+    'pick',
+    'picks',
+    'picked',
+    'grab',
+    'grabs',
+    'grabbed',
+    'retrieve',
+    'retrieves',
+  ],
+  step_back: [
+    'step',
+    'steps',
+    'stepped',
+    'back',
+    'recoil',
+    'recoils',
+    'retreat',
+    'retreats',
+  ],
+  cut_carve: [
+    'cut',
+    'cuts',
+    'cutting',
+    'carve',
+    'carves',
+    'carving',
+    'shape',
+    'shapes',
+  ],
   pour_spill: ['pour', 'pours', 'poured', 'spill', 'spills', 'spilled'],
   open_close: ['open', 'opens', 'opened', 'close', 'closes', 'closed'],
   chase_escape: ['chase', 'chases', 'flee', 'flees', 'escape', 'escapes'],
-  repair_clean: ['repair', 'repairs', 'clean', 'cleans', 'wipe', 'wipes', 'fix', 'fixes'],
+  repair_clean: [
+    'repair',
+    'repairs',
+    'clean',
+    'cleans',
+    'wipe',
+    'wipes',
+    'fix',
+    'fixes',
+  ],
   present_show: ['present', 'presents', 'show', 'shows', 'display', 'displays'],
 }
 
@@ -53,8 +124,25 @@ const OUTCOME_GROUPS = {
 }
 
 const EMOTION_GROUPS = {
-  shock: ['shock', 'shocked', 'startle', 'startled', 'jolt', 'jolts', 'surprise', 'surprised'],
-  fear: ['fear', 'afraid', 'scared', 'fright', 'frightened', 'panic', 'panicked'],
+  shock: [
+    'shock',
+    'shocked',
+    'startle',
+    'startled',
+    'jolt',
+    'jolts',
+    'surprise',
+    'surprised',
+  ],
+  fear: [
+    'fear',
+    'afraid',
+    'scared',
+    'fright',
+    'frightened',
+    'panic',
+    'panicked',
+  ],
   relief: ['relief', 'relieved', 'calm', 'settled'],
   joy: ['happy', 'joy', 'smile', 'smiles', 'celebrate', 'celebrates'],
   anger: ['angry', 'anger', 'mad', 'furious'],
@@ -84,15 +172,7 @@ const HUMAN_TERMS = [
   'teacher',
 ]
 
-const ANIMAL_TERMS = [
-  'cat',
-  'dog',
-  'wolf',
-  'horse',
-  'bird',
-  'monkey',
-  'bear',
-]
+const ANIMAL_TERMS = ['cat', 'dog', 'wolf', 'horse', 'bird', 'monkey', 'bear']
 
 const CREATURE_TERMS = ['ghost', 'spirit', 'monster', 'fairy', 'dragon']
 
@@ -243,12 +323,17 @@ function getPanelText(story, roleIndex) {
     ? story.panelDetails.slice(0, 4)
     : []
   const byRole = details.find(
-    (panel) => String(panel && panel.role ? panel.role : '').trim().toLowerCase() === roles[roleIndex]
+    (panel) =>
+      String(panel && panel.role ? panel.role : '')
+        .trim()
+        .toLowerCase() === roles[roleIndex]
   )
   if (byRole && byRole.description) {
     return String(byRole.description || '').trim()
   }
-  const panels = Array.isArray(story && story.panels) ? story.panels.slice(0, 4) : []
+  const panels = Array.isArray(story && story.panels)
+    ? story.panels.slice(0, 4)
+    : []
   return String(panels[roleIndex] || '').trim()
 }
 
@@ -256,7 +341,10 @@ function getStateChangeText(story, roleIndex) {
   const details = Array.isArray(story && story.panelDetails)
     ? story.panelDetails.slice(0, 4)
     : []
-  const panel = details[roleIndex] && typeof details[roleIndex] === 'object' ? details[roleIndex] : {}
+  const panel =
+    details[roleIndex] && typeof details[roleIndex] === 'object'
+      ? details[roleIndex]
+      : {}
   return String(panel.stateChangeFromPrevious || '').trim()
 }
 
@@ -281,7 +369,8 @@ function extractActorTags(text) {
   const tags = new Set()
   if (HUMAN_TERMS.some((term) => tokens.has(term))) tags.add('human_actor')
   if (ANIMAL_TERMS.some((term) => tokens.has(term))) tags.add('animal_actor')
-  if (CREATURE_TERMS.some((term) => tokens.has(term))) tags.add('creature_actor')
+  if (CREATURE_TERMS.some((term) => tokens.has(term)))
+    tags.add('creature_actor')
   if (!tags.size) tags.add('object_led')
   if (tokens.has('crowd') || tokens.has('audience') || tokens.has('group')) {
     tags.add('crowd_frame')
@@ -298,7 +387,10 @@ function extractObjectTokens(story) {
     getPanelText(story, 2),
     getPanelText(story, 3),
   ].join(' ')
-  const tokens = new Set([...buildTokenSet(text), ...getRequiredVisibleTokens(story)])
+  const tokens = new Set([
+    ...buildTokenSet(text),
+    ...getRequiredVisibleTokens(story),
+  ])
   GENERIC_OBJECT_TOKENS.forEach((token) => tokens.delete(token))
   return tokens
 }
@@ -323,8 +415,8 @@ function extractStoryDiversityProfile(story) {
     triggerTokens: buildTokenSet(triggerText),
     actionTokens: buildTokenSet(`${triggerText} ${reactionText}`),
     outcomeTokens: buildTokenSet(afterStateText),
-    panelTokenSets: [beforeText, triggerText, reactionText, afterText].map((text) =>
-      buildTokenSet(text)
+    panelTokenSets: [beforeText, triggerText, reactionText, afterText].map(
+      (text) => buildTokenSet(text)
     ),
   }
 }
@@ -415,7 +507,8 @@ function evaluateStoryDiversityPair(leftStory, rightStory) {
     awkwardPenalty += 22
   }
   if (
-    jaccardSimilarity(leftProfile.locationTags, rightProfile.locationTags) >= 0.7 &&
+    jaccardSimilarity(leftProfile.locationTags, rightProfile.locationTags) >=
+      0.7 &&
     triggerSimilarity >= 0.6
   ) {
     penalties.push('same_scene_template')
@@ -473,7 +566,8 @@ function compareCandidates(left, right) {
 
 function sortSelectedStories(stories) {
   return (Array.isArray(stories) ? stories.slice() : []).sort((left, right) => {
-    const qualityDelta = getStoryQualityScore(right) - getStoryQualityScore(left)
+    const qualityDelta =
+      getStoryQualityScore(right) - getStoryQualityScore(left)
     if (qualityDelta !== 0) {
       return qualityDelta
     }
@@ -491,29 +585,34 @@ function selectStoryOptionPair(stories, options = {}) {
   const candidates = Array.isArray(stories) ? stories.slice() : []
   const candidateQualityScores = candidates.map((story, index) => ({
     index,
-    id: `${String(
-      story && story.candidateSource ? story.candidateSource : 'candidate'
-    ).trim() || 'candidate'}:${String(
-      story && story.id ? story.id : `candidate-${index + 1}`
-    )}`,
+    id: `${
+      String(
+        story && story.candidateSource ? story.candidateSource : 'candidate'
+      ).trim() || 'candidate'
+    }:${String(story && story.id ? story.id : `candidate-${index + 1}`)}`,
     storyId: String(story && story.id ? story.id : `candidate-${index + 1}`),
     title: String(story && story.title ? story.title : '').trim(),
     qualityScore: getStoryQualityScore(story),
-    source: String(story && story.candidateSource ? story.candidateSource : '').trim(),
+    source: String(
+      story && story.candidateSource ? story.candidateSource : ''
+    ).trim(),
   }))
 
   if (requestedCount === 1 || candidates.length < 2) {
-    const selectedStories =
+    const topStories =
       candidates.length > 0
         ? candidates
             .slice()
-            .sort((left, right) => getStoryQualityScore(right) - getStoryQualityScore(left))
+            .sort(
+              (left, right) =>
+                getStoryQualityScore(right) - getStoryQualityScore(left)
+            )
             .slice(0, requestedCount)
         : []
     return {
       candidateQualityScores,
       pairwiseScores: [],
-      selectedStories,
+      selectedStories: topStories,
       selectedPair: null,
       diversityWeakness: candidates.length < 2 ? 'insufficient_candidates' : '',
     }
@@ -521,7 +620,11 @@ function selectStoryOptionPair(stories, options = {}) {
 
   const pairwiseScores = []
   for (let leftIndex = 0; leftIndex < candidates.length - 1; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < candidates.length;
+      rightIndex += 1
+    ) {
       const leftStory = candidates[leftIndex]
       const rightStory = candidates[rightIndex]
       const leftQuality = getStoryQualityScore(leftStory)
@@ -531,7 +634,8 @@ function selectStoryOptionPair(stories, options = {}) {
       const qualityFloorPenalty = Math.max(0, 85 - minQuality) * 0.8
       const diversity = evaluateStoryDiversityPair(leftStory, rightStory)
       const diversityBonus = Math.min(10, diversity.score * 0.14)
-      const finalCombinedScore = averageQuality - qualityFloorPenalty + diversityBonus
+      const finalCombinedScore =
+        averageQuality - qualityFloorPenalty + diversityBonus
 
       pairwiseScores.push({
         leftIndex,

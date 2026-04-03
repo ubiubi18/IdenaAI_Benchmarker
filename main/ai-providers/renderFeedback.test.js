@@ -50,9 +50,7 @@ describe('render feedback loop', () => {
       })
     ).toEqual(
       expect.objectContaining({
-        1: expect.stringContaining(
-          'follow the planned panel event literally'
-        ),
+        1: expect.stringContaining('follow the planned panel event literally'),
       })
     )
   })

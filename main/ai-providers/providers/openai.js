@@ -342,10 +342,7 @@ function extractOpenAiRawText(message) {
     if (typeof content.text === 'string' && content.text.trim()) {
       return content.text
     }
-    if (
-      typeof content.output_text === 'string' &&
-      content.output_text.trim()
-    ) {
+    if (typeof content.output_text === 'string' && content.output_text.trim()) {
       return content.output_text
     }
     return stringifyJsonLike(content)
@@ -356,10 +353,14 @@ function extractOpenAiRawText(message) {
 
 function extractOpenAiProviderMeta(responseData) {
   const choices =
-    responseData && Array.isArray(responseData.choices) ? responseData.choices : []
+    responseData && Array.isArray(responseData.choices)
+      ? responseData.choices
+      : []
   const firstChoice = choices[0] || {}
   const message =
-    firstChoice && firstChoice.message && typeof firstChoice.message === 'object'
+    firstChoice &&
+    firstChoice.message &&
+    typeof firstChoice.message === 'object'
       ? firstChoice.message
       : {}
   const finishReason = String(firstChoice.finish_reason || '')

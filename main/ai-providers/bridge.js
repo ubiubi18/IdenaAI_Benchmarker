@@ -405,7 +405,11 @@ function getLockedSense(value, key, fallbackKeyword = '') {
     safety_note: String(source.safety_note || '').trim(),
     tags: Array.isArray(source.tags)
       ? source.tags
-          .map((item) => String(item || '').trim().toLowerCase())
+          .map((item) =>
+            String(item || '')
+              .trim()
+              .toLowerCase()
+          )
           .filter(Boolean)
           .slice(0, 8)
       : [],
@@ -422,7 +426,11 @@ function senseHasTag(sense, tag) {
   return Boolean(
     sense &&
       Array.isArray(sense.tags) &&
-      sense.tags.includes(String(tag || '').trim().toLowerCase())
+      sense.tags.includes(
+        String(tag || '')
+          .trim()
+          .toLowerCase()
+      )
   )
 }
 
@@ -451,8 +459,9 @@ function isReflectionSense(sense) {
 }
 
 function getSensePromptLabel(sense, fallbackKeyword = '') {
-  const promptLabel = String(sense && sense.prompt_label ? sense.prompt_label : '')
-    .trim()
+  const promptLabel = String(
+    sense && sense.prompt_label ? sense.prompt_label : ''
+  ).trim()
   if (promptLabel) return promptLabel
   if (
     sense &&
@@ -461,7 +470,10 @@ function getSensePromptLabel(sense, fallbackKeyword = '') {
   ) {
     return String(sense.synonyms_for_prompting[0] || '').trim()
   }
-  return normalizeKeywordValue((sense && sense.keyword) || fallbackKeyword) || 'object'
+  return (
+    normalizeKeywordValue((sense && sense.keyword) || fallbackKeyword) ||
+    'object'
+  )
 }
 
 function formatSensePromptLines(senseSelection, keywordA, keywordB) {
@@ -472,22 +484,37 @@ function formatSensePromptLines(senseSelection, keywordA, keywordB) {
     .map((item) => String(item || '').trim())
     .filter(Boolean)
     .filter((item, index, list) => list.indexOf(item) === index)
-  const emotionalPair = isEmotionSense(firstSense) || isEmotionSense(secondSense)
+  const emotionalPair =
+    isEmotionSense(firstSense) || isEmotionSense(secondSense)
   const elevatedRiskPair =
     senseHasAnyTag(firstSense, ['elevated_risk']) ||
     senseHasAnyTag(secondSense, ['elevated_risk'])
 
   return [
     'Locked sense selection (must not drift across panels):',
-    `- Keyword 1 "${normalizeKeywordValue(keywordA) || '-'}" -> ${firstSense.gloss || getSensePromptLabel(firstSense, keywordA)} (sense_id: ${firstSense.sense_id || '-'})`,
-    `  Preferred visual form: ${firstSense.example_visual_form || getSensePromptLabel(firstSense, keywordA)}.`,
+    `- Keyword 1 "${normalizeKeywordValue(keywordA) || '-'}" -> ${
+      firstSense.gloss || getSensePromptLabel(firstSense, keywordA)
+    } (sense_id: ${firstSense.sense_id || '-'})`,
+    `  Preferred visual form: ${
+      firstSense.example_visual_form ||
+      getSensePromptLabel(firstSense, keywordA)
+    }.`,
     firstSense.synonyms_for_prompting.length > 0
-      ? `  Synonyms allowed for prompting: ${firstSense.synonyms_for_prompting.join(', ')}.`
+      ? `  Synonyms allowed for prompting: ${firstSense.synonyms_for_prompting.join(
+          ', '
+        )}.`
       : '',
-    `- Keyword 2 "${normalizeKeywordValue(keywordB) || '-'}" -> ${secondSense.gloss || getSensePromptLabel(secondSense, keywordB)} (sense_id: ${secondSense.sense_id || '-'})`,
-    `  Preferred visual form: ${secondSense.example_visual_form || getSensePromptLabel(secondSense, keywordB)}.`,
+    `- Keyword 2 "${normalizeKeywordValue(keywordB) || '-'}" -> ${
+      secondSense.gloss || getSensePromptLabel(secondSense, keywordB)
+    } (sense_id: ${secondSense.sense_id || '-'})`,
+    `  Preferred visual form: ${
+      secondSense.example_visual_form ||
+      getSensePromptLabel(secondSense, keywordB)
+    }.`,
     secondSense.synonyms_for_prompting.length > 0
-      ? `  Synonyms allowed for prompting: ${secondSense.synonyms_for_prompting.join(', ')}.`
+      ? `  Synonyms allowed for prompting: ${secondSense.synonyms_for_prompting.join(
+          ', '
+        )}.`
       : '',
     '- Keep these meanings locked across the full story and every panel prompt.',
     emotionalPair
@@ -1085,7 +1112,9 @@ function normalizeStoryPanelDetail(value, index) {
   const role =
     String(item.role || STORY_PANEL_ROLES[index] || '')
       .trim()
-      .toLowerCase() || STORY_PANEL_ROLES[index] || `panel_${index + 1}`
+      .toLowerCase() ||
+    STORY_PANEL_ROLES[index] ||
+    `panel_${index + 1}`
   return {
     panel: index + 1,
     role,
@@ -1171,6 +1200,24 @@ function normalizeStoryOption(value, index) {
   const panelDetails = panelSource.map((panel, panelIndex) =>
     normalizeStoryPanelDetail(panel, panelIndex)
   )
+  let senseSelection = null
+  if (item.senseSelection && typeof item.senseSelection === 'object') {
+    senseSelection = item.senseSelection
+  } else if (item.sense_selection && typeof item.sense_selection === 'object') {
+    senseSelection = item.sense_selection
+  } else if (item.semanticLock && typeof item.semanticLock === 'object') {
+    senseSelection = item.semanticLock
+  } else if (item.semantic_lock && typeof item.semantic_lock === 'object') {
+    senseSelection = item.semantic_lock
+  }
+
+  let qualityReport = null
+  if (item.qualityReport && typeof item.qualityReport === 'object') {
+    qualityReport = item.qualityReport
+  } else if (item.quality_report && typeof item.quality_report === 'object') {
+    qualityReport = item.quality_report
+  }
+
   return {
     id: String(item.id || `option-${index + 1}`),
     title,
@@ -1189,22 +1236,8 @@ function normalizeStoryOption(value, index) {
     complianceReport,
     riskFlags,
     revisionIfRisky,
-    senseSelection:
-      item.senseSelection && typeof item.senseSelection === 'object'
-        ? item.senseSelection
-        : item.sense_selection && typeof item.sense_selection === 'object'
-        ? item.sense_selection
-        : item.semanticLock && typeof item.semanticLock === 'object'
-        ? item.semanticLock
-        : item.semantic_lock && typeof item.semantic_lock === 'object'
-        ? item.semantic_lock
-        : null,
-    qualityReport:
-      item.qualityReport && typeof item.qualityReport === 'object'
-        ? item.qualityReport
-        : item.quality_report && typeof item.quality_report === 'object'
-        ? item.quality_report
-        : null,
+    senseSelection,
+    qualityReport,
   }
 }
 
@@ -1352,7 +1385,11 @@ function buildStoryOptionRepairPrompt({
   const keptConcepts = (Array.isArray(existingStories) ? existingStories : [])
     .slice(0, 2)
     .map((story, index) => {
-      const concept = storyOptionToMainPromptConcept(story, safeKeywordA, safeKeywordB)
+      const concept = storyOptionToMainPromptConcept(
+        story,
+        safeKeywordA,
+        safeKeywordB
+      )
       return `Kept concept ${index + 1}:\n${concept}`
     })
     .join('\n\n')
@@ -1369,7 +1406,9 @@ function buildStoryOptionRepairPrompt({
     'Preserve the locked senses already provided above.',
     'Return 2 fresh options in the same strict JSON schema, but make them genuinely different from any kept concept listed below.',
     'Change the scene, trigger, prop, or aftermath instead of rephrasing the same setup.',
-    keptConcepts ? `Already kept concepts to avoid duplicating:\n${keptConcepts}` : '',
+    keptConcepts
+      ? `Already kept concepts to avoid duplicating:\n${keptConcepts}`
+      : '',
     'Return strict JSON only. No markdown, commentary, or explanation.',
   ]
     .filter(Boolean)
@@ -1420,7 +1459,10 @@ function classifyStoryProviderOutcome({normalizedResponse, strictParse}) {
     120
   )
 
-  if (providerMeta.safetyBlock || textualOutcome === STORY_PROVIDER_OUTCOMES.SAFETY_BLOCK) {
+  if (
+    providerMeta.safetyBlock ||
+    textualOutcome === STORY_PROVIDER_OUTCOMES.SAFETY_BLOCK
+  ) {
     return {
       outcome: STORY_PROVIDER_OUTCOMES.SAFETY_BLOCK,
       detail: refusalDetail || blockReason || 'Provider safety block',
@@ -1429,7 +1471,10 @@ function classifyStoryProviderOutcome({normalizedResponse, strictParse}) {
     }
   }
 
-  if (providerMeta.refusal || textualOutcome === STORY_PROVIDER_OUTCOMES.REFUSAL) {
+  if (
+    providerMeta.refusal ||
+    textualOutcome === STORY_PROVIDER_OUTCOMES.REFUSAL
+  ) {
     return {
       outcome: STORY_PROVIDER_OUTCOMES.REFUSAL,
       detail: refusalDetail || 'Provider refusal',
@@ -1526,14 +1571,18 @@ function dedupeStoriesForSelection(stories) {
       : []
     const signature = JSON.stringify(
       details.map((panel, index) => ({
-        role: String(panel && panel.role ? panel.role : STORY_PANEL_ROLES[index])
+        role: String(
+          panel && panel.role ? panel.role : STORY_PANEL_ROLES[index]
+        )
           .trim()
           .toLowerCase(),
         description: String(panel && panel.description ? panel.description : '')
           .trim()
           .toLowerCase(),
         stateChangeFromPrevious: String(
-          panel && panel.stateChangeFromPrevious ? panel.stateChangeFromPrevious : ''
+          panel && panel.stateChangeFromPrevious
+            ? panel.stateChangeFromPrevious
+            : ''
         )
           .trim()
           .toLowerCase(),
@@ -1556,8 +1605,12 @@ function createStoryQualityCacheKey(story) {
     : []
 
   return JSON.stringify({
-    title: String(item.title || '').trim().toLowerCase(),
-    storySummary: String(item.storySummary || '').trim().toLowerCase(),
+    title: String(item.title || '')
+      .trim()
+      .toLowerCase(),
+    storySummary: String(item.storySummary || '')
+      .trim()
+      .toLowerCase(),
     panels: panelDetails.map((panel, index) => ({
       role: String(panel && panel.role ? panel.role : STORY_PANEL_ROLES[index])
         .trim()
@@ -1566,13 +1619,19 @@ function createStoryQualityCacheKey(story) {
         .trim()
         .toLowerCase(),
       stateChangeFromPrevious: String(
-        panel && panel.stateChangeFromPrevious ? panel.stateChangeFromPrevious : ''
+        panel && panel.stateChangeFromPrevious
+          ? panel.stateChangeFromPrevious
+          : ''
       )
         .trim()
         .toLowerCase(),
       requiredVisibles: Array.isArray(panel && panel.requiredVisibles)
         ? panel.requiredVisibles
-            .map((entry) => String(entry || '').trim().toLowerCase())
+            .map((entry) =>
+              String(entry || '')
+                .trim()
+                .toLowerCase()
+            )
             .filter(Boolean)
             .sort()
         : [],
@@ -1632,9 +1691,21 @@ function normalizeKeywordFallbackValue(value, fallback) {
 function buildLocalFallbackEditingTip(selection, keywordA, keywordB) {
   const safeKeywordA = normalizeKeywordValue(keywordA) || 'keyword 1'
   const safeKeywordB = normalizeKeywordValue(keywordB) || 'keyword 2'
-  const lockedSelection = getLockedSenseSelection(selection, safeKeywordA, safeKeywordB)
-  const chosenFirstSense = getLockedSense(lockedSelection, 'keyword_1', safeKeywordA)
-  const chosenSecondSense = getLockedSense(lockedSelection, 'keyword_2', safeKeywordB)
+  const lockedSelection = getLockedSenseSelection(
+    selection,
+    safeKeywordA,
+    safeKeywordB
+  )
+  const chosenFirstSense = getLockedSense(
+    lockedSelection,
+    'keyword_1',
+    safeKeywordA
+  )
+  const chosenSecondSense = getLockedSense(
+    lockedSelection,
+    'keyword_2',
+    safeKeywordB
+  )
   const usesLiteralFallbackSense =
     senseHasTag(chosenFirstSense, 'fallback') ||
     senseHasTag(chosenSecondSense, 'fallback')
@@ -1657,8 +1728,7 @@ function buildKeywordFallbackPanels(
   const firstSense = getLockedSense(selection, 'keyword_1', keywordA)
   const secondSense = getLockedSense(selection, 'keyword_2', keywordB)
   const usesLiteralFallbackSense =
-    senseHasTag(firstSense, 'fallback') ||
-    senseHasTag(secondSense, 'fallback')
+    senseHasTag(firstSense, 'fallback') || senseHasTag(secondSense, 'fallback')
 
   const buildRawKeywordStoryboardStarterPanels = () => {
     const primaryLabel = getSensePromptLabel(firstSense, keywordA)
@@ -1710,7 +1780,9 @@ function buildKeywordFallbackPanels(
     if (variant === 1) {
       return [
         prependSeedToPanel(
-          `A calm person sets a ${carriedObject.item} on a small table in a ${location} while ${withIndefiniteArticle(
+          `A calm person sets a ${
+            carriedObject.item
+          } on a small table in a ${location} while ${withIndefiniteArticle(
             triggerLabel
           )} moves into view nearby.`,
           humanStorySeed
@@ -1723,7 +1795,9 @@ function buildKeywordFallbackPanels(
 
     return [
       prependSeedToPanel(
-        `A calm person carries a ${carriedObject.item} through a ${location} while ${withIndefiniteArticle(
+        `A calm person carries a ${
+          carriedObject.item
+        } through a ${location} while ${withIndefiniteArticle(
           triggerLabel
         )} starts to appear nearby.`,
         humanStorySeed
@@ -1906,11 +1980,19 @@ function buildKeywordFallbackPanels(
 
   if (isToolSense(firstSense) || isToolSense(secondSense)) {
     const toolSense = isToolSense(firstSense) ? firstSense : secondSense
-    const actorSense = isActorSense(firstSense)
-      ? firstSense
-      : isActorSense(secondSense)
-      ? secondSense
-      : {sense_id: 'generic_person', prompt_label: 'person', keyword: 'person', tags: ['person']}
+    let actorSense = null
+    if (isActorSense(firstSense)) {
+      actorSense = firstSense
+    } else if (isActorSense(secondSense)) {
+      actorSense = secondSense
+    } else {
+      actorSense = {
+        sense_id: 'generic_person',
+        prompt_label: 'person',
+        keyword: 'person',
+        tags: ['person'],
+      }
+    }
     const otherSense = toolSense === firstSense ? secondSense : firstSense
     return buildToolLockedFallbackPanels(toolSense, actorSense, otherSense)
   }
@@ -1946,8 +2028,16 @@ function buildKeywordFallbackStories({
     safeKeywordA,
     safeKeywordB
   )
-  const fallbackFirstSense = getLockedSense(selection, 'keyword_1', safeKeywordA)
-  const fallbackSecondSense = getLockedSense(selection, 'keyword_2', safeKeywordB)
+  const fallbackFirstSense = getLockedSense(
+    selection,
+    'keyword_1',
+    safeKeywordA
+  )
+  const fallbackSecondSense = getLockedSense(
+    selection,
+    'keyword_2',
+    safeKeywordB
+  )
   const isStoryboardStarter =
     selection.used_raw_keyword_fallback ||
     senseHasTag(fallbackFirstSense, 'fallback') ||
@@ -2588,6 +2678,8 @@ function storyOptionToMainPromptConcept(option, keywordA, keywordB) {
   const panelDetails = Array.isArray(normalized.panelDetails)
     ? normalized.panelDetails.slice(0, 4)
     : null
+  const getDefaultStateChange = (panelIndex) =>
+    panelIndex === 0 ? 'n/a' : 'Clear visible change from previous panel.'
 
   return {
     keywords: safeKeywords,
@@ -2603,7 +2695,9 @@ function storyOptionToMainPromptConcept(option, keywordA, keywordB) {
         role:
           (panel &&
             typeof panel === 'object' &&
-            String(panel.role || '').trim().toLowerCase()) ||
+            String(panel.role || '')
+              .trim()
+              .toLowerCase()) ||
           roleByPanel[index] ||
           'progression',
         description:
@@ -2620,10 +2714,8 @@ function storyOptionToMainPromptConcept(option, keywordA, keywordB) {
         state_change_from_previous:
           panel && typeof panel === 'object'
             ? String(panel.stateChangeFromPrevious || '').trim() ||
-              (index === 0 ? 'n/a' : 'Clear visible change from previous panel.')
-            : index === 0
-            ? 'n/a'
-            : 'Clear visible change from previous panel.',
+              getDefaultStateChange(index)
+            : getDefaultStateChange(index),
       })
     ),
     compliance_report: complianceReport,
@@ -2825,13 +2917,13 @@ function buildPanelValidatorRetrySuffix({
   const recommendations = []
   const layerRecommendations = [
     validatorResult.ocr_text_check &&
-    validatorResult.ocr_text_check.retryRecommendation,
+      validatorResult.ocr_text_check.retryRecommendation,
     validatorResult.keyword_visibility_check &&
-    validatorResult.keyword_visibility_check.retryRecommendation,
+      validatorResult.keyword_visibility_check.retryRecommendation,
     validatorResult.alignment_check &&
-    validatorResult.alignment_check.retryRecommendation,
+      validatorResult.alignment_check.retryRecommendation,
     validatorResult.policy_risk_check &&
-    validatorResult.policy_risk_check.retryRecommendation,
+      validatorResult.policy_risk_check.retryRecommendation,
   ]
     .map((entry) => String(entry || '').trim())
     .filter(Boolean)
@@ -2868,7 +2960,9 @@ function buildPanelValidatorRetrySuffix({
     )
   }
 
-  return ['', ...recommendations, ...layerRecommendations].filter(Boolean).join('\n')
+  return ['', ...recommendations, ...layerRecommendations]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function buildLegacyTextAuditFromValidator({
@@ -3482,6 +3576,7 @@ function normalizeProviderResponse(providerResponse) {
 
   if (providerResponse && typeof providerResponse === 'object') {
     let rawText = ''
+    let providerMeta = null
 
     if (typeof providerResponse.rawText === 'string') {
       rawText = providerResponse.rawText
@@ -3489,16 +3584,22 @@ function normalizeProviderResponse(providerResponse) {
       rawText = providerResponse.content
     }
 
+    if (
+      providerResponse.providerMeta &&
+      typeof providerResponse.providerMeta === 'object'
+    ) {
+      providerMeta = providerResponse.providerMeta
+    } else if (
+      providerResponse.meta &&
+      typeof providerResponse.meta === 'object'
+    ) {
+      providerMeta = providerResponse.meta
+    }
+
     return {
       rawText,
       tokenUsage: normalizeTokenUsage(providerResponse.usage),
-      providerMeta:
-        providerResponse.providerMeta &&
-        typeof providerResponse.providerMeta === 'object'
-          ? providerResponse.providerMeta
-          : providerResponse.meta && typeof providerResponse.meta === 'object'
-          ? providerResponse.meta
-          : null,
+      providerMeta,
     }
   }
 
@@ -3932,9 +4033,11 @@ function createAiProviderBridge(logger, dependencies = {}) {
     function evaluateCandidateStories(candidateStories, source) {
       const accepted = []
       const rejected = []
-      const stories = Array.isArray(candidateStories) ? candidateStories : []
+      const storyCandidates = Array.isArray(candidateStories)
+        ? candidateStories
+        : []
 
-      stories.forEach((candidate, index) => {
+      storyCandidates.forEach((candidate, index) => {
         const normalizedStory = normalizeStoryOption(
           {
             ...(candidate && typeof candidate === 'object' ? candidate : {}),
@@ -3957,13 +4060,13 @@ function createAiProviderBridge(logger, dependencies = {}) {
           storyEvaluationCache.set(qualityCacheKey, cachedEvaluation)
         }
 
-        const qualityReport = cachedEvaluation.qualityReport
+        const {qualityReport} = cachedEvaluation
         const storyWithQuality = {
           ...normalizedStory,
           qualityReport,
           candidateSource: source,
         }
-        const isMeaningful = cachedEvaluation.isMeaningful
+        const {isMeaningful} = cachedEvaluation
 
         if (!isMeaningful || !qualityReport.ok) {
           recordStoryQualityMetrics(storyMetrics, qualityReport)
@@ -4011,8 +4114,9 @@ function createAiProviderBridge(logger, dependencies = {}) {
       ) {
         const selectedUsesFallback = selection.selectedStories.some(
           (story) =>
-            String(story && story.candidateSource ? story.candidateSource : '') ===
-            'local_fallback'
+            String(
+              story && story.candidateSource ? story.candidateSource : ''
+            ) === 'local_fallback'
         )
         const baselineDiversityAdequate =
           baselineSelection.selectedPair.pairwiseDiversityScore >= 52
@@ -4030,7 +4134,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
             model,
             storyIds: selection.selectedPair.storyIds,
             reasons: ['quality_first_keep_primary_pair'],
-            pairwiseDiversityScore: selection.selectedPair.pairwiseDiversityScore,
+            pairwiseDiversityScore:
+              selection.selectedPair.pairwiseDiversityScore,
             finalCombinedScore: selection.selectedPair.finalCombinedScore,
             baselineCombinedScore:
               baselineSelection.selectedPair.finalCombinedScore,
@@ -4067,7 +4172,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
         (pair) =>
           Array.isArray(pair.diversityRejectionReasons) &&
           pair.diversityRejectionReasons.length > 0 &&
-          (!selection.selectedPair || pair.pairKey !== selection.selectedPair.pairKey)
+          (!selection.selectedPair ||
+            pair.pairKey !== selection.selectedPair.pairKey)
       )
       rejectedPairs.forEach((pair) => {
         logger.info('AI story diversity rejection reasons', {
@@ -4136,25 +4242,25 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     async function finalizeStoryResult({
-      stories,
-      promptText: finalPromptText,
-      generationPath = null,
+      stories: resultStories,
+      promptText: resultPromptText,
+      generationPath: resultGenerationPath = null,
       semanticPlan = null,
-      usage,
-      estimatedCostUsd,
+      usage: resultUsage,
+      estimatedCostUsd: resultEstimatedCostUsd,
     }) {
       const validatorHooks = await runStoryValidatorHooks({
         hooks: storyValidatorHooks,
-        stories,
+        stories: resultStories,
         context: {
           provider,
           model,
           keywordA,
           keywordB,
-          promptText: finalPromptText,
+          promptText: resultPromptText,
           senseSelection,
           metrics: storyMetrics,
-          generationPath,
+          generationPath: resultGenerationPath,
         },
       })
 
@@ -4170,15 +4276,15 @@ function createAiProviderBridge(logger, dependencies = {}) {
         provider,
         model,
         latencyMs: storyMetrics.total_latency_ms,
-        stories,
+        stories: resultStories,
         senseSelection,
-        tokenUsage: usage,
+        tokenUsage: resultUsage,
         costs: {
-          estimatedUsd: estimatedCostUsd,
-          actualUsd: estimatedCostUsd,
+          estimatedUsd: resultEstimatedCostUsd,
+          actualUsd: resultEstimatedCostUsd,
         },
-        promptText: finalPromptText,
-        generationPath,
+        promptText: resultPromptText,
+        generationPath: resultGenerationPath,
         semanticPlan,
         metrics: storyMetrics,
         validatorHooks,
@@ -4334,7 +4440,10 @@ function createAiProviderBridge(logger, dependencies = {}) {
         })
 
         const normalizedResponse = normalizeProviderResponse(providerResponse)
-        combinedUsage = addTokenUsage(combinedUsage, normalizedResponse.tokenUsage)
+        combinedUsage = addTokenUsage(
+          combinedUsage,
+          normalizedResponse.tokenUsage
+        )
         const strictParse = parseStrictStoryOptions(normalizedResponse.rawText)
         const classification = classifyStoryProviderOutcome({
           normalizedResponse,
@@ -4485,6 +4594,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     async function runMissingStoryRepairAttempt({
+      sourceAttempt,
       basePromptText,
       existingStories,
       missingCount,
@@ -4500,7 +4610,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
           : `story_options_repair_missing_${attemptIndex}`
 
       let repairAttempt = await runStoryRetry({
-        fromAttempt: selectedAttempt,
+        fromAttempt: sourceAttempt,
         retryPromptText: buildStoryOptionRepairPrompt({
           basePrompt: basePromptText,
           keywordA,
@@ -4525,9 +4635,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
           attemptLabel: `${repairAttemptLabel}_schema_retry`,
           reason: 'schema_invalid_after_repair_missing',
         })
-      } else if (
-        repairAttempt.outcome === STORY_PROVIDER_OUTCOMES.TRUNCATION
-      ) {
+      } else if (repairAttempt.outcome === STORY_PROVIDER_OUTCOMES.TRUNCATION) {
         const expandedProfile = {
           ...profile,
           maxOutputTokens: Math.max(
@@ -4551,7 +4659,9 @@ function createAiProviderBridge(logger, dependencies = {}) {
     function evaluateAcceptedStoriesFromAttempt(attempt, sourceLabel) {
       const currentAttempt =
         attempt && typeof attempt === 'object' ? attempt : {}
-      const attemptSource = String(sourceLabel || currentAttempt.attemptLabel || 'provider_story_options')
+      const attemptSource = String(
+        sourceLabel || currentAttempt.attemptLabel || 'provider_story_options'
+      )
       const parsedStories =
         currentAttempt.outcome === STORY_PROVIDER_OUTCOMES.SUCCESS &&
         currentAttempt.strictParse &&
@@ -4690,6 +4800,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
         repairAttemptCount += 1
         const previousAcceptedCount = initialQuality.accepted.length
         const replacementAttempt = await runMissingStoryRepairAttempt({
+          sourceAttempt: selectedAttempt,
           basePromptText: promptText,
           existingStories: initialQuality.accepted,
           missingCount: requestedStoryCount - initialQuality.accepted.length,
@@ -4697,12 +4808,15 @@ function createAiProviderBridge(logger, dependencies = {}) {
         })
         const replacementEvaluation = evaluateAcceptedStoriesFromAttempt(
           replacementAttempt,
-          replacementAttempt.attemptLabel || 'provider_story_options_repair_missing'
+          replacementAttempt.attemptLabel ||
+            'provider_story_options_repair_missing'
         )
 
         if (replacementEvaluation.quality.accepted.length > 0) {
           const mergedCandidates = dedupeStoriesForSelection(
-            initialQuality.accepted.concat(replacementEvaluation.quality.accepted)
+            initialQuality.accepted.concat(
+              replacementEvaluation.quality.accepted
+            )
           )
           initialQuality = evaluateCandidateStories(
             mergedCandidates,
@@ -4730,7 +4844,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     if (selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SCHEMA_INVALID) {
-      storyFallbackReasonText = 'provider output did not match the required story format'
+      storyFallbackReasonText =
+        'provider output did not match the required story format'
     } else if (initialQuality.accepted.length < requestedStoryCount) {
       storyFallbackReasonText =
         'provider did not produce enough strong story options after repair attempts'
@@ -4739,7 +4854,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     let stories = initialQuality.accepted.slice(0, requestedStoryCount)
-    let finalPromptText = selectedAttempt.promptText || promptText
+    const finalPromptText = selectedAttempt.promptText || promptText
     let generationPath =
       selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SUCCESS
         ? selectedAttempt.attemptLabel
@@ -4761,7 +4876,10 @@ function createAiProviderBridge(logger, dependencies = {}) {
           keywordA,
           keywordB
         )
-        const auditPromptText = buildStoryAuditPrompt(finalPromptText, seedConcept)
+        const auditPromptText = buildStoryAuditPrompt(
+          finalPromptText,
+          seedConcept
+        )
         try {
           // eslint-disable-next-line no-await-in-loop
           const auditAttempt = await invokeStructuredStoryAttempt({
@@ -4821,10 +4939,10 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     const fallbackQuality = getFallbackCandidateQuality()
-    let selectionPool = dedupeStoriesForSelection(
+    const selectionPool = dedupeStoriesForSelection(
       stories.concat(fallbackQuality.accepted)
     )
-    let diversitySelection = rerankStoriesForDiversity(selectionPool, stories)
+    const diversitySelection = rerankStoriesForDiversity(selectionPool, stories)
 
     if (diversitySelection.selection.selectedStories.length > 0) {
       stories = diversitySelection.selection.selectedStories.slice(
@@ -4976,7 +5094,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
       0
     )
     const alternativeStoryOptions = normalizedStoryOptions.filter(
-      (item) => String(item && item.id ? item.id : '') !== String(activeStory.id)
+      (item) =>
+        String(item && item.id ? item.id : '') !== String(activeStory.id)
     )
     const includeNoise = Boolean(payload.includeNoise)
     const noisePanelIndex = chooseNoisePanelIndex(
@@ -5057,17 +5176,11 @@ function createAiProviderBridge(logger, dependencies = {}) {
     )
     const renderFeedbackMaxRepairs = Math.max(
       0,
-      Math.min(
-        2,
-        Number.parseInt(payload.renderFeedbackMaxRepairs, 10) || 1
-      )
+      Math.min(2, Number.parseInt(payload.renderFeedbackMaxRepairs, 10) || 1)
     )
     const renderFeedbackMaxSwitches = Math.max(
       0,
-      Math.min(
-        2,
-        Number.parseInt(payload.renderFeedbackMaxSwitches, 10) || 1
-      )
+      Math.min(2, Number.parseInt(payload.renderFeedbackMaxSwitches, 10) || 1)
     )
     const renderFeedbackHistory = Array.isArray(payload.renderFeedbackHistory)
       ? payload.renderFeedbackHistory.slice(0, 8)
@@ -5104,6 +5217,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       deadlineMs: Math.max(textAuditRequestTimeoutMs + 2000, 15000),
     })
     textAuditProfile.requestTimeoutMs = textAuditRequestTimeoutMs
+    const startedAt = now()
     const renderedPanelValidatorHooks = createRenderedPanelValidatorHooks(
       dependencies.storyValidatorHooks,
       {
@@ -5156,19 +5270,15 @@ function createAiProviderBridge(logger, dependencies = {}) {
       selectedStoryId: activeStory.id,
       alternativeStoryCount: alternativeStoryOptions.length,
     })
-
-    const startedAt = now()
     const nextPanels = existingPanels.slice(0, 4)
     const promptByPanel = Array.from({length: 4}, () => '')
     const panelImageModelUsed = Array.from({length: 4}, () => imageModel)
     const panelImageSizeUsed = Array.from({length: 4}, () => imageSize)
-    const textAuditByPanel = Array.from(
-      {length: 4},
-      () => createEmptyPanelTextAuditResult()
+    const textAuditByPanel = Array.from({length: 4}, () =>
+      createEmptyPanelTextAuditResult()
     )
-    const validatorAuditByPanel = Array.from(
-      {length: 4},
-      () => createEmptyRenderedPanelAuditResult()
+    const validatorAuditByPanel = Array.from({length: 4}, () =>
+      createEmptyRenderedPanelAuditResult()
     )
     const validatorMetrics = {
       validator_invoked: 0,

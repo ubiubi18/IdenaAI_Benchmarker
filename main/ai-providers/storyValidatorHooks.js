@@ -10,7 +10,9 @@ function createStoryValidatorHooks(hooks = {}) {
         ? source.keywordVisibilityCheck
         : null,
     alignmentCheck:
-      typeof source.alignmentCheck === 'function' ? source.alignmentCheck : null,
+      typeof source.alignmentCheck === 'function'
+        ? source.alignmentCheck
+        : null,
     policyRiskCheck:
       typeof source.policyRiskCheck === 'function'
         ? source.policyRiskCheck
@@ -106,10 +108,16 @@ function buildRenderedPanelAuditPrompt(context = {}) {
     '  }',
     '}',
     `Panel index: ${panelIndex}`,
-    `Planned panel description: ${String(context.panelStory || '').trim() || '-'}`,
+    `Planned panel description: ${
+      String(context.panelStory || '').trim() || '-'
+    }`,
     storyPanels ? `Full 4-panel story plan:\n${storyPanels}` : '',
-    `Keywords that should be visibly recognizable in this panel: ${keywordList.join(', ') || '-'}`,
-    `Current panel prompt intent: ${String(context.panelPrompt || '').trim() || '-'}`,
+    `Keywords that should be visibly recognizable in this panel: ${
+      keywordList.join(', ') || '-'
+    }`,
+    `Current panel prompt intent: ${
+      String(context.panelPrompt || '').trim() || '-'
+    }`,
     'OCR/text leakage rules:',
     '- fail if any readable letters, words, numbers, labels, logos, watermarks, UI text, or signs are visible',
     '- ignore texture that is clearly not readable text',
@@ -158,7 +166,9 @@ function normalizeKeywordVisibilityCheck(value, context = {}) {
       rawEntries.find((entry) => {
         const candidate =
           entry && typeof entry === 'object'
-            ? String(entry.keyword || '').trim().toLowerCase()
+            ? String(entry.keyword || '')
+                .trim()
+                .toLowerCase()
             : ''
         return candidate === keyword.toLowerCase()
       }) || {}
@@ -175,7 +185,8 @@ function normalizeKeywordVisibilityCheck(value, context = {}) {
   })
   const passed = normalizeBoolean(
     item.passed,
-    normalizedEntries.length > 0 && normalizedEntries.every((entry) => entry.visible)
+    normalizedEntries.length > 0 &&
+      normalizedEntries.every((entry) => entry.visible)
   )
   return {
     status: passed ? 'pass' : 'fail',
@@ -189,7 +200,10 @@ function normalizeKeywordVisibilityCheck(value, context = {}) {
 
 function normalizeAlignmentCheck(value) {
   const item = value && typeof value === 'object' ? value : {}
-  const aligned = normalizeBoolean(item.aligned, normalizeBoolean(item.passed, true))
+  const aligned = normalizeBoolean(
+    item.aligned,
+    normalizeBoolean(item.passed, true)
+  )
   const mismatchReasons = normalizeStringList(
     item.mismatch_reasons || item.mismatchReasons,
     8
@@ -222,7 +236,10 @@ function normalizePolicyRiskCheck(value) {
     item.triggered_categories || item.triggeredCategories,
     8
   )
-  const shouldReplan = normalizeBoolean(item.should_replan || item.shouldReplan, false)
+  const shouldReplan = normalizeBoolean(
+    item.should_replan || item.shouldReplan,
+    false
+  )
   const shouldRetryPanel = normalizeBoolean(
     item.should_retry_panel || item.shouldRetryPanel,
     riskLevel === 'high' && !shouldReplan
@@ -315,10 +332,16 @@ function createProviderAssistedPanelLayerHandlers(providerAudit) {
       if (!audit || audit.error) {
         return {
           status: 'error',
-          detail: audit && audit.error ? audit.error : 'panel_audit_unavailable',
+          detail:
+            audit && audit.error ? audit.error : 'panel_audit_unavailable',
         }
       }
-      return audit[layerName] || {status: 'error', detail: 'missing_panel_audit_layer'}
+      return (
+        audit[layerName] || {
+          status: 'error',
+          detail: 'missing_panel_audit_layer',
+        }
+      )
     }
   }
 
@@ -357,7 +380,14 @@ function createRenderedPanelValidatorHooks(hooks = {}, options = {}) {
 }
 
 function normalizePanelLayerResult(layerName, value, context = {}) {
-  const item = value && typeof value === 'object' ? value : value === true ? {passed: true} : value === false ? {passed: false} : {}
+  let item = {}
+  if (value && typeof value === 'object') {
+    item = value
+  } else if (value === true) {
+    item = {passed: true}
+  } else if (value === false) {
+    item = {passed: false}
+  }
   if (item.status === 'not_configured') {
     return {
       status: 'not_configured',
@@ -386,12 +416,18 @@ function normalizePanelLayerResult(layerName, value, context = {}) {
 
 function summarizeRenderedPanelValidatorResults(results = {}) {
   const ocr = results.ocr_text_check || {status: 'not_configured', passed: true}
-  const visibility =
-    results.keyword_visibility_check || {status: 'not_configured', passed: true}
-  const alignment =
-    results.alignment_check || {status: 'not_configured', passed: true}
-  const policy =
-    results.policy_risk_check || {status: 'not_configured', passed: true}
+  const visibility = results.keyword_visibility_check || {
+    status: 'not_configured',
+    passed: true,
+  }
+  const alignment = results.alignment_check || {
+    status: 'not_configured',
+    passed: true,
+  }
+  const policy = results.policy_risk_check || {
+    status: 'not_configured',
+    passed: true,
+  }
 
   const failureReasons = []
   let shouldRetryPanel = false
@@ -432,10 +468,7 @@ function summarizeRenderedPanelValidatorResults(results = {}) {
   }
 }
 
-async function runRenderedPanelValidatorHooks({
-  hooks = null,
-  context = {},
-}) {
+async function runRenderedPanelValidatorHooks({hooks = null, context = {}}) {
   const configured = createRenderedPanelValidatorHooks(hooks)
   const hookEntries = [
     ['ocr_text_check', configured.ocrTextCheck],
@@ -448,18 +481,17 @@ async function runRenderedPanelValidatorHooks({
   for (const [name, handler] of hookEntries) {
     if (typeof handler !== 'function') {
       results[name] = {status: 'not_configured', passed: true}
-      continue
-    }
-
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      const output = await handler({context})
-      results[name] = normalizePanelLayerResult(name, output, context)
-    } catch (error) {
-      results[name] = {
-        status: 'error',
-        passed: true,
-        detail: String((error && error.message) || error || '').trim(),
+    } else {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const output = await handler({context})
+        results[name] = normalizePanelLayerResult(name, output, context)
+      } catch (error) {
+        results[name] = {
+          status: 'error',
+          passed: true,
+          detail: String((error && error.message) || error || '').trim(),
+        }
       }
     }
   }
@@ -515,21 +547,20 @@ async function runStoryValidatorHooks({
   for (const [name, handler] of hookEntries) {
     if (typeof handler !== 'function') {
       results[name] = {status: 'not_configured', detail: '', data: null}
-      continue
-    }
-
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      const output = await handler({
-        stories,
-        context,
-      })
-      results[name] = normalizeHookResult(output)
-    } catch (error) {
-      results[name] = {
-        status: 'error',
-        detail: String((error && error.message) || error || '').trim(),
-        data: null,
+    } else {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const output = await handler({
+          stories,
+          context,
+        })
+        results[name] = normalizeHookResult(output)
+      } catch (error) {
+        results[name] = {
+          status: 'error',
+          detail: String((error && error.message) || error || '').trim(),
+          data: null,
+        }
       }
     }
   }

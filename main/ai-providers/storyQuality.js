@@ -219,17 +219,18 @@ function clampScore(value) {
 
 function toPanelDetails(story) {
   const item = story && typeof story === 'object' ? story : {}
-  const source = Array.isArray(item.panelDetails)
-    ? item.panelDetails.slice(0, 4)
-    : Array.isArray(item.panels)
-    ? item.panels.slice(0, 4).map((description, index) => ({
-        panel: index + 1,
-        role: STORY_PANEL_ROLES[index] || `panel_${index + 1}`,
-        description,
-        stateChangeFromPrevious: index === 0 ? 'n/a' : '',
-        requiredVisibles: [],
-      }))
-    : []
+  let source = []
+  if (Array.isArray(item.panelDetails)) {
+    source = item.panelDetails.slice(0, 4)
+  } else if (Array.isArray(item.panels)) {
+    source = item.panels.slice(0, 4).map((description, index) => ({
+      panel: index + 1,
+      role: STORY_PANEL_ROLES[index] || `panel_${index + 1}`,
+      description,
+      stateChangeFromPrevious: index === 0 ? 'n/a' : '',
+      requiredVisibles: [],
+    }))
+  }
 
   while (source.length < 4) {
     const index = source.length
@@ -244,7 +245,9 @@ function toPanelDetails(story) {
 
   return source.map((panel, index) => ({
     panel: index + 1,
-    role: normalizeText(panel.role || STORY_PANEL_ROLES[index]) || STORY_PANEL_ROLES[index],
+    role:
+      normalizeText(panel.role || STORY_PANEL_ROLES[index]) ||
+      STORY_PANEL_ROLES[index],
     description: normalizeText(panel.description || panel.text),
     stateChangeFromPrevious: normalizeText(
       panel.stateChangeFromPrevious || panel.state_change_from_previous
@@ -436,9 +439,7 @@ function evaluateStoryQuality(story) {
   const hasResultState = hasResultSignal(panelChecks[3])
 
   const emotionalPanelIndexes = panelChecks
-    .map((panel, index) =>
-      panel.emotionCount > 0 ? index : -1
-    )
+    .map((panel, index) => (panel.emotionCount > 0 ? index : -1))
     .filter((index) => index >= 0)
 
   const emotionalWithoutVisibleConsequence = emotionalPanelIndexes.some(

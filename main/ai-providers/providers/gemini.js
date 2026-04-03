@@ -271,7 +271,9 @@ async function callGemini({
     response && response.data && response.data.promptFeedback
       ? response.data.promptFeedback
       : {}
-  const finishReason = String(firstCandidate && firstCandidate.finishReason || '')
+  const finishReason = String(
+    (firstCandidate && firstCandidate.finishReason) || ''
+  )
     .trim()
     .toUpperCase()
   const blockReason = String(promptFeedback.blockReason || '')

@@ -93,7 +93,9 @@ describe('storyValidatorHooks', () => {
           ],
           retry_recommendation: 'make the ghost body larger',
         }),
-        alignmentCheck: jest.fn().mockResolvedValue({passed: true, aligned: true}),
+        alignmentCheck: jest
+          .fn()
+          .mockResolvedValue({passed: true, aligned: true}),
         policyRiskCheck: jest.fn().mockResolvedValue({
           passed: true,
           risk_level: 'low',
@@ -142,7 +144,10 @@ describe('storyValidatorHooks', () => {
           passed: false,
           aligned: false,
           confidence: 0.22,
-          mismatch_reasons: ['ghost missing from scene', 'cup drop not visible'],
+          mismatch_reasons: [
+            'ghost missing from scene',
+            'cup drop not visible',
+          ],
           retry_recommendation: 'show the ghost and the falling cup',
         }),
         policyRiskCheck: jest.fn().mockResolvedValue({
@@ -227,7 +232,11 @@ describe('storyValidatorHooks', () => {
     expect(prompt).toContain('2. keyword visibility')
     expect(prompt).toContain('3. panel-story alignment')
     expect(prompt).toContain('4. policy risk')
-    expect(prompt).toContain('Keywords that should be visibly recognizable in this panel: shock, ghost')
-    expect(prompt).toContain('allow non-graphic tension, fear, suspense, eerie scenes, and safe tool use')
+    expect(prompt).toContain(
+      'Keywords that should be visibly recognizable in this panel: shock, ghost'
+    )
+    expect(prompt).toContain(
+      'allow non-graphic tension, fear, suspense, eerie scenes, and safe tool use'
+    )
   })
 })
