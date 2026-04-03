@@ -42,7 +42,7 @@ import {
   SecondaryButton,
   PrimaryButton,
 } from '../../shared/components/button'
-import {FloatDebug, Page, Toast} from '../../shared/components/components'
+import {Page, Toast} from '../../shared/components/components'
 import Layout from '../../shared/components/layout'
 import {BadFlipDialog} from '../../screens/validation/components'
 import {useFailToast} from '../../shared/hooks/use-toast'
@@ -473,8 +473,6 @@ export default function EditFlipPage() {
             send('SUBMIT')
           }}
         />
-
-        {global.isDev && <FloatDebug>{current.value}</FloatDebug>}
       </Page>
     </Layout>
   )

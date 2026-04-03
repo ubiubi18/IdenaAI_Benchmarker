@@ -49,8 +49,11 @@ const {
   NODE_COMMAND,
   NODE_EVENT,
   AI_SOLVER_COMMAND,
+  AI_TEST_UNIT_COMMAND,
+  AI_TEST_UNIT_EVENT,
 } = require('./channels')
 const {createAiProviderBridge} = require('./ai-providers')
+const {createAiTestUnitBridge} = require('./ai-test-unit')
 const {
   startNode,
   stopNode,
@@ -68,6 +71,10 @@ const {
 const NodeUpdater = require('./node-updater')
 
 const aiProviderBridge = createAiProviderBridge(logger)
+const aiTestUnitBridge = createAiTestUnitBridge({
+  logger,
+  aiProviderBridge,
+})
 
 let mainWindow
 let node
@@ -77,6 +84,151 @@ let tray
 const nodeUpdater = new NodeUpdater(logger)
 
 let dnaUrl
+
+function normalizeImageSearchResult(item) {
+  if (!item || typeof item !== 'object') {
+    return null
+  }
+
+  const image =
+    item.image ||
+    item.url ||
+    item.imageUrl ||
+    item.image_url ||
+    item.full ||
+    item.raw ||
+    null
+
+  const thumbnail =
+    item.thumbnail ||
+    item.thumb ||
+    item.thumbnailUrl ||
+    item.thumbnail_url ||
+    item.preview ||
+    item.small ||
+    image
+
+  if (!image || !thumbnail) {
+    return null
+  }
+
+  return {image, thumbnail}
+}
+
+async function searchDuckDuckGoImages(query) {
+  try {
+    const results = await imageSearch({
+      query,
+      moderate: true,
+    })
+    if (!Array.isArray(results)) return []
+    return results.map(normalizeImageSearchResult).filter(Boolean)
+  } catch (error) {
+    logger.warn('duckduckgo image search failed', error.toString())
+    return []
+  }
+}
+
+async function searchOpenverseImages(query) {
+  try {
+    const {data} = await axios.get('https://api.openverse.org/v1/images/', {
+      params: {
+        q: query,
+        page_size: 30,
+      },
+      timeout: 12000,
+    })
+
+    const results = Array.isArray(data && data.results) ? data.results : []
+
+    return results
+      .map((item) =>
+        normalizeImageSearchResult({
+          image: item && item.url,
+          thumbnail:
+            (item && (item.thumbnail || item.thumbnail_url)) ||
+            (item && item.url),
+        })
+      )
+      .filter(Boolean)
+  } catch (error) {
+    logger.warn('openverse image search failed', error.toString())
+    return []
+  }
+}
+
+async function searchWikimediaImages(query) {
+  try {
+    const {data} = await axios.get('https://commons.wikimedia.org/w/api.php', {
+      params: {
+        action: 'query',
+        format: 'json',
+        generator: 'search',
+        gsrsearch: query,
+        gsrnamespace: 6,
+        gsrlimit: 30,
+        prop: 'imageinfo',
+        iiprop: 'url',
+        iiurlwidth: 320,
+        origin: '*',
+      },
+      timeout: 12000,
+    })
+
+    const pages = data && data.query && data.query.pages
+    const list = pages && typeof pages === 'object' ? Object.values(pages) : []
+
+    return list
+      .map((item) => {
+        const imageInfo = Array.isArray(item && item.imageinfo)
+          ? item.imageinfo[0]
+          : null
+        return normalizeImageSearchResult({
+          image: imageInfo && imageInfo.url,
+          thumbnail:
+            (imageInfo && (imageInfo.thumburl || imageInfo.url)) || null,
+        })
+      })
+      .filter(Boolean)
+  } catch (error) {
+    logger.warn('wikimedia image search failed', error.toString())
+    return []
+  }
+}
+
+function dedupeSearchResults(items) {
+  const seen = new Set()
+  const result = []
+
+  items.forEach((item) => {
+    if (!item || typeof item !== 'object') return
+    const image = String(item.image || '').trim()
+    const thumbnail = String(item.thumbnail || '').trim()
+    if (!image || !thumbnail) return
+    if (seen.has(image)) return
+    seen.add(image)
+    result.push({image, thumbnail})
+  })
+
+  return result
+}
+
+async function searchImages(query) {
+  const normalizedQuery = String(query || '').trim()
+  if (!normalizedQuery) return []
+
+  const [duckResults, openverseResults, wikimediaResults] = await Promise.all([
+    searchDuckDuckGoImages(normalizedQuery),
+    searchOpenverseImages(normalizedQuery),
+    searchWikimediaImages(normalizedQuery),
+  ])
+
+  const merged = dedupeSearchResults(
+    duckResults.concat(openverseResults).concat(wikimediaResults)
+  )
+
+  return merged.slice(0, 64)
+}
 
 const isFirstInstance = app.requestSingleInstanceLock()
 
@@ -157,10 +309,10 @@ function handleDnaLink(url) {
 
 const createMenu = () => {
   const application = {
-    label: 'Idena',
+    label: 'idenaAI-desktop',
     submenu: [
       {
-        label: i18next.t('About Idena'),
+        label: i18next.t('About idenaAI-desktop'),
         role: 'about',
       },
       {
@@ -305,7 +457,7 @@ const createTray = () => {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: i18next.t('Open Idena'),
+      label: i18next.t('Open idenaAI-desktop'),
       click: showMainWindow,
     },
     {
@@ -703,12 +855,7 @@ function sendMainWindowMsg(channel, message, data) {
   }
 }
 
-ipcMain.handle('search-image', async (_, query) =>
-  imageSearch({
-    query,
-    moderate: true,
-  })
-)
+ipcMain.handle('search-image', async (_, query) => searchImages(query))
 
 ipcMain.handle(AI_SOLVER_COMMAND, async (_event, command, payload) => {
   logger.info(`new ai solver command`, command, {
@@ -717,17 +864,91 @@ ipcMain.handle(AI_SOLVER_COMMAND, async (_event, command, payload) => {
     benchmarkProfile: payload && payload.benchmarkProfile,
   })
 
-  switch (command) {
-    case 'setProviderKey':
-      return aiProviderBridge.setProviderKey(payload)
-    case 'clearProviderKey':
-      return aiProviderBridge.clearProviderKey(payload)
-    case 'testProvider':
-      return aiProviderBridge.testProvider(payload)
-    case 'solveFlipBatch':
-      return aiProviderBridge.solveFlipBatch(payload)
-    default:
-      throw new Error(`Unsupported AI solver command: ${command}`)
+  try {
+    switch (command) {
+      case 'setProviderKey':
+        return aiProviderBridge.setProviderKey(payload)
+      case 'clearProviderKey':
+        return aiProviderBridge.clearProviderKey(payload)
+      case 'hasProviderKey':
+        return aiProviderBridge.hasProviderKey(payload)
+      case 'testProvider':
+        return aiProviderBridge.testProvider(payload)
+      case 'listModels':
+        return aiProviderBridge.listModels(payload)
+      case 'generateImageSearchResults':
+        return aiProviderBridge.generateImageSearchResults(payload)
+      case 'generateStoryOptions':
+        return aiProviderBridge.generateStoryOptions(payload)
+      case 'generateFlipPanels':
+        return aiProviderBridge.generateFlipPanels(payload)
+      case 'solveFlipBatch':
+        return aiProviderBridge.solveFlipBatch(payload)
+      default:
+        throw new Error(`Unsupported AI solver command: ${command}`)
+    }
+  } catch (error) {
+    logger.error('AI solver command failed', {
+      command,
+      provider: payload && payload.provider,
+      model: payload && payload.model,
+      error: error.toString(),
+    })
+    throw error
+  }
+})
+
+ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
+  logger.info(`new ai test unit command`, command, {
+    provider: payload && payload.provider,
+    model: payload && payload.model,
+    benchmarkProfile: payload && payload.benchmarkProfile,
+    flipsCount: Array.isArray(payload && payload.flips)
+      ? payload.flips.length
+      : undefined,
+  })
+
+  try {
+    switch (command) {
+      case 'addFlips':
+        return aiTestUnitBridge.addFlips(payload)
+      case 'listFlips':
+        return aiTestUnitBridge.listFlips(payload)
+      case 'clearFlips':
+        return aiTestUnitBridge.clearFlips(payload)
+      case 'run':
+        return aiTestUnitBridge.run(payload, {
+          onProgress: (progress) => {
+            try {
+              // Broadcast progress to the primary renderer process.
+              sendMainWindowMsg(AI_TEST_UNIT_EVENT, progress)
+
+              // Also try the invoking renderer when available.
+              if (
+                event &&
+                event.sender &&
+                typeof event.sender.send === 'function'
+              ) {
+                event.sender.send(AI_TEST_UNIT_EVENT, progress)
+              }
+            } catch (sendError) {
+              logger.error('Unable to send AI test unit progress event', {
+                error: sendError.toString(),
+              })
+            }
+          },
+        })
+      default:
+        throw new Error(`Unsupported AI test unit command: ${command}`)
+    }
+  } catch (error) {
+    logger.error('AI test unit command failed', {
+      command,
+      provider: payload && payload.provider,
+      model: payload && payload.model,
+      error: error.toString(),
+    })
+    throw error
   }
 })
 

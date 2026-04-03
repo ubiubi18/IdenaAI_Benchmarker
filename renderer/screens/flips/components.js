@@ -95,7 +95,7 @@ export function FlipCardList(props) {
   return <Wrap spacing="39px" {...props} />
 }
 
-export function FlipCard({flipService, onDelete}) {
+export function FlipCard({flipService, onDelete, onAddToTestUnit}) {
   const {t} = useTranslation()
 
   const [current, send] = useActor(flipService)
@@ -121,6 +121,14 @@ export function FlipCard({flipService, onDelete}) {
   const isViewable = [FlipType.Published, FlipType.Archived].includes(type)
   const isEditable = [FlipType.Draft, FlipType.Invalid].includes(type)
   const isDeletable = [FlipType.Published, FlipType.Draft].includes(type)
+  const isAiQueueable =
+    typeof onAddToTestUnit === 'function' &&
+    [
+      FlipType.Published,
+      FlipType.Draft,
+      FlipType.Archived,
+      FlipType.Invalid,
+    ].includes(type)
 
   return (
     <WrapItem>
@@ -197,9 +205,20 @@ export function FlipCard({flipService, onDelete}) {
                   </FlipCardMenuItem>
                 </NextLink>
               )}
-              {(isSubmittable || isEditable) && isDeletable && (
-                <MenuDivider color="gray.300" my={2} width={rem(145)} />
+              {isAiQueueable && (
+                <FlipCardMenuItem
+                  onClick={() => onAddToTestUnit(current.context)}
+                >
+                  <HStack spacing="2">
+                    <FlipCardMenuItemIcon icon={PlusSolidIcon} />
+                    <Text as="span">{t('Add to AI test queue')}</Text>
+                  </HStack>
+                </FlipCardMenuItem>
               )}
+              {(isSubmittable || isEditable || isAiQueueable) &&
+                isDeletable && (
+                  <MenuDivider color="gray.300" my={2} width={rem(145)} />
+                )}
 
               {isDeletable && (
                 <FlipCardMenuItem onClick={onDelete}>
@@ -1497,7 +1516,17 @@ export function DeleteFlipDrawer({hash, cover, isMissing, onDelete, ...props}) {
   )
 }
 
-export function PublishFlipDrawer({isPending, flip, onSubmit, ...props}) {
+export function PublishFlipDrawer({
+  isPending,
+  flip,
+  onSubmit,
+  onAiTest,
+  onAddToTestUnit,
+  isAiTesting,
+  isAddingToTestUnit,
+  aiTestResult,
+  ...props
+}) {
   const {t} = useTranslation()
 
   return (
@@ -1557,19 +1586,81 @@ export function PublishFlipDrawer({isPending, flip, onSubmit, ...props}) {
         </Stack>
       </DrawerBody>
       <DrawerFooter>
-        <HStack>
-          {/* eslint-disable-next-line react/destructuring-assignment */}
-          <SecondaryButton onClick={props.onClose}>
-            {t('Not now')}
-          </SecondaryButton>
-          <PrimaryButton
-            isLoading={isPending}
-            loadingText={t('Mining...')}
-            onClick={onSubmit}
-          >
-            {t('Submit')}
-          </PrimaryButton>
-        </HStack>
+        <Stack spacing={3}>
+          <Stack spacing={2} w="full">
+            <HStack justify="flex-end">
+              <SecondaryButton
+                isLoading={isAddingToTestUnit}
+                isDisabled={isPending || isAiTesting}
+                onClick={onAddToTestUnit}
+              >
+                {t('Add to local AI test unit')}
+              </SecondaryButton>
+              <SecondaryButton
+                isLoading={isAiTesting}
+                isDisabled={isPending || isAddingToTestUnit}
+                onClick={onAiTest}
+              >
+                {t('Run AI test before submit')}
+              </SecondaryButton>
+            </HStack>
+
+            {aiTestResult && (
+              <Box
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="md"
+                p={3}
+              >
+                {aiTestResult.error ? (
+                  <Text fontSize="xs" color="red.500">
+                    {aiTestResult.error}
+                  </Text>
+                ) : (
+                  <Stack spacing={1}>
+                    <Text fontSize="xs" color="muted">
+                      {`${aiTestResult.provider || '-'} ${
+                        aiTestResult.model || '-'
+                      }`}
+                    </Text>
+                    <Text fontSize="xs" color="muted">
+                      {`left ${aiTestResult.left || 0}, right ${
+                        aiTestResult.right || 0
+                      }, skipped ${aiTestResult.skipped || 0}, elapsed ${
+                        aiTestResult.elapsedMs || 0
+                      }ms`}
+                    </Text>
+                    {aiTestResult.primaryDecision && (
+                      <Text fontSize="xs" color="muted">
+                        {`decision ${String(
+                          aiTestResult.primaryDecision.answer || 'skip'
+                        ).toUpperCase()}, confidence ${
+                          aiTestResult.primaryDecision.confidence || 0
+                        }`}
+                      </Text>
+                    )}
+                  </Stack>
+                )}
+              </Box>
+            )}
+          </Stack>
+
+          <Divider />
+
+          <HStack justify="flex-end">
+            {/* eslint-disable-next-line react/destructuring-assignment */}
+            <SecondaryButton onClick={props.onClose}>
+              {t('Not now')}
+            </SecondaryButton>
+            <PrimaryButton
+              isLoading={isPending}
+              loadingText={t('Mining...')}
+              onClick={onSubmit}
+            >
+              {t('Submit')}
+            </PrimaryButton>
+          </HStack>
+        </Stack>
       </DrawerFooter>
     </AdDrawer>
   )

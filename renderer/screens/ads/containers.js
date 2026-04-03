@@ -29,10 +29,8 @@ import {
   useBoolean,
   ModalOverlay,
   Portal,
-  IconButton,
   Link,
 } from '@chakra-ui/react'
-import {useRouter} from 'next/router'
 import {useTranslation} from 'react-i18next'
 import {
   Avatar,
@@ -40,7 +38,6 @@ import {
   DrawerBody,
   DrawerFooter,
   DrawerHeader,
-  DrawerPromotionPortal,
   ExternalLink,
   FillCenter,
   FormLabel,
@@ -59,9 +56,6 @@ import {
   DrawerFormHelper,
 } from '../../shared/components/components'
 import {
-  useCurrentAd,
-  useRotatingAds,
-  useRotateAds,
   useAdStatusColor,
   useAdStatusText,
   useReviewAd,
@@ -79,8 +73,6 @@ import {
 } from './hooks'
 import {
   AdsIcon,
-  ArrowLeftIcon,
-  ArrowRightIcon,
   ChevronRightIcon,
   DeleteIcon,
   EditIcon,
@@ -88,7 +80,6 @@ import {
   InfoIcon,
   LaptopIcon,
   OracleIcon,
-  PicIcon,
 } from '../../shared/components/icons'
 import {useFailToast} from '../../shared/hooks/use-toast'
 import {
@@ -127,45 +118,8 @@ import {DnaInput} from '../oracles/components'
 import {useFormatDna} from '../../shared/hooks/hooks'
 
 export function AdBanner() {
-  const {t} = useTranslation()
-
-  const router = useRouter()
-
-  const activeAd = useCurrentAd()
-
-  return (
-    <Flex
-      align="center"
-      justify="space-between"
-      borderBottomWidth={1}
-      borderBottomColor="gray.300"
-      p="2"
-      pr="4"
-      h="14"
-    >
-      <AdBannerContent ad={activeAd} />
-      <HStack spacing="10">
-        <AdBannerAuthor ad={activeAd} display={['none', 'flex']} />
-        <Menu zIndex="popover">
-          {false && (
-            <MenuItem
-              icon={<AdsIcon boxSize={5} color="blue.500" />}
-              onClick={() => {
-                router.push(`/adn/list`)
-              }}
-            >
-              {t('My Ads')}
-            </MenuItem>
-          )}
-          <NextLink href="/adn/offers">
-            <MenuItem icon={<PicIcon boxSize={5} color="blue.500" />}>
-              {t('View all offers')}
-            </MenuItem>
-          </NextLink>
-        </Menu>
-      </HStack>
-    </Flex>
-  )
+  // Ads are disabled in the benchmark desktop fork.
+  return null
 }
 
 function AdBannerContent({ad}) {
@@ -408,83 +362,8 @@ export function AdListItem({
   )
 }
 
-export function AdDrawer({isMining = true, children, ...props}) {
-  const ads = useRotatingAds()
-
-  const hasRotatingAds = ads.length > 0
-
-  const {currentIndex, prev, next, setCurrentIndex} = useRotateAds()
-
-  const activeAd = ads[currentIndex]
-
-  return (
-    <Drawer {...props}>
-      {children}
-
-      {isMining && hasRotatingAds && (
-        <DrawerPromotionPortal>
-          <Stack spacing="4">
-            <HStack spacing="16">
-              <IconButton
-                variant="unstyled"
-                color="xwhite.050"
-                icon={<ArrowLeftIcon boxSize="5" />}
-                _hover={{
-                  color: 'white',
-                }}
-                onClick={prev}
-              />
-
-              <AdPromotion {...activeAd} />
-
-              <IconButton
-                variant="unstyled"
-                color="xwhite.050"
-                icon={<ArrowRightIcon boxSize="5" />}
-                _hover={{
-                  color: 'white',
-                }}
-                onClick={next}
-              />
-            </HStack>
-            <HStack spacing="2.5" justify="center" align="center" h="2">
-              {ads.map((ad, idx) => {
-                const isCurrrent = currentIndex === idx
-
-                const isSibling = Math.abs(currentIndex - idx) === 1
-
-                // eslint-disable-next-line no-nested-ternary
-                const boxSize = isCurrrent ? '2' : isSibling ? '1.5' : '1'
-
-                return (
-                  <Button
-                    key={ad.cid}
-                    variant="unstyled"
-                    bg={
-                      // eslint-disable-next-line no-nested-ternary
-                      isCurrrent
-                        ? 'white'
-                        : isSibling
-                        ? 'transparent'
-                        : 'xwhite.016'
-                    }
-                    borderColor="xwhite.016"
-                    borderWidth={isSibling ? 2 : 0}
-                    rounded="full"
-                    boxSize={boxSize}
-                    minW={boxSize}
-                    onClick={() => {
-                      setCurrentIndex(idx)
-                    }}
-                  />
-                )
-              })}
-            </HStack>
-          </Stack>
-        </DrawerPromotionPortal>
-      )}
-    </Drawer>
-  )
+export function AdDrawer({_isMining = true, children, ...props}) {
+  return <Drawer {...props}>{children}</Drawer>
 }
 
 function AdPromotion({cid, title, desc, url, media, author}) {

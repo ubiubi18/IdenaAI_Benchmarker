@@ -54,7 +54,6 @@ import {ExternalLink, Tooltip} from './components'
 import {useTimingState} from '../providers/timing-context'
 import {TodoVotingCountBadge} from '../../screens/oracles/components'
 import {
-  AdsIcon,
   ClockIcon,
   ContactsIcon,
   GalleryIcon,
@@ -320,9 +319,6 @@ function Navbar() {
         ) : (
           t('Oracle voting')
         )}
-      </NavItem>
-      <NavItem href="/adn/list" icon={AdsIcon}>
-        {t('Ads')}
       </NavItem>
       <NavItem href="/settings/general" icon={SettingsIcon}>
         {t('Settings')}
@@ -787,12 +783,7 @@ export function Version({
   return (
     <Stack spacing="2">
       <Stack spacing="px" mx="2">
-        <VersionText>
-          {t('Client version: {{version}}', {
-            version: global.appVersion,
-            nsSeparator: '!!',
-          })}
-        </VersionText>
+        <VersionText>{`idenaAI-desktop v.${global.appVersion}`}</VersionText>
         <VersionText>
           {t('Node version: {{version}}', {
             version: nodeCurrentVersion,

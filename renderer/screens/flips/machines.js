@@ -6,6 +6,7 @@ import {
   voteForKeywordTranslation,
   suggestKeywordTranslation,
   publishFlip,
+  getRandomKeywordPair,
   updateFlipType,
   DEFAULT_FLIP_ORDER,
   updateFlipTypeByHash,
@@ -16,6 +17,39 @@ import {shuffle} from '../../shared/utils/arr'
 import {FlipType, FlipFilter} from '../../shared/types'
 import {deleteFlip} from '../../shared/api/dna'
 import {persistState} from '../../shared/utils/persist'
+
+const OFFLINE_KEYWORD_WORD_RANGE_START = 3300
+
+function buildRandomKeywordPairs(count = 12) {
+  return Array.from({length: Math.max(1, count)}).map((_, index) => ({
+    id: index,
+    words: getRandomKeywordPair().words,
+  }))
+}
+
+function resolveKeywordPair(availableKeywords, keywordPairId) {
+  const list = Array.isArray(availableKeywords) ? availableKeywords : []
+  if (!list.length) {
+    return {
+      id: 0,
+      words: [
+        OFFLINE_KEYWORD_WORD_RANGE_START,
+        OFFLINE_KEYWORD_WORD_RANGE_START + 1,
+      ],
+    }
+  }
+
+  const match = list.find(({id}) => String(id) === String(keywordPairId))
+  return match || list[0]
+}
+
+function normalizeKeywordWordIds(pair) {
+  const words = Array.isArray(pair && pair.words) ? pair.words.slice(0, 2) : []
+  while (words.length < 2) {
+    words.push(OFFLINE_KEYWORD_WORD_RANGE_START + words.length)
+  }
+  return words
+}
 
 export const flipsMachine = Machine(
   {
@@ -537,6 +571,8 @@ export const flipMasterMachine = Machine(
   {
     id: 'flipMaster',
     context: {
+      keywordSource: 'node',
+      nodeAvailableKeywords: [],
       keywordPairId: 0,
       keywords: {
         words: [],
@@ -611,6 +647,29 @@ export const flipMasterMachine = Machine(
                     const {id} = availableKeywords[nextIdx]
                     return id
                   },
+                  adversarialImage: '',
+                  adversarialImages: Array.from({length: 8}),
+                }),
+              },
+              USE_NODE_KEYWORDS: {
+                target: '.loading',
+                actions: assign({
+                  availableKeywords: ({nodeAvailableKeywords}) =>
+                    Array.isArray(nodeAvailableKeywords)
+                      ? nodeAvailableKeywords
+                      : [],
+                  keywordPairId: () => 0,
+                  keywordSource: () => 'node',
+                  adversarialImage: '',
+                  adversarialImages: Array.from({length: 8}),
+                }),
+              },
+              USE_RANDOM_KEYWORDS: {
+                target: '.loading',
+                actions: assign({
+                  availableKeywords: () => buildRandomKeywordPairs(12),
+                  keywordPairId: () => 0,
+                  keywordSource: () => 'random',
                   adversarialImage: '',
                   adversarialImages: Array.from({length: 8}),
                 }),
@@ -729,6 +788,14 @@ export const flipMasterMachine = Machine(
                       image,
                       ...images.slice(currentIndex + 1),
                     ],
+                    protectedImages: (
+                      {protectedImages},
+                      {image, currentIndex}
+                    ) => [
+                      ...protectedImages.slice(0, currentIndex),
+                      image,
+                      ...protectedImages.slice(currentIndex + 1),
+                    ],
                   }),
                   log(),
                 ],
@@ -751,7 +818,7 @@ export const flipMasterMachine = Machine(
               PAINTING: '.painting',
               NEXT: [
                 {
-                  target: 'protect',
+                  target: 'shuffle',
                 },
               ],
               PREV: 'keywords',
@@ -920,7 +987,7 @@ export const flipMasterMachine = Machine(
               NEXT: 'submit',
               PREV: [
                 {
-                  target: 'protect',
+                  target: 'images',
                 },
               ],
             },
@@ -983,6 +1050,29 @@ export const flipMasterMachine = Machine(
           },
         },
         on: {
+          USE_NODE_KEYWORDS: {
+            target: '.keywords.loading',
+            actions: assign({
+              availableKeywords: ({nodeAvailableKeywords}) =>
+                Array.isArray(nodeAvailableKeywords)
+                  ? nodeAvailableKeywords
+                  : [],
+              keywordPairId: () => 0,
+              keywordSource: () => 'node',
+              adversarialImage: '',
+              adversarialImages: Array.from({length: 8}),
+            }),
+          },
+          USE_RANDOM_KEYWORDS: {
+            target: '.keywords.loading',
+            actions: assign({
+              availableKeywords: () => buildRandomKeywordPairs(12),
+              keywordPairId: () => 0,
+              keywordSource: () => 'random',
+              adversarialImage: '',
+              adversarialImages: Array.from({length: 8}),
+            }),
+          },
           PICK_IMAGES: '.images',
           PICK_PROTECT: '.protect',
           PICK_KEYWORDS: '.keywords',
@@ -1011,14 +1101,37 @@ export const flipMasterMachine = Machine(
   {
     services: {
       loadKeywords: async ({availableKeywords, keywordPairId}) => {
-        const {words} = availableKeywords.find(({id}) => id === keywordPairId)
+        if (
+          !Array.isArray(availableKeywords) ||
+          availableKeywords.length === 0
+        ) {
+          throw new Error('No keyword pairs are available')
+        }
+        const pair = resolveKeywordPair(availableKeywords, keywordPairId)
+        const words = normalizeKeywordWordIds(pair)
+
         return Promise.all(
-          words.map(async (id) => ({id, ...(await loadKeyword(id))}))
+          words.map(async (id) => {
+            try {
+              return {id, ...(await loadKeyword(id))}
+            } catch {
+              return {
+                id,
+                name: `keyword-${id}`,
+                desc: 'offline fallback keyword',
+              }
+            }
+          })
         )
       },
       loadTranslations: async ({availableKeywords, keywordPairId, locale}) => {
-        const {words} = availableKeywords.find(({id}) => id === keywordPairId)
-        return fetchKeywordTranslations(words, locale)
+        const pair = resolveKeywordPair(availableKeywords, keywordPairId)
+        const words = normalizeKeywordWordIds(pair)
+        try {
+          return await fetchKeywordTranslations(words, locale)
+        } catch {
+          return words.map(() => [])
+        }
       },
       persistFlip:
         (
@@ -1237,10 +1350,24 @@ export const createViewFlipMachine = (id) =>
     }
   )
 
+function resolveImageSearchList(data) {
+  if (Array.isArray(data)) {
+    return data
+  }
+  if (Array.isArray(data && data.images)) {
+    return data.images
+  }
+  return []
+}
+
 export const imageSearchMachine = createMachine({
   context: {
     images: [],
     query: '',
+    searchMode: 'web',
+    aiProvider: 'openai',
+    aiModel: 'gpt-4o-mini',
+    aiProviderConfig: null,
   },
   initial: 'idle',
   states: {
@@ -1248,13 +1375,31 @@ export const imageSearchMachine = createMachine({
     searching: {
       invoke: {
         // eslint-disable-next-line no-shadow
-        src: ({query}, {query: queryParam}) =>
-          global.ipcRenderer.invoke('search-image', query || queryParam),
+        src: (
+          {query, searchMode, aiProvider, aiModel, aiProviderConfig},
+          {query: queryParam}
+        ) => {
+          const nextQuery = query || queryParam
+          if (searchMode === 'ai') {
+            return global.aiSolver.generateImageSearchResults({
+              provider: aiProvider,
+              model: aiModel,
+              prompt: nextQuery,
+              providerConfig: aiProviderConfig,
+              maxImages: 8,
+            })
+          }
+          return global.ipcRenderer.invoke('search-image', nextQuery)
+        },
         onDone: {
           target: 'done',
           actions: [
             assign({
-              images: (_, {data}) => data,
+              images: (_, {data}) => resolveImageSearchList(data),
+              selectedImage: (_, {data}) => {
+                const list = resolveImageSearchList(data)
+                return list.length ? list[0].thumbnail || list[0].image : null
+              },
             }),
             log(),
           ],
@@ -1280,6 +1425,30 @@ export const imageSearchMachine = createMachine({
   },
   on: {
     SEARCH: 'searching',
+    SET_MODE: {
+      actions: [
+        assign({
+          searchMode: (_, {mode}) =>
+            String(mode || '')
+              .trim()
+              .toLowerCase() === 'ai'
+              ? 'ai'
+              : 'web',
+        }),
+      ],
+    },
+    SET_AI_META: {
+      actions: [
+        assign({
+          aiProvider: (_, {provider}) => String(provider || '').trim(),
+          aiModel: (_, {model}) => String(model || '').trim(),
+          aiProviderConfig: (_, {providerConfig}) =>
+            providerConfig && typeof providerConfig === 'object'
+              ? providerConfig
+              : null,
+        }),
+      ],
+    },
     TYPE: {
       actions: [
         assign({

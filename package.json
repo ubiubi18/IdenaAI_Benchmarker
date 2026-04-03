@@ -1,12 +1,12 @@
 {
-  "name": "idena-desktop",
-  "productName": "Idena",
+  "name": "idenaai-desktop",
+  "productName": "idenaAI-desktop",
   "version": "0.0.1",
   "main": "main/index.js",
   "repository": "idena-network/idena-desktop",
   "license": "MIT",
   "scripts": {
-    "start": "dotenv -e .env.local electron .",
+    "start": "NODE_OPTIONS= dotenv -e .env.local electron .",
     "build": "next build renderer && next export renderer",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win --publish onTag",
@@ -24,7 +24,7 @@
   },
   "build": {
     "appId": "io.idena",
-    "artifactName": "idena-client-${os}-${version}.${ext}",
+    "artifactName": "idenaAI-desktop-${os}-${version}.${ext}",
     "files": [
       "**/*",
       "!renderer",

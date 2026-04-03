@@ -97,3 +97,7 @@ datadir
 main/node/**
 
 .env.*
+
+# local benchmark artifacts
+.tmp/
+data/

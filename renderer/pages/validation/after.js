@@ -14,7 +14,6 @@ import {useRouter} from 'next/router'
 import React from 'react'
 import {useTranslation} from 'react-i18next'
 import {useTrackTx} from '../../screens/ads/hooks'
-import {ValidationAdPromotion} from '../../screens/validation/components/ads'
 import {ValidationCountdown} from '../../screens/validation/components/countdown'
 import {usePersistedValidationState} from '../../screens/validation/hooks/use-persisted-state'
 import {
@@ -147,7 +146,6 @@ export default function AfterValidationPage() {
               </ErrorAlert>
             )}
           </Stack>
-          <ValidationAdPromotion />
         </Stack>
       </Center>
     </Box>

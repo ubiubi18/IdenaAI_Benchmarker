@@ -74,8 +74,6 @@ import {
 } from '../../screens/dna/hooks'
 import {viewVotingHref} from '../../screens/oracles/utils'
 import {useHardFork} from '../../screens/hardfork/hooks'
-import {AdBanner} from '../../screens/ads/containers'
-import {useRotatingAds} from '../../screens/ads/hooks'
 import {ChevronRightIcon, GithubIcon} from './icons'
 import {
   useAutoStartLottery,
@@ -86,7 +84,8 @@ import {useIdentityState} from '../providers/identity-context'
 import {OfflineBanner} from './layout/offline'
 import {TroubleshootingScreen} from '../../screens/troubleshooting'
 
-global.getZoomLevel = global.getZoomLevel || {}
+global.getZoomLevel = global.getZoomLevel || (() => 0)
+global.setZoomLevel = global.setZoomLevel || (() => {})
 
 const AVAILABLE_TIMEOUT = global.isDev || global.isTest ? 0 : 1000 * 5
 
@@ -273,7 +272,7 @@ function LayoutContainer(props) {
   )
 }
 
-function NormalApp({skipBanner, children}) {
+function NormalApp({children}) {
   const {t} = useTranslation()
 
   const epoch = useEpochState()
@@ -354,12 +353,8 @@ function NormalApp({skipBanner, children}) {
     }
   )
 
-  const ads = useRotatingAds()
-  const hasRotatingAds = ads?.length > 0
-
   return (
     <Flex as="section" direction="column" flex={1} h="100vh" overflowY="auto">
-      {hasRotatingAds && !skipBanner && <AdBanner />}
       <BenchmarkResearchBanner />
 
       {children}

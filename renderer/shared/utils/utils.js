@@ -14,6 +14,11 @@ export const HASH_IN_MEMPOOL =
 
 export const queryClient = new QueryClient()
 
+const LEGACY_KEYWORDS_URL =
+  'https://raw.githubusercontent.com/idena-network/idena-go/v1.1.2/keywords/keywords.json'
+
+let legacyKeywordsPromise = null
+
 export function createRpcCaller({url, key}) {
   return async function (method, ...params) {
     const {result, error} = await (
@@ -125,10 +130,80 @@ export async function loadKeyword(index) {
       queryFn: ({queryKey: [, wordIndex]}) => callRpc('bcn_keyWord', wordIndex),
       staleTime: Infinity,
     })
-    return {name: resp.Name, desc: resp.Desc}
+    if (resp && (resp.Name || resp.Desc)) {
+      return {name: resp.Name || '', desc: resp.Desc || ''}
+    }
   } catch (error) {
-    global.logger.error('Unable to receive keyword', index)
-    return {name: '', desc: ''}
+    if (typeof global !== 'undefined' && global.logger && global.logger.error) {
+      global.logger.error('Unable to receive keyword from local RPC', index)
+    }
+  }
+
+  try {
+    const fallbackKeyword = await queryClient.fetchQuery({
+      queryKey: ['legacy_keyword', index],
+      queryFn: async ({queryKey: [, wordIndex]}) =>
+        getLegacyKeyword(wordIndex) || buildKeywordPlaceholder(wordIndex),
+      staleTime: Infinity,
+    })
+    return fallbackKeyword
+  } catch (error) {
+    if (typeof global !== 'undefined' && global.logger && global.logger.error) {
+      global.logger.error('Unable to receive fallback keyword', index)
+    }
+    return buildKeywordPlaceholder(index)
+  }
+}
+
+function buildKeywordPlaceholder(index) {
+  return {
+    name: `keyword-${index}`,
+    desc: 'offline fallback keyword',
+  }
+}
+
+async function getLegacyKeywords() {
+  if (!legacyKeywordsPromise) {
+    legacyKeywordsPromise = fetch(LEGACY_KEYWORDS_URL, {
+      method: 'GET',
+      cache: 'no-store',
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(
+            `Legacy keywords request failed with status ${response.status}`
+          )
+        }
+        return response.json()
+      })
+      .then((payload) => (Array.isArray(payload) ? payload : []))
+      .catch((error) => {
+        if (
+          typeof global !== 'undefined' &&
+          global.logger &&
+          global.logger.error
+        ) {
+          global.logger.error(
+            'Unable to load legacy keywords dataset',
+            error && error.message ? error.message : error
+          )
+        }
+        return []
+      })
+  }
+
+  return legacyKeywordsPromise
+}
+
+async function getLegacyKeyword(index) {
+  const keywords = await getLegacyKeywords()
+  if (!Array.isArray(keywords) || index < 0 || index >= keywords.length) {
+    return null
+  }
+  const item = keywords[index] || {}
+  return {
+    name: item.name || `keyword-${index}`,
+    desc: item.desc || '',
   }
 }
 

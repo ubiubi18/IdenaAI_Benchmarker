@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
-import React from 'react'
+import React, {useEffect} from 'react'
 import Head from 'next/head'
+import {useRouter} from 'next/router'
 import {ChakraProvider, extendTheme} from '@chakra-ui/react'
 import GoogleFonts from 'next-google-fonts'
 // eslint-disable-next-line import/no-extraneous-dependencies
@@ -21,6 +22,19 @@ import {queryClient} from '../shared/utils/utils'
 
 // err is a workaround for https://github.com/zeit/next.js/issues/8592
 export default function App({Component, err, ...pageProps}) {
+  const router = useRouter()
+  const isAdsRoute = router.pathname.startsWith('/adn')
+
+  useEffect(() => {
+    if (isAdsRoute) {
+      router.replace('/home')
+    }
+  }, [isAdsRoute, router])
+
+  if (isAdsRoute) {
+    return null
+  }
+
   return (
     <>
       <GoogleFonts href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
@@ -38,11 +52,7 @@ export default function App({Component, err, ...pageProps}) {
 }
 
 function AppProviders(props) {
-  React.useEffect(() => {
-    if (typeof window === 'undefined') {
-      return
-    }
-
+  if (typeof window !== 'undefined') {
     if (!global.env) {
       global.env = {}
     }
@@ -67,10 +77,53 @@ function AppProviders(props) {
       }
     }
 
+    if (!global.sub) {
+      global.sub = (db) => db
+    }
+
+    if (!global.aiSolver) {
+      const empty = async () => ({})
+      global.aiSolver = {
+        setProviderKey: empty,
+        clearProviderKey: empty,
+        hasProviderKey: async () => ({
+          ok: true,
+          provider: 'openai',
+          hasKey: false,
+        }),
+        testProvider: empty,
+        listModels: async () => ({
+          ok: true,
+          provider: 'openai',
+          total: 0,
+          models: [],
+        }),
+        solveFlipBatch: empty,
+      }
+    }
+
+    if (!global.aiTestUnit) {
+      const empty = async () => ({ok: true})
+      global.aiTestUnit = {
+        addFlips: empty,
+        listFlips: async () => ({ok: true, total: 0, flips: []}),
+        clearFlips: empty,
+        run: empty,
+      }
+    }
+
     if (!global.toggleFullScreen) {
       global.toggleFullScreen = () => {}
     }
-  }, [])
+
+    if (!global.getZoomLevel) {
+      global.getZoomLevel = () => 0
+    }
+
+    if (!global.setZoomLevel) {
+      global.setZoomLevel = () => {}
+    }
+  }
 
   return (
     <QueryClientProvider client={queryClient}>

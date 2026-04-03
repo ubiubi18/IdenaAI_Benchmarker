@@ -13,7 +13,6 @@ import NextLink from 'next/link'
 import React from 'react'
 import {useTranslation} from 'react-i18next'
 import {motion, isValidMotionProp} from 'framer-motion'
-import {ValidationAdPromotion} from '../../screens/validation/components/ads'
 import {useAutoStartValidation} from '../../screens/validation/hooks/use-start-validation'
 import {ValidationCountdown} from '../../screens/validation/components/countdown'
 import {ErrorAlert} from '../../shared/components/components'
@@ -23,7 +22,6 @@ import {EpochPeriod, IdentityStatus} from '../../shared/types'
 import {canValidate} from '../../screens/validation/utils'
 import {useIdentity} from '../../shared/providers/identity-context'
 import {Status} from '../../shared/components/sidebar'
-import {useRotatingAds} from '../../screens/ads/hooks'
 
 const shouldForwardProp = (prop) =>
   isValidMotionProp(prop) || ['children'].includes(prop)
@@ -49,10 +47,6 @@ export default function LotteryPage() {
   useAutoStartValidation()
 
   useAutoCloseValidationToast()
-
-  const ads = useRotatingAds()
-
-  const isRotatingAds = ads.length > 0
 
   return (
     <Box
@@ -98,7 +92,7 @@ export default function LotteryPage() {
           <Box>
             <MotionBox
               initial={{
-                y: isRotatingAds ? 180 : 0,
+                y: 0,
               }}
               animate={{
                 y: 0,
@@ -142,22 +136,6 @@ export default function LotteryPage() {
                   </ErrorAlert>
                 )}
               </Stack>
-            </MotionBox>
-          </Box>
-          <Box>
-            <MotionBox
-              initial={{
-                x: isRotatingAds ? 1499 : 0,
-              }}
-              animate={{
-                x: 0,
-              }}
-              transition={{
-                duration: 1,
-                delay: 3,
-              }}
-            >
-              <ValidationAdPromotion />
             </MotionBox>
           </Box>
         </Stack>

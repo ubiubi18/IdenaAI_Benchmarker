@@ -13,6 +13,7 @@ import {
   Stack,
   HStack,
   Button,
+  useToast,
 } from '@chakra-ui/react'
 import {useTranslation} from 'react-i18next'
 import dayjs from 'dayjs'
@@ -35,9 +36,9 @@ import {
 import {formatKeywords} from '../../screens/flips/utils'
 import {
   IconLink,
-  FloatDebug,
   Page,
   PageTitle,
+  Toast,
 } from '../../shared/components/components'
 import {
   FlipType,
@@ -59,6 +60,7 @@ import {
 import {onboardingShowingStep} from '../../shared/utils/onboarding'
 import {eitherState} from '../../shared/utils/utils'
 import {useFailToast} from '../../shared/hooks/use-toast'
+import {decodedFlipToAiFlip} from '../../screens/validation/ai/test-unit-utils'
 import {
   DeleteIcon,
   InfoIcon,
@@ -68,8 +70,55 @@ import {
   RewardIcon,
 } from '../../shared/components/icons'
 
+const DEFAULT_PANEL_ORDER = [0, 1, 2, 3]
+
+function normalizePanelOrder(order, fallback = DEFAULT_PANEL_ORDER) {
+  const source = Array.isArray(order)
+    ? order
+        .slice(0, 4)
+        .map((value) => Number.parseInt(value, 10))
+        .filter((value) => Number.isFinite(value) && value >= 0 && value < 4)
+    : []
+  if (source.length !== 4 || new Set(source).size !== 4) {
+    return fallback.slice()
+  }
+  return source
+}
+
+function buildAlternativePanelOrder(order) {
+  const normalized = normalizePanelOrder(order, DEFAULT_PANEL_ORDER)
+  const swapped = [normalized[1], normalized[0], normalized[3], normalized[2]]
+  const isSame = swapped.every((value, index) => value === normalized[index])
+  return isSame
+    ? [normalized[3], normalized[2], normalized[1], normalized[0]]
+    : swapped
+}
+
+function pickFlipImagesForAiQueue(flip) {
+  const protectedImages = Array.isArray(flip && flip.protectedImages)
+    ? flip.protectedImages
+    : []
+  const hasProtected = protectedImages.some((item) =>
+    String(item || '')
+      .trim()
+      .startsWith('data:')
+  )
+  let source = []
+  if (hasProtected) {
+    source = protectedImages
+  } else if (Array.isArray(flip && flip.images)) {
+    source = flip.images
+  }
+
+  return source
+    .slice(0, 4)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+}
+
 export default function FlipListPage() {
   const {t} = useTranslation()
+  const toast = useToast()
 
   const {
     isOpen: isOpenDeleteForm,
@@ -97,6 +146,85 @@ export default function FlipListPage() {
   ].includes(status)
 
   const failToast = useFailToast()
+
+  const notify = React.useCallback(
+    (title, description, tone = 'info') => {
+      toast({
+        status: tone,
+        duration: 5000,
+        render: (props) => (
+          <Toast title={title} description={description} {...props} />
+        ),
+      })
+    },
+    [toast]
+  )
+
+  const ensureAiTestUnitBridge = React.useCallback(() => {
+    if (
+      !global.aiTestUnit ||
+      typeof global.aiTestUnit.addFlips !== 'function'
+    ) {
+      throw new Error('AI test unit is unavailable. Restart desktop app.')
+    }
+    return global.aiTestUnit
+  }, [])
+
+  const addFlipToAiQueue = React.useCallback(
+    async (flipContext) => {
+      try {
+        const bridge = ensureAiTestUnitBridge()
+        const images = pickFlipImagesForAiQueue(flipContext)
+        if (images.length < 4) {
+          throw new Error('Flip must contain 4 images before adding to queue')
+        }
+
+        const originalOrder = normalizePanelOrder(
+          flipContext && flipContext.originalOrder,
+          DEFAULT_PANEL_ORDER
+        )
+        const currentOrder = normalizePanelOrder(
+          flipContext && flipContext.order,
+          originalOrder
+        )
+        const isSameOrder = currentOrder.every(
+          (value, index) => value === originalOrder[index]
+        )
+        const shuffledOrder = isSameOrder
+          ? buildAlternativePanelOrder(originalOrder)
+          : currentOrder
+
+        const aiFlip = await decodedFlipToAiFlip({
+          hash: String(
+            (flipContext && (flipContext.hash || flipContext.id)) ||
+              `draft-${Date.now()}`
+          ).trim(),
+          images,
+          orders: [originalOrder, shuffledOrder],
+        })
+
+        const result = await bridge.addFlips({
+          source: 'flips-list-draft',
+          flips: [aiFlip],
+          meta: {
+            flipId: (flipContext && flipContext.id) || null,
+            hash: (flipContext && flipContext.hash) || null,
+          },
+        })
+
+        notify(
+          t('Added to AI test queue'),
+          t('Flip added. Queue size: {{total}}', {
+            total: Number(result && result.total) || 0,
+          }),
+          'success'
+        )
+      } catch (error) {
+        failToast(error)
+      }
+    },
+    [ensureAiTestUnitBridge, failToast, notify, t]
+  )
 
   const [current, send] = useMachine(flipsMachine, {
     context: {
@@ -288,6 +416,7 @@ export default function FlipListPage() {
               <FlipCard
                 key={flip.id}
                 flipService={flip.ref}
+                onAddToTestUnit={addFlipToAiQueue}
                 onDelete={() => {
                   if (
                     flip.type === FlipType.Published &&
@@ -399,8 +528,6 @@ export default function FlipListPage() {
             onCloseDeleteForm()
           }}
         />
-
-        {global.isDev && <FloatDebug>{current.value}</FloatDebug>}
       </Page>
     </Layout>
   )

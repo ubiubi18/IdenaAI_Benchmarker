@@ -1,12 +1,79 @@
 import nanoid from 'nanoid'
 
-const {levelup, leveldown, dbPath, sub} = global
-
 let idenaDb = null
+let fallbackDb = null
+
+function createNotFoundError() {
+  const error = new Error('NotFound')
+  error.notFound = true
+  return error
+}
+
+function createInMemoryDb() {
+  const store = new Map()
+
+  return {
+    async get(key) {
+      if (!store.has(key)) {
+        throw createNotFoundError()
+      }
+      return store.get(key)
+    },
+    async put(key, value) {
+      store.set(key, value)
+      return undefined
+    },
+    batch() {
+      const ops = []
+      return {
+        put(key, value) {
+          ops.push({type: 'put', key, value})
+          return this
+        },
+        del(key) {
+          ops.push({type: 'del', key})
+          return this
+        },
+        async write() {
+          ops.forEach(({type, key, value}) => {
+            if (type === 'put') {
+              store.set(key, value)
+            } else if (type === 'del') {
+              store.delete(key)
+            }
+          })
+          return undefined
+        },
+      }
+    },
+    async clear() {
+      store.clear()
+      return undefined
+    },
+    isOpen() {
+      return true
+    },
+    async close() {
+      return undefined
+    },
+  }
+}
 
 export function requestDb(name = 'db') {
   if (idenaDb === null) {
-    idenaDb = levelup(leveldown(dbPath(name)))
+    const hasNativeDb =
+      typeof global.levelup === 'function' &&
+      typeof global.leveldown === 'function' &&
+      typeof global.dbPath === 'function'
+
+    if (hasNativeDb) {
+      idenaDb = global.levelup(global.leveldown(global.dbPath(name)))
+    } else {
+      if (fallbackDb === null) {
+        fallbackDb = createInMemoryDb()
+      }
+      idenaDb = fallbackDb
+    }
 
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', async () => {
@@ -18,6 +85,7 @@ export function requestDb(name = 'db') {
 }
 
 export const epochDb = (db, epoch = -1, options = {}) => {
+  const sub = typeof global.sub === 'function' ? global.sub : (value) => value
   const epochPrefix = `epoch${epoch}`
 
   const nextOptions = {

@@ -28,12 +28,7 @@ import {
 } from '../../screens/flips/components'
 import {createViewFlipMachine} from '../../screens/flips/machines'
 import {useIdentityState} from '../../shared/providers/identity-context'
-import {
-  FloatDebug,
-  Page,
-  PageTitle,
-  Toast,
-} from '../../shared/components/components'
+import {Page, PageTitle, Toast} from '../../shared/components/components'
 import {FlipType} from '../../shared/types'
 import {DEFAULT_FLIP_ORDER} from '../../screens/flips/utils'
 import Layout from '../../shared/components/layout'
@@ -211,8 +206,6 @@ export default function ViewFlipPage() {
           }}
         />
       )}
-
-      {global.isDev && <FloatDebug>{current.context.order}</FloatDebug>}
     </>
   )
 }

@@ -21,7 +21,11 @@ const invites = require('./stores/invites')
 const contacts = require('./stores/contacts')
 const logger = require('./logger')
 const {prepareDb, dbPath} = require('./stores/setup')
-const {AI_SOLVER_COMMAND} = require('./channels')
+const {
+  AI_SOLVER_COMMAND,
+  AI_TEST_UNIT_COMMAND,
+  AI_TEST_UNIT_EVENT,
+} = require('./channels')
 
 process.once('loaded', () => {
   global.ipcRenderer = ipcRenderer
@@ -31,10 +35,47 @@ process.once('loaded', () => {
       ipcRenderer.invoke(AI_SOLVER_COMMAND, 'setProviderKey', payload),
     clearProviderKey: (payload) =>
       ipcRenderer.invoke(AI_SOLVER_COMMAND, 'clearProviderKey', payload),
+    hasProviderKey: (payload) =>
+      ipcRenderer.invoke(AI_SOLVER_COMMAND, 'hasProviderKey', payload),
     testProvider: (payload) =>
       ipcRenderer.invoke(AI_SOLVER_COMMAND, 'testProvider', payload),
+    listModels: (payload) =>
+      ipcRenderer.invoke(AI_SOLVER_COMMAND, 'listModels', payload),
+    generateImageSearchResults: (payload) =>
+      ipcRenderer.invoke(
+        AI_SOLVER_COMMAND,
+        'generateImageSearchResults',
+        payload
+      ),
+    generateStoryOptions: (payload) =>
+      ipcRenderer.invoke(AI_SOLVER_COMMAND, 'generateStoryOptions', payload),
+    generateFlipPanels: (payload) =>
+      ipcRenderer.invoke(AI_SOLVER_COMMAND, 'generateFlipPanels', payload),
     solveFlipBatch: (payload) =>
       ipcRenderer.invoke(AI_SOLVER_COMMAND, 'solveFlipBatch', payload),
+  }
+  global.aiTestUnit = {
+    addFlips: (payload) =>
+      ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'addFlips', payload),
+    listFlips: (payload) =>
+      ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'listFlips', payload),
+    clearFlips: (payload) =>
+      ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'clearFlips', payload),
+    run: (payload) => ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'run', payload),
+    onEvent: (handler) => {
+      if (typeof handler !== 'function') {
+        return () => {}
+      }
+      const listener = (_event, first, second) =>
+        handler(typeof second === 'undefined' ? first : second)
+      ipcRenderer.on(AI_TEST_UNIT_EVENT, listener)
+      return () => ipcRenderer.removeListener(AI_TEST_UNIT_EVENT, listener)
+    },
+    offEvent: (handler) => {
+      if (typeof handler === 'function') {
+        ipcRenderer.removeListener(AI_TEST_UNIT_EVENT, handler)
+      }
+    },
   }
 
   global.flipStore = flips

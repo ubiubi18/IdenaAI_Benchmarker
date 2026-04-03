@@ -23,6 +23,9 @@ export default function SettingsLayout({children}) {
           <SettingsNavLink href="/settings/ai">
             {t('AI Solver')}
           </SettingsNavLink>
+          <SettingsNavLink href="/settings/ai-test-unit">
+            {t('AI Test Unit')}
+          </SettingsNavLink>
           <SettingsNavLink href="/settings/advanced">
             {t('Advanced')}
           </SettingsNavLink>

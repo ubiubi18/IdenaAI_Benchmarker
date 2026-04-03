@@ -16,6 +16,25 @@ describe('decision helpers', () => {
     })
   })
 
+  it('extracts JSON from fenced code blocks', () => {
+    expect(
+      extractJsonBlock('```json\n{"answer":"right","confidence":0.4}\n```')
+    ).toStrictEqual({
+      answer: 'right',
+      confidence: 0.4,
+    })
+  })
+
+  it('extracts first valid nested JSON object from noisy text', () => {
+    expect(
+      extractJsonBlock(
+        'prefix text {not valid json} and then {"stories":[{"panels":["a","b","c","d"]}]} suffix'
+      )
+    ).toStrictEqual({
+      stories: [{panels: ['a', 'b', 'c', 'd']}],
+    })
+  })
+
   it('normalizes answer and confidence bounds', () => {
     expect(normalizeAnswer('R')).toBe('right')
     expect(normalizeAnswer('unknown')).toBe('skip')

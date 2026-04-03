@@ -4,6 +4,7 @@ import {useMachine} from '@xstate/react'
 import {useRouter} from 'next/router'
 import {useTranslation} from 'react-i18next'
 import {
+  Box,
   Flex,
   Text,
   IconButton,
@@ -71,7 +72,7 @@ import {
   NewStarIcon,
 } from '../shared/components/icons'
 import {useAutoCloseValidationToast} from '../screens/validation/hooks/use-validation-toast'
-import {solveShortSessionWithAi} from '../screens/validation/ai/solver-orchestrator'
+import {solveValidationSessionWithAi} from '../screens/validation/ai/solver-orchestrator'
 
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
@@ -79,11 +80,36 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   model: 'gpt-4o-mini',
   mode: 'manual',
   benchmarkProfile: 'strict',
-  deadlineMs: 80 * 1000,
+  deadlineMs: 60 * 1000,
   requestTimeoutMs: 9 * 1000,
-  maxConcurrency: 2,
+  maxConcurrency: 1,
   maxRetries: 1,
   maxOutputTokens: 120,
+  interFlipDelayMs: 650,
+  temperature: 0,
+  forceDecision: true,
+  uncertaintyRepromptEnabled: true,
+  uncertaintyConfidenceThreshold: 0.45,
+  uncertaintyRepromptMinRemainingMs: 3500,
+  uncertaintyRepromptInstruction: '',
+  promptTemplateOverride: '',
+  flipVisionMode: 'composite',
+  ensembleEnabled: false,
+  ensemblePrimaryWeight: 1,
+  legacyHeuristicEnabled: false,
+  legacyHeuristicWeight: 1,
+  legacyHeuristicOnly: false,
+  ensembleProvider2Enabled: false,
+  ensembleProvider2: 'gemini',
+  ensembleModel2: 'gemini-2.0-flash',
+  ensembleProvider2Weight: 1,
+  ensembleProvider3Enabled: false,
+  ensembleProvider3: 'openai',
+  ensembleModel3: 'gpt-4.1-mini',
+  ensembleProvider3Weight: 1,
+  customProviderName: 'Custom OpenAI-compatible',
+  customProviderBaseUrl: 'https://api.openai.com/v1',
+  customProviderChatPath: '/chat/completions',
 }
 
 export default function ValidationPage() {
@@ -100,7 +126,7 @@ export default function ValidationPage() {
       <ValidationSession
         epoch={999}
         validationStart={Date.now() + 60 * 1000}
-        shortSessionDuration={80}
+        shortSessionDuration={60}
         longSessionDuration={180}
         forceAiPreview
       />
@@ -143,7 +169,10 @@ function ValidationSession({
   const [aiSolving, setAiSolving] = useState(false)
   const [aiProgress, setAiProgress] = useState(null)
   const [aiLastRun, setAiLastRun] = useState(null)
-  const autoSolveStartedRef = useRef(false)
+  const [aiLiveTimeline, setAiLiveTimeline] = useState([])
+  const [aiActiveFlip, setAiActiveFlip] = useState(null)
+  const [awaitingHumanReporting, setAwaitingHumanReporting] = useState(false)
+  const autoSolveStartedRef = useRef({short: false, long: false})
 
   const {
     isOpen: isExceededTooltipOpen,
@@ -255,69 +284,210 @@ function ValidationSession({
     [toast]
   )
 
-  const canRunAiSolve =
-    aiSolverSettings.enabled &&
+  const canRunAiSolveInShort =
     state.matches('shortSession.solve.answer.normal') &&
     state.matches('shortSession.fetch.done') &&
     !isSubmitting(state)
 
+  const canRunAiSolveInLong =
+    state.matches('longSession.solve.answer.flips') &&
+    state.matches('longSession.fetch.done') &&
+    !isSubmitting(state)
+
+  let aiSessionType = null
+  if (canRunAiSolveInShort) {
+    aiSessionType = 'short'
+  } else if (canRunAiSolveInLong) {
+    aiSessionType = 'long'
+  }
+
+  const isSessionAutoMode =
+    aiSolverSettings.enabled && aiSolverSettings.mode === 'session-auto'
+  const canRunAiSolve = aiSolverSettings.enabled && Boolean(aiSessionType)
+
   const runAiSolve = useCallback(async () => {
-    if (!canRunAiSolve || aiSolving) return
+    if (!canRunAiSolve || aiSolving || !aiSessionType) return
+
+    const sessionType = aiSessionType
+    const displayFlips = sessionFlips(state)
+    const indexByHash = new Map(
+      displayFlips.map((flip, index) => [flip.hash, index])
+    )
 
     setAiSolving(true)
     setAiProgress(t('Preparing flip payloads...'))
+    setAiLiveTimeline([])
+    setAiActiveFlip(null)
     setAiLastRun({
       status: 'running',
+      sessionType,
       provider: aiSolverSettings.provider,
       model: aiSolverSettings.model,
       startedAt: new Date().toISOString(),
     })
 
     try {
-      const result = await solveShortSessionWithAi({
+      const liveEntries = []
+      const result = await solveValidationSessionWithAi({
+        sessionType,
         shortFlips: state.context.shortFlips,
+        longFlips: state.context.longFlips,
         aiSolver: aiSolverSettings,
         sessionMeta: {
           epoch,
+          sessionType,
           startedAt: new Date().toISOString(),
         },
-        onProgress: ({index, total}) => {
-          setAiProgress(
-            t('Preparing flip payloads: {{current}}/{{total}}', {
-              current: index,
-              total,
-            })
-          )
-        },
-      })
+        onProgress: (event) => {
+          if (event.stage === 'prepared') {
+            setAiProgress(
+              t('Preparing flip payloads: {{current}}/{{total}}', {
+                current: event.index,
+                total: event.total,
+              })
+            )
+            return
+          }
 
-      send({
-        type: 'APPLY_AI_ANSWERS',
-        answers: result.answers.map(({hash, option}) => ({hash, option})),
+          if (event.stage === 'solving') {
+            const pickIndex = indexByHash.get(event.hash)
+            if (Number.isFinite(pickIndex)) {
+              send({type: 'PICK', index: pickIndex})
+            }
+            setAiActiveFlip({
+              hash: event.hash,
+              leftImage: event.leftImage,
+              rightImage: event.rightImage,
+              index: event.index,
+              total: event.total,
+              sessionType: event.sessionType,
+            })
+            setAiProgress(
+              t('Solving flip {{current}}/{{total}}', {
+                current: event.index,
+                total: event.total,
+              })
+            )
+            return
+          }
+
+          if (event.stage === 'solved') {
+            const pickIndex = indexByHash.get(event.hash)
+            if (Number.isFinite(pickIndex)) {
+              send({type: 'PICK', index: pickIndex})
+            }
+            setAiActiveFlip({
+              hash: event.hash,
+              leftImage: event.leftImage,
+              rightImage: event.rightImage,
+              answer: event.answer,
+              latencyMs: event.latencyMs,
+              confidence: event.confidence,
+              error: event.error,
+              tokenUsage: event.tokenUsage,
+              index: event.index,
+              total: event.total,
+              sessionType: event.sessionType,
+            })
+            const entry = {
+              at: new Date().toISOString(),
+              hash: event.hash,
+              answer: event.answer,
+              confidence: event.confidence,
+              latencyMs: event.latencyMs,
+              error: event.error,
+              index: event.index,
+              total: event.total,
+              rawAnswerBeforeRemap: event.rawAnswerBeforeRemap,
+              finalAnswerAfterRemap: event.finalAnswerAfterRemap,
+              sideSwapped: event.sideSwapped,
+              tokenUsage: event.tokenUsage,
+            }
+            liveEntries.push(entry)
+            setAiLiveTimeline((prev) => prev.concat(entry).slice(-24))
+            setAiProgress(
+              t('Flip {{current}}/{{total}}: {{answer}} in {{latency}} ms', {
+                current: event.index,
+                total: event.total,
+                answer: String(event.answer || 'skip').toUpperCase(),
+                latency: Number.isFinite(event.latencyMs)
+                  ? event.latencyMs
+                  : '-',
+              })
+            )
+            return
+          }
+
+          if (event.stage === 'waiting') {
+            setAiProgress(
+              t(
+                'Rate-limit pacing: wait {{wait}} ms before next flip ({{current}}/{{total}})',
+                {
+                  wait: event.waitMs,
+                  current: event.index,
+                  total: event.total,
+                }
+              )
+            )
+            return
+          }
+
+          if (event.stage === 'completed') {
+            setAiProgress(
+              t('AI run completed: {{applied}} answers applied', {
+                applied: event.appliedAnswers || 0,
+              })
+            )
+          }
+        },
+        onDecision: async ({hash, option}) => {
+          if (option > 0) {
+            send({
+              type: 'ANSWER',
+              hash,
+              option,
+            })
+          }
+        },
       })
 
       notifyAi(
         t('AI helper completed'),
-        t('{{answers}} answers applied ({{provider}} {{model}})', {
-          answers: result.answers.length,
-          provider: result.provider,
-          model: result.model,
-        })
+        t(
+          '{{answers}} answers applied in {{session}} session ({{provider}} {{model}})',
+          {
+            answers: result.answers.length,
+            session: sessionType,
+            provider: result.provider,
+            model: result.model,
+          }
+        )
       )
 
       setAiLastRun({
         status: 'completed',
+        sessionType,
         provider: result.provider,
         model: result.model,
         profile: result.profile,
         summary: result.summary,
         flips: result.results || [],
         appliedAnswers: result.answers.length,
+        timeline: liveEntries.slice(-24),
         completedAt: new Date().toISOString(),
       })
 
-      if (result.answers.length > 0) {
+      if (sessionType === 'short' && result.answers.length > 0) {
         send('SUBMIT')
+      }
+
+      if (
+        sessionType === 'long' &&
+        Array.isArray(result.results) &&
+        result.results.length > 0
+      ) {
+        setAwaitingHumanReporting(true)
+        send('FINISH_FLIPS')
       }
     } catch (error) {
       const errorMessage = error?.message || error.toString()
@@ -327,6 +497,7 @@ function ValidationSession({
       setAiLastRun((prev) => ({
         ...(prev || {}),
         status: 'failed',
+        sessionType,
         error: errorMessage,
         completedAt: new Date().toISOString(),
       }))
@@ -337,36 +508,70 @@ function ValidationSession({
   }, [
     aiSolverSettings,
     aiSolving,
+    aiSessionType,
     canRunAiSolve,
     epoch,
     notifyAi,
     send,
-    state.context.shortFlips,
+    state,
     t,
   ])
 
   useEffect(() => {
     if (
-      aiSolverSettings.enabled &&
-      aiSolverSettings.mode === 'session-auto' &&
+      isSessionAutoMode &&
       canRunAiSolve &&
-      !autoSolveStartedRef.current
+      aiSessionType &&
+      !autoSolveStartedRef.current[aiSessionType]
     ) {
-      autoSolveStartedRef.current = true
+      autoSolveStartedRef.current[aiSessionType] = true
       runAiSolve()
     }
-  }, [
-    aiSolverSettings.enabled,
-    aiSolverSettings.mode,
-    canRunAiSolve,
-    runAiSolve,
-  ])
+  }, [isSessionAutoMode, aiSessionType, canRunAiSolve, runAiSolve])
 
   useEffect(() => {
-    if (!state.matches('shortSession')) {
-      autoSolveStartedRef.current = false
+    if (
+      isSessionAutoMode &&
+      state.matches('longSession.solve.answer.welcomeQualification')
+    ) {
+      send('START_LONG_SESSION')
     }
-  }, [state])
+  }, [isSessionAutoMode, send, state])
+
+  useEffect(() => {
+    if (
+      isSessionAutoMode &&
+      awaitingHumanReporting &&
+      state.matches('longSession.solve.answer.finishFlips')
+    ) {
+      send('START_KEYWORDS_QUALIFICATION')
+    }
+  }, [awaitingHumanReporting, isSessionAutoMode, send, state])
+
+  useEffect(() => {
+    if (
+      awaitingHumanReporting &&
+      state.matches('longSession.solve.answer.keywords')
+    ) {
+      notifyAi(
+        t('Human reporting required'),
+        t(
+          'AI finished flip choices. Please complete reporting/approval manually, then submit long session answers.'
+        ),
+        'warning'
+      )
+      setAwaitingHumanReporting(false)
+    }
+  }, [awaitingHumanReporting, notifyAi, state, t])
+
+  useEffect(() => {
+    if (aiSessionType !== 'short') {
+      autoSolveStartedRef.current.short = false
+    }
+    if (aiSessionType !== 'long') {
+      autoSolveStartedRef.current.long = false
+    }
+  }, [aiSessionType])
 
   return (
     <ValidationScene bg={isShortSession(state) ? 'black' : 'white'}>
@@ -614,13 +819,16 @@ function ValidationSession({
             )}
         </FlipChallenge>
       </CurrentStep>
-      {isShortSession(state) && aiSolverSettings.enabled && (
-        <AiTelemetryPanel
-          isShortSessionMode={isShortSession(state)}
-          telemetry={aiLastRun}
-          aiProgress={aiProgress}
-        />
-      )}
+      {(isShortSession(state) || isLongSessionFlips(state)) &&
+        aiSolverSettings.enabled && (
+          <AiTelemetryPanel
+            isShortSessionMode={isShortSession(state)}
+            telemetry={aiLastRun}
+            aiProgress={aiProgress}
+            activeFlip={aiActiveFlip}
+            liveTimeline={aiLiveTimeline}
+          />
+        )}
       <ActionBar>
         <ActionBarItem />
         <ActionBarItem justify="center">
@@ -634,25 +842,28 @@ function ValidationSession({
           />
         </ActionBarItem>
         <ActionBarItem justify="flex-end">
-          {isShortSession(state) && aiSolverSettings.enabled && (
-            <Stack isInline spacing={2} align="center" mr={3}>
-              {aiProgress && (
-                <Text
-                  fontSize="xs"
-                  color={isShortSession(state) ? 'whiteAlpha.800' : 'muted'}
+          {(isShortSession(state) || isLongSessionFlips(state)) &&
+            aiSolverSettings.enabled && (
+              <Stack isInline spacing={2} align="center" mr={3}>
+                {aiProgress && (
+                  <Text
+                    fontSize="xs"
+                    color={isShortSession(state) ? 'whiteAlpha.800' : 'muted'}
+                  >
+                    {aiProgress}
+                  </Text>
+                )}
+                <SecondaryButton
+                  isDisabled={!canRunAiSolve}
+                  isLoading={aiSolving}
+                  onClick={runAiSolve}
                 >
-                  {aiProgress}
-                </Text>
-              )}
-              <SecondaryButton
-                isDisabled={!canRunAiSolve}
-                isLoading={aiSolving}
-                onClick={runAiSolve}
-              >
-                {t('AI solve short session')}
-              </SecondaryButton>
-            </Stack>
-          )}
+                  {isShortSession(state)
+                    ? t('AI solve short session')
+                    : t('AI solve long session')}
+                </SecondaryButton>
+              </Stack>
+            )}
           {(isShortSession(state) || isLongSessionKeywords(state)) &&
             (hasAllRelevanceMarks(state) || isLastFlip(state) ? (
               <PrimaryButton
@@ -808,13 +1019,31 @@ function formatLatency(value) {
   return `${num}ms`
 }
 
+function tokenTotal(usage = {}) {
+  const total = Number(usage && usage.totalTokens)
+  if (Number.isFinite(total) && total >= 0) return total
+
+  const prompt = Number(usage && usage.promptTokens)
+  const completion = Number(usage && usage.completionTokens)
+  const normalizedPrompt = Number.isFinite(prompt) && prompt >= 0 ? prompt : 0
+  const normalizedCompletion =
+    Number.isFinite(completion) && completion >= 0 ? completion : 0
+  return normalizedPrompt + normalizedCompletion
+}
+
 function shortenHash(hash) {
   const value = String(hash || '')
   if (value.length <= 12) return value
   return `${value.slice(0, 6)}...${value.slice(-4)}`
 }
 
-function AiTelemetryPanel({isShortSessionMode, telemetry, aiProgress}) {
+function AiTelemetryPanel({
+  isShortSessionMode,
+  telemetry,
+  aiProgress,
+  activeFlip,
+  liveTimeline = [],
+}) {
   const cardBg = isShortSessionMode ? 'whiteAlpha.100' : 'gray.50'
   const cardBorder = isShortSessionMode ? 'whiteAlpha.300' : 'gray.100'
   const titleColor = isShortSessionMode ? 'whiteAlpha.900' : 'brandGray.500'
@@ -851,12 +1080,14 @@ function AiTelemetryPanel({isShortSessionMode, telemetry, aiProgress}) {
       {telemetry && (
         <Stack spacing={1}>
           <Text fontSize="xs" color={bodyColor}>
-            {`${telemetry.provider || '-'} ${telemetry.model || '-'}`}
+            {`${telemetry.provider || '-'} ${telemetry.model || '-'} (${String(
+              telemetry.sessionType || 'short'
+            )})`}
           </Text>
 
           {telemetry.status === 'running' && (
             <Text fontSize="xs" color={bodyColor}>
-              Preparing and solving flips...
+              Solving flips in sequence with rate-limit pacing...
             </Text>
           )}
 
@@ -867,16 +1098,112 @@ function AiTelemetryPanel({isShortSessionMode, telemetry, aiProgress}) {
           )}
 
           {telemetry.summary && (
-            <Text fontSize="xs" color={bodyColor}>
-              {`applied ${telemetry.appliedAnswers || 0}, left ${
-                telemetry.summary.left || 0
-              }, right ${telemetry.summary.right || 0}, skipped ${
-                telemetry.summary.skipped || 0
-              }, elapsed ${formatLatency(telemetry.summary.elapsedMs)}`}
-            </Text>
+            <Stack spacing={1}>
+              <Text fontSize="xs" color={bodyColor}>
+                {`applied ${telemetry.appliedAnswers || 0}, left ${
+                  telemetry.summary.left || 0
+                }, right ${telemetry.summary.right || 0}, skipped ${
+                  telemetry.summary.skipped || 0
+                }, elapsed ${formatLatency(telemetry.summary.elapsedMs)}`}
+              </Text>
+              <Text fontSize="xs" color={bodyColor}>
+                {`tokens prompt ${
+                  telemetry.summary.tokens?.promptTokens || 0
+                }, completion ${
+                  telemetry.summary.tokens?.completionTokens || 0
+                }, total ${telemetry.summary.tokens?.totalTokens || 0}`}
+              </Text>
+              <Text fontSize="xs" color={bodyColor}>
+                {`raw L/R/S ${telemetry.summary.diagnostics?.rawLeft || 0}/${
+                  telemetry.summary.diagnostics?.rawRight || 0
+                }/${telemetry.summary.diagnostics?.rawSkip || 0}, swapped ${
+                  telemetry.summary.diagnostics?.swapped || 0
+                }/${telemetry.summary.diagnostics?.notSwapped || 0}, remapped ${
+                  telemetry.summary.diagnostics?.remappedDecisions || 0
+                }`}
+              </Text>
+            </Stack>
           )}
 
-          {Array.isArray(telemetry.flips) &&
+          {activeFlip && (
+            <Box
+              borderWidth="1px"
+              borderColor={cardBorder}
+              borderRadius="md"
+              p={2}
+              mt={1}
+            >
+              <Text fontSize="xs" color={bodyColor} mb={1}>
+                {`current ${activeFlip.index || '-'} / ${
+                  activeFlip.total || '-'
+                } ${shortenHash(activeFlip.hash)}`}
+              </Text>
+              <Flex gap={2}>
+                {activeFlip.leftImage ? (
+                  <img
+                    src={activeFlip.leftImage}
+                    alt="ai-current-left"
+                    style={{
+                      width: 84,
+                      height: 64,
+                      objectFit: 'cover',
+                      borderRadius: 6,
+                      border: '1px solid rgba(128,128,128,0.35)',
+                    }}
+                  />
+                ) : null}
+                {activeFlip.rightImage ? (
+                  <img
+                    src={activeFlip.rightImage}
+                    alt="ai-current-right"
+                    style={{
+                      width: 84,
+                      height: 64,
+                      objectFit: 'cover',
+                      borderRadius: 6,
+                      border: '1px solid rgba(128,128,128,0.35)',
+                    }}
+                  />
+                ) : null}
+              </Flex>
+              {activeFlip.answer && (
+                <Text fontSize="xs" color={bodyColor} mt={1}>
+                  {`selected ${String(
+                    activeFlip.answer
+                  ).toUpperCase()} in ${formatLatency(
+                    activeFlip.latencyMs
+                  )} | tok ${tokenTotal(activeFlip.tokenUsage)}`}
+                </Text>
+              )}
+            </Box>
+          )}
+
+          {Array.isArray(liveTimeline) &&
+            liveTimeline.slice(-8).map((event) => (
+              <Flex
+                key={`${event.hash}-${event.at}`}
+                justify="space-between"
+                gap={3}
+              >
+                <Text fontSize="xs" color={bodyColor} noOfLines={1}>
+                  {`#${event.index || '-'} ${shortenHash(event.hash)} ${String(
+                    event.answer || 'skip'
+                  ).toUpperCase()} raw:${String(
+                    event.rawAnswerBeforeRemap || '-'
+                  ).toUpperCase()}${event.sideSwapped ? ' SWAP' : ''}`}
+                </Text>
+                <Text fontSize="xs" color={bodyColor}>
+                  {`${toPct(event.confidence)} ${formatLatency(
+                    event.latencyMs
+                  )} tok:${tokenTotal(event.tokenUsage)}${
+                    event.error ? ' ERR' : ''
+                  }`}
+                </Text>
+              </Flex>
+            ))}
+
+          {!liveTimeline.length &&
+            Array.isArray(telemetry.flips) &&
             telemetry.flips.slice(0, 6).map((flip) => (
               <Flex key={flip.hash} justify="space-between" gap={3}>
                 <Text fontSize="xs" color={bodyColor} noOfLines={1}>
@@ -885,7 +1212,9 @@ function AiTelemetryPanel({isShortSessionMode, telemetry, aiProgress}) {
                   ).toUpperCase()}`}
                 </Text>
                 <Text fontSize="xs" color={bodyColor}>
-                  {`${toPct(flip.confidence)} ${formatLatency(flip.latencyMs)}${
+                  {`${toPct(flip.confidence)} ${formatLatency(
+                    flip.latencyMs
+                  )} tok:${tokenTotal(flip.tokenUsage)}${
                     flip.error ? ' ERR' : ''
                   }`}
                 </Text>

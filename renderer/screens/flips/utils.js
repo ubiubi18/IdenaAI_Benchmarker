@@ -943,24 +943,14 @@ export async function getAdversarialImage(images) {
   const ING_WIDTH = 440
   const IMG_HEIGHT = 330
 
-  let loadedImagesLength = 0
-  for (let i = 0; i < images.length; i++) {
-    if (images[i]) {
-      // eslint-disable-next-line no-plusplus
-      loadedImagesLength++
-    }
-  }
-  if (loadedImagesLength < 4) {
+  const availableImages = (Array.isArray(images) ? images : [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+  if (availableImages.length < 4) {
     return ''
   }
 
-  const selectedImages = []
-  while (selectedImages.length < 4) {
-    const rand = Math.floor(Math.random() * images.length)
-    if (!selectedImages.includes(images[rand])) {
-      selectedImages.push(images[rand])
-    }
-  }
+  const selectedImages = shuffle(availableImages).slice(0, 4)
 
   const imagesImageData = await Promise.all(
     selectedImages.map(async (imgSrc) => {
@@ -1009,7 +999,7 @@ export async function getAdversarialImage(images) {
   const sectorsImageData = getImageData(watershedImageAccess)
   const sectorsImage = getImageFromImageData(sectorsImageData)
   let palette0 = []
-  let commonColor = 0
+  let commonColor = null
   const options = {
     pixels: 10000,
     distance: 0.1,
@@ -1025,6 +1015,16 @@ export async function getAdversarialImage(images) {
     palette0.sort((a, b) => a.red - b.red)
     // eslint-disable-next-line no-empty
   } catch (e) {}
+
+  if (!commonColor || !Number.isFinite(commonColor.red)) {
+    const fallbackColor = {
+      red: Number(initialImageDataCopy[0]) || 96,
+      green: Number(initialImageDataCopy[1]) || 96,
+      blue: Number(initialImageDataCopy[2]) || 96,
+    }
+    commonColor = fallbackColor
+    palette0 = [fallbackColor]
+  }
 
   const nosenseImageData = getImageDataFromImage(sectorsImage)
   let nosensePixels = nosenseImageData.data

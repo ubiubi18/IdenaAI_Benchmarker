@@ -1,16 +1,207 @@
 const axios = require('axios')
+const {execFile} = require('child_process')
 const fs = require('fs-extra')
 const path = require('path')
+const {promisify} = require('util')
 
-const {PROVIDERS, DEFAULT_MODELS} = require('./constants')
+const {
+  PROVIDERS,
+  DEFAULT_MODELS,
+  PROVIDER_CONFIG_DEFAULTS,
+  OPENAI_COMPATIBLE_PROVIDERS,
+} = require('./constants')
 const {promptTemplate} = require('./prompt')
 const {sanitizeBenchmarkProfile} = require('./profile')
-const {extractJsonBlock, normalizeDecision} = require('./decision')
+const {
+  extractJsonBlock,
+  normalizeAnswer,
+  normalizeConfidence,
+  normalizeDecision,
+} = require('./decision')
 const {withRetries, mapWithConcurrency} = require('./concurrency')
-const {callOpenAi, testOpenAiProvider} = require('./providers/openai')
-const {callGemini, testGeminiProvider} = require('./providers/gemini')
+const {
+  callOpenAi,
+  callOpenAiImage,
+  testOpenAiProvider,
+  listOpenAiModels,
+} = require('./providers/openai')
+const {
+  callGemini,
+  callGeminiImage,
+  testGeminiProvider,
+  listGeminiModels,
+} = require('./providers/gemini')
+const {
+  callAnthropic,
+  testAnthropicProvider,
+  listAnthropicModels,
+} = require('./providers/anthropic')
+const {
+  LEGACY_HEURISTIC_PROVIDER,
+  LEGACY_HEURISTIC_MODEL,
+  LEGACY_HEURISTIC_STRATEGY,
+  solveLegacyHeuristicDecision,
+} = require('./providers/legacy-heuristic')
 
-const SUPPORTED_PROVIDERS = [PROVIDERS.OpenAI, PROVIDERS.Gemini]
+const SUPPORTED_PROVIDERS = Object.values(PROVIDERS)
+const MAX_CONSULTANTS = 4
+
+// Snapshot values for transparent benchmark estimation. Update as providers
+// revise pricing. Values are USD per 1M tokens or per generated image.
+const OPENAI_TEXT_PRICING_USD_PER_MTOK = {
+  'gpt-5.4': {input: 2.5, output: 15},
+  'gpt-5.3-chat-latest': {input: 1.75, output: 14},
+  'gpt-5.3-codex': {input: 1.75, output: 14},
+  'gpt-5-mini': {input: 0.25, output: 2},
+  'gpt-4.1': {input: 2, output: 8},
+  'gpt-4.1-mini': {input: 0.4, output: 1.6},
+  'gpt-4o': {input: 2.5, output: 10},
+  'gpt-4o-mini': {input: 0.15, output: 0.6},
+  'o4-mini': {input: 1.1, output: 4.4},
+}
+
+const OPENAI_IMAGE_PRICING_USD_PER_IMAGE = {
+  'gpt-image-1': {
+    '1024x1024': 0.042,
+    '1024x1536': 0.063,
+    '1536x1024': 0.063,
+  },
+  'gpt-image-1.5': {
+    '1024x1024': 0.034,
+    '1024x1536': 0.05,
+    '1536x1024': 0.05,
+  },
+  'gpt-image-1-mini': {
+    '1024x1024': 0.011,
+    '1024x1536': 0.015,
+    '1536x1024': 0.015,
+  },
+}
+
+const STORY_COMPLIANCE_KEYS = [
+  'keyword_relevance',
+  'no_text_needed',
+  'no_order_labels',
+  'no_inappropriate_content',
+  'single_story_only',
+  'no_waking_up_template',
+  'no_thumbs_up_down',
+  'no_enumeration_logic',
+  'no_screen_or_page_keyword_cheat',
+  'causal_clarity',
+  'consensus_clarity',
+]
+
+const SEMANTIC_ROLE_VALUES = [
+  'actor',
+  'tool',
+  'object',
+  'location',
+  'concept_representation',
+]
+
+const RISK_BEARING_KEYWORD_HINTS = new Set([
+  'chainsaw',
+  'gun',
+  'knife',
+  'poison',
+  'fire',
+  'explosive',
+  'explosives',
+  'bomb',
+  'rifle',
+  'pistol',
+  'blade',
+  'machete',
+  'blood',
+  'gore',
+  'corpse',
+  'dead',
+  'death',
+  'attack',
+  'violent',
+])
+
+const ACTOR_KEYWORD_HINTS = new Set([
+  'clown',
+  'person',
+  'man',
+  'woman',
+  'child',
+  'kid',
+  'boy',
+  'girl',
+  'nurse',
+  'doctor',
+  'teacher',
+  'police',
+  'officer',
+  'worker',
+  'chef',
+  'farmer',
+  'dog',
+  'cat',
+  'bird',
+  'robot',
+])
+
+const TOOL_KEYWORD_HINTS = new Set([
+  'chainsaw',
+  'gun',
+  'knife',
+  'hammer',
+  'saw',
+  'drill',
+  'wrench',
+  'scissors',
+  'brush',
+  'paintbrush',
+  'telescope',
+  'camera',
+  'broom',
+  'shovel',
+])
+
+const LOCATION_KEYWORD_HINTS = new Set([
+  'kitchen',
+  'workshop',
+  'garage',
+  'hospital',
+  'school',
+  'park',
+  'garden',
+  'beach',
+  'forest',
+  'office',
+  'factory',
+  'stadium',
+  'festival',
+  'museum',
+  'library',
+])
+
+const CONCEPT_REPRESENTATIONS = {
+  freedom: 'open birdcage with a broken chain',
+  justice: 'balanced scale on a courthouse table',
+  time: 'large hourglass and wall clock',
+  peace: 'white flag and olive branch on a table',
+  love: 'heart-shaped paper card and two linked rings',
+  danger: 'yellow hazard sign on a stand',
+  hope: 'lit lantern at dawn near a window',
+}
+
+const MIN_IMAGE_REQUEST_TIMEOUT_MS = 180 * 1000
+const IMAGE_TIMEOUT_BACKOFF_STEPS_MS = [0, 90 * 1000, 180 * 1000]
+const PYTHON_FLIP_PIPELINE_SCRIPT = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  'scripts',
+  'idena_flip_pipeline.py'
+)
+const DEFAULT_PYTHON_FLIP_PIPELINE_TIMEOUT_MS = 20000
+const execFileAsync = promisify(execFile)
+
 let appDataPath = null
 
 try {
@@ -39,11 +230,2157 @@ function normalizeProvider(provider) {
   return normalized
 }
 
+function isOpenAiCompatibleProvider(provider) {
+  return OPENAI_COMPATIBLE_PROVIDERS.includes(provider)
+}
+
+function supportsImageGenerationProvider(provider) {
+  return isOpenAiCompatibleProvider(provider) || provider === PROVIDERS.Gemini
+}
+
+function resolveProviderConfig(provider, providerConfig = null) {
+  const defaults =
+    PROVIDER_CONFIG_DEFAULTS &&
+    PROVIDER_CONFIG_DEFAULTS[provider] &&
+    typeof PROVIDER_CONFIG_DEFAULTS[provider] === 'object'
+      ? PROVIDER_CONFIG_DEFAULTS[provider]
+      : null
+
+  const overrides =
+    providerConfig && typeof providerConfig === 'object' ? providerConfig : null
+
+  if (!defaults && !overrides) {
+    return null
+  }
+
+  return {
+    ...(defaults || {}),
+    ...(overrides || {}),
+  }
+}
+
+function normalizeConsultantWeight(value, fallback = 1) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback
+  }
+  return Math.min(10, Math.max(0.05, parsed))
+}
+
+function toUsd(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
+}
+
+function resolveOpenAiTextPricing(model) {
+  const normalized = String(model || '')
+    .trim()
+    .toLowerCase()
+  if (!normalized) {
+    return null
+  }
+
+  if (OPENAI_TEXT_PRICING_USD_PER_MTOK[normalized]) {
+    return OPENAI_TEXT_PRICING_USD_PER_MTOK[normalized]
+  }
+
+  const prefix = Object.keys(OPENAI_TEXT_PRICING_USD_PER_MTOK).find((key) =>
+    normalized.startsWith(`${key}-`)
+  )
+
+  return prefix ? OPENAI_TEXT_PRICING_USD_PER_MTOK[prefix] : null
+}
+
+function estimateTextCostUsd(usage = {}, model = '') {
+  const pricing = resolveOpenAiTextPricing(model)
+  if (!pricing) {
+    return null
+  }
+
+  const promptTokens = toUsd(usage.promptTokens)
+  const completionTokens = toUsd(usage.completionTokens)
+
+  return (
+    (promptTokens / 1000000) * toUsd(pricing.input) +
+    (completionTokens / 1000000) * toUsd(pricing.output)
+  )
+}
+
+function resolveOpenAiImageUnitPrice(model, size) {
+  const normalizedModel = String(model || '')
+    .trim()
+    .toLowerCase()
+  const normalizedSize = String(size || '').trim() || '1024x1024'
+  const byModel = OPENAI_IMAGE_PRICING_USD_PER_IMAGE[normalizedModel]
+  if (!byModel) return null
+  return byModel[normalizedSize] || byModel['1024x1024'] || null
+}
+
+function normalizeKeywordValue(item) {
+  if (item == null) return ''
+  if (typeof item === 'string') return item.trim()
+  if (typeof item === 'object') {
+    return String(item.name || item.keyword || item.word || '').trim()
+  }
+  return ''
+}
+
+function normalizeHumanStorySeed(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function reduceStoryBoilerplate(text) {
+  return String(text || '')
+    .replace(/\bin a stable everyday setting\b/gi, 'nearby')
+    .replace(/\bin an everyday setting\b/gi, 'nearby')
+    .replace(/\bin a stable setting\b/gi, 'nearby')
+    .replace(/\bin the same scene\b/gi, 'nearby')
+    .replace(/\bstill clearly visible\b/gi, 'visible')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function normalizeKeywords(payload) {
+  const source = Array.isArray(payload && payload.keywords)
+    ? payload.keywords
+    : []
+  const values = source
+    .map((item) => normalizeKeywordValue(item))
+    .filter(Boolean)
+    .slice(0, 2)
+
+  if (values.length >= 2) return values
+  if (values.length === 1) return [values[0], '']
+  return ['', '']
+}
+
+function isTruthyFlag(value) {
+  if (typeof value === 'boolean') return value
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+  return (
+    normalized === '1' ||
+    normalized === 'true' ||
+    normalized === 'yes' ||
+    normalized === 'on'
+  )
+}
+
+function shouldUsePythonFlipPipeline(payload = {}) {
+  if (typeof payload.usePythonFlipPipeline === 'boolean') {
+    return payload.usePythonFlipPipeline
+  }
+  if (payload.usePythonFlipPipeline != null) {
+    return isTruthyFlag(payload.usePythonFlipPipeline)
+  }
+  return isTruthyFlag(process.env.IDENAAI_USE_PY_FLIP_PIPELINE)
+}
+
+function keywordTokenSet(value) {
+  return new Set(
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .split(/[^a-z0-9]+/g)
+      .filter(Boolean)
+  )
+}
+
+function hasAnyKeywordHint(value, hints) {
+  const tokens = keywordTokenSet(value)
+  for (const hint of hints) {
+    if (tokens.has(hint)) {
+      return true
+    }
+  }
+  return false
+}
+
+function normalizeSemanticRole(value, fallback = 'object') {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+  return SEMANTIC_ROLE_VALUES.includes(normalized) ? normalized : fallback
+}
+
+function normalizeRiskLevel(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase() === 'risk-bearing'
+    ? 'risk-bearing'
+    : 'neutral'
+}
+
+function classifyKeywordRole(value) {
+  if (hasAnyKeywordHint(value, LOCATION_KEYWORD_HINTS)) {
+    return 'location'
+  }
+  if (hasAnyKeywordHint(value, TOOL_KEYWORD_HINTS)) {
+    return 'tool'
+  }
+  if (hasAnyKeywordHint(value, ACTOR_KEYWORD_HINTS)) {
+    return 'actor'
+  }
+  return 'object'
+}
+
+function compileConceptKeyword(value) {
+  const raw = normalizeKeywordValue(value)
+  const key = String(raw || '')
+    .trim()
+    .toLowerCase()
+  if (CONCEPT_REPRESENTATIONS[key]) {
+    return {
+      renderableKeyword: CONCEPT_REPRESENTATIONS[key],
+      role: 'concept_representation',
+    }
+  }
+  return {
+    renderableKeyword: raw,
+    role: classifyKeywordRole(raw),
+  }
+}
+
+function buildPanelsFromPythonStory(story) {
+  const sourcePanels =
+    story && Array.isArray(story.panels) ? story.panels.slice(0, 4) : []
+  while (sourcePanels.length < 4) {
+    sourcePanels.push({})
+  }
+  return sourcePanels.map((panel, index) => {
+    const value = panel && typeof panel === 'object' ? panel : {}
+    const scene = String(
+      value.scene_description || value.sceneDescription || ''
+    )
+      .trim()
+      .replace(/\s+/g, ' ')
+    const action = String(value.action || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+    const required = Array.isArray(value.required_visibles)
+      ? value.required_visibles
+          .map((entry) => normalizeKeywordValue(entry))
+          .filter(Boolean)
+          .slice(0, 4)
+      : []
+    const combined = [scene, action]
+      .concat(required.length ? [`Visible: ${required.join(', ')}`] : [])
+      .filter(Boolean)
+      .join('. ')
+    return normalizeStoryPanel(combined, index)
+  })
+}
+
+function buildStoryOptionsFromPythonPipeline({
+  keywordA,
+  keywordB,
+  includeNoise,
+  storyPanels,
+  semanticPlan = null,
+}) {
+  const normalizedPanels = normalizeStoryPanels(storyPanels)
+  const semanticPromptLines = formatSemanticContractForPrompt(
+    normalizeSemanticContract(
+      semanticPlan,
+      buildSemanticContract({keywordA, keywordB})
+    )
+  )
+  const semanticPrompt = semanticPromptLines.join(' ')
+  const primaryRationale = [
+    'Generated by Python structured pipeline (semantic pre-processing + strict 4-panel schema).',
+    semanticPrompt,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+
+  const primaryStory = normalizeStoryOption(
+    {
+      id: 'option-1',
+      title: 'Option 1',
+      panels: normalizedPanels,
+      includeNoise,
+      noisePanelIndex: includeNoise
+        ? chooseNoisePanelIndex(`${keywordA}-${keywordB}`)
+        : null,
+      rationale: primaryRationale,
+      storySummary: semanticPrompt
+        ? `Safe semantic plan: ${semanticPrompt.slice(0, 220)}`
+        : 'Safe semantic plan generated by Python pipeline.',
+    },
+    0
+  )
+
+  const fallbackStories = buildKeywordFallbackStories({
+    keywordA,
+    keywordB,
+    includeNoise,
+    customStory: normalizedPanels,
+  })
+  const secondaryBase =
+    fallbackStories[1] ||
+    normalizeStoryOption(
+      {
+        id: 'option-2',
+        title: 'Option 2',
+        panels: normalizedPanels.map((panel, idx) =>
+          idx === 0 ? `${panel} (alternative opening)` : panel
+        ),
+        rationale: 'Alternative variant derived from Python semantic pipeline.',
+      },
+      1
+    )
+
+  const secondaryStory = normalizeStoryOption(
+    {
+      ...secondaryBase,
+      id: 'option-2',
+      title: String(secondaryBase.title || 'Option 2').trim() || 'Option 2',
+      rationale: [
+        'Alternative variant derived from Python semantic pipeline.',
+        String(secondaryBase.rationale || '').trim(),
+      ]
+        .filter(Boolean)
+        .join(' | '),
+    },
+    1
+  )
+
+  return [primaryStory, secondaryStory]
+}
+
+async function runPythonFlipStoryPipelineDefault({
+  keywordA,
+  keywordB,
+  provider = PROVIDERS.OpenAI,
+  timeoutMs = DEFAULT_PYTHON_FLIP_PIPELINE_TIMEOUT_MS,
+}) {
+  const scriptExists = await fs.pathExists(PYTHON_FLIP_PIPELINE_SCRIPT)
+  if (!scriptExists) {
+    throw new Error(
+      `Python pipeline script not found: ${PYTHON_FLIP_PIPELINE_SCRIPT}`
+    )
+  }
+
+  const args = [
+    PYTHON_FLIP_PIPELINE_SCRIPT,
+    normalizeKeywordValue(keywordA) || '-',
+    normalizeKeywordValue(keywordB) || '-',
+    '--story-only',
+    '--provider',
+    provider === PROVIDERS.Gemini ? 'gemini' : 'openai',
+  ]
+
+  const {stdout} = await execFileAsync('python3', args, {
+    timeout: Math.max(
+      5000,
+      Number(timeoutMs) || DEFAULT_PYTHON_FLIP_PIPELINE_TIMEOUT_MS
+    ),
+    maxBuffer: 4 * 1024 * 1024,
+    cwd: path.dirname(PYTHON_FLIP_PIPELINE_SCRIPT),
+  })
+
+  const parsed = extractJsonBlock(stdout)
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Python pipeline returned invalid JSON payload')
+  }
+
+  const storyPanels = buildPanelsFromPythonStory(parsed.story || {})
+  if (!hasMeaningfulStoryPanels(storyPanels)) {
+    throw new Error('Python pipeline returned low-value story panels')
+  }
+
+  return {
+    semanticPlan:
+      parsed.semantic_plan && typeof parsed.semantic_plan === 'object'
+        ? parsed.semantic_plan
+        : null,
+    storyPanels,
+    raw: parsed,
+  }
+}
+
+function makeSafeUseContext({
+  keyword,
+  role,
+  riskLevel,
+  defaultSafeContext = 'N/A',
+}) {
+  if (riskLevel !== 'risk-bearing') {
+    return defaultSafeContext
+  }
+
+  const normalized = String(keyword || '')
+    .trim()
+    .toLowerCase()
+  if (normalized.includes('chainsaw') || normalized.includes('saw')) {
+    return 'Bright woodworking studio, protective goggles and gloves, cutting only a wooden log.'
+  }
+  if (
+    normalized.includes('knife') ||
+    normalized.includes('blade') ||
+    normalized.includes('machete')
+  ) {
+    return 'Culinary classroom, chef supervision, cutting vegetables on a board.'
+  }
+  if (
+    normalized.includes('gun') ||
+    normalized.includes('rifle') ||
+    normalized.includes('pistol')
+  ) {
+    return 'Sports range safety drill with empty training prop and instructor supervision.'
+  }
+  if (normalized.includes('fire') || normalized.includes('explosive')) {
+    return 'Controlled safety demonstration zone with extinguisher and trained supervisor.'
+  }
+  if (normalized.includes('poison')) {
+    return 'Laboratory safety lesson with sealed hazard container and protective equipment.'
+  }
+
+  if (role === 'tool') {
+    return 'Professional workshop environment with protective gear and supervised safe-use handling.'
+  }
+  return 'Well-lit public setting with harmless everyday task and no threat cues.'
+}
+
+function resolveDisjointRoles(roleA, roleB) {
+  const normalizedA = normalizeSemanticRole(roleA, 'object')
+  const normalizedB = normalizeSemanticRole(roleB, 'object')
+
+  if (normalizedA !== normalizedB) {
+    return [normalizedA, normalizedB]
+  }
+
+  if (normalizedA === 'actor') {
+    return ['actor', 'object']
+  }
+  if (normalizedA === 'tool') {
+    return ['tool', 'object']
+  }
+  if (normalizedA === 'location') {
+    return ['location', 'object']
+  }
+  if (normalizedA === 'concept_representation') {
+    return ['concept_representation', 'object']
+  }
+
+  return [normalizedA, normalizedB]
+}
+
+function buildOverarchingIntent({
+  keywordA,
+  keywordB,
+  roleA,
+  roleB,
+  humanStorySeed,
+  riskLevelA,
+  riskLevelB,
+}) {
+  const seed = normalizeHumanStorySeed(humanStorySeed)
+  if (seed) {
+    return `Use this human seed as the safe narrative anchor: ${seed}`
+  }
+
+  if (riskLevelA === 'risk-bearing' || riskLevelB === 'risk-bearing') {
+    return `Create a harmless supervised task where ${keywordA} and ${keywordB} stay clearly visible throughout one causal sequence.`
+  }
+
+  if (roleA === 'actor' && roleB === 'tool') {
+    return `${keywordA} uses ${keywordB} to complete an everyday practical task with clear before-action-after progression.`
+  }
+  if (roleA === 'location' || roleB === 'location') {
+    return `One simple event chain unfolds in a stable location where ${keywordA} and ${keywordB} remain visible.`
+  }
+  return `Build a literal physical cause-effect sequence connecting ${keywordA} and ${keywordB}.`
+}
+
+function buildSemanticContract({keywordA, keywordB, humanStorySeed = ''}) {
+  const firstKeyword = normalizeKeywordValue(keywordA)
+  const secondKeyword = normalizeKeywordValue(keywordB)
+
+  const firstCompiled = compileConceptKeyword(firstKeyword)
+  const secondCompiled = compileConceptKeyword(secondKeyword)
+  const riskLevelA = hasAnyKeywordHint(firstKeyword, RISK_BEARING_KEYWORD_HINTS)
+    ? 'risk-bearing'
+    : 'neutral'
+  const riskLevelB = hasAnyKeywordHint(
+    secondKeyword,
+    RISK_BEARING_KEYWORD_HINTS
+  )
+    ? 'risk-bearing'
+    : 'neutral'
+  const [roleA, roleB] = resolveDisjointRoles(
+    firstCompiled.role,
+    secondCompiled.role
+  )
+
+  const safeContextA = makeSafeUseContext({
+    keyword: firstKeyword,
+    role: roleA,
+    riskLevel: riskLevelA,
+  })
+  const safeContextB = makeSafeUseContext({
+    keyword: secondKeyword,
+    role: roleB,
+    riskLevel: riskLevelB,
+    defaultSafeContext: safeContextA,
+  })
+
+  const mergedSafeContext =
+    safeContextA !== 'N/A' || safeContextB !== 'N/A'
+      ? [safeContextA, safeContextB]
+          .filter(Boolean)
+          .filter((value, index, list) => list.indexOf(value) === index)
+          .join(' ')
+      : 'N/A'
+
+  return {
+    keyword_1_analysis: {
+      keyword: firstKeyword || 'keyword-1',
+      renderable_keyword: firstCompiled.renderableKeyword || firstKeyword,
+      role: roleA,
+      risk_level: riskLevelA,
+      safe_use_context: safeContextA,
+    },
+    keyword_2_analysis: {
+      keyword: secondKeyword || 'keyword-2',
+      renderable_keyword: secondCompiled.renderableKeyword || secondKeyword,
+      role: roleB,
+      risk_level: riskLevelB,
+      safe_use_context: safeContextB,
+    },
+    safe_use_context: mergedSafeContext,
+    overarching_intent: buildOverarchingIntent({
+      keywordA: firstKeyword || 'keyword-1',
+      keywordB: secondKeyword || 'keyword-2',
+      roleA,
+      roleB,
+      humanStorySeed,
+      riskLevelA,
+      riskLevelB,
+    }),
+  }
+}
+
+function normalizeSemanticKeywordAnalysis(value, fallbackKeyword) {
+  const item = value && typeof value === 'object' ? value : {}
+  const keyword = normalizeKeywordValue(item.keyword || fallbackKeyword)
+  const renderableKeyword = normalizeKeywordValue(
+    item.renderable_keyword || item.renderableKeyword || keyword
+  )
+  return {
+    keyword: keyword || fallbackKeyword,
+    renderable_keyword: renderableKeyword || keyword || fallbackKeyword,
+    role: normalizeSemanticRole(item.role, classifyKeywordRole(keyword)),
+    risk_level: normalizeRiskLevel(item.risk_level || item.riskLevel),
+    safe_use_context: String(item.safe_use_context || item.safeUseContext || '')
+      .trim()
+      .slice(0, 260),
+  }
+}
+
+function normalizeSemanticContract(value, fallbackContract) {
+  const fallback =
+    fallbackContract && typeof fallbackContract === 'object'
+      ? fallbackContract
+      : buildSemanticContract({keywordA: 'keyword-1', keywordB: 'keyword-2'})
+  const raw = value && typeof value === 'object' ? value : {}
+
+  const first = normalizeSemanticKeywordAnalysis(
+    raw.keyword_1_analysis || raw.keyword1 || raw.keywordA,
+    fallback.keyword_1_analysis.keyword
+  )
+  const second = normalizeSemanticKeywordAnalysis(
+    raw.keyword_2_analysis || raw.keyword2 || raw.keywordB,
+    fallback.keyword_2_analysis.keyword
+  )
+  const [roleA, roleB] = resolveDisjointRoles(first.role, second.role)
+
+  return {
+    keyword_1_analysis: {
+      ...first,
+      role: roleA,
+    },
+    keyword_2_analysis: {
+      ...second,
+      role: roleB,
+    },
+    safe_use_context: String(raw.safe_use_context || raw.safeUseContext || '')
+      .trim()
+      .slice(0, 320),
+    overarching_intent: String(
+      raw.overarching_intent || raw.overarchingIntent || ''
+    )
+      .trim()
+      .slice(0, 420),
+  }
+}
+
+function _mergeSemanticContract(rawText, fallbackContract) {
+  const fallback =
+    fallbackContract && typeof fallbackContract === 'object'
+      ? fallbackContract
+      : null
+  if (!fallback) return null
+
+  try {
+    const parsed = extractJsonBlock(rawText) || {}
+    const source =
+      parsed &&
+      parsed.semantic_pre_processing &&
+      typeof parsed.semantic_pre_processing === 'object'
+        ? parsed.semantic_pre_processing
+        : parsed
+    return normalizeSemanticContract(source, fallback)
+  } catch (error) {
+    return fallback
+  }
+}
+
+function formatSemanticContractForPrompt(contract) {
+  if (!contract || typeof contract !== 'object') {
+    return []
+  }
+  const first = contract.keyword_1_analysis || {}
+  const second = contract.keyword_2_analysis || {}
+  const safeContext =
+    String(contract.safe_use_context || '').trim() ||
+    [first.safe_use_context, second.safe_use_context]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .filter((value, index, list) => list.indexOf(value) === index)
+      .join(' ')
+
+  return [
+    'Semantic pre-processing contract (must be preserved):',
+    `- Keyword 1: ${first.keyword || '-'} | role=${
+      first.role || 'object'
+    } | renderable=${first.renderable_keyword || first.keyword || '-'} | risk=${
+      first.risk_level || 'neutral'
+    }`,
+    `- Keyword 2: ${second.keyword || '-'} | role=${
+      second.role || 'object'
+    } | renderable=${
+      second.renderable_keyword || second.keyword || '-'
+    } | risk=${second.risk_level || 'neutral'}`,
+    safeContext && safeContext !== 'N/A'
+      ? `- Safe-use context: ${safeContext}`
+      : '- Safe-use context: N/A',
+    String(contract.overarching_intent || '').trim()
+      ? `- Overarching intent: ${String(contract.overarching_intent).trim()}`
+      : '',
+  ].filter(Boolean)
+}
+
+function normalizeStoryPanel(value, index) {
+  const text =
+    value && typeof value === 'object'
+      ? String(
+          value.description ||
+            value.text ||
+            value.panelText ||
+            value.panel_text ||
+            value.caption ||
+            ''
+        )
+      : String(value || '')
+  const normalized = reduceStoryBoilerplate(text.trim().replace(/\s+/g, ' '))
+  if (normalized) {
+    return normalized
+  }
+  return `Panel ${index + 1}: add a clear event in the story.`
+}
+
+function normalizeStoryPanels(value) {
+  const source = Array.isArray(value) ? value.slice(0, 4) : []
+  while (source.length < 4) {
+    source.push('')
+  }
+  return source.map((item, index) => normalizeStoryPanel(item, index))
+}
+
+function normalizeStoryOption(value, index) {
+  const item = value && typeof value === 'object' ? value : {}
+  const title =
+    String(
+      item.title || item.final_story_title || item.finalStoryTitle || ''
+    ).trim() || `Option ${index + 1}`
+  const storySummary = String(
+    item.storySummary || item.story_summary || ''
+  ).trim()
+  let complianceSource = {}
+  if (
+    item.complianceReport &&
+    typeof item.complianceReport === 'object' &&
+    !Array.isArray(item.complianceReport)
+  ) {
+    complianceSource = item.complianceReport
+  } else if (
+    item.compliance_report &&
+    typeof item.compliance_report === 'object' &&
+    !Array.isArray(item.compliance_report)
+  ) {
+    complianceSource = item.compliance_report
+  }
+  const complianceReport = STORY_COMPLIANCE_KEYS.reduce((acc, key) => {
+    const rawValue = String(complianceSource[key] || '')
+      .trim()
+      .toLowerCase()
+    if (rawValue === 'pass' || rawValue === 'fail') {
+      acc[key] = rawValue
+    } else if (
+      complianceSource[key] === true ||
+      rawValue === 'true' ||
+      rawValue === 'ok'
+    ) {
+      acc[key] = 'pass'
+    } else if (complianceSource[key] === false || rawValue === 'false') {
+      acc[key] = 'fail'
+    }
+    return acc
+  }, {})
+  let riskSource = []
+  if (Array.isArray(item.riskFlags)) {
+    riskSource = item.riskFlags
+  } else if (Array.isArray(item.risk_flags)) {
+    riskSource = item.risk_flags
+  }
+  const riskFlags = riskSource
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean)
+    .slice(0, 6)
+  const revisionIfRisky = String(
+    item.revisionIfRisky || item.revision_if_risky || ''
+  ).trim()
+  const failedChecks = Object.entries(complianceReport)
+    .filter(([, status]) => status === 'fail')
+    .map(([key]) => key)
+  const autoRationale = []
+  if (storySummary) autoRationale.push(storySummary)
+  if (failedChecks.length) {
+    autoRationale.push(`failed checks: ${failedChecks.join(', ')}`)
+  }
+  if (riskFlags.length) {
+    autoRationale.push(`risk flags: ${riskFlags.join('; ')}`)
+  }
+  const rationale =
+    String(item.rationale || '').trim() || autoRationale.join(' | ')
+  return {
+    id: String(item.id || `option-${index + 1}`),
+    title,
+    panels: normalizeStoryPanels(item.panels),
+    includeNoise: Boolean(item.includeNoise),
+    noisePanelIndex: Number.isFinite(Number(item.noisePanelIndex))
+      ? Math.max(0, Math.min(3, Number(item.noisePanelIndex)))
+      : null,
+    rationale,
+    storySummary,
+    complianceReport,
+    riskFlags,
+    revisionIfRisky,
+  }
+}
+
+function isPlaceholderStoryPanel(panelText) {
+  const value = String(panelText || '')
+    .trim()
+    .toLowerCase()
+  return /^panel\s*[1-4]\s*:\s*add a clear event in the story(?:\s*\(.*\))?\.?$/.test(
+    value
+  )
+}
+
+function isLowValueStoryPanel(panelText) {
+  const value = String(panelText || '')
+    .trim()
+    .toLowerCase()
+  if (!value) return true
+  if (isPlaceholderStoryPanel(value)) return true
+  if (/^add a clear event in the story(?:\s*\(.*\))?\.?$/.test(value)) {
+    return true
+  }
+  if (/^panel\s*[1-4]\s*:\s*continue story\.?$/.test(value)) {
+    return true
+  }
+  if (/^panel\s*[1-4]\s*:\s*continue the story\.?$/.test(value)) {
+    return true
+  }
+  if (/^panel\s*[1-4]\s*:\s*describe panel/i.test(value)) {
+    return true
+  }
+  return false
+}
+
+function hasMeaningfulStoryPanels(panels) {
+  if (!Array.isArray(panels)) return false
+  const meaningfulPanels = panels
+    .map((panel) => String(panel || '').trim())
+    .filter((panel) => panel && !isLowValueStoryPanel(panel))
+
+  if (meaningfulPanels.length < 3) return false
+
+  const uniquePanels = new Set(
+    meaningfulPanels.map((panel) => panel.toLowerCase())
+  )
+  return uniquePanels.size >= 3
+}
+
+function normalizeKeywordFallbackValue(value, fallback) {
+  const normalized = normalizeKeywordValue(value)
+  return normalized || fallback
+}
+
+function buildKeywordFallbackPanels(
+  keywordA,
+  keywordB,
+  variant,
+  humanStorySeed
+) {
+  const safeSeed = normalizeHumanStorySeed(humanStorySeed)
+  if (safeSeed) {
+    if (variant === 1) {
+      return [
+        `${safeSeed} The scene opens with ${keywordA} and ${keywordB} both visible.`,
+        `A person initiates one concrete action connecting ${keywordA} with ${keywordB}.`,
+        `That action causes an obvious physical change around ${keywordB}.`,
+        `The final panel shows the resolved outcome with ${keywordA} and ${keywordB} still visible.`,
+      ]
+    }
+    return [
+      `${safeSeed} The first panel establishes both ${keywordA} and ${keywordB}.`,
+      `An actor uses ${keywordA} to trigger a visible event involving ${keywordB}.`,
+      `The peak change becomes obvious in the third panel as ${keywordB} reacts.`,
+      `The fourth panel shows the new stable state after the event.`,
+    ]
+  }
+
+  if (variant === 1) {
+    return [
+      `A person notices ${keywordA} near a ${keywordB} and starts interacting with both.`,
+      `The person uses ${keywordA} as a clear tool to change the state of the ${keywordB}.`,
+      `The ${keywordB} visibly changes while ${keywordA} remains in the same scene.`,
+      `The person observes the final result with both ${keywordA} and ${keywordB} still clearly visible.`,
+    ]
+  }
+
+  return [
+    `A person notices ${keywordA} next to a ${keywordB} and prepares one clear action.`,
+    `The person performs one obvious action linking ${keywordA} to the ${keywordB}.`,
+    `A clear physical change appears on the ${keywordB} because of that action.`,
+    `The final panel shows the finished result with ${keywordA} and ${keywordB} visible.`,
+  ]
+}
+
+function buildKeywordFallbackStories({
+  keywordA,
+  keywordB,
+  includeNoise = false,
+  customStory = null,
+  humanStorySeed = '',
+}) {
+  const safeKeywordA = normalizeKeywordFallbackValue(keywordA, 'object A')
+  const safeKeywordB = normalizeKeywordFallbackValue(keywordB, 'object B')
+  const normalizedCustomPanels = normalizeStoryPanels(customStory || [])
+  const hasCustomPanels = hasMeaningfulStoryPanels(normalizedCustomPanels)
+  const noisePanelIndex = includeNoise
+    ? chooseNoisePanelIndex(`${safeKeywordA}-${safeKeywordB}`)
+    : null
+
+  const optionOnePanels = hasCustomPanels
+    ? normalizedCustomPanels
+    : buildKeywordFallbackPanels(safeKeywordA, safeKeywordB, 0, humanStorySeed)
+
+  const optionTwoPanels = hasCustomPanels
+    ? normalizedCustomPanels.map((panel, index) =>
+        index === 0 ? `${panel} (alternative opening)` : panel
+      )
+    : buildKeywordFallbackPanels(safeKeywordA, safeKeywordB, 1, humanStorySeed)
+
+  return [
+    normalizeStoryOption(
+      {
+        id: 'option-1',
+        title: 'Option 1',
+        panels: optionOnePanels,
+        rationale:
+          'Local fallback story generated because provider output could not be parsed reliably.',
+        includeNoise,
+        noisePanelIndex,
+      },
+      0
+    ),
+    normalizeStoryOption(
+      {
+        id: 'option-2',
+        title: 'Option 2',
+        panels: optionTwoPanels,
+        rationale:
+          'Alternative local fallback story generated because provider output could not be parsed reliably.',
+        includeNoise,
+        noisePanelIndex,
+      },
+      1
+    ),
+  ]
+}
+
+function normalizeStoryOptionFromStructuredItem(item, index) {
+  const option = item && typeof item === 'object' ? item : {}
+  const sourcePanels = Array.isArray(option.panels)
+    ? option.panels.slice(0, 4)
+    : []
+  while (sourcePanels.length < 4) {
+    sourcePanels.push({})
+  }
+  const normalizedPanels = sourcePanels.map((panel, panelIndex) => {
+    const value = panel && typeof panel === 'object' ? panel : {}
+    const scene = String(
+      value.scene_description || value.sceneDescription || ''
+    )
+      .trim()
+      .replace(/\s+/g, ' ')
+    const action = String(value.action || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+    const required = Array.isArray(value.required_visibles)
+      ? value.required_visibles
+          .map((entry) => String(entry || '').trim())
+          .filter(Boolean)
+          .slice(0, 4)
+      : []
+    const parts = [scene, action]
+      .concat(required.length ? [`Visible: ${required.join(', ')}`] : [])
+      .filter(Boolean)
+    if (parts.length > 0) {
+      return normalizeStoryPanel(parts.join('. '), panelIndex)
+    }
+    return normalizeStoryPanel('', panelIndex)
+  })
+
+  return normalizeStoryOption(
+    {
+      id: String(option.option_id || option.id || `option-${index + 1}`).trim(),
+      title:
+        String(
+          option.option_title || option.title || `Option ${index + 1}`
+        ).trim() || `Option ${index + 1}`,
+      panels: normalizedPanels,
+      storySummary: String(
+        option.story_summary ||
+          option.storySummary ||
+          option.overview ||
+          option.rationale ||
+          ''
+      ).trim(),
+      rationale: String(option.rationale || '').trim(),
+    },
+    index
+  )
+}
+
+function parseStoryOptions(rawText, context = {}) {
+  const contextValue = context && typeof context === 'object' ? context : {}
+  try {
+    const parsed = extractJsonBlock(rawText) || {}
+    if (Array.isArray(parsed) && parsed.length) {
+      const normalized = parsed
+        .slice(0, 2)
+        .map((item, index) => normalizeStoryOption(item, index))
+      if (normalized.some((item) => hasMeaningfulStoryPanels(item.panels))) {
+        return normalized
+      }
+    }
+    if (Array.isArray(parsed && parsed.stories) && parsed.stories.length) {
+      const normalized = parsed.stories
+        .slice(0, 2)
+        .map((item, index) => normalizeStoryOption(item, index))
+      if (normalized.some((item) => hasMeaningfulStoryPanels(item.panels))) {
+        return normalized
+      }
+    }
+    if (Array.isArray(parsed && parsed.options) && parsed.options.length) {
+      const normalized = parsed.options
+        .slice(0, 2)
+        .map((item, index) => normalizeStoryOption(item, index))
+      if (normalized.some((item) => hasMeaningfulStoryPanels(item.panels))) {
+        return normalized
+      }
+    }
+    if (
+      Array.isArray(parsed && parsed.story_options) &&
+      parsed.story_options.length
+    ) {
+      const normalized = parsed.story_options
+        .slice(0, 2)
+        .map((item, index) =>
+          normalizeStoryOptionFromStructuredItem(item, index)
+        )
+      if (normalized.some((item) => hasMeaningfulStoryPanels(item.panels))) {
+        return normalized
+      }
+    }
+    if (Array.isArray(parsed && parsed.panels) && parsed.panels.length) {
+      const normalized = [normalizeStoryOption(parsed, 0)]
+      if (hasMeaningfulStoryPanels(normalized[0].panels)) {
+        return normalized
+      }
+    }
+    if (
+      parsed &&
+      (parsed.final_story_title ||
+        parsed.finalStoryTitle ||
+        parsed.story_summary)
+    ) {
+      const normalized = [normalizeStoryOption(parsed, 0)]
+      if (hasMeaningfulStoryPanels(normalized[0].panels)) {
+        return normalized
+      }
+    }
+  } catch (error) {
+    // Fallback below.
+  }
+
+  // Fallback: split model text into 4 lines and mirror into 2 options.
+  const lines = String(rawText || '')
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(/^\s*[-*]\s*/, '')
+        .replace(/^panel\s*[1-4]\s*[:.)-]?\s*/i, '')
+        .trim()
+    )
+    .filter((line) => line && /[A-Za-z0-9]/.test(line))
+    .slice(0, 4)
+  if (lines.length >= 4) {
+    const panels = normalizeStoryPanels(lines)
+    const fallback = [
+      normalizeStoryOption({title: 'Option 1', panels}, 0),
+      normalizeStoryOption(
+        {
+          title: 'Option 2',
+          panels: panels.map((line, idx) =>
+            idx === 0 ? `${line} (alternative opening)` : line
+          ),
+        },
+        1
+      ),
+    ]
+    if (fallback.some((item) => hasMeaningfulStoryPanels(item.panels))) {
+      return fallback
+    }
+  }
+
+  return buildKeywordFallbackStories({
+    keywordA: contextValue.keywordA,
+    keywordB: contextValue.keywordB,
+    includeNoise: Boolean(contextValue.includeNoise),
+    customStory: contextValue.customStory || null,
+    humanStorySeed: contextValue.humanStorySeed || '',
+  })
+}
+
+function chooseNoisePanelIndex(seed, preferred = null) {
+  if (Number.isFinite(Number(preferred))) {
+    return Math.max(0, Math.min(3, Number(preferred)))
+  }
+  return hashScore(String(seed || Date.now())) % 4
+}
+
+function buildStoryOptionsPrompt({
+  keywordA,
+  keywordB,
+  includeNoise,
+  customStory,
+}) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || '-'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || '-'
+  const baseStory = normalizeStoryPanels(customStory)
+  const hasCustomStory = Array.isArray(customStory) && customStory.length > 0
+
+  const outputSchema = `{
+  "keywords": ["<keyword1>", "<keyword2>"],
+  "final_story_title": "<very short internal label>",
+  "story_summary": "<1 sentence, plain and literal>",
+  "panels": [
+    {
+      "panel": 1,
+      "role": "before",
+      "description": "<clear visual description>",
+      "keywords_visible": ["<...>"],
+      "state_change_from_previous": "n/a"
+    },
+    {
+      "panel": 2,
+      "role": "setup of event",
+      "description": "<clear visual description>",
+      "keywords_visible": ["<...>"],
+      "state_change_from_previous": "<what changed visibly>"
+    },
+    {
+      "panel": 3,
+      "role": "peak event",
+      "description": "<clear visual description>",
+      "keywords_visible": ["<...>"],
+      "state_change_from_previous": "<what changed visibly>"
+    },
+    {
+      "panel": 4,
+      "role": "after",
+      "description": "<clear visual description>",
+      "keywords_visible": ["<...>"],
+      "state_change_from_previous": "<what changed visibly>"
+    }
+  ],
+  "compliance_report": {
+    "keyword_relevance": "pass/fail",
+    "no_text_needed": "pass/fail",
+    "no_order_labels": "pass/fail",
+    "no_inappropriate_content": "pass/fail",
+    "single_story_only": "pass/fail",
+    "no_waking_up_template": "pass/fail",
+    "no_thumbs_up_down": "pass/fail",
+    "no_enumeration_logic": "pass/fail",
+    "no_screen_or_page_keyword_cheat": "pass/fail",
+    "causal_clarity": "pass/fail",
+    "consensus_clarity": "pass/fail"
+  },
+  "risk_flags": ["<list any remaining ambiguity or report-risk factors>"],
+  "revision_if_risky": "<if any risk flag exists, rewrite the concept once and provide the safer version instead>"
+}`
+
+  const customStoryHint = hasCustomStory
+    ? `Custom user draft panels to preserve/improve:
+1) ${baseStory[0]}
+2) ${baseStory[1]}
+3) ${baseStory[2]}
+4) ${baseStory[3]}`
+    : ''
+  const noiseHint = includeNoise
+    ? 'Additional instruction: keep all 4 panels as one coherent story. Noise, if enabled, is applied later as adversarial image distortion on one panel; do not introduce random unrelated scenes.'
+    : 'Additional instruction: do not include any extra noise semantics.'
+
+  return [
+    'You are an Idena flip storyline planner and compliance checker.',
+    'Goal:',
+    'Create two distinct 4-panel, wordless, single-story flip concepts from two Idena keywords.',
+    'Your priority is clear compliance plus creative quality. Your priority order is:',
+    '1. rule compliance,',
+    '2. low report risk,',
+    '3. high human consensus,',
+    '4. clear visual causality.',
+    '5. creative-but-readable scene design.',
+    '',
+    'Hard constraints:',
+    '- Both keywords must be clearly and concretely visible in the story.',
+    '- The flip must be solvable without reading any text.',
+    '- Do not use any letters, numbers, arrows, labels, captions, signs, interface text, clocks, calendars, scoreboards, book pages, posters, or subtitles if reading them is needed.',
+    '- Do not include inappropriate, sexual, violent, or shocking content.',
+    '- Do not use several unrelated mini-stories.',
+    '- Do not use the waking-up template.',
+    '- Do not end with thumbs up or thumbs down.',
+    '- Do not rely on a sequence of enumerated objects or counting logic.',
+    '- Do not satisfy the keywords only by showing them inside a page, screen, painting, or printed collage.',
+    '- Use exactly one coherent before-event-after storyline across 4 images.',
+    '',
+    'Design rules for low report risk:',
+    '- Prefer everyday physical actions and visible cause-effect.',
+    '- Avoid symbolism, wordplay, metaphors, jokes, surrealism, dream logic, and culturally specific references.',
+    '- Avoid tiny details that must be noticed to solve the sequence.',
+    '- Avoid camera-angle tricks that make two panels look like duplicates.',
+    '- Avoid multiple equally plausible orders.',
+    '- Avoid stories where the main change happens off-screen.',
+    '- Make the transition between panels 1-2-3-4 visibly progressive.',
+    '- Show at least one obvious state change in each step.',
+    '- If possible, show each keyword in more than one panel.',
+    '- Use one main actor or object chain only.',
+    '- Keep the environment stable unless the change itself is the point.',
+    '- Prefer actions a child could understand instantly.',
+    '',
+    '4-panel storyboard checklist (must be applied during generation):',
+    '1. Before: starting situation is obvious.',
+    '2. Trigger: change clearly begins.',
+    '3. Peak change: strongest causal event is visible.',
+    '4. After: stable consequence is obvious and clearly follows panel 3.',
+    'If panel 4 is not a real consequence of panel 3, reject the candidate.',
+    '',
+    'What to optimize for:',
+    '- one single story chain only',
+    '- one dominant visible change',
+    '- visible causality from panel to panel',
+    '- clear progression with no near-duplicates',
+    '- stable visual anchors across all 4 panels',
+    '- literal physical action instead of metaphor/symbolism',
+    '- big readable state changes even at small size',
+    '',
+    'Preferred archetypes:',
+    '- repair',
+    '- destruction',
+    '- containment and release',
+    '- obstacle and solution',
+    '- movement or transfer',
+    '- transformation',
+    '- loss and recovery',
+    '- cleanup and restoration',
+    '',
+    'Fast rejection rules:',
+    '- reject if more than one panel order seems plausible',
+    '- reject if two panels are near-duplicates',
+    '- reject if the main event happens off-screen',
+    '- reject if the story needs explanation',
+    '- reject if keywords are present but not functionally important',
+    '- reject if ending is only emotion without visible outcome',
+    '- reject if story depends on reading or counting',
+    '',
+    'Scoring rubric (1-5 for each candidate before final selection):',
+    '- keyword_clarity',
+    '- single_story_clarity',
+    '- causality',
+    '- visual_difference',
+    '- consensus_safety',
+    '- literalness',
+    '- ending_strength',
+    'Mandatory thresholds:',
+    '- causality >= 4',
+    '- consensus_safety >= 4',
+    '- keyword_clarity >= 4',
+    '',
+    'Internal workflow:',
+    '1. Interpret both keywords visually and literally first.',
+    '2. Generate 3 candidate storylines that pass the checklist/rubric.',
+    '3. For each candidate, run a compliance audit:',
+    '   - keyword_relevance',
+    '   - no_text_needed',
+    '   - no_order_labels',
+    '   - no_inappropriate_content',
+    '   - single_story_only',
+    '   - no_waking_up_template',
+    '   - no_thumbs_up_down',
+    '   - no_enumeration_logic',
+    '   - no_screen_or_page_keyword_cheat',
+    '   - causal_clarity',
+    '   - consensus_clarity',
+    '4. Reject any candidate that fails any hard constraint.',
+    '5. Among remaining candidates, choose the one with:',
+    '   - the clearest causal chain,',
+    '   - the least ambiguity,',
+    '   - the most literal keyword visibility,',
+    '   - the lowest report risk.',
+    '6. Output exactly two final concepts with different actions/scenes.',
+    '',
+    'Output format:',
+    'Return strict JSON with this exact envelope schema:',
+    '{',
+    '  "stories": [',
+    '    <concept_1_in_schema_below>,',
+    '    <concept_2_in_schema_below>',
+    '  ]',
+    '}',
+    'Concept schema:',
+    outputSchema,
+    '',
+    'Decision rule:',
+    'If there is any meaningful ambiguity, simplify while keeping the scene vivid and concrete.',
+    'If a keyword is only weakly implied, make it more literal.',
+    'If the concept is clever but not instantly readable, discard it.',
+    'Optimize for "boringly clear".',
+    'Never output placeholder text such as "Panel 1: add a clear event in the story."',
+    'Avoid stock phrases like "in a stable everyday setting", "still clearly visible", or "in the same scene".',
+    'Use concrete visual actions and vary wording across panels.',
+    'Never duplicate concept_1 as concept_2.',
+    '',
+    'Extra design heuristics:',
+    '- make one keyword the actor/object and the other the obstacle/tool/location',
+    '- avoid abstract nouns unless converted into an obvious physical scene',
+    '- avoid panel 1 and panel 4 looking too similar',
+    '- avoid "spot the tiny difference" stories',
+    '- avoid meme-style or internet-native imagery that could feel like text-dependent inference',
+    '',
+    `Keyword 1: ${safeKeywordA}`,
+    `Keyword 2: ${safeKeywordB}`,
+    noiseHint,
+    customStoryHint,
+    'Return strict JSON only. No markdown.',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function buildStoryOptionsPromptFast({
+  keywordA,
+  keywordB,
+  includeNoise,
+  customStory,
+}) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || '-'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || '-'
+  const baseStory = normalizeStoryPanels(customStory)
+  const hasCustomStory = Array.isArray(customStory) && customStory.length > 0
+  const customStoryHint = hasCustomStory
+    ? `Use this draft as seed and improve it:
+1) ${baseStory[0]}
+2) ${baseStory[1]}
+3) ${baseStory[2]}
+4) ${baseStory[3]}`
+    : ''
+  const noiseHint = includeNoise
+    ? 'Noise is added later to one panel. Keep one coherent story.'
+    : ''
+  return [
+    'Generate exactly 2 distinct flip story options as strict JSON only.',
+    'Goal: fast, clear, creative 4-panel stories for Idena flips.',
+    'Rules:',
+    '- one single story chain only',
+    '- clear structure: before -> trigger -> peak change -> after',
+    '- both keywords must be visually present and relevant',
+    '- no text overlays, letters, numbers, labels, logos, or watermarks',
+    '- no counting puzzles, no symbolism, no surreal jokes',
+    '- panel 4 must be a visible consequence of panel 3',
+    '- avoid repeated stock phrases; use natural concise wording',
+    'Output JSON schema:',
+    '{',
+    '  "stories": [',
+    '    {"title":"Option 1","story_summary":"...","panels":["...","...","...","..."]},',
+    '    {"title":"Option 2","story_summary":"...","panels":["...","...","...","..."]}',
+    '  ]',
+    '}',
+    `Keyword 1: ${safeKeywordA}`,
+    `Keyword 2: ${safeKeywordB}`,
+    noiseHint,
+    customStoryHint,
+    'Return JSON only. No markdown.',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function storyOptionToMainPromptConcept(option, keywordA, keywordB) {
+  const normalized = option && typeof option === 'object' ? option : {}
+  const keywords = [
+    normalizeKeywordValue(keywordA),
+    normalizeKeywordValue(keywordB),
+  ]
+    .filter(Boolean)
+    .slice(0, 2)
+  const safeKeywords = keywords.length ? keywords : ['keyword-1', 'keyword-2']
+  const roleByPanel = ['before', 'setup of event', 'peak event', 'after']
+  const complianceReport = STORY_COMPLIANCE_KEYS.reduce((acc, key) => {
+    const value =
+      normalized.complianceReport && normalized.complianceReport[key]
+    const status =
+      String(value || '')
+        .trim()
+        .toLowerCase() === 'fail'
+        ? 'fail'
+        : 'pass'
+    acc[key] = status
+    return acc
+  }, {})
+
+  return {
+    keywords: safeKeywords,
+    final_story_title: String(normalized.title || 'Safe story').trim(),
+    story_summary: String(
+      normalized.storySummary ||
+        normalized.rationale ||
+        'A clear four-step visual story.'
+    ).trim(),
+    panels: normalizeStoryPanels(normalized.panels).map(
+      (description, index) => ({
+        panel: index + 1,
+        role: roleByPanel[index] || 'progression',
+        description,
+        keywords_visible: safeKeywords,
+        state_change_from_previous:
+          index === 0 ? 'n/a' : 'Clear visible change from previous panel.',
+      })
+    ),
+    compliance_report: complianceReport,
+    risk_flags: Array.isArray(normalized.riskFlags)
+      ? normalized.riskFlags
+          .map((item) => String(item || '').trim())
+          .filter(Boolean)
+      : [],
+    revision_if_risky: String(normalized.revisionIfRisky || '').trim(),
+  }
+}
+
+function buildStoryAuditPrompt(basePrompt, conceptJson) {
+  return [
+    basePrompt,
+    '',
+    'Audit this concept and hard-reject anything risky.',
+    'If any hard constraint fails or there is meaningful ambiguity, rewrite it into a safer concept.',
+    'Keep the rewritten concept specific and visually rich, not generic.',
+    'Re-audit using this checklist before returning:',
+    '- before -> trigger -> peak change -> after must be explicit',
+    '- panel 4 must be a direct visible consequence of panel 3',
+    '- one single event chain only',
+    '- no near-duplicate panels',
+    '- no off-screen main event',
+    '- no text dependence and no counting logic',
+    'Re-score minimum thresholds:',
+    '- causality >= 4',
+    '- consensus_safety >= 4',
+    '- keyword_clarity >= 4',
+    'Return JSON only in the same schema.',
+    'Concept JSON to audit:',
+    JSON.stringify(conceptJson, null, 2),
+  ].join('\n')
+}
+
+function shouldRunStoryAudit(rawText, stories) {
+  if (!Array.isArray(stories) || stories.length < 1) return false
+  const value = String(rawText || '')
+    .trim()
+    .toLowerCase()
+  if (!value) return false
+  return (
+    value.includes('"panels"') ||
+    value.includes('"stories"') ||
+    value.includes('"options"') ||
+    value.includes('final_story_title') ||
+    value.includes('story_summary')
+  )
+}
+
+function buildPanelPrompt({
+  panelText,
+  storyPanels = [],
+  keywordA,
+  keywordB,
+  visualStyle,
+  panelIndex,
+  includeNoise = false,
+  noisePanelIndex = null,
+}) {
+  const isNoisePanel =
+    includeNoise && Number.isFinite(Number(noisePanelIndex))
+      ? Number(noisePanelIndex) === Number(panelIndex)
+      : false
+
+  const panelRoles = ['before', 'setup of event', 'peak event', 'after']
+  const role = panelRoles[panelIndex] || 'progression'
+  const previousPanelText =
+    panelIndex > 0
+      ? normalizeStoryPanel(storyPanels[panelIndex - 1], panelIndex - 1)
+      : ''
+  const nextPanelText =
+    panelIndex < 3
+      ? normalizeStoryPanel(storyPanels[panelIndex + 1], panelIndex + 1)
+      : ''
+  return [
+    `Create panel ${
+      panelIndex + 1
+    } of 4 (role: ${role}) for one coherent visual story.`,
+    `Keywords that must remain visually present across the story: ${keywordA} and ${keywordB}.`,
+    `Panel description: ${panelText}`,
+    previousPanelText ? `Previous panel context: ${previousPanelText}` : '',
+    nextPanelText ? `Next panel context: ${nextPanelText}` : '',
+    'Hard constraints:',
+    '- Wordless image. No letters, numbers, arrows, signs, labels, UI text, logos, watermarks.',
+    '- Keep one main actor/object chain and stable environment unless change itself is the event.',
+    '- Show a clear visible state change from previous panel.',
+    '- Avoid surrealism, jokes, metaphor-heavy symbolism, and duplicate-looking frames.',
+    isNoisePanel
+      ? '- This panel is marked for post-process adversarial pixel noise later. Keep objects large and readable before distortion.'
+      : '',
+    'Style requirements:',
+    visualStyle,
+    'Output image only.',
+  ].join('\n')
+}
+
+function buildPanelNoTextAuditPrompt({
+  panelIndex,
+  panelStory,
+  keywordA,
+  keywordB,
+}) {
+  return [
+    'You are checking one generated Idena flip panel for forbidden text.',
+    'Return strict JSON only.',
+    'Schema: {"hasText":true|false,"detectedText":["..."],"reason":"..."}',
+    `Panel index: ${Number(panelIndex) + 1}`,
+    `Story intent for this panel: ${String(panelStory || '').trim() || '-'}`,
+    `Keywords: ${String(keywordA || '-')} / ${String(keywordB || '-')}`,
+    'Mark hasText=true if any letters, words, numbers, signs, logos, watermarks, UI labels, or readable symbols are visible.',
+    'Ignore pure textures that are clearly not readable text.',
+  ].join('\n')
+}
+
+function parsePanelNoTextAudit(rawText) {
+  try {
+    const parsed = extractJsonBlock(rawText) || {}
+    const rawHasText = parsed.hasText
+    const hasText =
+      rawHasText === true ||
+      String(rawHasText || '')
+        .trim()
+        .toLowerCase() === 'true'
+    const detectedText = Array.isArray(parsed.detectedText)
+      ? parsed.detectedText
+          .map((item) => String(item || '').trim())
+          .filter(Boolean)
+          .slice(0, 6)
+      : []
+    const reason = String(parsed.reason || '').trim()
+    return {hasText, detectedText, reason}
+  } catch (error) {
+    const raw = String(rawText || '')
+      .trim()
+      .toLowerCase()
+    const hasText =
+      /"hastext"\s*:\s*true/.test(raw) ||
+      /has[\s_-]*text\s*[:=]\s*true/.test(raw)
+    return {
+      hasText,
+      detectedText: [],
+      reason: hasText ? 'fallback-parse-detected-text' : 'fallback-parse',
+    }
+  }
+}
+
+function getRemoteErrorPayload(data) {
+  if (!data) {
+    return {}
+  }
+
+  if (typeof data === 'string') {
+    return {message: data}
+  }
+
+  if (typeof data !== 'object') {
+    return {}
+  }
+
+  if (data.error && typeof data.error === 'object') {
+    return {
+      message: data.error.message || '',
+      code: data.error.code || data.error.type || '',
+      type: data.error.type || '',
+    }
+  }
+
+  return {
+    message: data.message || data.error_description || '',
+    code: data.code || '',
+    type: data.type || '',
+  }
+}
+
+function createProviderErrorMessage({provider, model, operation, error}) {
+  const status = error && error.response && error.response.status
+  const statusText = error && error.response && error.response.statusText
+  const remote = getRemoteErrorPayload(
+    error && error.response && error.response.data
+  )
+
+  const marker = []
+  if (Number.isFinite(status)) {
+    marker.push(String(status))
+  }
+  if (remote.code) {
+    marker.push(String(remote.code))
+  } else if (remote.type) {
+    marker.push(String(remote.type))
+  } else if (error && error.code) {
+    marker.push(String(error.code))
+  }
+
+  const reason =
+    String(remote.message || '').trim() ||
+    String(statusText || '').trim() ||
+    String((error && error.message) || '').trim() ||
+    String(error || 'Unknown error')
+
+  const markerText = marker.length ? ` (${marker.join(' ')})` : ''
+  return `${String(provider || 'provider')} ${String(
+    operation || 'request'
+  )} failed${markerText} for model ${String(model || '').trim()}: ${reason}`
+}
+
+function getResponseStatus(error) {
+  return error && error.response && error.response.status
+}
+
+function getRetryAfterMs(error) {
+  const headers = (error && error.response && error.response.headers) || {}
+  const raw = headers['retry-after'] || headers['Retry-After']
+  if (raw == null) {
+    return null
+  }
+
+  const asNumber = Number(raw)
+  if (Number.isFinite(asNumber) && asNumber >= 0) {
+    return asNumber * 1000
+  }
+
+  const asDate = Date.parse(String(raw))
+  if (Number.isFinite(asDate)) {
+    return Math.max(0, asDate - Date.now())
+  }
+
+  return null
+}
+
+function isTimeoutError(error) {
+  const timeoutCode = String(error && error.code ? error.code : '')
+    .trim()
+    .toUpperCase()
+  if (timeoutCode === 'ECONNABORTED') {
+    return true
+  }
+
+  const message = String((error && error.message) || '')
+    .trim()
+    .toLowerCase()
+  if (!message) {
+    return false
+  }
+
+  return (
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('deadline exceeded')
+  )
+}
+
+function buildImageTimeoutCandidates(baseTimeoutMs) {
+  const base = Math.max(
+    MIN_IMAGE_REQUEST_TIMEOUT_MS,
+    Number(baseTimeoutMs) || MIN_IMAGE_REQUEST_TIMEOUT_MS
+  )
+  const values = IMAGE_TIMEOUT_BACKOFF_STEPS_MS.map((step) => base + step)
+  return Array.from(new Set(values))
+}
+
+function buildImageProfileCandidates({provider, imageModel, imageSize}) {
+  const model = String(imageModel || '').trim() || 'gpt-image-1-mini'
+  const size = String(imageSize || '').trim() || '1024x1024'
+  const candidates = [{imageModel: model, imageSize: size, reason: 'requested'}]
+
+  if (size !== '1024x1024') {
+    candidates.push({
+      imageModel: model,
+      imageSize: '1024x1024',
+      reason: 'smaller-size',
+    })
+  }
+
+  if (isOpenAiCompatibleProvider(provider)) {
+    if (model.toLowerCase() !== 'gpt-image-1-mini') {
+      candidates.push({
+        imageModel: 'gpt-image-1-mini',
+        imageSize: '1024x1024',
+        reason: 'faster-model',
+      })
+    }
+  }
+
+  return candidates.filter((item, index, list) => {
+    const key = `${item.imageModel}|${item.imageSize}`
+    return (
+      list.findIndex((entry) => {
+        const entryKey = `${entry.imageModel}|${entry.imageSize}`
+        return entryKey === key
+      }) === index
+    )
+  })
+}
+
+function hashScore(value) {
+  const text = String(value || '')
+  let score = 17
+  for (let index = 0; index < text.length; index += 1) {
+    score = (score * 131 + text.charCodeAt(index)) % 2147483647
+  }
+  return score
+}
+
+function buildSwapPlan(flips) {
+  const total = Array.isArray(flips) ? flips.length : 0
+  if (!total) {
+    return []
+  }
+
+  const swapTarget = Math.ceil(total / 2)
+  const scored = flips.map((flip, index) => ({
+    index,
+    score: hashScore(`${flip && flip.hash ? flip.hash : ''}:${index}`),
+  }))
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score
+    }
+    return a.index - b.index
+  })
+
+  const swapPlan = Array(total).fill(false)
+  for (let index = 0; index < swapTarget; index += 1) {
+    const target = scored[index]
+    if (target) {
+      swapPlan[target.index] = true
+    }
+  }
+
+  return swapPlan
+}
+
+function remapDecisionIfSwapped(decision, swapped) {
+  if (!swapped) {
+    return decision
+  }
+
+  if (decision.answer === 'left') {
+    return {...decision, answer: 'right'}
+  }
+
+  if (decision.answer === 'right') {
+    return {...decision, answer: 'left'}
+  }
+
+  return decision
+}
+
+function normalizeConsultProviders(payload, primaryProvider, primaryModel) {
+  const legacyHeuristicEnabled = Boolean(
+    payload && payload.legacyHeuristicEnabled
+  )
+  const legacyHeuristicOnly = Boolean(
+    legacyHeuristicEnabled && payload && payload.legacyHeuristicOnly
+  )
+  const primaryWeight = normalizeConsultantWeight(
+    payload && payload.ensemblePrimaryWeight,
+    1
+  )
+  const result = []
+  const seen = new Set()
+
+  if (!legacyHeuristicOnly) {
+    result.push({
+      provider: primaryProvider,
+      model: primaryModel,
+      source: 'primary',
+      weight: primaryWeight,
+    })
+    seen.add(`${primaryProvider}:${String(primaryModel).toLowerCase()}`)
+  }
+
+  const providerConfig =
+    payload &&
+    payload.providerConfig &&
+    typeof payload.providerConfig === 'object'
+      ? payload.providerConfig
+      : null
+
+  const rawCandidates = Array.isArray(payload && payload.consultProviders)
+    ? payload.consultProviders
+    : []
+
+  const consultSlotsFromSettings =
+    payload && payload.ensembleEnabled && !legacyHeuristicOnly
+      ? [
+          {
+            enabled: payload.ensembleProvider2Enabled,
+            provider: payload.ensembleProvider2,
+            model: payload.ensembleModel2,
+            source: 'ensemble-slot-2',
+            weight: payload.ensembleProvider2Weight,
+          },
+          {
+            enabled: payload.ensembleProvider3Enabled,
+            provider: payload.ensembleProvider3,
+            model: payload.ensembleModel3,
+            source: 'ensemble-slot-3',
+            weight: payload.ensembleProvider3Weight,
+          },
+        ]
+      : []
+
+  const legacyHeuristicFromSettings = legacyHeuristicEnabled
+    ? [
+        {
+          strategy: LEGACY_HEURISTIC_STRATEGY,
+          source: 'legacy-heuristic',
+          weight: payload.legacyHeuristicWeight,
+        },
+      ]
+    : []
+
+  const candidateList = legacyHeuristicOnly
+    ? legacyHeuristicFromSettings
+    : rawCandidates
+        .concat(consultSlotsFromSettings)
+        .concat(legacyHeuristicFromSettings)
+
+  candidateList.forEach((candidate) => {
+    if (!candidate || result.length >= MAX_CONSULTANTS) return
+    if (candidate.enabled === false) return
+
+    const strategy = String(candidate.strategy || '')
+      .trim()
+      .toLowerCase()
+    const providerLike = String(candidate.provider || '')
+      .trim()
+      .toLowerCase()
+
+    if (
+      strategy === LEGACY_HEURISTIC_STRATEGY ||
+      providerLike === LEGACY_HEURISTIC_PROVIDER
+    ) {
+      const strategyKey = `${LEGACY_HEURISTIC_PROVIDER}:${LEGACY_HEURISTIC_MODEL}`
+      if (seen.has(strategyKey)) {
+        return
+      }
+
+      seen.add(strategyKey)
+      result.push({
+        provider: LEGACY_HEURISTIC_PROVIDER,
+        model: LEGACY_HEURISTIC_MODEL,
+        source:
+          String(candidate.source || 'legacy-heuristic').trim() ||
+          'legacy-heuristic',
+        weight: normalizeConsultantWeight(candidate.weight, 1),
+        internalStrategy: LEGACY_HEURISTIC_STRATEGY,
+      })
+      return
+    }
+
+    let provider = ''
+    try {
+      provider = normalizeProvider(candidate.provider || primaryProvider)
+    } catch (error) {
+      return
+    }
+
+    const model = String(candidate.model || '').trim()
+    if (!model) return
+
+    const key = `${provider}:${model.toLowerCase()}`
+    if (seen.has(key)) return
+
+    seen.add(key)
+    result.push({
+      provider,
+      model,
+      source: String(candidate.source || 'consult').trim() || 'consult',
+      weight: normalizeConsultantWeight(candidate.weight, 1),
+      providerConfig:
+        provider === PROVIDERS.Anthropic ||
+        provider === PROVIDERS.OpenAICompatible
+          ? candidate.providerConfig || providerConfig || null
+          : candidate.providerConfig || null,
+    })
+  })
+
+  return result.slice(0, MAX_CONSULTANTS)
+}
+
+function decisionToDistribution(decision = {}) {
+  if (decision.error) {
+    return {
+      left: 0,
+      right: 0,
+      skip: 0,
+      weight: 0,
+    }
+  }
+
+  const answer = normalizeAnswer(decision.answer)
+  const confidence = normalizeConfidence(decision.confidence)
+  if (confidence <= 0) {
+    return {
+      left: 0,
+      right: 0,
+      skip: 0,
+      weight: 0,
+    }
+  }
+
+  const remainder = (1 - confidence) / 2
+  const distribution = {
+    left: remainder,
+    right: remainder,
+    skip: remainder,
+    weight: 1,
+  }
+  distribution[answer] = confidence
+
+  return distribution
+}
+
+function aggregateConsultantDecisions(decisions = []) {
+  if (!Array.isArray(decisions) || decisions.length === 0) {
+    return {
+      answer: 'skip',
+      confidence: 0,
+      reasoning: 'No consultant decisions available',
+      probabilities: null,
+      contributors: 0,
+      totalWeight: 0,
+    }
+  }
+
+  if (decisions.length === 1) {
+    const item = decisions[0]
+    return {
+      answer: normalizeAnswer(item.answer),
+      confidence: normalizeConfidence(item.confidence),
+      reasoning: item.reasoning,
+      probabilities: null,
+      contributors: item.error ? 0 : 1,
+      totalWeight: item.error ? 0 : normalizeConsultantWeight(item.weight, 1),
+    }
+  }
+
+  const totals = {left: 0, right: 0, skip: 0}
+  let contributors = 0
+  let totalWeight = 0
+
+  decisions.forEach((decision) => {
+    const distribution = decisionToDistribution(decision)
+    if (distribution.weight <= 0) return
+    const decisionWeight = normalizeConsultantWeight(decision.weight, 1)
+    totals.left += distribution.left * decisionWeight
+    totals.right += distribution.right * decisionWeight
+    totals.skip += distribution.skip * decisionWeight
+    contributors += 1
+    totalWeight += decisionWeight
+  })
+
+  if (contributors <= 0 || totalWeight <= 0) {
+    const fallback = decisions.find((item) => !item.error) || decisions[0]
+    return {
+      answer: normalizeAnswer(fallback && fallback.answer),
+      confidence: normalizeConfidence(fallback && fallback.confidence),
+      reasoning:
+        'All consultant requests failed; using fallback consultant decision',
+      probabilities: null,
+      contributors: 0,
+      totalWeight: 0,
+    }
+  }
+
+  const probabilities = {
+    left: totals.left / totalWeight,
+    right: totals.right / totalWeight,
+    skip: totals.skip / totalWeight,
+  }
+
+  const ranked = ['left', 'right', 'skip'].sort((a, b) => {
+    if (probabilities[b] === probabilities[a]) return 0
+    return probabilities[b] - probabilities[a]
+  })
+  const answer = ranked[0]
+
+  return {
+    answer,
+    confidence: normalizeConfidence(probabilities[answer]),
+    reasoning: `ensemble average probabilities left=${probabilities.left.toFixed(
+      3
+    )}, right=${probabilities.right.toFixed(
+      3
+    )}, skip=${probabilities.skip.toFixed(3)}`,
+    probabilities,
+    contributors,
+    totalWeight,
+  }
+}
+
+function chooseDeterministicSide(hash) {
+  return hashScore(String(hash || '')) % 2 === 0 ? 'left' : 'right'
+}
+
+function normalizeImageList(value) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.map((item) => String(item || '').trim()).filter(Boolean)
+}
+
+function resolveVisionModeForFlip(profile, flip) {
+  const requested = String(
+    profile && profile.flipVisionMode ? profile.flipVisionMode : 'composite'
+  )
+    .trim()
+    .toLowerCase()
+
+  if (requested === 'composite') {
+    return {
+      requested,
+      applied: 'composite',
+      leftFrames: [],
+      rightFrames: [],
+      fallbackReason: null,
+    }
+  }
+
+  const leftFrames = normalizeImageList(flip && flip.leftFrames).slice(0, 4)
+  const rightFrames = normalizeImageList(flip && flip.rightFrames).slice(0, 4)
+
+  if (!leftFrames.length || !rightFrames.length) {
+    return {
+      requested,
+      applied: 'composite',
+      leftFrames: [],
+      rightFrames: [],
+      fallbackReason: 'missing_frames',
+    }
+  }
+
+  return {
+    requested,
+    applied:
+      requested === 'frames_single_pass' || requested === 'frames_two_pass'
+        ? requested
+        : 'composite',
+    leftFrames,
+    rightFrames,
+    fallbackReason:
+      requested === 'frames_single_pass' || requested === 'frames_two_pass'
+        ? null
+        : 'unsupported_mode',
+  }
+}
+
+function buildProviderFlipForVision({
+  flip,
+  swapped,
+  visionMode,
+  leftFrames,
+  rightFrames,
+}) {
+  const baseFlip = swapped
+    ? {
+        ...flip,
+        leftImage: flip.rightImage,
+        rightImage: flip.leftImage,
+      }
+    : {...flip}
+
+  if (visionMode === 'composite') {
+    return {
+      ...baseFlip,
+      images: [baseFlip.leftImage, baseFlip.rightImage].filter(Boolean),
+    }
+  }
+
+  const effectiveLeftFrames = swapped ? rightFrames : leftFrames
+  const effectiveRightFrames = swapped ? leftFrames : rightFrames
+
+  return {
+    ...baseFlip,
+    leftFrames: effectiveLeftFrames,
+    rightFrames: effectiveRightFrames,
+    images: effectiveLeftFrames.concat(effectiveRightFrames),
+  }
+}
+
+function createEmptyTokenUsage() {
+  return {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+  }
+}
+
+function normalizeTokenUsage(usage = {}) {
+  const promptTokens = Number(usage.promptTokens)
+  const completionTokens = Number(usage.completionTokens)
+  const totalTokens = Number(usage.totalTokens)
+
+  const normalizedPrompt =
+    Number.isFinite(promptTokens) && promptTokens >= 0 ? promptTokens : 0
+  const normalizedCompletion =
+    Number.isFinite(completionTokens) && completionTokens >= 0
+      ? completionTokens
+      : 0
+
+  const normalizedTotal =
+    Number.isFinite(totalTokens) && totalTokens >= 0
+      ? totalTokens
+      : normalizedPrompt + normalizedCompletion
+
+  return {
+    promptTokens: normalizedPrompt,
+    completionTokens: normalizedCompletion,
+    totalTokens: normalizedTotal,
+  }
+}
+
+function normalizeProviderResponse(providerResponse) {
+  if (typeof providerResponse === 'string') {
+    return {
+      rawText: providerResponse,
+      tokenUsage: createEmptyTokenUsage(),
+    }
+  }
+
+  if (providerResponse && typeof providerResponse === 'object') {
+    let rawText = ''
+
+    if (typeof providerResponse.rawText === 'string') {
+      rawText = providerResponse.rawText
+    } else if (typeof providerResponse.content === 'string') {
+      rawText = providerResponse.content
+    }
+
+    return {
+      rawText,
+      tokenUsage: normalizeTokenUsage(providerResponse.usage),
+    }
+  }
+
+  return {
+    rawText: '',
+    tokenUsage: createEmptyTokenUsage(),
+  }
+}
+
+function addTokenUsage(left = {}, right = {}) {
+  const a = normalizeTokenUsage(left)
+  const b = normalizeTokenUsage(right)
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+  }
+}
+
+function summarizeTokenUsage(results) {
+  return results.reduce(
+    (acc, item) => {
+      const usage = normalizeTokenUsage(item && item.tokenUsage)
+      const hasUsage =
+        usage.promptTokens > 0 ||
+        usage.completionTokens > 0 ||
+        usage.totalTokens > 0
+
+      return {
+        promptTokens: acc.promptTokens + usage.promptTokens,
+        completionTokens: acc.completionTokens + usage.completionTokens,
+        totalTokens: acc.totalTokens + usage.totalTokens,
+        flipsWithUsage: acc.flipsWithUsage + (hasUsage ? 1 : 0),
+      }
+    },
+    {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      flipsWithUsage: 0,
+    }
+  )
+}
+
 function createAiProviderBridge(logger, dependencies = {}) {
-  const providerKeys = new Map([
-    [PROVIDERS.OpenAI, null],
-    [PROVIDERS.Gemini, null],
-  ])
+  const providerKeys = new Map(
+    Object.values(PROVIDERS).map((provider) => [provider, null])
+  )
 
   const now =
     typeof dependencies.now === 'function' ? dependencies.now : () => Date.now()
@@ -59,10 +2396,23 @@ function createAiProviderBridge(logger, dependencies = {}) {
       ? dependencies.invokeProvider
       : runProvider
 
+  const runPythonFlipStoryPipeline =
+    typeof dependencies.runPythonFlipStoryPipeline === 'function'
+      ? dependencies.runPythonFlipStoryPipeline
+      : runPythonFlipStoryPipelineDefault
+
   const writeBenchmarkLog =
     typeof dependencies.writeBenchmarkLog === 'function'
       ? dependencies.writeBenchmarkLog
       : writeBenchmarkLogDefault
+
+  const sleep =
+    typeof dependencies.sleep === 'function'
+      ? dependencies.sleep
+      : (ms) =>
+          new Promise((resolve) => {
+            setTimeout(resolve, ms)
+          })
 
   function getApiKey(provider) {
     const key = providerKeys.get(provider)
@@ -93,52 +2443,202 @@ function createAiProviderBridge(logger, dependencies = {}) {
     return {ok: true, provider: normalized}
   }
 
-  async function runProvider({provider, model, flip, profile}) {
-    const apiKey = getApiKey(provider)
-    const prompt = promptTemplate({hash: flip.hash})
+  function hasProviderKey({provider}) {
+    const normalized = normalizeProvider(provider)
+    const key = providerKeys.get(normalized)
+    return {
+      ok: true,
+      provider: normalized,
+      hasKey: Boolean(key),
+    }
+  }
 
-    if (provider === PROVIDERS.OpenAI) {
+  async function runProvider({
+    provider,
+    model,
+    flip,
+    profile,
+    apiKey,
+    providerConfig,
+    promptText = '',
+    promptOptions = {},
+  }) {
+    const resolvedApiKey = apiKey || getApiKey(provider)
+    const resolvedProviderConfig = resolveProviderConfig(
+      provider,
+      providerConfig
+    )
+    const prompt =
+      String(promptText || '').trim() ||
+      promptTemplate({
+        hash: flip.hash,
+        forceDecision: Boolean(promptOptions.forceDecision),
+        secondPass: Boolean(promptOptions.secondPass),
+        promptTemplateOverride: profile.promptTemplateOverride,
+        uncertaintyRepromptInstruction: profile.uncertaintyRepromptInstruction,
+        flipVisionMode: promptOptions.flipVisionMode || profile.flipVisionMode,
+        promptPhase: promptOptions.promptPhase || 'decision',
+        frameReasoning: promptOptions.frameReasoning || '',
+      })
+
+    if (isOpenAiCompatibleProvider(provider)) {
       return callOpenAi({
         httpClient,
-        apiKey,
+        apiKey: resolvedApiKey,
         model,
         flip,
         prompt,
         profile,
+        providerConfig: resolvedProviderConfig,
+      })
+    }
+
+    if (provider === PROVIDERS.Anthropic) {
+      return callAnthropic({
+        httpClient,
+        apiKey: resolvedApiKey,
+        model,
+        flip,
+        prompt,
+        profile,
+        providerConfig: resolvedProviderConfig,
       })
     }
 
     return callGemini({
       httpClient,
-      apiKey,
+      apiKey: resolvedApiKey,
       model,
       flip,
       prompt,
       profile,
+      providerConfig: resolvedProviderConfig,
     })
   }
 
-  async function testProvider({provider, model}) {
+  async function runImageProvider({
+    provider,
+    imageModel,
+    prompt,
+    profile,
+    apiKey,
+    providerConfig,
+    size = '1024x1024',
+    quality = '',
+    style = '',
+  }) {
+    const resolvedApiKey = apiKey || getApiKey(provider)
+    const resolvedProviderConfig = resolveProviderConfig(
+      provider,
+      providerConfig
+    )
+
+    if (isOpenAiCompatibleProvider(provider)) {
+      return callOpenAiImage({
+        httpClient,
+        apiKey: resolvedApiKey,
+        model: imageModel,
+        prompt,
+        profile,
+        providerConfig: resolvedProviderConfig,
+        size,
+        quality,
+        style,
+      })
+    }
+
+    if (provider === PROVIDERS.Gemini) {
+      return callGeminiImage({
+        httpClient,
+        apiKey: resolvedApiKey,
+        model: imageModel,
+        prompt,
+        profile,
+        providerConfig: resolvedProviderConfig,
+        size,
+        quality,
+        style,
+      })
+    }
+
+    throw new Error(
+      `Image generation is not supported for provider: ${provider}. Supported providers: openai-compatible and gemini.`
+    )
+  }
+
+  async function testProvider({provider, model, providerConfig}) {
     const normalized = normalizeProvider(provider)
     const finalModel = String(model || DEFAULT_MODELS[normalized]).trim()
     const startedAt = now()
     const profile = sanitizeBenchmarkProfile()
     const apiKey = getApiKey(normalized)
+    const resolvedProviderConfig = resolveProviderConfig(
+      normalized,
+      providerConfig
+    )
 
-    if (normalized === PROVIDERS.OpenAI) {
-      await testOpenAiProvider({
-        httpClient,
-        apiKey,
-        model: finalModel,
-        profile,
+    try {
+      await withRetries(1, async (attempt) => {
+        try {
+          if (isOpenAiCompatibleProvider(normalized)) {
+            await testOpenAiProvider({
+              httpClient,
+              apiKey,
+              model: finalModel,
+              profile,
+              providerConfig: resolvedProviderConfig,
+            })
+          } else if (normalized === PROVIDERS.Anthropic) {
+            await testAnthropicProvider({
+              httpClient,
+              apiKey,
+              model: finalModel,
+              profile,
+              providerConfig: resolvedProviderConfig,
+            })
+          } else {
+            await testGeminiProvider({
+              httpClient,
+              apiKey,
+              model: finalModel,
+              profile,
+              providerConfig: resolvedProviderConfig,
+            })
+          }
+        } catch (error) {
+          const status = getResponseStatus(error)
+          const timeoutCode = String(error && error.code ? error.code : '')
+            .trim()
+            .toUpperCase()
+          const isTimeout = timeoutCode === 'ECONNABORTED'
+          if ((status === 429 || isTimeout) && attempt < 1) {
+            const retryAfterMs = isTimeout
+              ? 1800
+              : getRetryAfterMs(error) || 1200
+            logger.info('AI provider test retrying after transient failure', {
+              provider: normalized,
+              model: finalModel,
+              retryAfterMs,
+              timeout: isTimeout,
+            })
+            await sleep(retryAfterMs)
+          }
+          throw error
+        }
       })
-    } else {
-      await testGeminiProvider({
-        httpClient,
-        apiKey,
+    } catch (error) {
+      const message = createProviderErrorMessage({
+        provider: normalized,
         model: finalModel,
-        profile,
+        operation: 'test',
+        error,
       })
+      logger.error('AI provider test failed', {
+        provider: normalized,
+        model: finalModel,
+        error: message,
+      })
+      throw new Error(message)
     }
 
     return {
@@ -146,6 +2646,919 @@ function createAiProviderBridge(logger, dependencies = {}) {
       provider: normalized,
       model: finalModel,
       latencyMs: now() - startedAt,
+    }
+  }
+
+  async function listModels({provider, providerConfig}) {
+    const normalized = normalizeProvider(provider)
+    const profile = sanitizeBenchmarkProfile()
+    const apiKey = getApiKey(normalized)
+    const resolvedProviderConfig = resolveProviderConfig(
+      normalized,
+      providerConfig
+    )
+
+    try {
+      let models = []
+      if (isOpenAiCompatibleProvider(normalized)) {
+        models = await listOpenAiModels({
+          httpClient,
+          apiKey,
+          profile,
+          providerConfig: resolvedProviderConfig,
+        })
+      } else if (normalized === PROVIDERS.Anthropic) {
+        models = await listAnthropicModels({
+          httpClient,
+          apiKey,
+          profile,
+          providerConfig: resolvedProviderConfig,
+        })
+      } else {
+        models = await listGeminiModels({
+          httpClient,
+          apiKey,
+          profile,
+          providerConfig: resolvedProviderConfig,
+        })
+      }
+
+      const unique = Array.from(
+        new Set(models.map((item) => String(item || '').trim()).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b))
+
+      return {
+        ok: true,
+        provider: normalized,
+        total: unique.length,
+        models: unique,
+      }
+    } catch (error) {
+      const message = createProviderErrorMessage({
+        provider: normalized,
+        model: '-',
+        operation: 'list_models',
+        error,
+      })
+
+      logger.error('AI provider model list failed', {
+        provider: normalized,
+        error: message,
+      })
+
+      throw new Error(message)
+    }
+  }
+
+  async function generateStoryOptions(payload = {}) {
+    const requestedStoryCount = 2
+    const fastStoryMode = payload.fastStoryMode === true
+    const provider = normalizeProvider(payload.provider)
+    const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
+    const providerConfig = payload.providerConfig || null
+    const [keywordA, keywordB] = normalizeKeywords(payload)
+    const humanStorySeed = ''
+    const includeNoise = Boolean(payload.includeNoise)
+    const customStory = normalizeStoryPanels(payload.customStoryPanels)
+    const hasCustomStory = Boolean(payload.hasCustomStory)
+
+    const hasCustomTemperature =
+      Number.isFinite(Number(payload.temperature)) &&
+      Number(payload.temperature) >= 0
+    const defaultTemperature = fastStoryMode ? 0.7 : 0.85
+
+    const profile = sanitizeBenchmarkProfile({
+      benchmarkProfile: 'custom',
+      requestTimeoutMs:
+        payload.requestTimeoutMs || (fastStoryMode ? 12000 : 20000),
+      maxOutputTokens: payload.maxOutputTokens || (fastStoryMode ? 700 : 1200),
+      temperature: hasCustomTemperature
+        ? Number(payload.temperature)
+        : defaultTemperature,
+      maxRetries: payload.maxRetries || 1,
+      maxConcurrency: 1,
+      deadlineMs: Math.max(
+        Number(payload.requestTimeoutMs || (fastStoryMode ? 12000 : 20000)) +
+          3000,
+        fastStoryMode ? 10000 : 15000
+      ),
+    })
+    const startedAt = now()
+
+    if (shouldUsePythonFlipPipeline(payload)) {
+      try {
+        const pythonResult = await runPythonFlipStoryPipeline({
+          keywordA,
+          keywordB,
+          provider,
+          timeoutMs:
+            Number(payload.pythonPipelineTimeoutMs) ||
+            Number(profile.requestTimeoutMs) ||
+            DEFAULT_PYTHON_FLIP_PIPELINE_TIMEOUT_MS,
+        })
+        const pythonStories = buildStoryOptionsFromPythonPipeline({
+          keywordA,
+          keywordB,
+          includeNoise,
+          storyPanels: pythonResult.storyPanels,
+          semanticPlan: pythonResult.semanticPlan,
+        }).slice(0, requestedStoryCount)
+
+        if (pythonStories.length > 0) {
+          return {
+            ok: true,
+            provider,
+            model,
+            latencyMs: now() - startedAt,
+            stories: pythonStories,
+            tokenUsage: createEmptyTokenUsage(),
+            costs: {
+              estimatedUsd: null,
+              actualUsd: null,
+            },
+            promptText: 'python:idena_flip_pipeline',
+            generationPath: 'python_story_pipeline',
+            semanticPlan:
+              pythonResult.semanticPlan &&
+              typeof pythonResult.semanticPlan === 'object'
+                ? pythonResult.semanticPlan
+                : null,
+          }
+        }
+      } catch (pythonError) {
+        logger.info(
+          'Python story pipeline unavailable, falling back to provider LLM flow',
+          {
+            provider,
+            model,
+            error: String(
+              (pythonError && pythonError.message) || pythonError || ''
+            )
+              .trim()
+              .slice(0, 280),
+          }
+        )
+      }
+    }
+
+    const promptText = fastStoryMode
+      ? buildStoryOptionsPromptFast({
+          keywordA,
+          keywordB,
+          includeNoise,
+          customStory: hasCustomStory ? customStory : null,
+        })
+      : buildStoryOptionsPrompt({
+          keywordA,
+          keywordB,
+          includeNoise,
+          customStory: hasCustomStory ? customStory : null,
+        })
+    const apiKey = getApiKey(provider)
+    const providerResponse = await invokeProvider({
+      provider,
+      model,
+      flip: {
+        hash: `story-option-${startedAt}`,
+        leftImage: '',
+        rightImage: '',
+        images: [],
+      },
+      profile,
+      apiKey,
+      providerConfig,
+      promptText,
+      promptOptions: {
+        promptPhase: 'story_options',
+      },
+    })
+
+    const normalized = normalizeProviderResponse(providerResponse)
+    let combinedUsage = normalizeTokenUsage(normalized.tokenUsage)
+    const parsedStories = parseStoryOptions(normalized.rawText, {
+      keywordA,
+      keywordB,
+      includeNoise,
+      customStory: hasCustomStory ? customStory : null,
+      humanStorySeed,
+    })
+    let stories = parsedStories.slice(0, requestedStoryCount)
+
+    if (!fastStoryMode && shouldRunStoryAudit(normalized.rawText, stories)) {
+      const auditedStories = []
+
+      for (let index = 0; index < stories.length; index += 1) {
+        const seedConcept = storyOptionToMainPromptConcept(
+          stories[index],
+          keywordA,
+          keywordB
+        )
+        const auditPromptText = buildStoryAuditPrompt(promptText, seedConcept)
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const auditResponse = await invokeProvider({
+            provider,
+            model,
+            flip: {
+              hash: `story-audit-${startedAt}-${index + 1}`,
+              leftImage: '',
+              rightImage: '',
+              images: [],
+            },
+            profile,
+            apiKey,
+            providerConfig,
+            promptText: auditPromptText,
+            promptOptions: {
+              promptPhase: 'story_audit',
+            },
+          })
+
+          const normalizedAudit = normalizeProviderResponse(auditResponse)
+          combinedUsage = addTokenUsage(
+            combinedUsage,
+            normalizedAudit.tokenUsage
+          )
+          const parsedAuditStories = parseStoryOptions(
+            normalizedAudit.rawText,
+            {
+              keywordA,
+              keywordB,
+              includeNoise,
+              customStory: hasCustomStory ? customStory : null,
+              humanStorySeed,
+            }
+          )
+          const auditedStory = parsedAuditStories.find((story) =>
+            hasMeaningfulStoryPanels(story.panels)
+          )
+
+          if (auditedStory) {
+            auditedStories.push(auditedStory)
+          } else {
+            auditedStories.push(stories[index])
+          }
+        } catch (auditError) {
+          logger.info('Story audit pass failed, keeping first-pass concept', {
+            provider,
+            model,
+            option: index + 1,
+            error: String(
+              (auditError && auditError.message) || auditError || ''
+            )
+              .trim()
+              .slice(0, 280),
+          })
+          auditedStories.push(stories[index])
+        }
+      }
+
+      if (auditedStories.length > 0) {
+        stories = auditedStories.slice(0, requestedStoryCount)
+      }
+    }
+
+    if (stories.length < requestedStoryCount) {
+      const fallbackStories = buildKeywordFallbackStories({
+        keywordA,
+        keywordB,
+        includeNoise,
+        customStory: hasCustomStory ? customStory : null,
+        humanStorySeed,
+      })
+      const seenPanels = new Set(
+        stories.map((item) =>
+          normalizeStoryPanels(item.panels).join('|').toLowerCase()
+        )
+      )
+
+      for (const fallbackStory of fallbackStories) {
+        if (stories.length >= requestedStoryCount) break
+        const signature = normalizeStoryPanels(fallbackStory.panels)
+          .join('|')
+          .toLowerCase()
+        const isDuplicate = seenPanels.has(signature)
+        const isMeaningful = hasMeaningfulStoryPanels(fallbackStory.panels)
+        if (!isDuplicate && isMeaningful) {
+          seenPanels.add(signature)
+          stories.push(fallbackStory)
+        }
+      }
+    }
+
+    stories = stories.slice(0, requestedStoryCount).map((story, index) =>
+      normalizeStoryOption(
+        {
+          ...story,
+          id: `option-${index + 1}`,
+          title: String(story && story.title ? story.title : '').trim() || null,
+        },
+        index
+      )
+    )
+
+    if (stories.length < 1) {
+      stories = buildKeywordFallbackStories({
+        keywordA,
+        keywordB,
+        includeNoise,
+        customStory: hasCustomStory ? customStory : null,
+        humanStorySeed,
+      }).slice(0, requestedStoryCount)
+    }
+
+    const usage = normalizeTokenUsage(combinedUsage)
+    const estimatedCostUsd = isOpenAiCompatibleProvider(provider)
+      ? estimateTextCostUsd(usage, model)
+      : null
+
+    return {
+      ok: true,
+      provider,
+      model,
+      latencyMs: now() - startedAt,
+      stories,
+      tokenUsage: usage,
+      costs: {
+        estimatedUsd: estimatedCostUsd,
+        actualUsd: estimatedCostUsd,
+      },
+      promptText,
+    }
+  }
+
+  async function generateFlipPanels(payload = {}) {
+    const provider = normalizeProvider(payload.provider)
+    const fastBuild = payload.fastBuild !== false
+    const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
+    const imageModel = String(payload.imageModel || 'gpt-image-1-mini').trim()
+    const imageSize = String(payload.imageSize || '1024x1024').trim()
+    const imageQuality = String(payload.imageQuality || '').trim()
+    const imageStyle = String(payload.imageStyle || '').trim()
+    const providerConfig = payload.providerConfig || null
+    const apiKey = getApiKey(provider)
+    const [keywordA, keywordB] = normalizeKeywords(payload)
+    const storyPanels = normalizeStoryPanels(payload.storyPanels)
+    const includeNoise = Boolean(payload.includeNoise)
+    const noisePanelIndex = chooseNoisePanelIndex(
+      payload.noiseSeed || `${keywordA}-${keywordB}-${Date.now()}`,
+      payload.noisePanelIndex
+    )
+    const visualStyle =
+      String(payload.visualStyle || '').trim() ||
+      'Single-panel cartoon illustration, flat bright colors, clean line art, consistent environment and character style with no text overlays.'
+
+    if (!supportsImageGenerationProvider(provider)) {
+      throw new Error(
+        `Flip image generation is not available for provider: ${provider}. Supported providers: openai-compatible and gemini.`
+      )
+    }
+
+    const existingPanels = normalizeImageList(payload.existingPanels).slice(
+      0,
+      4
+    )
+    while (existingPanels.length < 4) {
+      existingPanels.push('')
+    }
+
+    const requestedRegenerateIndices = Array.isArray(payload.regenerateIndices)
+      ? payload.regenerateIndices
+          .map((value) => Number.parseInt(value, 10))
+          .filter((value) => Number.isFinite(value) && value >= 0 && value < 4)
+      : []
+
+    const regenerateIndices = requestedRegenerateIndices.length
+      ? Array.from(new Set(requestedRegenerateIndices))
+      : [0, 1, 2, 3]
+
+    const imageRequestTimeoutMs = Math.max(
+      Number(payload.requestTimeoutMs) || 0,
+      fastBuild ? 45 * 1000 : MIN_IMAGE_REQUEST_TIMEOUT_MS
+    )
+    const textAuditEnabled =
+      typeof payload.textAuditEnabled === 'boolean'
+        ? payload.textAuditEnabled
+        : !fastBuild
+    const textAuditModel = String(
+      payload.textAuditModel || 'gpt-4o-mini'
+    ).trim()
+    const textAuditMaxRetries = Math.max(
+      0,
+      Math.min(
+        3,
+        Number.parseInt(payload.textAuditMaxRetries, 10) || (fastBuild ? 0 : 2)
+      )
+    )
+    const textAuditRequestTimeoutMs = Math.max(
+      Number(payload.textAuditRequestTimeoutMs) || 0,
+      12 * 1000
+    )
+
+    const profile = sanitizeBenchmarkProfile({
+      benchmarkProfile: 'custom',
+      requestTimeoutMs: imageRequestTimeoutMs,
+      maxOutputTokens: 64,
+      temperature: 0,
+      maxRetries: payload.maxRetries ?? 1,
+      maxConcurrency: 1,
+      deadlineMs: 180000,
+    })
+    // Keep image generation timeout independent from strict short-session text limits.
+    profile.requestTimeoutMs = imageRequestTimeoutMs
+    const textAuditProfile = sanitizeBenchmarkProfile({
+      benchmarkProfile: 'custom',
+      requestTimeoutMs: textAuditRequestTimeoutMs,
+      maxOutputTokens: 80,
+      temperature: 0,
+      maxRetries: 0,
+      maxConcurrency: 1,
+      deadlineMs: Math.max(textAuditRequestTimeoutMs + 2000, 15000),
+    })
+    textAuditProfile.requestTimeoutMs = textAuditRequestTimeoutMs
+
+    logger.info('AI flip image generation profile', {
+      provider,
+      model,
+      imageModel,
+      imageSize,
+      requestTimeoutMs: profile.requestTimeoutMs,
+      maxRetries: profile.maxRetries,
+      textAuditEnabled,
+      textAuditModel,
+      textAuditMaxRetries,
+      textAuditRequestTimeoutMs: textAuditProfile.requestTimeoutMs,
+    })
+
+    const startedAt = now()
+    const nextPanels = existingPanels.slice(0, 4)
+    const promptByPanel = Array.from({length: 4}, () => '')
+    const panelImageModelUsed = Array.from({length: 4}, () => imageModel)
+    const panelImageSizeUsed = Array.from({length: 4}, () => imageSize)
+    const textAuditByPanel = Array.from({length: 4}, () => ({
+      checked: false,
+      passed: true,
+      hasText: false,
+      attempts: 0,
+      retriesUsed: 0,
+      reason: '',
+      detectedText: [],
+    }))
+    let usage = createEmptyTokenUsage()
+    let generatedCount = 0
+    let estimatedImageCostUsd = 0
+    let textOverlayRetryCount = 0
+
+    for (let panelIndex = 0; panelIndex < 4; panelIndex += 1) {
+      const shouldGenerate = regenerateIndices.includes(panelIndex)
+      const panelPromptBase = buildPanelPrompt({
+        panelText: storyPanels[panelIndex],
+        storyPanels,
+        keywordA,
+        keywordB,
+        visualStyle,
+        panelIndex,
+        includeNoise,
+        noisePanelIndex,
+      })
+
+      if (shouldGenerate) {
+        const panelProviderConfig = resolveProviderConfig(
+          provider,
+          providerConfig
+        )
+        let panelResponse = null
+        let panelImageModel = imageModel
+        let panelImageSize = imageSize
+        let acceptedPrompt = panelPromptBase
+        let acceptedAudit = {
+          checked: false,
+          passed: true,
+          hasText: false,
+          attempts: 0,
+          retriesUsed: 0,
+          reason: '',
+          detectedText: [],
+        }
+
+        for (
+          let attempt = 0;
+          attempt <= textAuditMaxRetries && !panelResponse;
+          attempt += 1
+        ) {
+          const retrySuffix =
+            attempt > 0
+              ? [
+                  '',
+                  'Critical retry: previous output contained forbidden text.',
+                  'Do not draw any letters, numbers, labels, logos, signs, UI text, or watermarks.',
+                  'Replace any text-bearing object with a text-free visual equivalent.',
+                ].join('\n')
+              : ''
+          const panelPrompt = retrySuffix
+            ? `${panelPromptBase}\n${retrySuffix}`
+            : panelPromptBase
+
+          let currentPanelResponse = null
+          const timeoutCandidates = buildImageTimeoutCandidates(
+            fastBuild
+              ? Math.min(profile.requestTimeoutMs, 90 * 1000)
+              : profile.requestTimeoutMs
+          )
+          const imageProfileCandidates = buildImageProfileCandidates({
+            provider,
+            imageModel,
+            imageSize,
+          })
+          let timeoutFailure = null
+          for (
+            let profileIndex = 0;
+            profileIndex < imageProfileCandidates.length &&
+            !currentPanelResponse;
+            profileIndex += 1
+          ) {
+            const profileCandidate = imageProfileCandidates[profileIndex]
+            for (
+              let timeoutIndex = 0;
+              timeoutIndex < timeoutCandidates.length && !currentPanelResponse;
+              timeoutIndex += 1
+            ) {
+              const timeoutMs = timeoutCandidates[timeoutIndex]
+              const imageProfile = {
+                ...profile,
+                requestTimeoutMs: timeoutMs,
+              }
+              try {
+                // eslint-disable-next-line no-await-in-loop
+                currentPanelResponse = await withRetries(
+                  profile.maxRetries,
+                  () =>
+                    runImageProvider({
+                      provider,
+                      imageModel: profileCandidate.imageModel,
+                      prompt: panelPrompt,
+                      profile: imageProfile,
+                      apiKey,
+                      providerConfig: panelProviderConfig,
+                      size: profileCandidate.imageSize,
+                      quality: imageQuality,
+                      style: imageStyle,
+                    })
+                )
+                if (currentPanelResponse) {
+                  panelImageModel = profileCandidate.imageModel
+                  panelImageSize = profileCandidate.imageSize
+                  if (profileIndex > 0) {
+                    logger.info('AI image generation fallback profile used', {
+                      provider,
+                      panel: panelIndex + 1,
+                      imageModel: profileCandidate.imageModel,
+                      imageSize: profileCandidate.imageSize,
+                      reason: profileCandidate.reason,
+                    })
+                  }
+                }
+              } catch (error) {
+                if (isTimeoutError(error)) {
+                  timeoutFailure = error
+                  logger.info(
+                    'AI image generation timeout, escalating timeout',
+                    {
+                      provider,
+                      imageModel: profileCandidate.imageModel,
+                      imageSize: profileCandidate.imageSize,
+                      panel: panelIndex + 1,
+                      totalPanels: 4,
+                      timeoutMs,
+                      nextTimeoutMs:
+                        timeoutCandidates[timeoutIndex + 1] || timeoutMs,
+                    }
+                  )
+                } else {
+                  throw error
+                }
+              }
+            }
+          }
+
+          if (!currentPanelResponse && timeoutFailure) {
+            throw new Error(
+              `Image generation timed out after retries (panel ${
+                panelIndex + 1
+              }/4, model ${imageModel}, size ${imageSize}, tried timeouts: ${timeoutCandidates.join(
+                'ms, '
+              )}ms, fallback profiles: ${imageProfileCandidates
+                .map((item) => `${item.imageModel}@${item.imageSize}`)
+                .join(', ')}).`
+            )
+          }
+
+          usage = addTokenUsage(
+            usage,
+            currentPanelResponse.usage || createEmptyTokenUsage()
+          )
+          panelImageModelUsed[panelIndex] = panelImageModel
+          panelImageSizeUsed[panelIndex] = panelImageSize
+          const unitPrice = isOpenAiCompatibleProvider(provider)
+            ? resolveOpenAiImageUnitPrice(panelImageModel, panelImageSize)
+            : null
+          if (unitPrice != null) {
+            estimatedImageCostUsd += unitPrice
+          }
+
+          const panelImageDataUrl = String(
+            currentPanelResponse.imageDataUrl || ''
+          ).trim()
+          if (!textAuditEnabled || !panelImageDataUrl) {
+            panelResponse = currentPanelResponse
+            acceptedPrompt = panelPrompt
+            acceptedAudit = {
+              checked: false,
+              passed: true,
+              hasText: false,
+              attempts: attempt + 1,
+              retriesUsed: attempt,
+              reason: textAuditEnabled ? '' : 'disabled',
+              detectedText: [],
+            }
+          } else {
+            const auditPrompt = buildPanelNoTextAuditPrompt({
+              panelIndex,
+              panelStory: storyPanels[panelIndex],
+              keywordA,
+              keywordB,
+            })
+            // eslint-disable-next-line no-await-in-loop
+            const auditResponse = await runProvider({
+              provider,
+              model: textAuditModel,
+              flip: {
+                hash: `panel-text-audit-${startedAt}-${panelIndex}-${attempt}`,
+                leftImage: '',
+                rightImage: '',
+                images: [panelImageDataUrl],
+              },
+              profile: textAuditProfile,
+              apiKey,
+              providerConfig,
+              promptText: auditPrompt,
+              promptOptions: {
+                promptPhase: 'image_text_audit',
+              },
+            })
+            const normalizedAuditResponse =
+              normalizeProviderResponse(auditResponse)
+            usage = addTokenUsage(usage, normalizedAuditResponse.tokenUsage)
+            const auditResult = parsePanelNoTextAudit(
+              normalizedAuditResponse.rawText
+            )
+            const hasText = Boolean(auditResult.hasText)
+            const canRetry = hasText && attempt < textAuditMaxRetries
+
+            if (canRetry) {
+              textOverlayRetryCount += 1
+            } else {
+              panelResponse = currentPanelResponse
+              acceptedPrompt = panelPrompt
+              acceptedAudit = {
+                checked: true,
+                passed: !hasText,
+                hasText,
+                attempts: attempt + 1,
+                retriesUsed: attempt,
+                reason: String(auditResult.reason || '').trim(),
+                detectedText: Array.isArray(auditResult.detectedText)
+                  ? auditResult.detectedText
+                      .map((item) => String(item || '').trim())
+                      .filter(Boolean)
+                      .slice(0, 6)
+                  : [],
+              }
+            }
+          }
+        }
+
+        if (!panelResponse) {
+          throw new Error(
+            `Panel ${panelIndex + 1} generation failed after text-audit retries`
+          )
+        }
+
+        nextPanels[panelIndex] = String(panelResponse.imageDataUrl || '').trim()
+        promptByPanel[panelIndex] = acceptedPrompt
+        textAuditByPanel[panelIndex] = acceptedAudit
+        generatedCount += 1
+      } else {
+        promptByPanel[panelIndex] = panelPromptBase
+      }
+    }
+
+    if (nextPanels.some((item) => !String(item || '').trim())) {
+      throw new Error(
+        'Panel generation returned incomplete images. Regenerate missing panels.'
+      )
+    }
+
+    const estimatedTextCostUsd = estimateTextCostUsd(usage, model)
+    const estimatedUsd =
+      (estimatedTextCostUsd || 0) +
+      (Number.isFinite(estimatedImageCostUsd) ? estimatedImageCostUsd : 0)
+
+    return {
+      ok: true,
+      provider,
+      model,
+      imageModel,
+      imageSize,
+      latencyMs: now() - startedAt,
+      includeNoise,
+      noisePanelIndex: includeNoise ? noisePanelIndex : null,
+      generatedPanelCount: generatedCount,
+      textAuditEnabled,
+      textAuditModel: textAuditEnabled ? textAuditModel : '',
+      textAuditMaxRetries,
+      textOverlayRetryCount,
+      textAuditByPanel,
+      panels: nextPanels.map((imageDataUrl, index) => ({
+        index,
+        imageDataUrl,
+        imageModelUsed: panelImageModelUsed[index] || imageModel,
+        imageSizeUsed: panelImageSizeUsed[index] || imageSize,
+        panelPrompt: promptByPanel[index] || '',
+        panelStory: storyPanels[index] || '',
+        generated: regenerateIndices.includes(index),
+      })),
+      imageFallbackUsed: panelImageModelUsed.some(
+        (usedModel, index) =>
+          String(usedModel || '').trim() !== String(imageModel || '').trim() ||
+          String(panelImageSizeUsed[index] || '').trim() !==
+            String(imageSize || '').trim()
+      ),
+      tokenUsage: normalizeTokenUsage(usage),
+      costs: {
+        estimatedUsd,
+        actualUsd: estimatedUsd,
+        estimatedTextUsd: estimatedTextCostUsd,
+        estimatedImageUsd: Number.isFinite(estimatedImageCostUsd)
+          ? estimatedImageCostUsd
+          : null,
+      },
+    }
+  }
+
+  async function generateImageSearchResults(payload = {}) {
+    const provider = normalizeProvider(payload.provider)
+    const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
+    const imageModel = String(payload.imageModel || 'gpt-image-1-mini').trim()
+    const imageSize = String(payload.imageSize || '1024x1024').trim()
+    const imageQuality = String(payload.imageQuality || '').trim()
+    const imageStyle = String(payload.imageStyle || '').trim()
+    const maxImages = Math.max(
+      1,
+      Math.min(8, Number.parseInt(payload.maxImages, 10) || 4)
+    )
+    const prompt = String(payload.prompt || '')
+      .trim()
+      .slice(0, 2400)
+    const providerConfig = payload.providerConfig || null
+    const apiKey = getApiKey(provider)
+
+    if (!prompt) {
+      throw new Error('Prompt is required for AI image search')
+    }
+
+    if (!supportsImageGenerationProvider(provider)) {
+      throw new Error(
+        `AI image search is not available for provider: ${provider}. Supported providers: openai-compatible and gemini.`
+      )
+    }
+
+    const imageRequestTimeoutMs = Math.max(
+      Number(payload.requestTimeoutMs) || 0,
+      MIN_IMAGE_REQUEST_TIMEOUT_MS
+    )
+
+    const profile = sanitizeBenchmarkProfile({
+      benchmarkProfile: 'custom',
+      requestTimeoutMs: imageRequestTimeoutMs,
+      maxOutputTokens: 32,
+      temperature: 0,
+      maxRetries: payload.maxRetries ?? 1,
+      maxConcurrency: 1,
+      deadlineMs: 180000,
+    })
+    profile.requestTimeoutMs = imageRequestTimeoutMs
+
+    const startedAt = now()
+    const images = []
+    let usage = createEmptyTokenUsage()
+    let estimatedImageCostUsd = 0
+
+    for (let index = 0; index < maxImages; index += 1) {
+      const variantPrompt =
+        maxImages > 1
+          ? `${prompt}\n\nCreate variant ${
+              index + 1
+            } with a different composition.`
+          : prompt
+
+      const timeoutCandidates = buildImageTimeoutCandidates(
+        profile.requestTimeoutMs
+      )
+      let response = null
+      let timeoutFailure = null
+      for (
+        let timeoutIndex = 0;
+        timeoutIndex < timeoutCandidates.length && !response;
+        timeoutIndex += 1
+      ) {
+        const timeoutMs = timeoutCandidates[timeoutIndex]
+        const imageProfile = {
+          ...profile,
+          requestTimeoutMs: timeoutMs,
+        }
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          response = await withRetries(profile.maxRetries, () =>
+            runImageProvider({
+              provider,
+              imageModel,
+              prompt: variantPrompt,
+              profile: imageProfile,
+              apiKey,
+              providerConfig: resolveProviderConfig(provider, providerConfig),
+              size: imageSize,
+              quality: imageQuality,
+              style: imageStyle,
+            })
+          )
+        } catch (error) {
+          if (isTimeoutError(error)) {
+            timeoutFailure = error
+            logger.info('AI image search timeout, escalating timeout', {
+              provider,
+              imageModel,
+              variant: index + 1,
+              totalVariants: maxImages,
+              timeoutMs,
+              nextTimeoutMs: timeoutCandidates[timeoutIndex + 1] || timeoutMs,
+            })
+          } else {
+            throw error
+          }
+        }
+      }
+
+      if (!response && timeoutFailure) {
+        throw new Error(
+          `AI image search timed out after retries (variant ${
+            index + 1
+          }/${maxImages}, model ${imageModel}, size ${imageSize}, tried timeouts: ${timeoutCandidates.join(
+            'ms, '
+          )}ms).`
+        )
+      }
+
+      const imageDataUrl = String(response.imageDataUrl || '').trim()
+      if (!imageDataUrl) {
+        throw new Error('AI image search returned empty image payload')
+      }
+
+      images.push({
+        image: imageDataUrl,
+        thumbnail: imageDataUrl,
+      })
+      usage = addTokenUsage(usage, response.usage || createEmptyTokenUsage())
+      const unitPrice = isOpenAiCompatibleProvider(provider)
+        ? resolveOpenAiImageUnitPrice(imageModel, imageSize)
+        : null
+      if (unitPrice != null) {
+        estimatedImageCostUsd += unitPrice
+      }
+    }
+
+    const estimatedTextCostUsd = estimateTextCostUsd(usage, model)
+    const estimatedUsd =
+      (estimatedTextCostUsd || 0) +
+      (Number.isFinite(estimatedImageCostUsd) ? estimatedImageCostUsd : 0)
+
+    return {
+      ok: true,
+      provider,
+      model,
+      imageModel,
+      imageSize,
+      latencyMs: now() - startedAt,
+      images,
+      tokenUsage: normalizeTokenUsage(usage),
+      costs: {
+        estimatedUsd,
+        actualUsd: estimatedUsd,
+        estimatedTextUsd: estimatedTextCostUsd,
+        estimatedImageUsd: Number.isFinite(estimatedImageCostUsd)
+          ? estimatedImageCostUsd
+          : null,
+      },
     }
   }
 
@@ -167,88 +3580,542 @@ function createAiProviderBridge(logger, dependencies = {}) {
   async function solveFlipBatch(payload = {}) {
     const provider = normalizeProvider(payload.provider)
     const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
+    const legacyOnlyMode = Boolean(
+      payload && payload.legacyHeuristicEnabled && payload.legacyHeuristicOnly
+    )
     const flips = Array.isArray(payload.flips) ? payload.flips : []
+    const providerConfig = payload.providerConfig || null
+    const consultProviders = normalizeConsultProviders(payload, provider, model)
+    const consultProvidersWithKeys = consultProviders.map((consultant) => ({
+      ...consultant,
+      apiKey:
+        consultant.internalStrategy === LEGACY_HEURISTIC_STRATEGY
+          ? null
+          : getApiKey(consultant.provider),
+    }))
 
     if (!flips.length) {
       throw new Error('No flips provided')
+    }
+    if (!consultProviders.length) {
+      throw new Error('No consultant strategies available')
     }
 
     const profile = sanitizeBenchmarkProfile(payload)
     const startedAt = now()
     const deadlineAt = startedAt + profile.deadlineMs
+    const swapPlan = buildSwapPlan(flips)
+    const interFlipDelayMs = Math.max(0, Number(profile.interFlipDelayMs) || 0)
+    const onFlipStart =
+      typeof payload.onFlipStart === 'function' ? payload.onFlipStart : null
+    const onFlipResult =
+      typeof payload.onFlipResult === 'function' ? payload.onFlipResult : null
 
-    const results = await mapWithConcurrency(
-      flips,
-      profile.maxConcurrency,
-      async (flip) => {
-        const flipStartedAt = now()
+    function emitFlipStart(event) {
+      if (!onFlipStart) {
+        return
+      }
+      try {
+        onFlipStart(event)
+      } catch (error) {
+        logger.error('AI solver onFlipStart callback failed', {
+          error: error.toString(),
+        })
+      }
+    }
 
-        if (flipStartedAt >= deadlineAt) {
+    function emitFlipResult(event) {
+      if (!onFlipResult) {
+        return
+      }
+      try {
+        onFlipResult(event)
+      } catch (error) {
+        logger.error('AI solver onFlipResult callback failed', {
+          error: error.toString(),
+        })
+      }
+    }
+
+    async function solveSingleFlip(flip, flipIndex) {
+      const flipStartedAt = now()
+      const swapped = swapPlan[flipIndex] === true
+      const vision = resolveVisionModeForFlip(profile, flip)
+
+      if (flipStartedAt >= deadlineAt) {
+        if (profile.forceDecision) {
+          const forcedAnswer = chooseDeterministicSide(flip.hash)
           return {
             hash: flip.hash,
-            answer: 'skip',
+            answer: forcedAnswer,
+            rawAnswerBeforeRemap: 'skip',
+            finalAnswerAfterRemap: forcedAnswer,
             confidence: 0,
-            reasoning: 'deadline exceeded before request',
+            reasoning: `deadline exceeded, forced ${forcedAnswer}`,
             latencyMs: 0,
             error: 'deadline_exceeded',
+            sideSwapped: swapped,
+            flipVisionModeRequested: vision.requested,
+            flipVisionModeApplied: vision.applied,
+            flipVisionModeFallback: vision.fallbackReason,
+            forcedDecision: true,
+            forcedDecisionReason: 'deadline_exceeded',
+            tokenUsage: createEmptyTokenUsage(),
           }
         }
-
-        try {
-          const raw = await withRetries(profile.maxRetries, async () =>
-            invokeProvider({provider, model, flip, profile})
-          )
-          const parsed = extractJsonBlock(raw)
-          const decision = normalizeDecision(parsed)
-
-          return {
-            hash: flip.hash,
-            ...decision,
-            latencyMs: now() - flipStartedAt,
-          }
-        } catch (error) {
-          return {
-            hash: flip.hash,
-            answer: 'skip',
-            confidence: 0,
-            reasoning: 'provider error',
-            latencyMs: now() - flipStartedAt,
-            error: error.toString(),
-          }
+        return {
+          hash: flip.hash,
+          answer: 'skip',
+          rawAnswerBeforeRemap: 'skip',
+          finalAnswerAfterRemap: 'skip',
+          confidence: 0,
+          reasoning: 'deadline exceeded before request',
+          latencyMs: 0,
+          error: 'deadline_exceeded',
+          sideSwapped: swapped,
+          flipVisionModeRequested: vision.requested,
+          flipVisionModeApplied: vision.applied,
+          flipVisionModeFallback: vision.fallbackReason,
+          tokenUsage: createEmptyTokenUsage(),
         }
       }
-    )
 
+      const providerFlip = buildProviderFlipForVision({
+        flip,
+        swapped,
+        visionMode: vision.applied,
+        leftFrames: vision.leftFrames,
+        rightFrames: vision.rightFrames,
+      })
+
+      emitFlipStart({
+        type: 'flip-start',
+        flipIndex,
+        hash: flip.hash,
+        leftImage: flip.leftImage,
+        rightImage: flip.rightImage,
+        leftFrames: vision.leftFrames,
+        rightFrames: vision.rightFrames,
+        sideSwapped: swapped,
+        flipVisionModeRequested: vision.requested,
+        flipVisionModeApplied: vision.applied,
+        flipVisionModeFallback: vision.fallbackReason,
+      })
+
+      const callProviderPass = async ({
+        secondPass = false,
+        allowSkip = true,
+      } = {}) => {
+        const invokeConsultantOnce = async (consultant, promptOptions) =>
+          withRetries(profile.maxRetries, async (attempt) => {
+            try {
+              return await invokeProvider({
+                provider: consultant.provider,
+                model: consultant.model,
+                flip: providerFlip,
+                profile,
+                apiKey: consultant.apiKey,
+                providerConfig: consultant.providerConfig || providerConfig,
+                promptOptions,
+              })
+            } catch (error) {
+              const status = getResponseStatus(error)
+              if (status === 429 && attempt < profile.maxRetries) {
+                const retryAfterMs =
+                  getRetryAfterMs(error) || Math.max(500, 700 * (attempt + 1))
+                await sleep(retryAfterMs)
+              }
+              throw error
+            }
+          })
+
+        const solveConsultant = async (consultant) => {
+          try {
+            if (consultant.internalStrategy === LEGACY_HEURISTIC_STRATEGY) {
+              const heuristicRawDecision = solveLegacyHeuristicDecision({
+                flip: providerFlip,
+              })
+              const heuristicDecision = remapDecisionIfSwapped(
+                heuristicRawDecision,
+                swapped
+              )
+
+              return {
+                provider: consultant.provider,
+                model: consultant.model,
+                weight: normalizeConsultantWeight(consultant.weight, 1),
+                answer: normalizeAnswer(heuristicDecision.answer),
+                confidence: normalizeConfidence(heuristicDecision.confidence),
+                reasoning: heuristicDecision.reasoning,
+                rawAnswerBeforeRemap: normalizeAnswer(
+                  heuristicRawDecision.answer
+                ),
+                finalAnswerAfterRemap: normalizeAnswer(
+                  heuristicDecision.answer
+                ),
+                error: null,
+                tokenUsage: createEmptyTokenUsage(),
+                frameReasoningUsed: false,
+              }
+            }
+
+            let decisionResponse
+            let combinedTokenUsage = createEmptyTokenUsage()
+            let frameReasoningUsed = false
+
+            if (vision.applied === 'frames_two_pass') {
+              const frameReasoningResponse = await invokeConsultantOnce(
+                consultant,
+                {
+                  secondPass,
+                  forceDecision: false,
+                  flipVisionMode: vision.applied,
+                  promptPhase: 'frame_reasoning',
+                }
+              )
+              const normalizedFrameReasoning = normalizeProviderResponse(
+                frameReasoningResponse
+              )
+              combinedTokenUsage = addTokenUsage(
+                combinedTokenUsage,
+                normalizedFrameReasoning.tokenUsage
+              )
+              frameReasoningUsed = true
+
+              decisionResponse = await invokeConsultantOnce(consultant, {
+                secondPass,
+                forceDecision: !allowSkip,
+                flipVisionMode: vision.applied,
+                promptPhase: 'decision_from_frame_reasoning',
+                frameReasoning: normalizedFrameReasoning.rawText,
+              })
+            } else {
+              decisionResponse = await invokeConsultantOnce(consultant, {
+                secondPass,
+                forceDecision: !allowSkip,
+                flipVisionMode: vision.applied,
+                promptPhase: 'decision',
+              })
+            }
+
+            const {rawText, tokenUsage} =
+              normalizeProviderResponse(decisionResponse)
+            combinedTokenUsage = addTokenUsage(combinedTokenUsage, tokenUsage)
+
+            const parsed = extractJsonBlock(rawText)
+            const rawDecision = normalizeDecision(parsed)
+            const decision = remapDecisionIfSwapped(rawDecision, swapped)
+
+            return {
+              provider: consultant.provider,
+              model: consultant.model,
+              weight: normalizeConsultantWeight(consultant.weight, 1),
+              answer: normalizeAnswer(decision.answer),
+              confidence: normalizeConfidence(decision.confidence),
+              reasoning: decision.reasoning,
+              rawAnswerBeforeRemap: normalizeAnswer(rawDecision.answer),
+              finalAnswerAfterRemap: normalizeAnswer(decision.answer),
+              error: null,
+              tokenUsage: combinedTokenUsage,
+              frameReasoningUsed,
+            }
+          } catch (error) {
+            const message = createProviderErrorMessage({
+              provider: consultant.provider,
+              model: consultant.model,
+              operation: 'request',
+              error,
+            })
+            return {
+              provider: consultant.provider,
+              model: consultant.model,
+              weight: normalizeConsultantWeight(consultant.weight, 1),
+              answer: 'skip',
+              confidence: 0,
+              reasoning: 'provider error',
+              error: message,
+              tokenUsage: createEmptyTokenUsage(),
+              frameReasoningUsed: false,
+            }
+          }
+        }
+
+        const consultantDecisions = await Promise.all(
+          consultProvidersWithKeys.map((consultant) =>
+            solveConsultant(consultant)
+          )
+        )
+
+        const aggregate = aggregateConsultantDecisions(consultantDecisions)
+        const consultantTokenUsage = consultantDecisions.reduce(
+          (acc, item) => addTokenUsage(acc, item.tokenUsage),
+          createEmptyTokenUsage()
+        )
+        const consultedProviders = consultantDecisions.map(
+          ({
+            provider: consultProvider,
+            model: consultModel,
+            weight: itemWeight,
+            answer,
+            confidence,
+            error,
+          }) => ({
+            provider: consultProvider,
+            model: consultModel,
+            weight: normalizeConsultantWeight(itemWeight, 1),
+            answer,
+            confidence,
+            error,
+          })
+        )
+        const providerErrors = consultantDecisions
+          .filter((item) => item.error)
+          .map((item) => item.error)
+        const singleConsultantDecision =
+          consultantDecisions.length === 1 ? consultantDecisions[0] : null
+        const rawAnswerBeforeRemap = singleConsultantDecision
+          ? normalizeAnswer(singleConsultantDecision.rawAnswerBeforeRemap)
+          : aggregate.answer
+        const finalAnswerAfterRemap = singleConsultantDecision
+          ? normalizeAnswer(singleConsultantDecision.finalAnswerAfterRemap)
+          : aggregate.answer
+
+        return {
+          hash: flip.hash,
+          answer: aggregate.answer,
+          confidence: aggregate.confidence,
+          reasoning: aggregate.reasoning,
+          rawAnswerBeforeRemap,
+          finalAnswerAfterRemap,
+          error:
+            providerErrors.length > 0
+              ? providerErrors.slice(0, 3).join(' | ')
+              : null,
+          sideSwapped: swapped,
+          flipVisionModeRequested: vision.requested,
+          flipVisionModeApplied: vision.applied,
+          flipVisionModeFallback: vision.fallbackReason,
+          tokenUsage: consultantTokenUsage,
+          secondPass,
+          frameReasoningUsed: consultantDecisions.some(
+            (item) => item.frameReasoningUsed
+          ),
+          consultedProviders,
+          ensembleProbabilities: aggregate.probabilities,
+          ensembleContributors: aggregate.contributors,
+          ensembleTotalWeight: aggregate.totalWeight,
+          ensembleConsulted: consultantDecisions.length,
+        }
+      }
+
+      const allowSkipFirstPass = !(
+        profile.forceDecision && !profile.uncertaintyRepromptEnabled
+      )
+      const firstPassResult = await callProviderPass({
+        secondPass: false,
+        allowSkip: allowSkipFirstPass,
+      })
+      let finalResult = firstPassResult
+      let mergedTokenUsage = addTokenUsage(
+        createEmptyTokenUsage(),
+        firstPassResult.tokenUsage
+      )
+
+      const shouldReprompt =
+        profile.uncertaintyRepromptEnabled &&
+        deadlineAt - now() >= profile.uncertaintyRepromptMinRemainingMs &&
+        (firstPassResult.answer === 'skip' ||
+          firstPassResult.confidence < profile.uncertaintyConfidenceThreshold)
+
+      if (shouldReprompt) {
+        const secondPassResult = await callProviderPass({
+          secondPass: true,
+          allowSkip: false,
+        })
+        mergedTokenUsage = addTokenUsage(
+          mergedTokenUsage,
+          secondPassResult.tokenUsage
+        )
+        finalResult = {
+          ...secondPassResult,
+          uncertaintyRepromptUsed: true,
+          firstPass: {
+            answer: firstPassResult.answer,
+            confidence: firstPassResult.confidence,
+            error: firstPassResult.error,
+          },
+        }
+      }
+
+      if (profile.forceDecision && finalResult.answer === 'skip') {
+        const forcedAnswer = chooseDeterministicSide(flip.hash)
+        finalResult = {
+          ...finalResult,
+          answer: forcedAnswer,
+          finalAnswerAfterRemap: forcedAnswer,
+          forcedDecision: true,
+          forcedDecisionReason: finalResult.error
+            ? 'provider_error'
+            : 'uncertain_or_skip',
+          reasoning: finalResult.reasoning
+            ? `${finalResult.reasoning}; forced ${forcedAnswer}`
+            : `forced ${forcedAnswer}`,
+        }
+      }
+
+      return {
+        ...finalResult,
+        latencyMs: now() - flipStartedAt,
+        tokenUsage: mergedTokenUsage,
+      }
+    }
+
+    function toProgressEvent(flip, flipIndex, result) {
+      return {
+        type: 'flip-result',
+        flipIndex,
+        hash: flip.hash,
+        leftImage: flip.leftImage,
+        rightImage: flip.rightImage,
+        leftFrames: normalizeImageList(flip.leftFrames).slice(0, 4),
+        rightFrames: normalizeImageList(flip.rightFrames).slice(0, 4),
+        ...result,
+      }
+    }
+
+    let results = []
+    if (profile.maxConcurrency <= 1) {
+      for (let flipIndex = 0; flipIndex < flips.length; flipIndex += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const result = await solveSingleFlip(flips[flipIndex], flipIndex)
+        results.push(result)
+        emitFlipResult(toProgressEvent(flips[flipIndex], flipIndex, result))
+
+        if (interFlipDelayMs > 0 && flipIndex < flips.length - 1) {
+          // eslint-disable-next-line no-await-in-loop
+          await sleep(interFlipDelayMs)
+        }
+      }
+    } else {
+      results = await mapWithConcurrency(
+        flips,
+        profile.maxConcurrency,
+        async (flip, flipIndex) => {
+          const result = await solveSingleFlip(flip, flipIndex)
+          emitFlipResult(toProgressEvent(flip, flipIndex, result))
+          return result
+        }
+      )
+    }
+
+    const tokenUsageSummary = summarizeTokenUsage(results)
+    const reportedProvider = legacyOnlyMode
+      ? LEGACY_HEURISTIC_PROVIDER
+      : provider
+    const reportedModel = legacyOnlyMode ? LEGACY_HEURISTIC_MODEL : model
     const summary = {
       totalFlips: results.length,
       elapsedMs: now() - startedAt,
       skipped: results.filter((x) => x.answer === 'skip').length,
       left: results.filter((x) => x.answer === 'left').length,
       right: results.filter((x) => x.answer === 'right').length,
+      consultedProviders: consultProviders.map(
+        ({provider: itemProvider, model: itemModel, weight: itemWeight}) => ({
+          provider: itemProvider,
+          model: itemModel,
+          weight: normalizeConsultantWeight(itemWeight, 1),
+        })
+      ),
+      tokens: tokenUsageSummary,
+      diagnostics: {
+        swapped: results.filter((x) => x.sideSwapped === true).length,
+        notSwapped: results.filter((x) => x.sideSwapped !== true).length,
+        rawLeft: results.filter((x) => x.rawAnswerBeforeRemap === 'left')
+          .length,
+        rawRight: results.filter((x) => x.rawAnswerBeforeRemap === 'right')
+          .length,
+        rawSkip: results.filter((x) => x.rawAnswerBeforeRemap === 'skip')
+          .length,
+        finalLeft: results.filter((x) => x.finalAnswerAfterRemap === 'left')
+          .length,
+        finalRight: results.filter((x) => x.finalAnswerAfterRemap === 'right')
+          .length,
+        finalSkip: results.filter((x) => x.finalAnswerAfterRemap === 'skip')
+          .length,
+        remappedDecisions: results.filter((x) => {
+          if (
+            x.rawAnswerBeforeRemap !== 'left' &&
+            x.rawAnswerBeforeRemap !== 'right'
+          ) {
+            return false
+          }
+          return x.rawAnswerBeforeRemap !== x.finalAnswerAfterRemap
+        }).length,
+        providerErrors: results.filter((x) => Boolean(x.error)).length,
+      },
     }
 
     await writeBenchmarkLog({
       time: new Date().toISOString(),
-      provider,
-      model,
+      provider: reportedProvider,
+      model: reportedModel,
       profile,
       session: payload.session || null,
       summary,
       flips: results.map(
-        ({hash, answer, confidence, latencyMs, error, reasoning}) => ({
+        ({
           hash,
           answer,
           confidence,
           latencyMs,
           error,
           reasoning,
+          sideSwapped,
+          rawAnswerBeforeRemap,
+          finalAnswerAfterRemap,
+          tokenUsage,
+          uncertaintyRepromptUsed,
+          forcedDecision,
+          forcedDecisionReason,
+          frameReasoningUsed,
+          flipVisionModeRequested,
+          flipVisionModeApplied,
+          flipVisionModeFallback,
+          consultedProviders,
+          ensembleProbabilities,
+          ensembleContributors,
+          ensembleTotalWeight,
+          ensembleConsulted,
+        }) => ({
+          hash,
+          answer,
+          confidence,
+          latencyMs,
+          error,
+          reasoning,
+          sideSwapped,
+          rawAnswerBeforeRemap,
+          finalAnswerAfterRemap,
+          tokenUsage,
+          uncertaintyRepromptUsed,
+          forcedDecision,
+          forcedDecisionReason,
+          frameReasoningUsed,
+          flipVisionModeRequested,
+          flipVisionModeApplied,
+          flipVisionModeFallback,
+          consultedProviders,
+          ensembleProbabilities,
+          ensembleContributors,
+          ensembleTotalWeight,
+          ensembleConsulted,
         })
       ),
     })
 
     return {
-      provider,
-      model,
+      provider: reportedProvider,
+      model: reportedModel,
       profile,
       summary,
       results,
@@ -258,7 +4125,12 @@ function createAiProviderBridge(logger, dependencies = {}) {
   return {
     setProviderKey,
     clearProviderKey,
+    hasProviderKey,
     testProvider,
+    listModels,
+    generateImageSearchResults,
+    generateStoryOptions,
+    generateFlipPanels,
     solveFlipBatch,
   }
 }
