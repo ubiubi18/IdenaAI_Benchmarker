@@ -1806,6 +1806,8 @@ export default function NewFlipPage() {
         visualStyle: aiImageStyle,
         keywords: [keywordA, keywordB],
         storyPanels: storyPanelsDraft,
+        storyOptions,
+        selectedStoryId,
         senseSelection:
           selectedStoryOption && selectedStoryOption.senseSelection
             ? selectedStoryOption.senseSelection
@@ -1821,6 +1823,21 @@ export default function NewFlipPage() {
         : []
       if (nextPanels.length < 4) {
         throw new Error('Panel generation returned less than 4 panels')
+      }
+      if (
+        response &&
+        response.selectedStory &&
+        typeof response.selectedStory === 'object'
+      ) {
+        const nextStoryId = String(response.selectedStory.id || '').trim()
+        if (nextStoryId && nextStoryId !== String(selectedStoryId)) {
+          setSelectedStoryId(nextStoryId)
+        }
+        if (Array.isArray(response.selectedStory.panels)) {
+          setStoryPanelsDraft(
+            normalizeStoryPanelsInput(response.selectedStory.panels)
+          )
+        }
       }
 
       const normalizedPanelDataUrls = await normalizeGeneratedPanelsForBuilder(
@@ -1922,8 +1939,32 @@ export default function NewFlipPage() {
             )
           : t(
               'Panels were applied and shuffled for submit. You can still reshuffle or regenerate panels.'
-            )
+          )
       )
+      if (
+        response &&
+        response.renderFeedback &&
+        response.renderFeedback.switchedToAlternativeOption
+      ) {
+        notify(
+          t('Switched to stronger rendered story'),
+          t(
+            'The original story rendered weakly, so the stronger alternative story option was used for the generated panels.'
+          )
+        )
+      } else if (
+        response &&
+        response.renderFeedback &&
+        response.renderFeedback.verdict === 'replan_story'
+      ) {
+        notify(
+          t('Rendered story looks weak'),
+          t(
+            'The rendered sequence still looks ambiguous after generation. Consider switching story option or regenerating again.'
+          ),
+          'warning'
+        )
+      }
       if (textAuditFailed.length > 0) {
         notify(
           t('Text detected in generated panel'),

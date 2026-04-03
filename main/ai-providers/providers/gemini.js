@@ -216,6 +216,7 @@ async function callGemini({
   prompt,
   profile,
   providerConfig,
+  promptOptions = {},
 }) {
   const images = (
     Array.isArray(flip && flip.images) && flip.images.length
@@ -223,6 +224,18 @@ async function callGemini({
       : [flip && flip.leftImage, flip && flip.rightImage]
   ).filter(Boolean)
   const imageParts = images.map((image) => toImagePartFromDataUrl(image))
+  const structuredOutput =
+    promptOptions &&
+    promptOptions.structuredOutput &&
+    typeof promptOptions.structuredOutput === 'object'
+      ? promptOptions.structuredOutput
+      : null
+  const responseSchema =
+    structuredOutput &&
+    structuredOutput.responseSchema &&
+    typeof structuredOutput.responseSchema === 'object'
+      ? structuredOutput.responseSchema
+      : null
 
   const response = await httpClient.post(
     resolveGeminiEndpoint({model, apiKey, providerConfig}),
@@ -237,6 +250,7 @@ async function callGemini({
         temperature: profile.temperature,
         maxOutputTokens: profile.maxOutputTokens,
         responseMimeType: 'application/json',
+        ...(responseSchema ? {responseSchema} : {}),
       },
     },
     {
@@ -253,12 +267,33 @@ async function callGemini({
     .map((part) => part && part.text)
     .filter(Boolean)
     .join('\n')
+  const promptFeedback =
+    response && response.data && response.data.promptFeedback
+      ? response.data.promptFeedback
+      : {}
+  const finishReason = String(firstCandidate && firstCandidate.finishReason || '')
+    .trim()
+    .toUpperCase()
+  const blockReason = String(promptFeedback.blockReason || '')
+    .trim()
+    .toUpperCase()
 
   return {
     rawText,
     usage: normalizeGeminiUsage(
       response && response.data && response.data.usageMetadata
     ),
+    providerMeta: {
+      finishReason,
+      blockReason,
+      refusal: '',
+      safetyBlock:
+        blockReason === 'SAFETY' ||
+        finishReason === 'SAFETY' ||
+        blockReason === 'PROHIBITED_CONTENT',
+      truncated:
+        finishReason === 'MAX_TOKENS' || finishReason === 'MAX_OUTPUT_TOKENS',
+    },
   }
 }
 

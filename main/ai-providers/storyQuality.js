@@ -67,12 +67,15 @@ const CONCRETE_ACTION_PATTERNS = [
   /\bcarries?\b/i,
   /\bcatches?\b/i,
   /\bchases?\b/i,
+  /\bchecks?\b/i,
   /\bcloses?\b/i,
   /\bcollides?\b/i,
   /\bcovers?\b/i,
+  /\bcarves?\b/i,
   /\bcracks?\b/i,
   /\bcuts?\b/i,
   /\bdrops?\b/i,
+  /\benters?\b/i,
   /\bextinguishes?\b/i,
   /\bfalls?\b/i,
   /\bfreezes?\b/i,
@@ -86,8 +89,11 @@ const CONCRETE_ACTION_PATTERNS = [
   /\blifts?\b/i,
   /\bmoves?\b/i,
   /\bopens?\b/i,
+  /\bplaces?\b/i,
   /\bpicks? up\b/i,
+  /\bpositions?\b/i,
   /\bpours?\b/i,
+  /\bputs?\b/i,
   /\bpulls?\b/i,
   /\bpushes?\b/i,
   /\bruns?\b/i,
@@ -96,6 +102,7 @@ const CONCRETE_ACTION_PATTERNS = [
   /\bslides?\b/i,
   /\bspills?\b/i,
   /\bspreads?\b/i,
+  /\bstarts?\b/i,
   /\bstartles?\b/i,
   /\bsteps? back\b/i,
   /\bsweeps?\b/i,
@@ -107,28 +114,43 @@ const CONCRETE_ACTION_PATTERNS = [
   /\bunlocks?\b/i,
   /\bwalks?\b/i,
   /\bwaves?\b/i,
+  /\bwrites?\b/i,
+  /\bshapes?\b/i,
+  /\bsets? down\b/i,
+  /\bpresents?\b/i,
+  /\bshows?\b/i,
+  /\btakes? form\b/i,
 ]
 
 const EXTERNAL_CHANGE_PATTERNS = [
   /\bappears?\b/i,
   /\bbreaks?\b/i,
+  /\bcarves?\b/i,
+  /\bchips scatter\b/i,
   /\bcracks?\b/i,
+  /\bcutting\b/i,
   /\bdrops?\b/i,
   /\bfalls?\b/i,
+  /\bfinished\b/i,
   /\bhits? the floor\b/i,
   /\bignites?\b/i,
   /\bknocks? over\b/i,
   /\blands?\b/i,
-  /\bopens?\b/i,
+  /\blifts?\b/i,
+  /\bpicks? up\b/i,
+  /\bpresents?\b/i,
+  /\bputs?\b/i,
+  /\bscatter(?:s|ed)?\b/i,
   /\bspills?\b/i,
   /\bspreads?\b/i,
+  /\bstarts?\b/i,
   /\bshatters?\b/i,
+  /\bshapes?\b/i,
   /\bslides?\b/i,
+  /\btakes? form\b/i,
   /\btopples?\b/i,
   /\bwet floor\b/i,
   /\bbroken\b/i,
-  /\bopen\b/i,
-  /\bclosed\b/i,
   /\bscattered\b/i,
 ]
 
@@ -155,8 +177,8 @@ const RESULT_STATE_PATTERNS = [
   /\bholds?\b/i,
   /\blies?\b/i,
   /\bnow\b/i,
-  /\bopen\b/i,
-  /\bclosed\b/i,
+  /\bplaces?\b/i,
+  /\bcloses?\b/i,
   /\bremains?\b/i,
   /\brests?\b/i,
   /\bsafe\b/i,
@@ -164,6 +186,11 @@ const RESULT_STATE_PATTERNS = [
   /\bspilled\b/i,
   /\bstands?\b/i,
   /\bstays?\b/i,
+  /\bputs?\b/i,
+  /\bshows?\b/i,
+  /\bstored\b/i,
+  /\bfinished\b/i,
+  /\bcompleted\b/i,
 ]
 
 const EMOTION_PATTERNS = [
@@ -174,6 +201,7 @@ const EMOTION_PATTERNS = [
   /\brelieved\b/i,
   /\bscared\b/i,
   /\bshock\b/i,
+  /\bshocked\b/i,
   /\bstartled\b/i,
   /\bsurprised\b/i,
   /\bworried\b/i,
@@ -247,9 +275,35 @@ function countPatternMatches(text, patterns) {
   return getMatchedLabels(text, patterns).length
 }
 
+function buildDescriptionPatternStats(text) {
+  const description = normalizeText(text)
+  const abstractHits = getMatchedLabels(description, ABSTRACT_PATTERNS)
+  const genericHits = getMatchedLabels(description, GENERIC_WORDING_PATTERNS)
+  const concreteActionCount = countPatternMatches(
+    description,
+    CONCRETE_ACTION_PATTERNS
+  )
+  const externalChangeFromDescription =
+    countPatternMatches(description, EXTERNAL_CHANGE_PATTERNS) > 0
+  const reactionCount = countPatternMatches(description, REACTION_PATTERNS)
+  const emotionCount = countPatternMatches(description, EMOTION_PATTERNS)
+  const resultCount = countPatternMatches(description, RESULT_STATE_PATTERNS)
+
+  return {
+    description,
+    abstractHits,
+    genericHits,
+    concreteActionCount,
+    externalChangeFromDescription,
+    reactionCount,
+    emotionCount,
+    resultCount,
+  }
+}
+
 function isGenericStateChange(text) {
   const value = normalizeText(text)
-  if (!value) return true
+  if (!value) return false
   return GENERIC_STATE_CHANGE_PATTERNS.some((pattern) => pattern.test(value))
 }
 
@@ -262,9 +316,11 @@ function tokenize(text) {
     .filter((token) => token && !STOPWORDS.has(token))
 }
 
-function jaccardSimilarity(left, right) {
-  const leftTokens = new Set(tokenize(left))
-  const rightTokens = new Set(tokenize(right))
+function tokenizeToSet(text) {
+  return new Set(tokenize(text))
+}
+
+function jaccardSimilarityFromSets(leftTokens, rightTokens) {
   if (leftTokens.size < 1 || rightTokens.size < 1) return 0
 
   let intersection = 0
@@ -278,51 +334,57 @@ function jaccardSimilarity(left, right) {
   return union > 0 ? intersection / union : 0
 }
 
-function hasExternalChange(panel) {
-  const description = normalizeText(panel && panel.description)
-  const stateChange = normalizeText(panel && panel.stateChangeFromPrevious)
+function hasTriggerEventSignal(panelCheck) {
   return (
-    countPatternMatches(description, EXTERNAL_CHANGE_PATTERNS) > 0 ||
-    (stateChange && !isGenericStateChange(stateChange))
+    Boolean(panelCheck && panelCheck.concreteActionCount > 0) ||
+    Boolean(panelCheck && panelCheck.externalChange)
   )
 }
 
-function hasConcreteAction(text) {
-  return countPatternMatches(text, CONCRETE_ACTION_PATTERNS) > 0
-}
-
-function hasReactionSignal(panel) {
-  const description = normalizeText(panel && panel.description)
+function hasReactionSignal(panelCheck) {
   return (
-    countPatternMatches(description, REACTION_PATTERNS) > 0 ||
-    countPatternMatches(description, EMOTION_PATTERNS) > 0 ||
-    hasExternalChange(panel)
+    Boolean(panelCheck && panelCheck.reactionCount > 0) ||
+    Boolean(panelCheck && panelCheck.emotionCount > 0) ||
+    Boolean(panelCheck && panelCheck.concreteActionCount > 0) ||
+    Boolean(panelCheck && panelCheck.externalChange)
   )
 }
 
-function hasResultSignal(panel) {
-  const description = normalizeText(panel && panel.description)
+function hasResultSignal(panelCheck) {
   return (
-    countPatternMatches(description, RESULT_STATE_PATTERNS) > 0 ||
-    hasExternalChange(panel)
+    Boolean(panelCheck && panelCheck.resultCount > 0) ||
+    Boolean(panelCheck && panelCheck.externalChange)
   )
 }
 
 function buildPanelChecks(panelDetails) {
-  return panelDetails.map((panel, index) => ({
-    panel: index + 1,
-    role: panel.role,
-    description: panel.description,
-    abstractHits: getMatchedLabels(panel.description, ABSTRACT_PATTERNS),
-    genericHits: getMatchedLabels(panel.description, GENERIC_WORDING_PATTERNS),
-    concreteActionCount: countPatternMatches(
-      panel.description,
-      CONCRETE_ACTION_PATTERNS
-    ),
-    externalChange: index === 0 ? false : hasExternalChange(panel),
-    genericStateChange:
-      index === 0 ? false : isGenericStateChange(panel.stateChangeFromPrevious),
-  }))
+  return panelDetails.map((panel, index) => {
+    const patternStats = buildDescriptionPatternStats(panel.description)
+    const stateChangeFromPrevious = normalizeText(panel.stateChangeFromPrevious)
+    const genericStateChange =
+      index === 0 ? false : isGenericStateChange(stateChangeFromPrevious)
+
+    return {
+      panel: index + 1,
+      role: panel.role,
+      description: patternStats.description,
+      abstractHits: patternStats.abstractHits,
+      genericHits: patternStats.genericHits,
+      concreteActionCount: patternStats.concreteActionCount,
+      reactionCount: patternStats.reactionCount,
+      emotionCount: patternStats.emotionCount,
+      resultCount: patternStats.resultCount,
+      descriptionTokens: tokenizeToSet(patternStats.description),
+      externalChange:
+        index === 0
+          ? false
+          : Boolean(
+              patternStats.externalChangeFromDescription ||
+                (stateChangeFromPrevious && !genericStateChange)
+            ),
+      genericStateChange,
+    }
+  })
 }
 
 function evaluateStoryQuality(story) {
@@ -332,13 +394,13 @@ function evaluateStoryQuality(story) {
   const nearDuplicatePairs = []
 
   for (let index = 0; index < panelChecks.length - 1; index += 1) {
-    const similarity = jaccardSimilarity(
-      panelChecks[index].description,
-      panelChecks[index + 1].description
+    const similarity = jaccardSimilarityFromSets(
+      panelChecks[index].descriptionTokens,
+      panelChecks[index + 1].descriptionTokens
     )
     const roundedSimilarity = Number(similarity.toFixed(2))
     consecutiveSimilarities.push(roundedSimilarity)
-    if (roundedSimilarity >= 0.74) {
+    if (roundedSimilarity >= 0.65) {
       nearDuplicatePairs.push({
         leftPanel: index + 1,
         rightPanel: index + 2,
@@ -369,14 +431,13 @@ function evaluateStoryQuality(story) {
   const hasInitialState =
     panelChecks[0].description.length >= 18 &&
     panelChecks[0].abstractHits.length < 1
-  const hasTriggerEvent =
-    hasConcreteAction(panelChecks[1].description) || panelChecks[1].externalChange
-  const hasReaction = hasReactionSignal(panelDetails[2])
-  const hasResultState = hasResultSignal(panelDetails[3])
+  const hasTriggerEvent = hasTriggerEventSignal(panelChecks[1])
+  const hasReaction = hasReactionSignal(panelChecks[2])
+  const hasResultState = hasResultSignal(panelChecks[3])
 
   const emotionalPanelIndexes = panelChecks
     .map((panel, index) =>
-      countPatternMatches(panel.description, EMOTION_PATTERNS) > 0 ? index : -1
+      panel.emotionCount > 0 ? index : -1
     )
     .filter((index) => index >= 0)
 
@@ -433,7 +494,7 @@ function evaluateStoryQuality(story) {
     ok: failures.length < 1 && score >= 60,
     score,
     failures: Array.from(new Set(failures)),
-    panelChecks,
+    panelChecks: panelChecks.map(({descriptionTokens, ...panel}) => panel),
     metrics: {
       hasInitialState,
       hasTriggerEvent,

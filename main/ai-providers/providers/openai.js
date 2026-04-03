@@ -164,6 +164,7 @@ function buildOpenAiPayload({
   tokenField,
   includeTemperature,
   includeResponseFormat,
+  responseFormat,
 }) {
   const payload = {
     model,
@@ -184,9 +185,12 @@ function buildOpenAiPayload({
   }
 
   if (includeResponseFormat) {
-    payload.response_format = {
-      type: 'json_object',
-    }
+    payload.response_format =
+      responseFormat && typeof responseFormat === 'object'
+        ? responseFormat
+        : {
+            type: 'json_object',
+          }
   }
 
   return payload
@@ -204,7 +208,26 @@ function dedupePayloadVariants(payloads) {
   return result
 }
 
-function buildOpenAiPayloadVariants({model, prompt, images, profile}) {
+function buildOpenAiPayloadVariants({
+  model,
+  prompt,
+  images,
+  profile,
+  promptOptions = {},
+}) {
+  const structuredOutput =
+    promptOptions &&
+    promptOptions.structuredOutput &&
+    typeof promptOptions.structuredOutput === 'object'
+      ? promptOptions.structuredOutput
+      : null
+  const responseFormat =
+    structuredOutput &&
+    structuredOutput.responseFormat &&
+    typeof structuredOutput.responseFormat === 'object'
+      ? structuredOutput.responseFormat
+      : null
+
   return dedupePayloadVariants([
     buildOpenAiPayload({
       model,
@@ -214,6 +237,7 @@ function buildOpenAiPayloadVariants({model, prompt, images, profile}) {
       tokenField: 'max_tokens',
       includeTemperature: true,
       includeResponseFormat: true,
+      responseFormat,
     }),
     buildOpenAiPayload({
       model,
@@ -223,6 +247,7 @@ function buildOpenAiPayloadVariants({model, prompt, images, profile}) {
       tokenField: 'max_completion_tokens',
       includeTemperature: true,
       includeResponseFormat: true,
+      responseFormat,
     }),
     buildOpenAiPayload({
       model,
@@ -252,6 +277,38 @@ function buildOpenAiPayloadVariants({model, prompt, images, profile}) {
       includeResponseFormat: false,
     }),
   ])
+}
+
+function extractOpenAiRawText(message) {
+  const content = message && message.content
+
+  return Array.isArray(content)
+    ? content
+        .map((part) => part && (part.text || part.output_text))
+        .filter(Boolean)
+        .join('\n')
+    : String(content || '')
+}
+
+function extractOpenAiProviderMeta(responseData) {
+  const choices =
+    responseData && Array.isArray(responseData.choices) ? responseData.choices : []
+  const firstChoice = choices[0] || {}
+  const message =
+    firstChoice && firstChoice.message && typeof firstChoice.message === 'object'
+      ? firstChoice.message
+      : {}
+  const finishReason = String(firstChoice.finish_reason || '')
+    .trim()
+    .toLowerCase()
+  const refusalText = String(message.refusal || '').trim()
+
+  return {
+    finishReason,
+    refusal: refusalText,
+    safetyBlock: finishReason === 'content_filter',
+    truncated: finishReason === 'length',
+  }
 }
 
 async function postWithCompatibilityFallback({
@@ -290,6 +347,7 @@ async function callOpenAi({
   prompt,
   profile,
   providerConfig,
+  promptOptions = {},
 }) {
   const endpoint = resolveOpenAiEndpoint(providerConfig)
   const images = (
@@ -306,6 +364,7 @@ async function callOpenAi({
       prompt,
       images,
       profile,
+      promptOptions,
     }),
     requestConfig: {
       timeout: profile.requestTimeoutMs,
@@ -313,22 +372,15 @@ async function callOpenAi({
     },
   })
 
-  const choices = response && response.data && response.data.choices
+  const responseData = response && response.data
+  const choices = responseData && responseData.choices
   const message = Array.isArray(choices) && choices.length && choices[0].message
-  const content = message && message.content
-
-  const rawText = Array.isArray(content)
-    ? content
-        .map((part) => part && part.text)
-        .filter(Boolean)
-        .join('\n')
-    : content || ''
+  const rawText = extractOpenAiRawText(message)
 
   return {
     rawText,
-    usage: normalizeOpenAiUsage(
-      response && response.data && response.data.usage
-    ),
+    usage: normalizeOpenAiUsage(responseData && responseData.usage),
+    providerMeta: extractOpenAiProviderMeta(responseData),
   }
 }
 

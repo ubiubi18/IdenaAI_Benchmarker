@@ -1,4 +1,7 @@
 const {callOpenAi, testOpenAiProvider} = require('./openai')
+const {
+  STORY_OPTIONS_OPENAI_RESPONSE_FORMAT,
+} = require('../storySchema')
 
 function makeUnsupportedParameterError(param, message = '') {
   return {
@@ -143,5 +146,60 @@ describe('openai provider adapter', () => {
     expect(payload.max_tokens).toBeUndefined()
     expect(payload.max_completion_tokens).toBeUndefined()
     expect(payload.response_format).toBeUndefined()
+  })
+
+  test('passes through structured output schema and exposes provider refusal metadata', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: {
+          choices: [
+            {
+              finish_reason: 'content_filter',
+              message: {
+                content: '',
+                refusal: 'Policy refusal.',
+              },
+            },
+          ],
+          usage: {
+            prompt_tokens: 90,
+            completion_tokens: 0,
+            total_tokens: 90,
+          },
+        },
+      }),
+    }
+
+    const result = await callOpenAi({
+      httpClient,
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+      flip: {
+        hash: 'flip-structured-output',
+      },
+      prompt: 'return structured story json',
+      profile: {
+        temperature: 0.2,
+        maxOutputTokens: 256,
+        requestTimeoutMs: 5000,
+      },
+      providerConfig: null,
+      promptOptions: {
+        structuredOutput: {
+          responseFormat: STORY_OPTIONS_OPENAI_RESPONSE_FORMAT,
+        },
+      },
+    })
+
+    expect(httpClient.post).toHaveBeenCalledTimes(1)
+    expect(httpClient.post.mock.calls[0][1].response_format).toEqual(
+      STORY_OPTIONS_OPENAI_RESPONSE_FORMAT
+    )
+    expect(result.providerMeta).toMatchObject({
+      finishReason: 'content_filter',
+      refusal: 'Policy refusal.',
+      safetyBlock: true,
+      truncated: false,
+    })
   })
 })

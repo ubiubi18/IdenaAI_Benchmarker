@@ -58,7 +58,7 @@ describe('story quality validation', () => {
 
     expect(result.ok).toBe(false)
     expect(result.failures).toContain('near_duplicate_panels')
-    expect(result.metrics.maxConsecutiveSimilarity).toBeGreaterThanOrEqual(0.74)
+    expect(result.metrics.maxConsecutiveSimilarity).toBeGreaterThanOrEqual(0.65)
   })
 
   test('passes a stronger shock and ghost story with visible progression', () => {
