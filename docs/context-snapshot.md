@@ -3,9 +3,9 @@
 ## Branch and commits
 - Branch: `research/benchmark-desktop`
 - Latest commits:
+  - `c4b5ed87` `feat: advance AI benchmark builder, test unit, and provider integrations`
+  - `18fd7401` `docs: refresh snapshot after warning banner step`
   - `65b2e1ad` `feat(desktop): add persistent research warning banners`
-  - `26070ecc` `feat(ai-helper): add validation telemetry panel`
-  - `9eb742ac` `refactor(ai-helper): modularize providers and add focused tests`
 
 ## Implemented scope
 - AI provider bridge in main process (OpenAI + Gemini).
@@ -43,6 +43,10 @@
 - Validation visual preview URL:
   - `/validation?previewAi=1`
 - Browser-safe guards added for non-Electron preview mode.
+- Deep Research index:
+  - generate: `npm run index:deep-research`
+  - output: `docs/deep-research-index.json`
+  - guide: `docs/deep-research-integration.md`
 
 ## Not implemented yet
 - Orchestrator integration tests with realistic image payload generation.

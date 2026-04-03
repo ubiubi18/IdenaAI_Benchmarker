@@ -4003,3 +4003,41 @@ Result: passed.
 - UI now supports explicit Fast/Strict generation behavior.
 - Human creativity is enforced in default flow via required 1-2 sentence seed.
 - Story options are less generic and more anchored to user-provided narrative intent.
+
+## 2026-04-03 - Step: Harmonize and index repository for ChatGPT Deep Research ingestion
+
+### Inspected
+
+- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/package.json`
+- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/docs/context-snapshot.md`
+- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/scripts/`
+
+### Changed
+
+- Added script entry in `package.json`:
+  - `index:deep-research` -> `python3 scripts/build_deep_research_index.py`
+- Added generator script:
+  - `scripts/build_deep_research_index.py`
+  - builds reproducible `docs/deep-research-index.json` with:
+    - project metadata
+    - git branch/head
+    - entrypoints
+    - quick start commands
+    - curated sections (docs, ai backend, ai ui, ops/data, tests)
+- Added integration guide:
+  - `docs/deep-research-integration.md`
+  - includes prompt template and recommended file bundle for ingestion.
+- Updated snapshot doc for harmonized discovery:
+  - `docs/context-snapshot.md` now references deep-research index workflow.
+
+### Why
+
+- Requested: harmonize and prepare a deterministic index for ChatGPT Deep Research integration before push.
+
+### Commands
+
+- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm run index:deep-research`
+
+### Result
+
+- Repo now exposes a machine-readable index (`docs/deep-research-index.json`) plus a human guide (`docs/deep-research-integration.md`) for reliable Deep Research context loading.
