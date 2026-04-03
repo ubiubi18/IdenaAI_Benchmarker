@@ -1163,6 +1163,7 @@ function normalizeStoryOption(value, index) {
   }
   const rationale =
     String(item.rationale || '').trim() || autoRationale.join(' | ')
+  const editingTip = String(item.editingTip || item.editing_tip || '').trim()
   const panelSource = Array.isArray(item.panels) ? item.panels.slice(0, 4) : []
   while (panelSource.length < 4) {
     panelSource.push('')
@@ -1180,6 +1181,10 @@ function normalizeStoryOption(value, index) {
       ? Math.max(0, Math.min(3, Number(item.noisePanelIndex)))
       : null,
     rationale,
+    editingTip,
+    isStoryboardStarter: Boolean(
+      item.isStoryboardStarter || item.is_storyboard_starter
+    ),
     storySummary,
     complianceReport,
     riskFlags,
@@ -1588,6 +1593,23 @@ function normalizeKeywordFallbackValue(value, fallback) {
   return normalized || fallback
 }
 
+function buildLocalFallbackEditingTip(selection, keywordA, keywordB) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || 'keyword 1'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || 'keyword 2'
+  const lockedSelection = getLockedSenseSelection(selection, safeKeywordA, safeKeywordB)
+  const chosenFirstSense = getLockedSense(lockedSelection, 'keyword_1', safeKeywordA)
+  const chosenSecondSense = getLockedSense(lockedSelection, 'keyword_2', safeKeywordB)
+  const usesLiteralFallbackSense =
+    senseHasTag(chosenFirstSense, 'fallback') ||
+    senseHasTag(chosenSecondSense, 'fallback')
+
+  if (lockedSelection.used_raw_keyword_fallback || usesLiteralFallbackSense) {
+    return `These keywords stayed ambiguous, so treat this as a storyboard starter. Rewrite all 4 panels with a specific place, actor, trigger, and visible aftermath before building images for "${safeKeywordA}" and "${safeKeywordB}".`
+  }
+
+  return 'Treat this as a starting point, not a finished answer. If the beat feels stiff, rewrite the place, prop, trigger, or aftermath in your own words before building images.'
+}
+
 function buildKeywordFallbackPanels(
   keywordA,
   keywordB,
@@ -1598,6 +1620,36 @@ function buildKeywordFallbackPanels(
   const selection = getLockedSenseSelection(senseSelection, keywordA, keywordB)
   const firstSense = getLockedSense(selection, 'keyword_1', keywordA)
   const secondSense = getLockedSense(selection, 'keyword_2', keywordB)
+  const usesLiteralFallbackSense =
+    senseHasTag(firstSense, 'fallback') ||
+    senseHasTag(secondSense, 'fallback')
+
+  const buildRawKeywordStoryboardStarterPanels = () => {
+    const primaryLabel = getSensePromptLabel(firstSense, keywordA)
+    const secondaryLabel = getSensePromptLabel(secondSense, keywordB)
+
+    if (variant === 1) {
+      return [
+        prependSeedToPanel(
+          `Choose a concrete room, street, stage, or landscape and decide what "${primaryLabel}" literally looks like there before anything changes.`,
+          humanStorySeed
+        ),
+        `Bring "${secondaryLabel}" into the scene in the exact moment that starts the story, not as a background detail.`,
+        `Show the biggest visible consequence in panel 3, such as a spill, break, reveal, chase, collapse, or sudden movement.`,
+        `End on a final image where the new situation is obvious at a glance, not only a facial expression.`,
+      ]
+    }
+
+    return [
+      prependSeedToPanel(
+        `Pick one specific actor or object and one specific place where "${primaryLabel}" can become immediately visual.`,
+        humanStorySeed
+      ),
+      `Use "${secondaryLabel}" as the trigger that makes the scene noticeably change in one readable moment.`,
+      `Show the strongest physical consequence and the reaction together, so the flip still reads without explanation.`,
+      `Rewrite the ending so both keywords still matter in the final stable image, not just in the setup.`,
+    ]
+  }
 
   const buildEmotionLockedFallbackPanels = (emotionSense, triggerSense) => {
     const seed = `${emotionSense.sense_id}|${triggerSense.sense_id}|${variant}`
@@ -1786,24 +1838,28 @@ function buildKeywordFallbackPanels(
     if (variant === 1) {
       return [
         prependSeedToPanel(
-          `A person sets the ${primaryLabel} beside the ${secondaryLabel} on a ${location}.`,
+          `A person notices the ${primaryLabel} and the ${secondaryLabel} together on a ${location}.`,
           humanStorySeed
         ),
-        `One clear push makes the ${primaryLabel} bump the ${secondaryLabel}.`,
-        `The ${secondaryLabel} shifts visibly, and a nearby ${prop} tips over to make the change obvious.`,
-        `The tipped ${prop}, the moved ${primaryLabel}, and the changed ${secondaryLabel} remain visible in the final stable state.`,
+        `A sudden bump or slip makes the ${primaryLabel} collide with the ${secondaryLabel} in one readable beat.`,
+        `That impact tips the nearby ${prop} and changes the position of the ${secondaryLabel} in a way that is easy to see.`,
+        `The spilled ${prop} and the new positions of the ${primaryLabel} and ${secondaryLabel} remain visible as the aftermath.`,
       ]
     }
 
     return [
       prependSeedToPanel(
-        `A person arranges the ${primaryLabel} and the ${secondaryLabel} beside a ${prop} on a ${location}.`,
+        `In a ${location}, a person is handling the ${primaryLabel} near the ${secondaryLabel} and a ${prop}.`,
         humanStorySeed
       ),
-      `The person makes one concrete move that sends the ${primaryLabel} into the ${secondaryLabel}.`,
-      `That contact causes a visible external change as the ${secondaryLabel} shifts and the ${prop} spills.`,
-      `The spilled ${prop} and changed positions of the ${primaryLabel} and ${secondaryLabel} show the stable aftermath.`,
+      `A sudden movement sends the ${primaryLabel} into the ${secondaryLabel}, turning the setup into an obvious event.`,
+      `The collision shifts the ${secondaryLabel} and knocks the ${prop} over so the change reads instantly.`,
+      `The mess and the changed positions of the ${primaryLabel} and ${secondaryLabel} hold the final image together.`,
     ]
+  }
+
+  if (selection.used_raw_keyword_fallback || usesLiteralFallbackSense) {
+    return buildRawKeywordStoryboardStarterPanels()
   }
 
   if (isEmotionSense(firstSense) || isEmotionSense(secondSense)) {
@@ -1853,6 +1909,17 @@ function buildKeywordFallbackStories({
     safeKeywordA,
     safeKeywordB
   )
+  const fallbackFirstSense = getLockedSense(selection, 'keyword_1', safeKeywordA)
+  const fallbackSecondSense = getLockedSense(selection, 'keyword_2', safeKeywordB)
+  const isStoryboardStarter =
+    selection.used_raw_keyword_fallback ||
+    senseHasTag(fallbackFirstSense, 'fallback') ||
+    senseHasTag(fallbackSecondSense, 'fallback')
+  const editingTip = buildLocalFallbackEditingTip(
+    selection,
+    safeKeywordA,
+    safeKeywordB
+  )
   const normalizedCustomPanels = normalizeStoryPanels(customStory || [])
   const hasCustomPanels = hasMeaningfulStoryPanels(normalizedCustomPanels)
   const noisePanelIndex = includeNoise
@@ -1888,7 +1955,9 @@ function buildKeywordFallbackStories({
         title: 'Option 1',
         panels: optionOnePanels,
         rationale:
-          'Local fallback story generated because provider output could not be parsed reliably.',
+          'Local fallback storyboard starter generated because provider output could not be parsed reliably.',
+        editingTip,
+        isStoryboardStarter,
         includeNoise,
         noisePanelIndex,
         senseSelection: selection,
@@ -1901,7 +1970,9 @@ function buildKeywordFallbackStories({
         title: 'Option 2',
         panels: optionTwoPanels,
         rationale:
-          'Alternative local fallback story generated because provider output could not be parsed reliably.',
+          'Alternative local fallback storyboard starter generated because provider output could not be parsed reliably.',
+        editingTip,
+        isStoryboardStarter,
         includeNoise,
         noisePanelIndex,
         senseSelection: selection,
@@ -2057,6 +2128,10 @@ function parseStoryOptions(rawText, context = {}) {
     }
   }
 
+  if (contextValue.allowLocalFallback === false) {
+    return []
+  }
+
   return buildKeywordFallbackStories({
     keywordA: contextValue.keywordA,
     keywordB: contextValue.keywordB,
@@ -2072,6 +2147,29 @@ function chooseNoisePanelIndex(seed, preferred = null) {
     return Math.max(0, Math.min(3, Number(preferred)))
   }
   return hashScore(String(seed || Date.now())) % 4
+}
+
+function buildStoryCreativityLines({fastMode = false}) {
+  if (fastMode) {
+    return [
+      'Creative steering:',
+      '- Think like a storyboard partner helping a human creator get to a strong idea quickly.',
+      '- Give vivid, editable story seeds, not stiff compliance prose.',
+      '- Specific places, props, reveals, accidents, and reactions beat generic object bumps.',
+      '- Allow suspense, humor, eerie tone, awkwardness, and small surprises if the panel order stays obvious.',
+      '- Never write filler like "one concrete move", "visible external change", or "stable aftermath".',
+    ]
+  }
+
+  return [
+    'Creative direction:',
+    '- Think like a storyboard collaborator, not a policy robot.',
+    '- Return ideas a human would actually want to personalize and rewrite.',
+    '- Specific rooms, props, accidents, reveals, and aftermaths beat neutral keyword collisions.',
+    '- Small suspense, weirdness, irony, or eerie mood are welcome if the order stays instantly readable.',
+    '- If the keywords feel awkward together, invent a human situation that makes them feel natural.',
+    '- Never write filler like "one concrete move", "visible external change", or "stable aftermath".',
+  ]
 }
 
 function buildStoryOptionsPrompt({
@@ -2093,6 +2191,7 @@ function buildStoryOptionsPrompt({
     safeKeywordB
   )
   const contentSafetyBoundaryLines = getContentSafetyBoundaryLines()
+  const creativityLines = buildStoryCreativityLines({fastMode: false})
   const exemplarConfig = buildStoryPromptExemplarLines({
     provider,
     fastMode: false,
@@ -2172,6 +2271,8 @@ function buildStoryOptionsPrompt({
     '4. clear visual causality.',
     '5. creative-but-readable scene design.',
     '',
+    ...creativityLines,
+    '',
     'Hard constraints:',
     '- Both keywords must be clearly and concretely visible in the story.',
     '- The flip must be solvable without reading any text.',
@@ -2186,16 +2287,12 @@ function buildStoryOptionsPrompt({
     '',
     'Design rules for low report risk:',
     '- Prefer everyday physical actions and visible cause-effect.',
-    '- Avoid symbolism, wordplay, metaphors, jokes, surrealism, dream logic, and culturally specific references.',
+    '- Avoid symbolism, wordplay, or dream logic when a concrete scene would work better.',
     '- Avoid tiny details that must be noticed to solve the sequence.',
     '- Avoid camera-angle tricks that make two panels look like duplicates.',
     '- Avoid multiple equally plausible orders.',
     '- Avoid stories where the main change happens off-screen.',
     '- Make the transition between panels 1-2-3-4 visibly progressive.',
-    '- Show at least one obvious state change in each step.',
-    '- If possible, show each keyword in more than one panel.',
-    '- Use one main actor or object chain only.',
-    '- Keep the environment stable unless the change itself is the point.',
     '- Prefer actions a child could understand instantly.',
     '',
     '4-panel storyboard checklist (must be applied during generation):',
@@ -2207,22 +2304,18 @@ function buildStoryOptionsPrompt({
     '',
     'What to optimize for:',
     '- one single story chain only',
-    '- one dominant visible change',
+    '- vivid readable scene design',
     '- visible causality from panel to panel',
     '- clear progression with no near-duplicates',
     '- stable visual anchors across all 4 panels',
-    '- literal physical action instead of metaphor/symbolism',
     '- big readable state changes even at small size',
     '',
-    'Preferred archetypes:',
-    '- repair',
-    '- destruction',
-    '- containment and release',
-    '- obstacle and solution',
-    '- movement or transfer',
-    '- transformation',
-    '- loss and recovery',
-    '- cleanup and restoration',
+    'Story shapes that often work:',
+    '- mishap and aftermath',
+    '- reveal and reaction',
+    '- obstacle and workaround',
+    '- pursuit, escape, containment, or recovery',
+    '- repair, transformation, loss, or cleanup',
     '',
     'Fast rejection rules:',
     '- reject if more than one panel order seems plausible',
@@ -2231,7 +2324,6 @@ function buildStoryOptionsPrompt({
     '- reject if the story needs explanation',
     '- reject if keywords are present but not functionally important',
     '- reject if ending is only emotion without visible outcome',
-    '- reject if story depends on reading or counting',
     '',
     'Scoring rubric (1-5 for each candidate before final selection):',
     '- keyword_clarity',
@@ -2284,10 +2376,11 @@ function buildStoryOptionsPrompt({
     'If there is any meaningful ambiguity, simplify while keeping the scene vivid and concrete.',
     'If a keyword is only weakly implied, make it more literal.',
     'If the concept is clever but not instantly readable, discard it.',
-    'Optimize for "boringly clear".',
+    'Optimize for "clear, vivid, and easy to personalize".',
     'Never output placeholder text such as "Panel 1: add a clear event in the story."',
     'Avoid stock phrases like "in a stable everyday setting", "still clearly visible", or "in the same scene".',
     'Use concrete visual actions and vary wording across panels.',
+    'Return story beats a human could quickly rewrite into something better, not compliance filler.',
     'Never duplicate concept_1 as concept_2.',
     ...exemplarConfig.lines,
     '',
@@ -2329,6 +2422,7 @@ function buildStoryOptionsPromptFast({
     safeKeywordB
   )
   const contentSafetyBoundaryLines = getContentSafetyBoundaryLines()
+  const creativityLines = buildStoryCreativityLines({fastMode: true})
   const exemplarConfig = buildStoryPromptExemplarLines({
     provider,
     fastMode: true,
@@ -2346,7 +2440,7 @@ function buildStoryOptionsPromptFast({
     : ''
   return [
     'Generate exactly 2 distinct flip story options as strict JSON only.',
-    'Goal: fast, clear, creative 4-panel stories for Idena flips.',
+    'Goal: fast, vivid, editable 4-panel story seeds for Idena flips.',
     'Rules:',
     '- one single story chain only',
     '- clear structure: before -> trigger -> reaction -> after',
@@ -2354,9 +2448,11 @@ function buildStoryOptionsPromptFast({
     '- no text overlays, letters, numbers, labels, logos, or watermarks',
     ...contentSafetyBoundaryLines,
     '- no counting puzzles, no symbolism, no surreal jokes',
+    '- keep the two options meaningfully different in scene, action, or outcome',
     '- panel 4 must be a visible consequence of panel 3',
     '- each panel must show a visible state progression from the previous panel',
     '- avoid repeated stock phrases; use natural concise wording',
+    ...creativityLines,
     ...exemplarConfig.lines,
     ...lockedSenseLines,
     'Output JSON schema:',
@@ -4417,16 +4513,54 @@ function createAiProviderBridge(logger, dependencies = {}) {
       Array.isArray(selectedAttempt.strictParse.stories)
         ? selectedAttempt.strictParse.stories
         : []
-    const initialQuality = evaluateCandidateStories(
-      parsedStories,
+    let initialQualitySource =
       selectedAttempt.attemptLabel || 'provider_story_options'
+    let initialQuality = evaluateCandidateStories(
+      parsedStories,
+      initialQualitySource
     )
+    if (
+      initialQuality.accepted.length < requestedStoryCount &&
+      selectedAttempt.normalizedResponse &&
+      selectedAttempt.normalizedResponse.rawText
+    ) {
+      const salvagedStories = parseStoryOptions(
+        selectedAttempt.normalizedResponse.rawText,
+        {
+          keywordA,
+          keywordB,
+          includeNoise,
+          customStory: hasCustomStory ? customStory : null,
+          humanStorySeed,
+          senseSelection,
+          allowLocalFallback: false,
+        }
+      )
+      const salvageQuality = evaluateCandidateStories(
+        salvagedStories,
+        `${initialQualitySource}_lenient_salvage`
+      )
+      if (salvageQuality.accepted.length > initialQuality.accepted.length) {
+        initialQuality = salvageQuality
+        initialQualitySource = `${initialQualitySource}_lenient_salvage`
+        logger.info('AI story lenient salvage path', {
+          provider,
+          model,
+          from: selectedAttempt.attemptLabel,
+          acceptedStories: salvageQuality.accepted.length,
+          rejectedStories: salvageQuality.rejected.length,
+        })
+      }
+    }
     let stories = initialQuality.accepted.slice(0, requestedStoryCount)
     let finalPromptText = selectedAttempt.promptText || promptText
     let generationPath =
       selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SUCCESS
         ? selectedAttempt.attemptLabel
         : null
+    if (!generationPath && initialQualitySource.endsWith('_lenient_salvage')) {
+      generationPath = initialQualitySource
+    }
 
     if (
       !fastStoryMode &&
@@ -4564,7 +4698,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     const fallbackUsed = stories.some((story) =>
-      /local fallback story generated because provider output could not be parsed reliably/i.test(
+      /local fallback(?: storyboard starter)? generated because provider output could not be parsed reliably/i.test(
         String(story && story.rationale ? story.rationale : '')
       )
     )

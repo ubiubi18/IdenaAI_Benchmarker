@@ -1024,6 +1024,10 @@ function normalizeStoryOptionFromBackend(item, index) {
         ? Number(next.noisePanelIndex)
         : null,
     rationale: String(next.rationale || '').trim(),
+    editingTip: String(next.editingTip || next.editing_tip || '').trim(),
+    isStoryboardStarter: Boolean(
+      next.isStoryboardStarter || next.is_storyboard_starter
+    ),
     storySummary: String(next.storySummary || next.story_summary || '').trim(),
     complianceReport,
     failedComplianceKeys,
@@ -1726,9 +1730,20 @@ export default function NewFlipPage() {
             : null,
       })
 
+      const fallbackStorySeed = options.some((item) => item.isStoryboardStarter)
+      const fallbackWasUsed = Boolean(
+        response &&
+          response.metrics &&
+          response.metrics.fallback_used
+      )
+
       notify(
         t('Story options generated'),
-        t('Choose the better option, customize if needed, then build flip.')
+        fallbackStorySeed || fallbackWasUsed
+          ? t(
+              'The AI returned a rough storyboard starter. Rewrite any weak panel text directly before building the flip.'
+            )
+          : t('Choose the better option, customize if needed, then build flip.')
       )
     } catch (error) {
       const message = formatAiRunError(error)
@@ -3311,6 +3326,11 @@ export default function NewFlipPage() {
                                       {option.rationale ? (
                                         <Text fontSize="xs" color="muted">
                                           {option.rationale}
+                                        </Text>
+                                      ) : null}
+                                      {option.editingTip ? (
+                                        <Text fontSize="xs" color="blue.500">
+                                          {option.editingTip}
                                         </Text>
                                       ) : null}
                                       {option.storySummary ? (

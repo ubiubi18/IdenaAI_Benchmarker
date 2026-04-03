@@ -1093,6 +1093,9 @@ describe('createAiProviderBridge', () => {
     expect(callPayload.promptText).toContain('4-panel storyboard checklist')
     expect(callPayload.promptText).toContain('causality >= 4')
     expect(callPayload.promptText).toContain(
+      'Think like a storyboard collaborator, not a policy robot.'
+    )
+    expect(callPayload.promptText).toContain(
       'Compact positive/negative exemplars (openai_like_compact_exemplars):'
     )
     expect(callPayload.promptText).toContain(
@@ -1104,6 +1107,7 @@ describe('createAiProviderBridge', () => {
     expect(callPayload.promptText).not.toContain(
       'Do not include inappropriate, sexual, violent, or shocking content.'
     )
+    expect(callPayload.promptText).not.toContain('Optimize for "boringly clear".')
     expect(auditPayload.promptText).toContain(
       'Audit this concept and hard-reject only clearly extreme or provider-triggering content.'
     )
@@ -1166,6 +1170,104 @@ describe('createAiProviderBridge', () => {
     ])
     expect(result.stories[1].panels.join(' ')).toContain('monkey')
     expect(result.stories[1].panels.join(' ')).toContain('focus')
+  })
+
+  it('salvages readable unstructured story text before dropping to local fallback', async () => {
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValueOnce({
+        rawText: [
+          'Panel 1: A person studies a mirror in a bedroom.',
+          'Panel 2: A ghost appears in the mirror and the person jolts backward.',
+          'Panel 3: The mirror tilts and a hairbrush drops to the floor.',
+          'Panel 4: The person stares at the tilted mirror while the ghost remains inside it.',
+        ].join('\n'),
+        usage: {
+          promptTokens: 24,
+          completionTokens: 32,
+          totalTokens: 56,
+        },
+      })
+      .mockResolvedValueOnce({
+        rawText: [
+          'Panel 1: A person studies a mirror in a bedroom.',
+          'Panel 2: A ghost appears in the mirror and the person jolts backward.',
+          'Panel 3: The mirror tilts and a hairbrush drops to the floor.',
+          'Panel 4: The person stares at the tilted mirror while the ghost remains inside it.',
+        ].join('\n'),
+        usage: {
+          promptTokens: 24,
+          completionTokens: 32,
+          totalTokens: 56,
+        },
+      })
+
+    const logger = mockLogger()
+    const bridge = createAiProviderBridge(logger, {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      keywords: ['mirror', 'ghost'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(2)
+    expect(result.generationPath).toContain('lenient_salvage')
+    expect(
+      result.stories.some(
+        (story) =>
+          !/local fallback/i.test(String(story && story.rationale ? story.rationale : ''))
+      )
+    ).toBe(true)
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('mirror')
+    expect(logger.info).toHaveBeenCalledWith(
+      'AI story lenient salvage path',
+      expect.objectContaining({
+        provider: 'openai',
+        acceptedStories: expect.any(Number),
+      })
+    )
+  })
+
+  it('returns explicit storyboard starter guidance for ambiguous raw-keyword fallback', async () => {
+    const invokeProvider = jest.fn().mockResolvedValue({
+      rawText: '',
+      usage: {
+        promptTokens: 18,
+        completionTokens: 0,
+        totalTokens: 18,
+      },
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      keywords: ['jump', 'sport'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    expect(result.metrics.fallback_used).toBe(true)
+    expect(result.stories[0]).toMatchObject({
+      isStoryboardStarter: true,
+    })
+    expect(result.stories[0].rationale).toMatch(/storyboard starter/i)
+    expect(result.stories[0].editingTip).toMatch(/Rewrite all 4 panels/i)
+    expect(
+      result.stories[0].panels[0].includes('Pick one specific actor or object') ||
+        result.stories[0].panels[0].includes('Choose a concrete room')
+    ).toBe(true)
+    expect(result.stories[0].panels.join(' ')).not.toContain(
+      'The person makes one concrete move'
+    )
   })
 
   it('includes compact provider-specific exemplars in story prompts and can disable them', async () => {
@@ -2022,9 +2124,7 @@ describe('createAiProviderBridge', () => {
       'chainsaw'
     )
     expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('clown')
-    expect(result.stories[0].rationale).not.toMatch(
-      /local fallback story generated/i
-    )
+    expect(result.stories[0].rationale).not.toMatch(/local fallback/i)
   })
 
   it('reranks bland near-duplicate provider options below a more diverse valid pair', async () => {
@@ -2147,7 +2247,7 @@ describe('createAiProviderBridge', () => {
     expect(result.stories.map((story) => story.title)).toContain('Mirror scare A')
     expect(
       result.stories.some((story) =>
-        /local fallback story generated/i.test(String(story.rationale || ''))
+        /local fallback/i.test(String(story.rationale || ''))
       )
     ).toBe(true)
     expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('mirror')
