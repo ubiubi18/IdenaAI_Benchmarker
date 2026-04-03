@@ -1340,6 +1340,42 @@ function buildStorySafeReinterpretationPrompt({
     .join('\n')
 }
 
+function buildStoryOptionRepairPrompt({
+  basePrompt,
+  keywordA,
+  keywordB,
+  existingStories = [],
+  missingCount = 1,
+}) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || '-'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || '-'
+  const keptConcepts = (Array.isArray(existingStories) ? existingStories : [])
+    .slice(0, 2)
+    .map((story, index) => {
+      const concept = storyOptionToMainPromptConcept(story, safeKeywordA, safeKeywordB)
+      return `Kept concept ${index + 1}:\n${concept}`
+    })
+    .join('\n\n')
+
+  return [
+    basePrompt,
+    '',
+    'Option repair retry:',
+    `The previous attempt produced fewer than 2 usable story options after validation. We still need ${Math.max(
+      1,
+      Number(missingCount) || 1
+    )} more strong option(s).`,
+    `Keep both keywords visible: "${safeKeywordA}" and "${safeKeywordB}".`,
+    'Preserve the locked senses already provided above.',
+    'Return 2 fresh options in the same strict JSON schema, but make them genuinely different from any kept concept listed below.',
+    'Change the scene, trigger, prop, or aftermath instead of rephrasing the same setup.',
+    keptConcepts ? `Already kept concepts to avoid duplicating:\n${keptConcepts}` : '',
+    'Return strict JSON only. No markdown, commentary, or explanation.',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 function classifyTextualStoryProviderOutcome(rawText) {
   const text = String(rawText || '').trim()
   if (!text) return null
@@ -1901,6 +1937,7 @@ function buildKeywordFallbackStories({
   customStory = null,
   humanStorySeed = '',
   senseSelection = null,
+  fallbackReasonText = '',
 }) {
   const safeKeywordA = normalizeKeywordFallbackValue(keywordA, 'object A')
   const safeKeywordB = normalizeKeywordFallbackValue(keywordB, 'object B')
@@ -1948,14 +1985,21 @@ function buildKeywordFallbackStories({
         selection
       )
 
+  const fallbackReason = String(fallbackReasonText || '').trim()
+  const primaryFallbackRationale = fallbackReason
+    ? `Local fallback storyboard starter generated because ${fallbackReason}.`
+    : 'Local fallback storyboard starter generated because provider output could not be parsed reliably.'
+  const secondaryFallbackRationale = fallbackReason
+    ? `Alternative local fallback storyboard starter generated because ${fallbackReason}.`
+    : 'Alternative local fallback storyboard starter generated because provider output could not be parsed reliably.'
+
   return [
     normalizeStoryOption(
       {
         id: 'option-1',
         title: 'Option 1',
         panels: optionOnePanels,
-        rationale:
-          'Local fallback storyboard starter generated because provider output could not be parsed reliably.',
+        rationale: primaryFallbackRationale,
         editingTip,
         isStoryboardStarter,
         includeNoise,
@@ -1969,8 +2013,7 @@ function buildKeywordFallbackStories({
         id: 'option-2',
         title: 'Option 2',
         panels: optionTwoPanels,
-        rationale:
-          'Alternative local fallback storyboard starter generated because provider output could not be parsed reliably.',
+        rationale: secondaryFallbackRationale,
         editingTip,
         isStoryboardStarter,
         includeNoise,
@@ -3884,6 +3927,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const storyMetrics = createStoryGenerationMetrics()
     const storyEvaluationCache = new Map()
     let fallbackCandidateQuality = null
+    let storyFallbackReasonText = 'provider output could not be parsed reliably'
 
     function evaluateCandidateStories(candidateStories, source) {
       const accepted = []
@@ -4083,6 +4127,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
           customStory: hasCustomStory ? customStory : null,
           humanStorySeed,
           senseSelection,
+          fallbackReasonText: storyFallbackReasonText,
         }),
         'local_fallback'
       )
@@ -4439,6 +4484,123 @@ function createAiProviderBridge(logger, dependencies = {}) {
       return retryAttempt
     }
 
+    async function runMissingStoryRepairAttempt({
+      basePromptText,
+      existingStories,
+      missingCount,
+      attemptIndex,
+    }) {
+      const repairAttemptLabel =
+        attemptIndex === 1
+          ? 'provider_story_options_repair_missing'
+          : `provider_story_options_repair_missing_${attemptIndex}`
+      const repairPromptPhase =
+        attemptIndex === 1
+          ? 'story_options_repair_missing'
+          : `story_options_repair_missing_${attemptIndex}`
+
+      let repairAttempt = await runStoryRetry({
+        fromAttempt: selectedAttempt,
+        retryPromptText: buildStoryOptionRepairPrompt({
+          basePrompt: basePromptText,
+          keywordA,
+          keywordB,
+          existingStories,
+          missingCount,
+        }),
+        promptPhase: repairPromptPhase,
+        attemptLabel: repairAttemptLabel,
+        reason: `usable_story_count_${existingStories.length}`,
+        logMessage: 'AI story repair path',
+      })
+
+      if (repairAttempt.outcome === STORY_PROVIDER_OUTCOMES.SCHEMA_INVALID) {
+        repairAttempt = await runStoryRetry({
+          fromAttempt: repairAttempt,
+          retryPromptText: buildStorySchemaRetryPrompt(
+            repairAttempt.promptText,
+            repairAttempt.strictParse
+          ),
+          promptPhase: `${repairPromptPhase}_schema_retry`,
+          attemptLabel: `${repairAttemptLabel}_schema_retry`,
+          reason: 'schema_invalid_after_repair_missing',
+        })
+      } else if (
+        repairAttempt.outcome === STORY_PROVIDER_OUTCOMES.TRUNCATION
+      ) {
+        const expandedProfile = {
+          ...profile,
+          maxOutputTokens: Math.max(
+            Number(profile.maxOutputTokens) + 300,
+            Math.ceil(Number(profile.maxOutputTokens) * 1.4)
+          ),
+        }
+        repairAttempt = await runStoryRetry({
+          fromAttempt: repairAttempt,
+          retryPromptText: repairAttempt.promptText || basePromptText,
+          promptPhase: `${repairPromptPhase}_truncation_retry`,
+          attemptLabel: `${repairAttemptLabel}_truncation_retry`,
+          reason: 'truncation_after_repair_missing',
+          profileOverride: expandedProfile,
+        })
+      }
+
+      return repairAttempt
+    }
+
+    function evaluateAcceptedStoriesFromAttempt(attempt, sourceLabel) {
+      const currentAttempt =
+        attempt && typeof attempt === 'object' ? attempt : {}
+      const attemptSource = String(sourceLabel || currentAttempt.attemptLabel || 'provider_story_options')
+      const parsedStories =
+        currentAttempt.outcome === STORY_PROVIDER_OUTCOMES.SUCCESS &&
+        currentAttempt.strictParse &&
+        Array.isArray(currentAttempt.strictParse.stories)
+          ? currentAttempt.strictParse.stories
+          : []
+      let qualitySource = attemptSource
+      let quality = evaluateCandidateStories(parsedStories, qualitySource)
+
+      if (
+        quality.accepted.length < requestedStoryCount &&
+        currentAttempt.normalizedResponse &&
+        currentAttempt.normalizedResponse.rawText
+      ) {
+        const salvagedStories = parseStoryOptions(
+          currentAttempt.normalizedResponse.rawText,
+          {
+            keywordA,
+            keywordB,
+            includeNoise,
+            customStory: hasCustomStory ? customStory : null,
+            humanStorySeed,
+            senseSelection,
+            allowLocalFallback: false,
+          }
+        )
+        const salvageQuality = evaluateCandidateStories(
+          salvagedStories,
+          `${qualitySource}_lenient_salvage`
+        )
+        if (salvageQuality.accepted.length > quality.accepted.length) {
+          quality = salvageQuality
+          qualitySource = `${qualitySource}_lenient_salvage`
+          logger.info('AI story lenient salvage path', {
+            provider,
+            model,
+            from: currentAttempt.attemptLabel,
+            acceptedStories: salvageQuality.accepted.length,
+            rejectedStories: salvageQuality.rejected.length,
+          })
+        }
+      }
+
+      return {
+        quality,
+        qualitySource,
+      }
+    }
+
     let selectedAttempt = await invokeStructuredStoryAttempt({
       promptText,
       promptPhase: 'story_options',
@@ -4507,51 +4669,75 @@ function createAiProviderBridge(logger, dependencies = {}) {
       })
     }
 
-    const parsedStories =
-      selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SUCCESS &&
-      selectedAttempt.strictParse &&
-      Array.isArray(selectedAttempt.strictParse.stories)
-        ? selectedAttempt.strictParse.stories
-        : []
-    let initialQualitySource =
-      selectedAttempt.attemptLabel || 'provider_story_options'
-    let initialQuality = evaluateCandidateStories(
-      parsedStories,
-      initialQualitySource
-    )
+    let {quality: initialQuality, qualitySource: initialQualitySource} =
+      evaluateAcceptedStoriesFromAttempt(
+        selectedAttempt,
+        selectedAttempt.attemptLabel || 'provider_story_options'
+      )
+
     if (
       initialQuality.accepted.length < requestedStoryCount &&
-      selectedAttempt.normalizedResponse &&
-      selectedAttempt.normalizedResponse.rawText
+      selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.REFUSAL &&
+      selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.SAFETY_BLOCK &&
+      selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.TRANSPORT_ERROR
     ) {
-      const salvagedStories = parseStoryOptions(
-        selectedAttempt.normalizedResponse.rawText,
-        {
-          keywordA,
-          keywordB,
-          includeNoise,
-          customStory: hasCustomStory ? customStory : null,
-          humanStorySeed,
-          senseSelection,
-          allowLocalFallback: false,
-        }
-      )
-      const salvageQuality = evaluateCandidateStories(
-        salvagedStories,
-        `${initialQualitySource}_lenient_salvage`
-      )
-      if (salvageQuality.accepted.length > initialQuality.accepted.length) {
-        initialQuality = salvageQuality
-        initialQualitySource = `${initialQualitySource}_lenient_salvage`
-        logger.info('AI story lenient salvage path', {
-          provider,
-          model,
-          from: selectedAttempt.attemptLabel,
-          acceptedStories: salvageQuality.accepted.length,
-          rejectedStories: salvageQuality.rejected.length,
+      let repairAttemptCount = 0
+
+      while (
+        initialQuality.accepted.length < requestedStoryCount &&
+        repairAttemptCount < 2
+      ) {
+        repairAttemptCount += 1
+        const previousAcceptedCount = initialQuality.accepted.length
+        const replacementAttempt = await runMissingStoryRepairAttempt({
+          basePromptText: promptText,
+          existingStories: initialQuality.accepted,
+          missingCount: requestedStoryCount - initialQuality.accepted.length,
+          attemptIndex: repairAttemptCount,
         })
+        const replacementEvaluation = evaluateAcceptedStoriesFromAttempt(
+          replacementAttempt,
+          replacementAttempt.attemptLabel || 'provider_story_options_repair_missing'
+        )
+
+        if (replacementEvaluation.quality.accepted.length > 0) {
+          const mergedCandidates = dedupeStoriesForSelection(
+            initialQuality.accepted.concat(replacementEvaluation.quality.accepted)
+          )
+          initialQuality = evaluateCandidateStories(
+            mergedCandidates,
+            'provider_story_options_repaired_merge'
+          )
+          initialQualitySource = 'provider_story_options_repaired_merge'
+        }
+
+        if (
+          initialQuality.accepted.length >= requestedStoryCount ||
+          replacementAttempt.outcome === STORY_PROVIDER_OUTCOMES.REFUSAL ||
+          replacementAttempt.outcome === STORY_PROVIDER_OUTCOMES.SAFETY_BLOCK ||
+          replacementAttempt.outcome === STORY_PROVIDER_OUTCOMES.TRANSPORT_ERROR
+        ) {
+          break
+        }
+
+        if (
+          initialQuality.accepted.length <= previousAcceptedCount &&
+          replacementEvaluation.quality.accepted.length < 1
+        ) {
+          break
+        }
       }
     }
+
+    if (selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SCHEMA_INVALID) {
+      storyFallbackReasonText = 'provider output did not match the required story format'
+    } else if (initialQuality.accepted.length < requestedStoryCount) {
+      storyFallbackReasonText =
+        'provider did not produce enough strong story options after repair attempts'
+    } else {
+      storyFallbackReasonText = 'provider output could not be parsed reliably'
+    }
+
     let stories = initialQuality.accepted.slice(0, requestedStoryCount)
     let finalPromptText = selectedAttempt.promptText || promptText
     let generationPath =
@@ -4698,7 +4884,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     const fallbackUsed = stories.some((story) =>
-      /local fallback(?: storyboard starter)? generated because provider output could not be parsed reliably/i.test(
+      /local fallback(?: storyboard starter)? generated because/i.test(
         String(story && story.rationale ? story.rationale : '')
       )
     )

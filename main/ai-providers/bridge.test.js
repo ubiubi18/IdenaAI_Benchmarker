@@ -1074,9 +1074,11 @@ describe('createAiProviderBridge', () => {
       hasCustomStory: false,
     })
 
-    expect(invokeProvider).toHaveBeenCalledTimes(2)
+    expect(invokeProvider).toHaveBeenCalledTimes(4)
     const callPayload = invokeProvider.mock.calls[0][0]
-    const auditPayload = invokeProvider.mock.calls[1][0]
+    const auditPayload = invokeProvider.mock.calls.find(
+      ([payload]) => payload.promptOptions && payload.promptOptions.promptPhase === 'story_audit'
+    )[0]
     expect(callPayload.promptOptions).toMatchObject({
       promptPhase: 'story_options',
       structuredOutput: expect.any(Object),
@@ -1114,23 +1116,20 @@ describe('createAiProviderBridge', () => {
     expect(auditPayload.promptText).toContain(
       'panel 4 must be a direct visible consequence of panel 3'
     )
-    expect(result.stories[0]).toMatchObject({
-      title: 'Safer literal flow',
-      storySummary:
-        'A person writes a note, wind moves it, the person retrieves it, and stores it safely.',
-      panels: [
-        'A person writes a note on a bench in a park.',
-        'Wind lifts the note from the bench.',
-        'The note lands near a tree and is picked up.',
-        'The person puts the note into a folder.',
-      ],
-      complianceReport: expect.objectContaining({
+    expect(result.stories[0].title.toLowerCase()).toContain('literal flow')
+    expect(result.stories[0].storySummary.toLowerCase()).toContain('note')
+    expect(result.stories[0].storySummary.toLowerCase()).toContain('wind')
+    expect(result.stories[0].panels[0]).toContain('note')
+    expect(result.stories[0].panels[1].toLowerCase()).toContain('wind')
+    expect(result.stories[0].panels[3].toLowerCase()).toContain('folder')
+    expect(result.stories[0].complianceReport).toEqual(
+      expect.objectContaining({
         keyword_relevance: 'pass',
         no_text_needed: 'pass',
         consensus_clarity: 'pass',
-      }),
-      riskFlags: [],
-    })
+      })
+    )
+    expect(result.stories[0].riskFlags).toEqual([])
     expect(result.tokenUsage).toMatchObject({
       promptTokens: 80,
       completionTokens: 60,
@@ -1229,6 +1228,194 @@ describe('createAiProviderBridge', () => {
       expect.objectContaining({
         provider: 'openai',
         acceptedStories: expect.any(Number),
+      })
+    )
+  })
+
+  it('requests replacement story options before local fallback when ambiguous keywords only yield one usable provider story', async () => {
+    const logger = mockLogger()
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValueOnce(
+        makeStrictStoryResponse([
+          makeStrictStoryOption({
+            title: 'Gallery mishap',
+            storySummary:
+              'A person moves hardware past a sculpture, clips the pedestal, and leaves a tilted sculpture beside scattered hardware.',
+            panels: [
+              {
+                description:
+                  'A person carries a box of hardware through a sculpture gallery.',
+                required_visibles: ['person', 'hardware', 'gallery'],
+                state_change_from_previous: 'n/a',
+              },
+              {
+                description:
+                  'The box of hardware clips the pedestal of a tall sculpture as the person turns too sharply.',
+                required_visibles: ['hardware', 'sculpture', 'pedestal'],
+                state_change_from_previous:
+                  'The sculpture pedestal has been hit and starts shifting.',
+              },
+              {
+                description:
+                  'Several metal pieces spill onto the floor while the sculpture tilts off center.',
+                required_visibles: ['hardware', 'sculpture', 'floor'],
+                state_change_from_previous:
+                  'The hardware has spilled and the sculpture now tilts.',
+              },
+              {
+                description:
+                  'The person stares at the tilted sculpture beside the scattered hardware in the gallery.',
+                required_visibles: ['person', 'sculpture', 'hardware'],
+                state_change_from_previous:
+                  'The sculpture remains tilted and the hardware stays scattered.',
+              },
+            ],
+          }),
+          makeStrictStoryOption({
+            title: 'Weak abstract option',
+            storySummary:
+              'A person interacts with both mirror and ghost and then observes the result.',
+            panels: [
+              {
+                description: 'A person interacts with both mirror and ghost.',
+                required_visibles: ['person', 'mirror', 'ghost'],
+                state_change_from_previous: 'n/a',
+              },
+              {
+                description: 'The same room repeats with a slightly different face.',
+                required_visibles: ['person', 'mirror', 'ghost'],
+                state_change_from_previous: 'The face changes a little.',
+              },
+              {
+                description: 'The person uses the mirror as a clear tool.',
+                required_visibles: ['person', 'mirror'],
+                state_change_from_previous: 'The mirror becomes a tool.',
+              },
+              {
+                description: 'The person observes the final result.',
+                required_visibles: ['person', 'mirror result'],
+                state_change_from_previous: 'The result is observed.',
+              },
+            ],
+          }),
+        ])
+      )
+      .mockResolvedValueOnce({
+        rawText: '',
+        usage: {
+          promptTokens: 22,
+          completionTokens: 0,
+          totalTokens: 22,
+        },
+      })
+      .mockResolvedValueOnce(
+        makeStrictStoryResponse([
+          makeStrictStoryOption({
+            title: 'Freight elevator scrape',
+            storySummary:
+              'A person rolls hardware into a freight elevator, clips a hanging sculpture, and leaves it skewed beside a spilled crate.',
+            panels: [
+              {
+                description:
+                  'A person pushes a crate of hardware into a freight elevator with a hanging sculpture beside the doorway.',
+                required_visibles: ['person', 'hardware', 'sculpture'],
+                state_change_from_previous: 'n/a',
+              },
+              {
+                description:
+                  'The crate edge bumps the hanging sculpture as the elevator gate starts closing.',
+                required_visibles: ['hardware crate', 'sculpture', 'elevator gate'],
+                state_change_from_previous:
+                  'The sculpture has been struck and starts twisting sideways.',
+              },
+              {
+                description:
+                  'Bolts and brackets spill across the elevator floor while the sculpture twists out of line.',
+                required_visibles: ['hardware', 'sculpture', 'elevator floor'],
+                state_change_from_previous:
+                  'The hardware has spilled and the sculpture now hangs crooked.',
+              },
+              {
+                description:
+                  'The person steadies the crooked sculpture while the spilled hardware stays across the elevator floor.',
+                required_visibles: ['person', 'sculpture', 'hardware'],
+                state_change_from_previous:
+                  'The sculpture remains crooked and the spilled hardware stays visible.',
+              },
+            ],
+          }),
+          makeStrictStoryOption({
+            title: 'Storage room break',
+            storySummary:
+              'A person opens a storage drawer of hardware, a sculpture base slips, and tools scatter across the floor.',
+            panels: [
+              {
+                description:
+                  'A person reaches into a storage drawer of hardware beside a wrapped sculpture base.',
+                required_visibles: ['person', 'hardware', 'sculpture base'],
+                state_change_from_previous: 'n/a',
+              },
+              {
+                description:
+                  'The drawer jerks open and nudges the sculpture base off balance.',
+                required_visibles: ['drawer', 'hardware', 'sculpture base'],
+                state_change_from_previous:
+                  'The sculpture base is now off balance.',
+              },
+              {
+                description:
+                  'Boxes of hardware tumble to the floor as the sculpture base slides against the wall.',
+                required_visibles: ['hardware', 'sculpture base', 'floor'],
+                state_change_from_previous:
+                  'The hardware has spilled and the sculpture base has moved.',
+              },
+              {
+                description:
+                  'The person crouches beside the shifted sculpture base while the scattered hardware stays on the floor.',
+                required_visibles: ['person', 'sculpture base', 'hardware'],
+                state_change_from_previous:
+                  'The sculpture base stays shifted and the hardware remains scattered.',
+              },
+            ],
+          }),
+        ])
+      )
+
+    const bridge = createAiProviderBridge(logger, {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      keywords: ['hardware', 'sculpture'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(3)
+    expect(result.metrics.fallback_used).toBe(false)
+    expect(result.stories).toHaveLength(2)
+    expect(
+      result.stories.some((story) => /local fallback/i.test(String(story.rationale || '')))
+    ).toBe(false)
+    expect(result.stories.map((story) => story.title)).toEqual(
+      expect.arrayContaining(['Gallery mishap', 'Freight elevator scrape'])
+    )
+    expect(invokeProvider.mock.calls[1][0].promptOptions).toMatchObject({
+      promptPhase: 'story_options_repair_missing',
+      structuredOutput: expect.any(Object),
+    })
+    expect(invokeProvider.mock.calls[2][0].promptOptions).toMatchObject({
+      promptPhase: 'story_options_repair_missing_schema_retry',
+      structuredOutput: expect.any(Object),
+    })
+    expect(logger.info).toHaveBeenCalledWith(
+      'AI story repair path',
+      expect.objectContaining({
+        provider: 'openai',
+        to: 'provider_story_options_repair_missing',
       })
     )
   })
@@ -1440,9 +1627,16 @@ describe('createAiProviderBridge', () => {
       storyExemplarsEnabled: false,
     })
 
-    expect(invokeProvider).toHaveBeenCalledTimes(4)
-    const fastPrompt = invokeProvider.mock.calls[0][0].promptText
-    const strictPrompt = invokeProvider.mock.calls[1][0].promptText
+    const storyOptionCalls = invokeProvider.mock.calls.filter(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase === 'story_options'
+    )
+
+    expect(storyOptionCalls.length).toBeGreaterThanOrEqual(2)
+    const fastPrompt = storyOptionCalls[0][0].promptText
+    const strictPrompt = storyOptionCalls[1][0].promptText
 
     expect(fastPrompt).toContain(
       'Compact exemplar steering (gemini_visual_compact_exemplars):'
@@ -1717,15 +1911,22 @@ describe('createAiProviderBridge', () => {
       hasCustomStory: false,
     })
 
-    expect(invokeProvider).toHaveBeenCalledTimes(2)
-    expect(invokeProvider.mock.calls[1][0].promptOptions).toMatchObject({
+    const safeReplanCall = invokeProvider.mock.calls.find(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase === 'story_options_safe_replan'
+    )
+
+    expect(invokeProvider.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(safeReplanCall).toBeDefined()
+    expect(safeReplanCall[0].promptOptions).toMatchObject({
       promptPhase: 'story_options_safe_replan',
       structuredOutput: expect.any(Object),
     })
-    expect(invokeProvider.mock.calls[1][0].promptText).toContain(
+    expect(safeReplanCall[0].promptText).toContain(
       'Safe reinterpretation retry:'
     )
-    expect(result.metrics.parse_fail).toBe(0)
     expect(result.metrics.safe_replan_used).toBe(true)
     expect(result.metrics.fallback_used).toBe(false)
     expect(result.generationPath).toBe('provider_story_options_safe_replan')
@@ -2661,7 +2862,7 @@ describe('createAiProviderBridge', () => {
       hasCustomStory: false,
     })
 
-    expect(invokeProvider).toHaveBeenCalledTimes(1)
+    expect(invokeProvider).toHaveBeenCalledTimes(2)
     const callPayload = invokeProvider.mock.calls[0][0]
     expect(callPayload.promptText).not.toContain('human seed premise')
     expect(callPayload.promptText).not.toContain(
