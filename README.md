@@ -83,3 +83,15 @@ python3 scripts/preload_ai_test_unit_queue.py \
   --max-total 20 \
   --source audit-sample
 ```
+
+## ChatGPT connector index
+
+Generate a machine-readable repo index for ChatGPT Deep Research / connector ingestion:
+
+```bash
+python3 scripts/build_chatgpt_connector_index.py
+```
+
+Output file:
+
+- `docs/chatgpt-connector-index.json`

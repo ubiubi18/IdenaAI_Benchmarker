@@ -29,3 +29,6 @@ Snapshot date: 2026-03-26
 
 - Local caches/build artifacts are intentionally excluded.
 - This bundle is for audit/review and reproducibility, not a security-certified release.
+- ChatGPT connector/deep-research indexing can be regenerated with:
+  - `python3 scripts/build_chatgpt_connector_index.py`
+  - output: `docs/chatgpt-connector-index.json`

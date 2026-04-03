@@ -1,0 +1,249 @@
+{
+  "schema_version": "1.0",
+  "generated_at_utc": "2026-04-03T07:17:34+00:00",
+  "repository": {
+    "name": "IdenaAI_Benchmarker",
+    "relative_root": "."
+  },
+  "git_context": [
+    {
+      "path": ".",
+      "branch": "main",
+      "head": "79177527951af1e5cd602cc50c526552e8d43ee3",
+      "head_short": "7917752"
+    }
+  ],
+  "connector_target": "chatgpt-deep-research",
+  "quick_start": [
+    "bash scripts/verify_snapshot.sh",
+    "cd idena-desktop && npm install && npm run start",
+    "cd idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --help",
+    "python3 scripts/build_chatgpt_connector_index.py"
+  ],
+  "sections": {
+    "root_docs_count": 5,
+    "desktop_core_count": 6,
+    "go_core_count": 5,
+    "tooling_count": 6,
+    "sample_json_count_total": 2,
+    "sample_json_indexed": 2
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "area": "root",
+      "role": "documentation",
+      "size_bytes": 2443,
+      "sha256_12": "0363faa166ad",
+      "modified_utc": "2026-04-03T07:17:06+00:00",
+      "notes": "Top-level repo docs"
+    },
+    {
+      "path": "DISCLAIMER.md",
+      "area": "root",
+      "role": "documentation",
+      "size_bytes": 668,
+      "sha256_12": "f1d22af0d0e4",
+      "modified_utc": "2026-03-26T10:39:57+00:00",
+      "notes": "Top-level repo docs"
+    },
+    {
+      "path": "LICENSE",
+      "area": "root",
+      "role": "documentation",
+      "size_bytes": 1089,
+      "sha256_12": "979047793a6b",
+      "modified_utc": "2026-03-26T10:39:57+00:00",
+      "notes": "Top-level repo docs"
+    },
+    {
+      "path": "docs/audit-manifest.md",
+      "area": "root",
+      "role": "documentation",
+      "size_bytes": 1160,
+      "sha256_12": "f8feed9ba41b",
+      "modified_utc": "2026-04-03T07:17:12+00:00",
+      "notes": "Top-level repo docs"
+    },
+    {
+      "path": "docs/reproducible-setup.md",
+      "area": "root",
+      "role": "documentation",
+      "size_bytes": 1133,
+      "sha256_12": "cb87804c0c13",
+      "modified_utc": "2026-03-26T10:40:39+00:00",
+      "notes": "Top-level repo docs"
+    },
+    {
+      "path": "idena-desktop/main/index.js",
+      "area": "desktop",
+      "role": "core",
+      "size_bytes": 21754,
+      "sha256_12": "4756cb27d101",
+      "modified_utc": "2026-03-26T02:15:45+00:00",
+      "notes": "Desktop AI benchmark and UI flow"
+    },
+    {
+      "path": "idena-desktop/main/ai-providers/bridge.js",
+      "area": "desktop",
+      "role": "core",
+      "size_bytes": 43596,
+      "sha256_12": "38fc412764a8",
+      "modified_utc": "2026-03-26T06:08:03+00:00",
+      "notes": "Desktop AI benchmark and UI flow"
+    },
+    {
+      "path": "idena-desktop/renderer/pages/flips/new.js",
+      "area": "desktop",
+      "role": "core",
+      "size_bytes": 85186,
+      "sha256_12": "63572ac8459a",
+      "modified_utc": "2026-03-26T08:11:28+00:00",
+      "notes": "Desktop AI benchmark and UI flow"
+    },
+    {
+      "path": "idena-desktop/renderer/pages/validation.js",
+      "area": "desktop",
+      "role": "core",
+      "size_bytes": 40791,
+      "sha256_12": "c4c9dac5f5a1",
+      "modified_utc": "2026-03-26T06:07:01+00:00",
+      "notes": "Desktop AI benchmark and UI flow"
+    },
+    {
+      "path": "idena-desktop/docs/context-snapshot.md",
+      "area": "desktop",
+      "role": "core",
+      "size_bytes": 2588,
+      "sha256_12": "f125164135e4",
+      "modified_utc": "2026-03-23T18:08:19+00:00",
+      "notes": "Desktop AI benchmark and UI flow"
+    },
+    {
+      "path": "idena-desktop/docs/fork-plan.md",
+      "area": "desktop",
+      "role": "core",
+      "size_bytes": 9505,
+      "sha256_12": "05d0a0b0d3ca",
+      "modified_utc": "2026-03-26T06:09:20+00:00",
+      "notes": "Desktop AI benchmark and UI flow"
+    },
+    {
+      "path": "idena-go/main.go",
+      "area": "chain",
+      "role": "core",
+      "size_bytes": 4117,
+      "sha256_12": "5160ef3b3280",
+      "modified_utc": "2026-03-22T21:07:36+00:00",
+      "notes": "Node/chain fork sources and docs"
+    },
+    {
+      "path": "idena-go/go.mod",
+      "area": "chain",
+      "role": "core",
+      "size_bytes": 14547,
+      "sha256_12": "3b2e0637b320",
+      "modified_utc": "2026-03-25T07:33:29+00:00",
+      "notes": "Node/chain fork sources and docs"
+    },
+    {
+      "path": "idena-go/docs/context-snapshot.md",
+      "area": "chain",
+      "role": "core",
+      "size_bytes": 772,
+      "sha256_12": "2017fb8c2283",
+      "modified_utc": "2026-03-22T22:16:10+00:00",
+      "notes": "Node/chain fork sources and docs"
+    },
+    {
+      "path": "idena-go/docs/fork-plan.md",
+      "area": "chain",
+      "role": "core",
+      "size_bytes": 1474,
+      "sha256_12": "09632335bb38",
+      "modified_utc": "2026-03-25T07:40:54+00:00",
+      "notes": "Node/chain fork sources and docs"
+    },
+    {
+      "path": "idena-go/docs/worklog.md",
+      "area": "chain",
+      "role": "core",
+      "size_bytes": 2071,
+      "sha256_12": "07ad4888b6a5",
+      "modified_utc": "2026-03-25T23:33:03+00:00",
+      "notes": "Node/chain fork sources and docs"
+    },
+    {
+      "path": "scripts/verify_snapshot.sh",
+      "area": "tooling",
+      "role": "scripts",
+      "size_bytes": 734,
+      "sha256_12": "5687f21fd6e2",
+      "modified_utc": "2026-03-26T09:47:21+00:00",
+      "notes": "Reproducibility and dataset tools"
+    },
+    {
+      "path": "scripts/bootstrap_upstream_workspace.sh",
+      "area": "tooling",
+      "role": "scripts",
+      "size_bytes": 825,
+      "sha256_12": "3fd4719887c5",
+      "modified_utc": "2026-03-26T10:41:15+00:00",
+      "notes": "Reproducibility and dataset tools"
+    },
+    {
+      "path": "idena-desktop/scripts/import_flip_challenge.py",
+      "area": "tooling",
+      "role": "scripts",
+      "size_bytes": 9591,
+      "sha256_12": "d22f8f4696e3",
+      "modified_utc": "2026-03-25T11:11:07+00:00",
+      "notes": "Reproducibility and dataset tools"
+    },
+    {
+      "path": "idena-desktop/scripts/audit_flip_consensus.py",
+      "area": "tooling",
+      "role": "scripts",
+      "size_bytes": 10453,
+      "sha256_12": "8981d3848268",
+      "modified_utc": "2026-03-24T09:37:34+00:00",
+      "notes": "Reproducibility and dataset tools"
+    },
+    {
+      "path": "idena-desktop/scripts/preload_ai_test_unit_queue.py",
+      "area": "tooling",
+      "role": "scripts",
+      "size_bytes": 6993,
+      "sha256_12": "cae28bbc64a2",
+      "modified_utc": "2026-03-26T06:58:34+00:00",
+      "notes": "Reproducibility and dataset tools"
+    },
+    {
+      "path": "scripts/build_chatgpt_connector_index.py",
+      "area": "tooling",
+      "role": "scripts",
+      "size_bytes": 5806,
+      "sha256_12": "9828ec89224e",
+      "modified_utc": "2026-04-03T07:17:27+00:00",
+      "notes": "Reproducibility and dataset tools"
+    },
+    {
+      "path": "samples/flips/flip-challenge-test-20-decoded-labeled.json",
+      "area": "samples",
+      "role": "data",
+      "size_bytes": 4380836,
+      "sha256_12": "e30ce308977f",
+      "modified_utc": "2026-03-26T09:46:34+00:00",
+      "notes": "Sample labeled flips for audit/testing"
+    },
+    {
+      "path": "samples/flips/flip-challenge-test-5-decoded-labeled.json",
+      "area": "samples",
+      "role": "data",
+      "size_bytes": 724682,
+      "sha256_12": "b6034273ba75",
+      "modified_utc": "2026-03-26T09:46:34+00:00",
+      "notes": "Sample labeled flips for audit/testing"
+    }
+  ]
+}
