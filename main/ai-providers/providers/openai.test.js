@@ -202,4 +202,138 @@ describe('openai provider adapter', () => {
       truncated: false,
     })
   })
+
+  test('extracts structured story json from message.parsed when content is empty', async () => {
+    const parsedPayload = {
+      stories: [
+        {
+          title: 'Option 1',
+          story_summary: 'A mirror reveals a ghost and a brush falls.',
+          panels: [
+            {
+              panel: 1,
+              role: 'before',
+              description: 'A person wipes a mirror.',
+              required_visibles: ['person', 'mirror'],
+              state_change_from_previous: 'n/a',
+            },
+            {
+              panel: 2,
+              role: 'trigger',
+              description: 'A ghost appears in the mirror.',
+              required_visibles: ['ghost', 'mirror'],
+              state_change_from_previous: 'The ghost becomes visible.',
+            },
+            {
+              panel: 3,
+              role: 'reaction',
+              description: 'A brush drops to the floor.',
+              required_visibles: ['brush', 'floor'],
+              state_change_from_previous: 'The brush has fallen.',
+            },
+            {
+              panel: 4,
+              role: 'after',
+              description: 'The person stares at the tilted mirror.',
+              required_visibles: ['person', 'mirror'],
+              state_change_from_previous: 'The mirror remains tilted.',
+            },
+          ],
+          compliance_report: {
+            keyword_relevance: 'pass',
+          },
+          risk_flags: [],
+          revision_if_risky: '',
+        },
+        {
+          title: 'Option 2',
+          story_summary: 'A window reveals a ghost and a lamp falls.',
+          panels: [
+            {
+              panel: 1,
+              role: 'before',
+              description: 'A person reads beside a window.',
+              required_visibles: ['person', 'window'],
+              state_change_from_previous: 'n/a',
+            },
+            {
+              panel: 2,
+              role: 'trigger',
+              description: 'A ghost appears outside the window.',
+              required_visibles: ['ghost', 'window'],
+              state_change_from_previous: 'The ghost becomes visible.',
+            },
+            {
+              panel: 3,
+              role: 'reaction',
+              description: 'A lamp falls from the table.',
+              required_visibles: ['lamp', 'table'],
+              state_change_from_previous: 'The lamp has fallen.',
+            },
+            {
+              panel: 4,
+              role: 'after',
+              description: 'The person backs away from the fallen lamp.',
+              required_visibles: ['person', 'lamp'],
+              state_change_from_previous: 'The person has retreated.',
+            },
+          ],
+          compliance_report: {
+            keyword_relevance: 'pass',
+          },
+          risk_flags: [],
+          revision_if_risky: '',
+        },
+      ],
+    }
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: {
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: '',
+                parsed: parsedPayload,
+              },
+            },
+          ],
+          usage: {
+            prompt_tokens: 90,
+            completion_tokens: 40,
+            total_tokens: 130,
+          },
+        },
+      }),
+    }
+
+    const result = await callOpenAi({
+      httpClient,
+      apiKey: 'test-key',
+      model: 'gpt-4o-mini',
+      flip: {
+        hash: 'flip-structured-parsed',
+      },
+      prompt: 'return structured story json',
+      profile: {
+        temperature: 0.2,
+        maxOutputTokens: 256,
+        requestTimeoutMs: 5000,
+      },
+      providerConfig: null,
+      promptOptions: {
+        structuredOutput: {
+          responseFormat: STORY_OPTIONS_OPENAI_RESPONSE_FORMAT,
+        },
+      },
+    })
+
+    expect(result.rawText).toBe(JSON.stringify(parsedPayload))
+    expect(result.providerMeta).toMatchObject({
+      finishReason: 'stop',
+      refusal: '',
+      safetyBlock: false,
+      truncated: false,
+    })
+  })
 })

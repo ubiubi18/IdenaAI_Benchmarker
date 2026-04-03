@@ -208,6 +208,16 @@ function dedupePayloadVariants(payloads) {
   return result
 }
 
+function stringifyJsonLike(value) {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch (error) {
+    return ''
+  }
+}
+
 function buildOpenAiPayloadVariants({
   model,
   prompt,
@@ -280,14 +290,68 @@ function buildOpenAiPayloadVariants({
 }
 
 function extractOpenAiRawText(message) {
+  const parsed = message && message.parsed
   const content = message && message.content
+  const functionCall = message && message.function_call
+  const toolCalls =
+    message && Array.isArray(message.tool_calls) ? message.tool_calls : []
 
-  return Array.isArray(content)
-    ? content
-        .map((part) => part && (part.text || part.output_text))
-        .filter(Boolean)
-        .join('\n')
-    : String(content || '')
+  if (parsed && typeof parsed === 'object') {
+    return stringifyJsonLike(parsed)
+  }
+
+  if (
+    functionCall &&
+    typeof functionCall === 'object' &&
+    typeof functionCall.arguments === 'string' &&
+    functionCall.arguments.trim()
+  ) {
+    return functionCall.arguments
+  }
+
+  for (const toolCall of toolCalls) {
+    const fn =
+      toolCall && toolCall.function && typeof toolCall.function === 'object'
+        ? toolCall.function
+        : null
+    if (fn && typeof fn.arguments === 'string' && fn.arguments.trim()) {
+      return fn.arguments
+    }
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part) return ''
+        if (typeof part.text === 'string' && part.text.trim()) {
+          return part.text
+        }
+        if (typeof part.output_text === 'string' && part.output_text.trim()) {
+          return part.output_text
+        }
+        if (part.json && typeof part.json === 'object') {
+          return stringifyJsonLike(part.json)
+        }
+        return ''
+      })
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  if (content && typeof content === 'object') {
+    if (typeof content.text === 'string' && content.text.trim()) {
+      return content.text
+    }
+    if (
+      typeof content.output_text === 'string' &&
+      content.output_text.trim()
+    ) {
+      return content.output_text
+    }
+    return stringifyJsonLike(content)
+  }
+
+  return String(content || '')
 }
 
 function extractOpenAiProviderMeta(responseData) {
