@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "generated_at_utc": "2026-04-03T09:42:50+00:00",
+  "repository": {
+    "name": "IdenaAI_Benchmarker",
+    "relative_root": "."
+  },
+  "git_context": [
+    {
+      "path": ".",
+      "branch": "main",
+      "head": "702a08c35dc756272dd0aa70c197a842453d0ba5",
+      "head_short": "702a08c"
+    }
+  ],
+  "connector_target": "chatgpt-deep-research",
+  "quick_start": [
+    "bash scripts/verify_snapshot.sh",
+    "cd idena-desktop && npm install && npm run start",
+    "cd idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --help",
+    "python3 scripts/build_chatgpt_connector_index.py"
+  ],
+  "sections": {
+    "root_docs_count": 3,
+    "desktop_core_count": 0,
+    "go_core_count": 0,
+    "tooling_count": 1,
+    "sample_json_count_total": 0,
+    "sample_json_indexed": 0
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "area": "root",
+      "role": "documentation",
+      "size_bytes": 2443,
+      "sha256_12": "0363faa166ad",
+      "modified_utc": "2026-04-03T09:42:50+00:00",
+      "notes": "Top-level repo docs"
+    },
+    {
+      "path": "LICENSE",
+      "area": "root",
+      "role": "documentation",
+      "size_bytes": 1062,
+      "sha256_12": "9aa99537e1a9",
+      "modified_utc": "2026-04-03T09:42:27+00:00",
+      "notes": "Top-level repo docs"
+    },
+    {
+      "path": "docs/audit-manifest.md",
+      "area": "root",
+      "role": "documentation",
+      "size_bytes": 1160,
+      "sha256_12": "f8feed9ba41b",
+      "modified_utc": "2026-04-03T09:42:50+00:00",
+      "notes": "Top-level repo docs"
+    },
+    {
+      "path": "scripts/build_chatgpt_connector_index.py",
+      "area": "tooling",
+      "role": "scripts",
+      "size_bytes": 5806,
+      "sha256_12": "9828ec89224e",
+      "modified_utc": "2026-04-03T09:42:50+00:00",
+      "notes": "Reproducibility and dataset tools"
+    }
+  ]
+}

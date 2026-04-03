@@ -1,107 +1,97 @@
-# Idena Desktop
+# IdenaAI_Benchmarker
 
-> Idena Desktop client for Windows, Mac, and Linux.
+Reproducible audit bundle for the Idena AI benchmark fork work.
 
-Backed by [Electron](https://www.electronjs.org), [React](https://reactjs.org) and [Next.js](https://nextjs.org/).
+## Included components
 
-[![Build Status](https://travis-ci.com/idena-network/idena-desktop.svg?branch=master)](https://travis-ci.com/idena-network/idena-desktop)
-[![dependencies Status](https://img.shields.io/david/idena-network/idena-desktop.svg)](https://david-dm.org/idena-network/idena-desktop)
-[![devDependency Status](https://img.shields.io/david/dev/idena-network/idena-desktop.svg)](https://david-dm.org/idena-network/idena-desktop?type=dev)
+- `idena-desktop` (desktop app fork with AI helper/test tooling)
+- `idena-go` (`v1.1.2`-based chain/node fork work)
+- `idena-wasm-binding` (included source + static libs)
+- `idena-wasm` (source for rebuilding wasm artifacts)
+- `samples/flips/*-decoded-labeled.json` (small labeled benchmark samples)
 
-## IMPORTANT!!!
+## Disclaimer (important)
 
-> We do not recommend to start the client with `npm start` for the validation session.
+This project was **100% vibe-coded with Codex** and large parts are **unchecked**.
+It may contain critical bugs, vulnerabilities, incorrect logic, or other issues.
+Use entirely at your own risk. No warranties of any kind.
 
-Please download and run the [latest app version](https://github.com/idena-network/idena-desktop/releases/latest) or use `npm run dist` for building and packaging the app on your own.
+Current state:
+- It can run against Idena mainnet endpoints for production-like testing workflows.
+- The intended long-term target is a separate forked benchmark chain.
+- Development happened primarily on macOS, so some dependencies/build steps may fail on other systems.
 
-You can also check #112
+## License
 
-## Getting started
+This repository is distributed under the MIT License. See `LICENSE`.
 
-### Download latest release
+## Reproducible setup
 
-https://github.com/idena-network/idena-desktop/releases/latest
+Use environment variables instead of machine-specific paths.
 
-### Install
-
-Follow installation instructions for your system.
-
-### Get to know Idena
-
-Visit [Idena](https://idena.io) for the [most common questions](https://idena.io/?view=faq) and [guidelines](https://idena.io/?view=guide).
-
-### Configuration
-
-Most of the configuration is available in `userData` directory:
-
-- `%APPDATA%\Idena` on Windows
-- `~/Library/Application Support/Idena` on macOS
-- `~/.config/Idena` on Linux
-
-**Note**: Manual configuration is a danger zone that may corrupt your Idena installation and lead to unexpected behavior. Only edit configuration files if you're 💯sure what you do.
-
-### Logs
-
-Logs are available in `logs` directory:
-
-- `%APPDATA%\Idena\logs` on Windows
-- `~/Library/Logs/Idena` on macOS
-- `~/.config/Idena/idena.log` on Linux
-
-### Built-in node
-
-Node configuration and data files located in `node` directory inside `userData`:
-
-- `%APPDATA%\Idena\node` on Windows
-- `~/Library/Application Support/Idena/node` on macOS
-- `~/.config/Idena/node` on Linux
-
-The built-in node directory structure is the same as for standalone node.
-
-## Development
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org) 10.x or later LTS versions recommended
-- npm 6.x or later recommended
-- Git
-
-### Install dependencies
+Quick bootstrap:
 
 ```bash
+bash scripts/bootstrap_upstream_workspace.sh
+```
+
+Manual bootstrap:
+
+```bash
+export WORKSPACE="$HOME/idena-ai-benchmark-workspace"
+mkdir -p "$WORKSPACE"
+cd "$WORKSPACE"
+
+git clone https://github.com/idena-network/idena-go.git
+git clone https://github.com/idena-network/idena-desktop.git
+git clone https://github.com/idena-network/idena-wasm.git
+git clone https://github.com/idena-network/idena-wasm-binding.git
+
+cd "$WORKSPACE/idena-go"
+git fetch --tags --prune
+git switch --detach v1.1.2
+git switch -c research/benchmark-chain
+
+cd "$WORKSPACE/idena-desktop"
+git fetch --tags --prune
+git switch --detach v0.39.1
+git switch -c research/benchmark-desktop
+```
+
+For this audit bundle (already assembled), run:
+
+```bash
+cd IdenaAI_Benchmarker
+bash scripts/verify_snapshot.sh
+```
+
+## Local run
+
+```bash
+cd idena-desktop
 npm install
+npm run start
 ```
 
-### Run
+## Load labeled sample flips
 
-```
-npm start
-```
-
-### Build
-
-Builds available for macOS, Windows and Linux platforms thanks to [electron-builder](https://www.electron.build/).
-
-You may build for the current platform:
-
-```
-npm run dist
+```bash
+cd idena-desktop
+python3 scripts/preload_ai_test_unit_queue.py \
+  --input ../samples/flips/flip-challenge-test-20-decoded-labeled.json \
+  --replace \
+  --max-total 20 \
+  --source audit-sample
 ```
 
-or for a specific platform
+## ChatGPT connector index
 
+Generate a machine-readable repo index for ChatGPT Deep Research / connector ingestion:
+
+```bash
+python3 scripts/build_chatgpt_connector_index.py
 ```
-npm run dist:win
-npm run dist:mac
-npm run dist:linux
-```
 
-Currently, only `deb` target supported for Linux.
+Output file:
 
-PRs are welcome! 👐
-
-## Contributing
-
-### Localization
-
-Please check your language plurals [here](https://jsfiddle.net/sm9wgLze).
+- `docs/chatgpt-connector-index.json`
