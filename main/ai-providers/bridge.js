@@ -18,6 +18,14 @@ const {
   normalizeConfidence,
   normalizeDecision,
 } = require('./decision')
+const {selectSensePair} = require('./senseSelector')
+const {
+  STORY_COMPLIANCE_KEYS,
+  STORY_OPTIONS_GEMINI_RESPONSE_SCHEMA,
+  STORY_OPTIONS_OPENAI_RESPONSE_FORMAT,
+  STORY_PANEL_ROLES,
+  validateStoryOptionsPayload,
+} = require('./storySchema')
 const {withRetries, mapWithConcurrency} = require('./concurrency')
 const {
   callOpenAi,
@@ -77,20 +85,6 @@ const OPENAI_IMAGE_PRICING_USD_PER_IMAGE = {
     '1536x1024': 0.015,
   },
 }
-
-const STORY_COMPLIANCE_KEYS = [
-  'keyword_relevance',
-  'no_text_needed',
-  'no_order_labels',
-  'no_inappropriate_content',
-  'single_story_only',
-  'no_waking_up_template',
-  'no_thumbs_up_down',
-  'no_enumeration_logic',
-  'no_screen_or_page_keyword_cheat',
-  'causal_clarity',
-  'consensus_clarity',
-]
 
 const SEMANTIC_ROLE_VALUES = [
   'actor',
@@ -354,6 +348,166 @@ function normalizeKeywords(payload) {
   if (values.length >= 2) return values
   if (values.length === 1) return [values[0], '']
   return ['', '']
+}
+
+function getLockedSenseSelection(value, keywordA, keywordB) {
+  if (
+    value &&
+    typeof value === 'object' &&
+    value.chosen_senses &&
+    value.chosen_senses.keyword_1 &&
+    value.chosen_senses.keyword_2
+  ) {
+    return value
+  }
+  return selectSensePair({keywordA, keywordB})
+}
+
+function getLockedSense(value, key, fallbackKeyword = '') {
+  const source =
+    value &&
+    value.chosen_senses &&
+    value.chosen_senses[key] &&
+    typeof value.chosen_senses[key] === 'object'
+      ? value.chosen_senses[key]
+      : {}
+  return {
+    keyword: normalizeKeywordValue(source.keyword || fallbackKeyword),
+    sense_id: String(source.sense_id || '').trim(),
+    gloss: String(source.gloss || '').trim(),
+    usage_rank: Math.max(1, Number.parseInt(source.usage_rank, 10) || 1),
+    visual_concreteness_score: clamp01(source.visual_concreteness_score),
+    causal_story_score: clamp01(source.causal_story_score),
+    example_visual_form: String(source.example_visual_form || '').trim(),
+    synonyms_for_prompting: Array.isArray(source.synonyms_for_prompting)
+      ? source.synonyms_for_prompting
+          .map((item) => String(item || '').trim())
+          .filter(Boolean)
+          .slice(0, 5)
+      : [],
+    prompt_label: String(source.prompt_label || '').trim(),
+    safety_note: String(source.safety_note || '').trim(),
+    tags: Array.isArray(source.tags)
+      ? source.tags
+          .map((item) => String(item || '').trim().toLowerCase())
+          .filter(Boolean)
+          .slice(0, 8)
+      : [],
+  }
+}
+
+function clamp01(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 0
+  return Math.max(0, Math.min(1, numeric))
+}
+
+function senseHasTag(sense, tag) {
+  return Boolean(
+    sense &&
+      Array.isArray(sense.tags) &&
+      sense.tags.includes(String(tag || '').trim().toLowerCase())
+  )
+}
+
+function senseHasAnyTag(sense, tags) {
+  return Array.isArray(tags) && tags.some((tag) => senseHasTag(sense, tag))
+}
+
+function isEmotionSense(sense) {
+  return senseHasTag(sense, 'emotion')
+}
+
+function isToolSense(sense) {
+  return senseHasTag(sense, 'tool')
+}
+
+function isActorSense(sense) {
+  return senseHasAnyTag(sense, ['actor', 'person'])
+}
+
+function isMotionSense(sense) {
+  return senseHasTag(sense, 'motion')
+}
+
+function isReflectionSense(sense) {
+  return senseHasTag(sense, 'reflection')
+}
+
+function getSensePromptLabel(sense, fallbackKeyword = '') {
+  const promptLabel = String(sense && sense.prompt_label ? sense.prompt_label : '')
+    .trim()
+  if (promptLabel) return promptLabel
+  if (
+    sense &&
+    Array.isArray(sense.synonyms_for_prompting) &&
+    sense.synonyms_for_prompting.length > 0
+  ) {
+    return String(sense.synonyms_for_prompting[0] || '').trim()
+  }
+  return normalizeKeywordValue((sense && sense.keyword) || fallbackKeyword) || 'object'
+}
+
+function formatSensePromptLines(senseSelection, keywordA, keywordB) {
+  const selection = getLockedSenseSelection(senseSelection, keywordA, keywordB)
+  const firstSense = getLockedSense(selection, 'keyword_1', keywordA)
+  const secondSense = getLockedSense(selection, 'keyword_2', keywordB)
+  const notes = [firstSense.safety_note, secondSense.safety_note]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .filter((item, index, list) => list.indexOf(item) === index)
+  const emotionalPair = isEmotionSense(firstSense) || isEmotionSense(secondSense)
+  const elevatedRiskPair =
+    senseHasAnyTag(firstSense, ['elevated_risk']) ||
+    senseHasAnyTag(secondSense, ['elevated_risk'])
+
+  return [
+    'Locked sense selection (must not drift across panels):',
+    `- Keyword 1 "${normalizeKeywordValue(keywordA) || '-'}" -> ${firstSense.gloss || getSensePromptLabel(firstSense, keywordA)} (sense_id: ${firstSense.sense_id || '-'})`,
+    `  Preferred visual form: ${firstSense.example_visual_form || getSensePromptLabel(firstSense, keywordA)}.`,
+    firstSense.synonyms_for_prompting.length > 0
+      ? `  Synonyms allowed for prompting: ${firstSense.synonyms_for_prompting.join(', ')}.`
+      : '',
+    `- Keyword 2 "${normalizeKeywordValue(keywordB) || '-'}" -> ${secondSense.gloss || getSensePromptLabel(secondSense, keywordB)} (sense_id: ${secondSense.sense_id || '-'})`,
+    `  Preferred visual form: ${secondSense.example_visual_form || getSensePromptLabel(secondSense, keywordB)}.`,
+    secondSense.synonyms_for_prompting.length > 0
+      ? `  Synonyms allowed for prompting: ${secondSense.synonyms_for_prompting.join(', ')}.`
+      : '',
+    '- Keep these meanings locked across the full story and every panel prompt.',
+    emotionalPair
+      ? '- If the locked sense includes an emotion, show a visible trigger and a visible external consequence. Emotion alone is not enough.'
+      : '',
+    elevatedRiskPair
+      ? '- Keep risky tools, flames, or firearms visible in a non-graphic context only. No direct harm to a person or animal.'
+      : '',
+    notes.length > 0 ? `- Sense-specific safety notes: ${notes.join(' ')}` : '',
+  ].filter(Boolean)
+}
+
+function getContentSafetyBoundaryLines() {
+  return [
+    '- Allow ordinary fear, tension, conflict, surprise, creepy atmosphere, safe tool use, accidental mess, and non-graphic consequences when they improve clarity.',
+    '- Reject only clearly extreme or provider-triggering content such as sexual content, graphic violence, gore, explicit injury, direct weapon harm against a person or animal, torture, dismemberment, or body horror.',
+    '- Prefer minimal safety intervention. Keep the story concrete instead of flattening it into a harmless non-event.',
+  ]
+}
+
+function chooseDeterministicItem(items, seed, fallback = '') {
+  const list = Array.isArray(items) ? items.filter(Boolean) : []
+  if (list.length < 1) return fallback
+  return list[hashScore(seed) % list.length]
+}
+
+function withIndefiniteArticle(text) {
+  const value = String(text || '').trim()
+  if (!value) return ''
+  return /^[aeiou]/i.test(value) ? `an ${value}` : `a ${value}`
+}
+
+function prependSeedToPanel(panelText, humanStorySeed) {
+  const seed = normalizeHumanStorySeed(humanStorySeed)
+  if (!seed) return panelText
+  return `${seed} ${panelText}`
 }
 
 function isTruthyFlag(value) {
@@ -981,6 +1135,59 @@ function normalizeStoryOption(value, index) {
     complianceReport,
     riskFlags,
     revisionIfRisky,
+    senseSelection:
+      item.senseSelection && typeof item.senseSelection === 'object'
+        ? item.senseSelection
+        : item.sense_selection && typeof item.sense_selection === 'object'
+        ? item.sense_selection
+        : item.semanticLock && typeof item.semanticLock === 'object'
+        ? item.semanticLock
+        : item.semantic_lock && typeof item.semantic_lock === 'object'
+        ? item.semantic_lock
+        : null,
+  }
+}
+
+function parseStrictStoryOptions(rawText) {
+  const text = String(rawText || '').trim()
+  if (!text) {
+    return {
+      ok: false,
+      errorType: 'empty_response',
+      error: 'Empty provider response',
+      errors: ['Empty provider response'],
+    }
+  }
+
+  let parsed = null
+  try {
+    parsed = extractJsonBlock(text)
+  } catch (error) {
+    return {
+      ok: false,
+      errorType: 'json_extract',
+      error: String((error && error.message) || error || '').trim(),
+      errors: [String((error && error.message) || error || '').trim()],
+    }
+  }
+
+  const validation = validateStoryOptionsPayload(parsed)
+  if (!validation.ok) {
+    return {
+      ok: false,
+      errorType: 'schema_validation',
+      error: validation.error,
+      errors: validation.errors,
+      parsed,
+    }
+  }
+
+  return {
+    ok: true,
+    parsed,
+    stories: parsed.stories
+      .slice(0, 2)
+      .map((story, index) => normalizeStoryOption(story, index)),
   }
 }
 
@@ -1037,41 +1244,250 @@ function buildKeywordFallbackPanels(
   keywordA,
   keywordB,
   variant,
-  humanStorySeed
+  humanStorySeed,
+  senseSelection
 ) {
-  const safeSeed = normalizeHumanStorySeed(humanStorySeed)
-  if (safeSeed) {
+  const selection = getLockedSenseSelection(senseSelection, keywordA, keywordB)
+  const firstSense = getLockedSense(selection, 'keyword_1', keywordA)
+  const secondSense = getLockedSense(selection, 'keyword_2', keywordB)
+
+  const buildEmotionLockedFallbackPanels = (emotionSense, triggerSense) => {
+    const seed = `${emotionSense.sense_id}|${triggerSense.sense_id}|${variant}`
+    const carriedObject = chooseDeterministicItem(
+      [
+        {item: 'cup', consequence: 'water spreads across the floor'},
+        {item: 'book', consequence: 'pages scatter across the floor'},
+        {item: 'fruit bowl', consequence: 'fruit rolls across the floor'},
+        {item: 'tray', consequence: 'small objects scatter across the floor'},
+      ],
+      `${seed}|object`,
+      {item: 'cup', consequence: 'water spreads across the floor'}
+    )
+    const location = chooseDeterministicItem(
+      ['hallway', 'living room', 'studio corridor', 'quiet stair landing'],
+      `${seed}|location`,
+      'hallway'
+    )
+    const triggerLabel = getSensePromptLabel(triggerSense, keywordB)
+    const reactionLabel = getSensePromptLabel(emotionSense, keywordA)
+
     if (variant === 1) {
       return [
-        `${safeSeed} The scene opens with ${keywordA} and ${keywordB} both visible.`,
-        `A person initiates one concrete action connecting ${keywordA} with ${keywordB}.`,
-        `That action causes an obvious physical change around ${keywordB}.`,
-        `The final panel shows the resolved outcome with ${keywordA} and ${keywordB} still visible.`,
+        prependSeedToPanel(
+          `A calm person sets a ${carriedObject.item} on a small table in a ${location} while ${withIndefiniteArticle(
+            triggerLabel
+          )} moves into view nearby.`,
+          humanStorySeed
+        ),
+        `The ${triggerLabel} suddenly becomes impossible to miss, and the person jerks in a ${reactionLabel} as the ${carriedObject.item} slides off the table.`,
+        `The ${carriedObject.item} drops to the floor and ${carriedObject.consequence} while the ${triggerLabel} stays clearly visible.`,
+        `The person steps back from the mess, still showing the ${reactionLabel}, with the ${triggerLabel} nearby.`,
       ]
     }
+
     return [
-      `${safeSeed} The first panel establishes both ${keywordA} and ${keywordB}.`,
-      `An actor uses ${keywordA} to trigger a visible event involving ${keywordB}.`,
-      `The peak change becomes obvious in the third panel as ${keywordB} reacts.`,
-      `The fourth panel shows the new stable state after the event.`,
+      prependSeedToPanel(
+        `A calm person carries a ${carriedObject.item} through a ${location} while ${withIndefiniteArticle(
+          triggerLabel
+        )} starts to appear nearby.`,
+        humanStorySeed
+      ),
+      `The ${triggerLabel} moves fully into view, and the person jolts in a ${reactionLabel} as the ${carriedObject.item} slips from their hand.`,
+      `The ${carriedObject.item} hits the floor and ${carriedObject.consequence} while the ${triggerLabel} remains visible.`,
+      `The startled person backs away from the mess with the ${triggerLabel} still visible in the ${location}.`,
     ]
   }
 
-  if (variant === 1) {
+  const buildToolLockedFallbackPanels = (toolSense, actorSense, otherSense) => {
+    const seed = `${toolSense.sense_id}|${actorSense.sense_id}|${variant}`
+    const actorLabel = isActorSense(actorSense)
+      ? getSensePromptLabel(actorSense, actorSense.keyword || 'person')
+      : 'person'
+    const toolLabel = getSensePromptLabel(toolSense, keywordA)
+
+    let location = 'bright workshop'
+    let workObject = 'wooden log'
+    let visibleResult = 'a carved shape becomes obvious'
+    if (toolSense.keyword === 'gun') {
+      location = 'training range lane'
+      workObject = 'hinged metal plate'
+      visibleResult = 'the metal plate swings backward from the impact'
+    } else if (toolSense.keyword === 'fire') {
+      location = 'controlled demo table'
+      workObject = 'lantern wick'
+      visibleResult = 'the lantern glows with a steady visible flame'
+    } else if (toolSense.keyword === 'chainsaw') {
+      location = 'bright workshop'
+      workObject = 'wooden log'
+      visibleResult = 'a clean carved shape becomes obvious in the wood'
+    } else if (toolSense.keyword === 'mirror') {
+      location = 'quiet dressing room'
+      workObject = 'standing mirror frame'
+      visibleResult = 'the mirror surface changes visibly'
+    } else if (senseHasTag(toolSense, 'repair')) {
+      location = 'sunlit workbench'
+      workObject = 'window frame gap'
+      visibleResult = 'the repaired gap looks sealed and clean'
+    } else if (otherSense && otherSense.sense_id) {
+      workObject = getSensePromptLabel(otherSense, otherSense.keyword)
+    }
+
+    if (variant === 1) {
+      return [
+        prependSeedToPanel(
+          `A ${actorLabel} stands in a ${location} with a ${toolLabel} beside the ${workObject}.`,
+          humanStorySeed
+        ),
+        `The ${actorLabel} starts one clear action with the ${toolLabel} on the ${workObject}.`,
+        `That action causes an obvious external change as ${visibleResult}.`,
+        `The ${actorLabel} steps back from the finished result while the ${toolLabel} rests safely nearby.`,
+      ]
+    }
+
     return [
-      `A person notices ${keywordA} near a ${keywordB} and starts interacting with both.`,
-      `The person uses ${keywordA} as a clear tool to change the state of the ${keywordB}.`,
-      `The ${keywordB} visibly changes while ${keywordA} remains in the same scene.`,
-      `The person observes the final result with both ${keywordA} and ${keywordB} still clearly visible.`,
+      prependSeedToPanel(
+        `A ${actorLabel} prepares the ${workObject} in a ${location} with the ${toolLabel} ready.`,
+        humanStorySeed
+      ),
+      `The ${actorLabel} uses the ${toolLabel} in one concrete step on the ${workObject}.`,
+      `A visible state change appears immediately as ${visibleResult}.`,
+      `The completed result stays in view while the ${toolLabel} is set aside in the same ${location}.`,
     ]
   }
 
-  return [
-    `A person notices ${keywordA} next to a ${keywordB} and prepares one clear action.`,
-    `The person performs one obvious action linking ${keywordA} to the ${keywordB}.`,
-    `A clear physical change appears on the ${keywordB} because of that action.`,
-    `The final panel shows the finished result with ${keywordA} and ${keywordB} visible.`,
-  ]
+  const buildMotionLockedFallbackPanels = (motionSense, anchorSense) => {
+    const seed = `${motionSense.sense_id}|${anchorSense.sense_id}|${variant}`
+    const movingObject = chooseDeterministicItem(
+      ['glass vase', 'picture frame', 'ceramic bowl', 'table lamp'],
+      `${seed}|moving-object`,
+      'glass vase'
+    )
+    const anchorLabel = getSensePromptLabel(anchorSense, keywordB)
+    const location = chooseDeterministicItem(
+      ['hallway table', 'bedroom shelf', 'studio stand', 'living room cabinet'],
+      `${seed}|location`,
+      'hallway table'
+    )
+
+    return [
+      prependSeedToPanel(
+        `A person places a ${movingObject} beside the ${anchorLabel} on a ${location}.`,
+        humanStorySeed
+      ),
+      `The ${movingObject} starts a clear ${getSensePromptLabel(
+        motionSense,
+        keywordA
+      )} toward the ${anchorLabel} as the edge tips.`,
+      `The ${movingObject} falls, the ${anchorLabel} shifts hard, and visible pieces or debris spread across the floor.`,
+      `The fallen ${movingObject} lies beside the changed ${anchorLabel} in the new stable state.`,
+    ]
+  }
+
+  const buildReflectionLockedFallbackPanels = (reflectionSense, otherSense) => {
+    const seed = `${reflectionSense.sense_id}|${otherSense.sense_id}|${variant}`
+    const otherLabel = getSensePromptLabel(otherSense, keywordB)
+    const cleaningTool = chooseDeterministicItem(
+      ['cloth', 'spray bottle', 'soft brush'],
+      `${seed}|tool`,
+      'cloth'
+    )
+    const room = chooseDeterministicItem(
+      ['quiet bedroom', 'hallway corner', 'dressing room'],
+      `${seed}|room`,
+      'quiet bedroom'
+    )
+
+    return [
+      prependSeedToPanel(
+        `A person wipes a ${getSensePromptLabel(
+          reflectionSense,
+          keywordA
+        )} in a ${room} with a ${cleaningTool}.`,
+        humanStorySeed
+      ),
+      `The ${otherLabel} appears clearly inside the ${getSensePromptLabel(
+        reflectionSense,
+        keywordA
+      )}, changing the reflection in a way the person can see.`,
+      `The ${cleaningTool} drops and the ${getSensePromptLabel(
+        reflectionSense,
+        keywordA
+      )} tilts as the ${otherLabel} remains visible in it.`,
+      `The fallen ${cleaningTool} and angled ${getSensePromptLabel(
+        reflectionSense,
+        keywordA
+      )} stay in view with the ${otherLabel} still reflected inside.`,
+    ]
+  }
+
+  const buildGenericLockedFallbackPanels = (primarySense, secondarySense) => {
+    const seed = `${primarySense.sense_id}|${secondarySense.sense_id}|${variant}`
+    const primaryLabel = getSensePromptLabel(primarySense, keywordA)
+    const secondaryLabel = getSensePromptLabel(secondarySense, keywordB)
+    const prop = chooseDeterministicItem(
+      ['box', 'bucket', 'jar', 'basket'],
+      `${seed}|prop`,
+      'box'
+    )
+    const location = chooseDeterministicItem(
+      ['kitchen counter', 'garage shelf', 'garden table', 'hall bench'],
+      `${seed}|location`,
+      'kitchen counter'
+    )
+
+    if (variant === 1) {
+      return [
+        prependSeedToPanel(
+          `A person sets the ${primaryLabel} beside the ${secondaryLabel} on a ${location}.`,
+          humanStorySeed
+        ),
+        `One clear push makes the ${primaryLabel} bump the ${secondaryLabel}.`,
+        `The ${secondaryLabel} shifts visibly, and a nearby ${prop} tips over to make the change obvious.`,
+        `The tipped ${prop}, the moved ${primaryLabel}, and the changed ${secondaryLabel} remain visible in the final stable state.`,
+      ]
+    }
+
+    return [
+      prependSeedToPanel(
+        `A person arranges the ${primaryLabel} and the ${secondaryLabel} beside a ${prop} on a ${location}.`,
+        humanStorySeed
+      ),
+      `The person makes one concrete move that sends the ${primaryLabel} into the ${secondaryLabel}.`,
+      `That contact causes a visible external change as the ${secondaryLabel} shifts and the ${prop} spills.`,
+      `The spilled ${prop} and changed positions of the ${primaryLabel} and ${secondaryLabel} show the stable aftermath.`,
+    ]
+  }
+
+  if (isEmotionSense(firstSense) || isEmotionSense(secondSense)) {
+    return isEmotionSense(firstSense)
+      ? buildEmotionLockedFallbackPanels(firstSense, secondSense)
+      : buildEmotionLockedFallbackPanels(secondSense, firstSense)
+  }
+
+  if (isToolSense(firstSense) || isToolSense(secondSense)) {
+    const toolSense = isToolSense(firstSense) ? firstSense : secondSense
+    const actorSense = isActorSense(firstSense)
+      ? firstSense
+      : isActorSense(secondSense)
+      ? secondSense
+      : {sense_id: 'generic_person', prompt_label: 'person', keyword: 'person', tags: ['person']}
+    const otherSense = toolSense === firstSense ? secondSense : firstSense
+    return buildToolLockedFallbackPanels(toolSense, actorSense, otherSense)
+  }
+
+  if (isMotionSense(firstSense) || isMotionSense(secondSense)) {
+    return isMotionSense(firstSense)
+      ? buildMotionLockedFallbackPanels(firstSense, secondSense)
+      : buildMotionLockedFallbackPanels(secondSense, firstSense)
+  }
+
+  if (isReflectionSense(firstSense) || isReflectionSense(secondSense)) {
+    return isReflectionSense(firstSense)
+      ? buildReflectionLockedFallbackPanels(firstSense, secondSense)
+      : buildReflectionLockedFallbackPanels(secondSense, firstSense)
+  }
+
+  return buildGenericLockedFallbackPanels(firstSense, secondSense)
 }
 
 function buildKeywordFallbackStories({
@@ -1080,9 +1496,15 @@ function buildKeywordFallbackStories({
   includeNoise = false,
   customStory = null,
   humanStorySeed = '',
+  senseSelection = null,
 }) {
   const safeKeywordA = normalizeKeywordFallbackValue(keywordA, 'object A')
   const safeKeywordB = normalizeKeywordFallbackValue(keywordB, 'object B')
+  const selection = getLockedSenseSelection(
+    senseSelection,
+    safeKeywordA,
+    safeKeywordB
+  )
   const normalizedCustomPanels = normalizeStoryPanels(customStory || [])
   const hasCustomPanels = hasMeaningfulStoryPanels(normalizedCustomPanels)
   const noisePanelIndex = includeNoise
@@ -1091,13 +1513,25 @@ function buildKeywordFallbackStories({
 
   const optionOnePanels = hasCustomPanels
     ? normalizedCustomPanels
-    : buildKeywordFallbackPanels(safeKeywordA, safeKeywordB, 0, humanStorySeed)
+    : buildKeywordFallbackPanels(
+        safeKeywordA,
+        safeKeywordB,
+        0,
+        humanStorySeed,
+        selection
+      )
 
   const optionTwoPanels = hasCustomPanels
     ? normalizedCustomPanels.map((panel, index) =>
         index === 0 ? `${panel} (alternative opening)` : panel
       )
-    : buildKeywordFallbackPanels(safeKeywordA, safeKeywordB, 1, humanStorySeed)
+    : buildKeywordFallbackPanels(
+        safeKeywordA,
+        safeKeywordB,
+        1,
+        humanStorySeed,
+        selection
+      )
 
   return [
     normalizeStoryOption(
@@ -1109,6 +1543,7 @@ function buildKeywordFallbackStories({
           'Local fallback story generated because provider output could not be parsed reliably.',
         includeNoise,
         noisePanelIndex,
+        senseSelection: selection,
       },
       0
     ),
@@ -1121,6 +1556,7 @@ function buildKeywordFallbackStories({
           'Alternative local fallback story generated because provider output could not be parsed reliably.',
         includeNoise,
         noisePanelIndex,
+        senseSelection: selection,
       },
       1
     ),
@@ -1279,6 +1715,7 @@ function parseStoryOptions(rawText, context = {}) {
     includeNoise: Boolean(contextValue.includeNoise),
     customStory: contextValue.customStory || null,
     humanStorySeed: contextValue.humanStorySeed || '',
+    senseSelection: contextValue.senseSelection || null,
   })
 }
 
@@ -1294,11 +1731,18 @@ function buildStoryOptionsPrompt({
   keywordB,
   includeNoise,
   customStory,
+  senseSelection,
 }) {
   const safeKeywordA = normalizeKeywordValue(keywordA) || '-'
   const safeKeywordB = normalizeKeywordValue(keywordB) || '-'
   const baseStory = normalizeStoryPanels(customStory)
   const hasCustomStory = Array.isArray(customStory) && customStory.length > 0
+  const lockedSenseLines = formatSensePromptLines(
+    senseSelection,
+    safeKeywordA,
+    safeKeywordB
+  )
+  const contentSafetyBoundaryLines = getContentSafetyBoundaryLines()
 
   const outputSchema = `{
   "keywords": ["<keyword1>", "<keyword2>"],
@@ -1309,28 +1753,28 @@ function buildStoryOptionsPrompt({
       "panel": 1,
       "role": "before",
       "description": "<clear visual description>",
-      "keywords_visible": ["<...>"],
+      "required_visibles": ["<...>", "<...>"],
       "state_change_from_previous": "n/a"
     },
     {
       "panel": 2,
-      "role": "setup of event",
+      "role": "trigger",
       "description": "<clear visual description>",
-      "keywords_visible": ["<...>"],
+      "required_visibles": ["<...>", "<...>"],
       "state_change_from_previous": "<what changed visibly>"
     },
     {
       "panel": 3,
-      "role": "peak event",
+      "role": "reaction",
       "description": "<clear visual description>",
-      "keywords_visible": ["<...>"],
+      "required_visibles": ["<...>", "<...>"],
       "state_change_from_previous": "<what changed visibly>"
     },
     {
       "panel": 4,
       "role": "after",
       "description": "<clear visual description>",
-      "keywords_visible": ["<...>"],
+      "required_visibles": ["<...>", "<...>"],
       "state_change_from_previous": "<what changed visibly>"
     }
   ],
@@ -1368,7 +1812,7 @@ function buildStoryOptionsPrompt({
     'Create two distinct 4-panel, wordless, single-story flip concepts from two Idena keywords.',
     'Your priority is clear compliance plus creative quality. Your priority order is:',
     '1. rule compliance,',
-    '2. low report risk,',
+    '2. avoid clearly extreme/provider-triggering content while keeping normal tension,',
     '3. high human consensus,',
     '4. clear visual causality.',
     '5. creative-but-readable scene design.',
@@ -1377,7 +1821,7 @@ function buildStoryOptionsPrompt({
     '- Both keywords must be clearly and concretely visible in the story.',
     '- The flip must be solvable without reading any text.',
     '- Do not use any letters, numbers, arrows, labels, captions, signs, interface text, clocks, calendars, scoreboards, book pages, posters, or subtitles if reading them is needed.',
-    '- Do not include inappropriate, sexual, violent, or shocking content.',
+    ...contentSafetyBoundaryLines,
     '- Do not use several unrelated mini-stories.',
     '- Do not use the waking-up template.',
     '- Do not end with thumbs up or thumbs down.',
@@ -1448,7 +1892,7 @@ function buildStoryOptionsPrompt({
     '- keyword_clarity >= 4',
     '',
     'Internal workflow:',
-    '1. Interpret both keywords visually and literally first.',
+    '1. Interpret both keywords using the locked senses below.',
     '2. Generate 3 candidate storylines that pass the checklist/rubric.',
     '3. For each candidate, run a compliance audit:',
     '   - keyword_relevance',
@@ -1498,6 +1942,8 @@ function buildStoryOptionsPrompt({
     '- avoid "spot the tiny difference" stories',
     '- avoid meme-style or internet-native imagery that could feel like text-dependent inference',
     '',
+    ...lockedSenseLines,
+    '',
     `Keyword 1: ${safeKeywordA}`,
     `Keyword 2: ${safeKeywordB}`,
     noiseHint,
@@ -1513,11 +1959,17 @@ function buildStoryOptionsPromptFast({
   keywordB,
   includeNoise,
   customStory,
+  senseSelection,
 }) {
   const safeKeywordA = normalizeKeywordValue(keywordA) || '-'
   const safeKeywordB = normalizeKeywordValue(keywordB) || '-'
   const baseStory = normalizeStoryPanels(customStory)
   const hasCustomStory = Array.isArray(customStory) && customStory.length > 0
+  const lockedSenseLines = formatSensePromptLines(
+    senseSelection,
+    safeKeywordA,
+    safeKeywordB
+  )
   const customStoryHint = hasCustomStory
     ? `Use this draft as seed and improve it:
 1) ${baseStory[0]}
@@ -1536,9 +1988,12 @@ function buildStoryOptionsPromptFast({
     '- clear structure: before -> trigger -> peak change -> after',
     '- both keywords must be visually present and relevant',
     '- no text overlays, letters, numbers, labels, logos, or watermarks',
+    '- allow ordinary fear, surprise, creepy atmosphere, safe tool use, and non-graphic conflict if the visible consequence stays clear',
+    '- reject only graphic injury, gore, explicit sexual content, or direct weapon harm against a person or animal',
     '- no counting puzzles, no symbolism, no surreal jokes',
     '- panel 4 must be a visible consequence of panel 3',
     '- avoid repeated stock phrases; use natural concise wording',
+    ...lockedSenseLines,
     'Output JSON schema:',
     '{',
     '  "stories": [',
@@ -1565,7 +2020,7 @@ function storyOptionToMainPromptConcept(option, keywordA, keywordB) {
     .filter(Boolean)
     .slice(0, 2)
   const safeKeywords = keywords.length ? keywords : ['keyword-1', 'keyword-2']
-  const roleByPanel = ['before', 'setup of event', 'peak event', 'after']
+  const roleByPanel = STORY_PANEL_ROLES
   const complianceReport = STORY_COMPLIANCE_KEYS.reduce((acc, key) => {
     const value =
       normalized.complianceReport && normalized.complianceReport[key]
@@ -1592,7 +2047,7 @@ function storyOptionToMainPromptConcept(option, keywordA, keywordB) {
         panel: index + 1,
         role: roleByPanel[index] || 'progression',
         description,
-        keywords_visible: safeKeywords,
+        required_visibles: safeKeywords,
         state_change_from_previous:
           index === 0 ? 'n/a' : 'Clear visible change from previous panel.',
       })
@@ -1611,8 +2066,9 @@ function buildStoryAuditPrompt(basePrompt, conceptJson) {
   return [
     basePrompt,
     '',
-    'Audit this concept and hard-reject anything risky.',
-    'If any hard constraint fails or there is meaningful ambiguity, rewrite it into a safer concept.',
+    'Audit this concept and hard-reject only clearly extreme or provider-triggering content.',
+    'If any hard constraint fails or there is meaningful ambiguity, rewrite it into a safer but still concrete concept.',
+    'Keep ordinary fear, tension, creepy atmosphere, safe tool use, and non-graphic conflict when they improve causal clarity.',
     'Keep the rewritten concept specific and visually rich, not generic.',
     'Re-audit using this checklist before returning:',
     '- before -> trigger -> peak change -> after must be explicit',
@@ -1655,14 +2111,14 @@ function buildPanelPrompt({
   panelIndex,
   includeNoise = false,
   noisePanelIndex = null,
+  senseSelection = null,
 }) {
   const isNoisePanel =
     includeNoise && Number.isFinite(Number(noisePanelIndex))
       ? Number(noisePanelIndex) === Number(panelIndex)
       : false
 
-  const panelRoles = ['before', 'setup of event', 'peak event', 'after']
-  const role = panelRoles[panelIndex] || 'progression'
+  const role = STORY_PANEL_ROLES[panelIndex] || 'progression'
   const previousPanelText =
     panelIndex > 0
       ? normalizeStoryPanel(storyPanels[panelIndex - 1], panelIndex - 1)
@@ -1671,11 +2127,17 @@ function buildPanelPrompt({
     panelIndex < 3
       ? normalizeStoryPanel(storyPanels[panelIndex + 1], panelIndex + 1)
       : ''
+  const lockedSenseLines = formatSensePromptLines(
+    senseSelection,
+    keywordA,
+    keywordB
+  )
   return [
     `Create panel ${
       panelIndex + 1
     } of 4 (role: ${role}) for one coherent visual story.`,
     `Keywords that must remain visually present across the story: ${keywordA} and ${keywordB}.`,
+    ...lockedSenseLines,
     `Panel description: ${panelText}`,
     previousPanelText ? `Previous panel context: ${previousPanelText}` : '',
     nextPanelText ? `Next panel context: ${nextPanelText}` : '',
@@ -1683,6 +2145,7 @@ function buildPanelPrompt({
     '- Wordless image. No letters, numbers, arrows, signs, labels, UI text, logos, watermarks.',
     '- Keep one main actor/object chain and stable environment unless change itself is the event.',
     '- Show a clear visible state change from previous panel.',
+    '- Keep ordinary tension, surprise, creepy atmosphere, and non-graphic conflict if they help the story. Do not escalate into graphic injury, gore, or direct weapon harm to a person or animal.',
     '- Avoid surrealism, jokes, metaphor-heavy symbolism, and duplicate-looking frames.',
     isNoisePanel
       ? '- This panel is marked for post-process adversarial pixel noise later. Keep objects large and readable before distortion.'
@@ -2717,6 +3180,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
     const providerConfig = payload.providerConfig || null
     const [keywordA, keywordB] = normalizeKeywords(payload)
+    const senseSelection = getLockedSenseSelection(null, keywordA, keywordB)
     const humanStorySeed = ''
     const includeNoise = Boolean(payload.includeNoise)
     const customStory = normalizeStoryPanels(payload.customStoryPanels)
@@ -2745,6 +3209,17 @@ function createAiProviderBridge(logger, dependencies = {}) {
     })
     const startedAt = now()
 
+    logger.info('AI story sense selection', {
+      rawKeywords: senseSelection.raw_keywords,
+      candidateSenses: senseSelection.candidate_senses,
+      rejectedSenses: senseSelection.rejected_senses,
+      chosenSenses: senseSelection.chosen_senses,
+      compatibilityScores: senseSelection.compatibility_scores,
+      selectionSource: senseSelection.selection_source,
+      topPairWasWeak: senseSelection.top_pair_was_weak,
+      attemptedNextBestPair: senseSelection.attempted_next_best_pair,
+    })
+
     if (shouldUsePythonFlipPipeline(payload)) {
       try {
         const pythonResult = await runPythonFlipStoryPipeline({
@@ -2762,7 +3237,18 @@ function createAiProviderBridge(logger, dependencies = {}) {
           includeNoise,
           storyPanels: pythonResult.storyPanels,
           semanticPlan: pythonResult.semanticPlan,
-        }).slice(0, requestedStoryCount)
+        })
+          .slice(0, requestedStoryCount)
+          .map((story, index) =>
+            normalizeStoryOption(
+              {
+                ...story,
+                id: `option-${index + 1}`,
+                senseSelection,
+              },
+              index
+            )
+          )
 
         if (pythonStories.length > 0) {
           return {
@@ -2778,6 +3264,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
             },
             promptText: 'python:idena_flip_pipeline',
             generationPath: 'python_story_pipeline',
+            senseSelection,
             semanticPlan:
               pythonResult.semanticPlan &&
               typeof pythonResult.semanticPlan === 'object'
@@ -2807,12 +3294,14 @@ function createAiProviderBridge(logger, dependencies = {}) {
           keywordB,
           includeNoise,
           customStory: hasCustomStory ? customStory : null,
+          senseSelection,
         })
       : buildStoryOptionsPrompt({
           keywordA,
           keywordB,
           includeNoise,
           customStory: hasCustomStory ? customStory : null,
+          senseSelection,
         })
     const apiKey = getApiKey(provider)
     const providerResponse = await invokeProvider({
@@ -2841,6 +3330,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       includeNoise,
       customStory: hasCustomStory ? customStory : null,
       humanStorySeed,
+      senseSelection,
     })
     let stories = parsedStories.slice(0, requestedStoryCount)
 
@@ -2887,6 +3377,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
               includeNoise,
               customStory: hasCustomStory ? customStory : null,
               humanStorySeed,
+              senseSelection,
             }
           )
           const auditedStory = parsedAuditStories.find((story) =>
@@ -2925,6 +3416,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
         includeNoise,
         customStory: hasCustomStory ? customStory : null,
         humanStorySeed,
+        senseSelection,
       })
       const seenPanels = new Set(
         stories.map((item) =>
@@ -2952,6 +3444,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
           ...story,
           id: `option-${index + 1}`,
           title: String(story && story.title ? story.title : '').trim() || null,
+          senseSelection,
         },
         index
       )
@@ -2964,7 +3457,22 @@ function createAiProviderBridge(logger, dependencies = {}) {
         includeNoise,
         customStory: hasCustomStory ? customStory : null,
         humanStorySeed,
+        senseSelection,
       }).slice(0, requestedStoryCount)
+    }
+
+    const fallbackUsed = stories.some((story) =>
+      /local fallback story generated because provider output could not be parsed reliably/i.test(
+        String(story && story.rationale ? story.rationale : '')
+      )
+    )
+    if (fallbackUsed) {
+      logger.info('AI story fallback sense lock', {
+        rawKeywords: senseSelection.raw_keywords,
+        chosenSenses: senseSelection.chosen_senses,
+        fallbackUsedLockedSenses: !senseSelection.used_raw_keyword_fallback,
+        selectionSource: senseSelection.selection_source,
+      })
     }
 
     const usage = normalizeTokenUsage(combinedUsage)
@@ -2978,6 +3486,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       model,
       latencyMs: now() - startedAt,
       stories,
+      senseSelection,
       tokenUsage: usage,
       costs: {
         estimatedUsd: estimatedCostUsd,
@@ -2998,6 +3507,11 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const providerConfig = payload.providerConfig || null
     const apiKey = getApiKey(provider)
     const [keywordA, keywordB] = normalizeKeywords(payload)
+    const senseSelection = getLockedSenseSelection(
+      payload.senseSelection,
+      keywordA,
+      keywordB
+    )
     const storyPanels = normalizeStoryPanels(payload.storyPanels)
     const includeNoise = Boolean(payload.includeNoise)
     const noisePanelIndex = chooseNoisePanelIndex(
@@ -3120,6 +3634,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
         panelIndex,
         includeNoise,
         noisePanelIndex,
+        senseSelection,
       })
 
       if (shouldGenerate) {
@@ -3378,6 +3893,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       textAuditModel: textAuditEnabled ? textAuditModel : '',
       textAuditMaxRetries,
       textOverlayRetryCount,
+      senseSelection,
       textAuditByPanel,
       panels: nextPanels.map((imageDataUrl, index) => ({
         index,

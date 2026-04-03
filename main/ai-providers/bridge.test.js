@@ -1,4 +1,5 @@
 const {createAiProviderBridge} = require('./bridge')
+const {selectSensePair} = require('./senseSelector')
 
 function mockLogger() {
   return {
@@ -991,8 +992,14 @@ describe('createAiProviderBridge', () => {
     expect(callPayload.promptText).toContain('no_text_needed')
     expect(callPayload.promptText).toContain('4-panel storyboard checklist')
     expect(callPayload.promptText).toContain('causality >= 4')
+    expect(callPayload.promptText).toContain(
+      'Allow ordinary fear, tension, conflict, surprise, creepy atmosphere, safe tool use, accidental mess, and non-graphic consequences when they improve clarity.'
+    )
+    expect(callPayload.promptText).not.toContain(
+      'Do not include inappropriate, sexual, violent, or shocking content.'
+    )
     expect(auditPayload.promptText).toContain(
-      'Audit this concept and hard-reject anything risky.'
+      'Audit this concept and hard-reject only clearly extreme or provider-triggering content.'
     )
     expect(auditPayload.promptText).toContain(
       'panel 4 must be a direct visible consequence of panel 3'
@@ -1053,6 +1060,56 @@ describe('createAiProviderBridge', () => {
     ])
     expect(result.stories[1].panels.join(' ')).toContain('monkey')
     expect(result.stories[1].panels.join(' ')).toContain('focus')
+  })
+
+  it('uses locked senses in fallback stories instead of ambiguous raw keyword drift', async () => {
+    const logger = mockLogger()
+    const invokeProvider = jest.fn().mockResolvedValue({
+      rawText: '',
+      usage: {
+        promptTokens: 18,
+        completionTokens: 0,
+        totalTokens: 18,
+      },
+    })
+
+    const bridge = createAiProviderBridge(logger, {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      keywords: ['shock', 'ghost'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    const joinedPanels = result.stories[0].panels.join(' ').toLowerCase()
+
+    expect(result.senseSelection.selected_pair).toMatchObject({
+      keyword_1_sense_id: 'shock_emotional_startle',
+      keyword_2_sense_id: 'ghost_visible_spirit',
+    })
+    expect(joinedPanels).toContain('ghost')
+    expect(joinedPanels).toMatch(/startled|jolts|startled reaction/)
+    expect(joinedPanels).not.toContain('electric jolt')
+    expect(joinedPanels).not.toContain('starts interacting with both')
+    expect(joinedPanels).not.toContain('uses shock as a clear tool')
+    expect(joinedPanels).not.toContain('observes the final result')
+    expect(logger.info).toHaveBeenCalledWith(
+      'AI story fallback sense lock',
+      expect.objectContaining({
+        fallbackUsedLockedSenses: true,
+        chosenSenses: expect.objectContaining({
+          keyword_1: expect.objectContaining({
+            sense_id: 'shock_emotional_startle',
+          }),
+          keyword_2: expect.objectContaining({
+            sense_id: 'ghost_visible_spirit',
+          }),
+        }),
+      })
+    )
   })
 
   it('uses the Python story pipeline when enabled and skips provider calls', async () => {
@@ -1266,6 +1323,72 @@ describe('createAiProviderBridge', () => {
         )
       )
     ).toBe(false)
+  })
+
+  it('threads locked senses into every panel prompt to prevent sense drift', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      data: 'AAA=',
+                      mimeType: 'image/png',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 1,
+            totalTokenCount: 11,
+          },
+        },
+      }),
+      get: jest.fn(),
+    }
+
+    const bridge = createAiProviderBridge(mockLogger(), {httpClient})
+    bridge.setProviderKey({provider: 'gemini', apiKey: 'gemini-test-key'})
+
+    const senseSelection = selectSensePair({
+      keywordA: 'shock',
+      keywordB: 'ghost',
+    })
+
+    const result = await bridge.generateFlipPanels({
+      provider: 'gemini',
+      model: 'gemini-2.0-flash',
+      imageModel: 'gemini-2.5-flash-image',
+      imageSize: '1024x1024',
+      requestTimeoutMs: 15000,
+      textAuditEnabled: false,
+      maxRetries: 0,
+      keywords: ['shock', 'ghost'],
+      senseSelection,
+      storyPanels: [
+        'A calm person carries a cup through a hallway.',
+        'A visible ghost appears and the person jolts in surprise.',
+        'The cup hits the floor and water spreads across the hallway.',
+        'The startled person steps back while the ghost remains visible.',
+      ],
+    })
+
+    expect(result.panels).toHaveLength(4)
+    result.panels.forEach((panel) => {
+      expect(panel.panelPrompt).toContain(
+        'Keyword 1 "shock" -> emotional shock or startled reaction that is visible on a person'
+      )
+      expect(panel.panelPrompt).toContain(
+        'Keyword 2 "ghost" -> visible ghost figure or floating spirit'
+      )
+      expect(panel.panelPrompt).not.toContain('electric shock or electrical jolt')
+    })
   })
 
   it('lists latest models for gemini and strips models/ prefix', async () => {

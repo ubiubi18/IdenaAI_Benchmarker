@@ -1031,6 +1031,16 @@ function normalizeStoryOptionFromBackend(item, index) {
     revisionIfRisky: String(
       next.revisionIfRisky || next.revision_if_risky || ''
     ).trim(),
+    senseSelection:
+      next.senseSelection && typeof next.senseSelection === 'object'
+        ? next.senseSelection
+        : next.sense_selection && typeof next.sense_selection === 'object'
+        ? next.sense_selection
+        : next.semanticLock && typeof next.semanticLock === 'object'
+        ? next.semanticLock
+        : next.semantic_lock && typeof next.semantic_lock === 'object'
+        ? next.semantic_lock
+        : null,
   }
 }
 
@@ -1778,6 +1788,9 @@ export default function NewFlipPage() {
         aiReasoningModel || aiSolverSettings.model
       ).trim()
       const isFastMode = aiGenerationMode !== 'strict'
+      const selectedStoryOption = storyOptions.find(
+        (item) => String(item.id) === String(selectedStoryId)
+      )
 
       const response = await global.aiSolver.generateFlipPanels({
         ...baseRunPayload,
@@ -1793,6 +1806,10 @@ export default function NewFlipPage() {
         visualStyle: aiImageStyle,
         keywords: [keywordA, keywordB],
         storyPanels: storyPanelsDraft,
+        senseSelection:
+          selectedStoryOption && selectedStoryOption.senseSelection
+            ? selectedStoryOption.senseSelection
+            : null,
         includeNoise: storyIncludeNoise,
         noisePanelIndex: storyNoisePanelIndex,
         regenerateIndices,

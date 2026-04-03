@@ -1,0 +1,461 @@
+const {STORY_PANEL_ROLES} = require('./storySchema')
+
+const STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'as',
+  'at',
+  'by',
+  'for',
+  'from',
+  'in',
+  'into',
+  'is',
+  'it',
+  'of',
+  'on',
+  'or',
+  'the',
+  'their',
+  'then',
+  'to',
+  'with',
+])
+
+const ABSTRACT_PATTERNS = [
+  /\binteracts with\b/i,
+  /\buses?(?: [a-z]+){0,4} as a tool\b/i,
+  /\bobserves?(?: the)?(?: final)? result\b/i,
+  /\bnotices?(?: the)? result\b/i,
+  /\breacts somehow\b/i,
+  /\bsomething changes\b/i,
+  /\bsomething happens\b/i,
+  /\bthe action continues\b/i,
+  /\bthe story continues\b/i,
+  /\ba visible change occurs\b/i,
+  /\ba clear change occurs\b/i,
+  /\bcontinues the same scene\b/i,
+]
+
+const GENERIC_WORDING_PATTERNS = [
+  /\bclearly visible\b/i,
+  /\bin the same scene\b/i,
+  /\bin a stable everyday setting\b/i,
+  /\bvisible consequence\b/i,
+  /\bvisible state change\b/i,
+  /\bthe situation changes\b/i,
+  /\bthe scene changes\b/i,
+  /\bfinal result\b/i,
+]
+
+const GENERIC_STATE_CHANGE_PATTERNS = [
+  /\bn\/a\b/i,
+  /\bclear visible change from previous panel\b/i,
+  /\bvisible change from previous panel\b/i,
+  /\bwhat changed visibly\b/i,
+  /\bsomething changes\b/i,
+  /\bthe situation changes\b/i,
+]
+
+const CONCRETE_ACTION_PATTERNS = [
+  /\bappears?\b/i,
+  /\barrives?\b/i,
+  /\bbacks? away\b/i,
+  /\bbreaks?\b/i,
+  /\bbumps?\b/i,
+  /\bcarries?\b/i,
+  /\bcatches?\b/i,
+  /\bchases?\b/i,
+  /\bcloses?\b/i,
+  /\bcollides?\b/i,
+  /\bcovers?\b/i,
+  /\bcracks?\b/i,
+  /\bcuts?\b/i,
+  /\bdrops?\b/i,
+  /\bextinguishes?\b/i,
+  /\bfalls?\b/i,
+  /\bfreezes?\b/i,
+  /\bgrabs?\b/i,
+  /\bhides?\b/i,
+  /\bhits?\b/i,
+  /\bignites?\b/i,
+  /\bjolts?\b/i,
+  /\bknocks?\b/i,
+  /\blands?\b/i,
+  /\blifts?\b/i,
+  /\bmoves?\b/i,
+  /\bopens?\b/i,
+  /\bpicks? up\b/i,
+  /\bpours?\b/i,
+  /\bpulls?\b/i,
+  /\bpushes?\b/i,
+  /\bruns?\b/i,
+  /\bsaws?\b/i,
+  /\bscatters?\b/i,
+  /\bslides?\b/i,
+  /\bspills?\b/i,
+  /\bspreads?\b/i,
+  /\bstartles?\b/i,
+  /\bsteps? back\b/i,
+  /\bsweeps?\b/i,
+  /\btears?\b/i,
+  /\bthrows?\b/i,
+  /\btopples?\b/i,
+  /\bturns?\b/i,
+  /\buncovers?\b/i,
+  /\bunlocks?\b/i,
+  /\bwalks?\b/i,
+  /\bwaves?\b/i,
+]
+
+const EXTERNAL_CHANGE_PATTERNS = [
+  /\bappears?\b/i,
+  /\bbreaks?\b/i,
+  /\bcracks?\b/i,
+  /\bdrops?\b/i,
+  /\bfalls?\b/i,
+  /\bhits? the floor\b/i,
+  /\bignites?\b/i,
+  /\bknocks? over\b/i,
+  /\blands?\b/i,
+  /\bopens?\b/i,
+  /\bspills?\b/i,
+  /\bspreads?\b/i,
+  /\bshatters?\b/i,
+  /\bslides?\b/i,
+  /\btopples?\b/i,
+  /\bwet floor\b/i,
+  /\bbroken\b/i,
+  /\bopen\b/i,
+  /\bclosed\b/i,
+  /\bscattered\b/i,
+]
+
+const REACTION_PATTERNS = [
+  /\bbacks? away\b/i,
+  /\bcovers? face\b/i,
+  /\bducks?\b/i,
+  /\bfreezes?\b/i,
+  /\bgrabs?\b/i,
+  /\bgasps?\b/i,
+  /\bjolts?\b/i,
+  /\blooks? back\b/i,
+  /\bruns?\b/i,
+  /\bstartles?\b/i,
+  /\bsteps? back\b/i,
+  /\bturns? sharply\b/i,
+]
+
+const RESULT_STATE_PATTERNS = [
+  /\bafterward\b/i,
+  /\bends? with\b/i,
+  /\bfinished\b/i,
+  /\bfinally\b/i,
+  /\bholds?\b/i,
+  /\blies?\b/i,
+  /\bnow\b/i,
+  /\bopen\b/i,
+  /\bclosed\b/i,
+  /\bremains?\b/i,
+  /\brests?\b/i,
+  /\bsafe\b/i,
+  /\bsettles?\b/i,
+  /\bspilled\b/i,
+  /\bstands?\b/i,
+  /\bstays?\b/i,
+]
+
+const EMOTION_PATTERNS = [
+  /\bafraid\b/i,
+  /\bangry\b/i,
+  /\bfear\b/i,
+  /\bpanic\b/i,
+  /\brelieved\b/i,
+  /\bscared\b/i,
+  /\bshock\b/i,
+  /\bstartled\b/i,
+  /\bsurprised\b/i,
+  /\bworried\b/i,
+]
+
+function normalizeText(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
+function clampScore(value) {
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+function toPanelDetails(story) {
+  const item = story && typeof story === 'object' ? story : {}
+  const source = Array.isArray(item.panelDetails)
+    ? item.panelDetails.slice(0, 4)
+    : Array.isArray(item.panels)
+    ? item.panels.slice(0, 4).map((description, index) => ({
+        panel: index + 1,
+        role: STORY_PANEL_ROLES[index] || `panel_${index + 1}`,
+        description,
+        stateChangeFromPrevious: index === 0 ? 'n/a' : '',
+        requiredVisibles: [],
+      }))
+    : []
+
+  while (source.length < 4) {
+    const index = source.length
+    source.push({
+      panel: index + 1,
+      role: STORY_PANEL_ROLES[index] || `panel_${index + 1}`,
+      description: '',
+      stateChangeFromPrevious: index === 0 ? 'n/a' : '',
+      requiredVisibles: [],
+    })
+  }
+
+  return source.map((panel, index) => ({
+    panel: index + 1,
+    role: normalizeText(panel.role || STORY_PANEL_ROLES[index]) || STORY_PANEL_ROLES[index],
+    description: normalizeText(panel.description || panel.text),
+    stateChangeFromPrevious: normalizeText(
+      panel.stateChangeFromPrevious || panel.state_change_from_previous
+    ),
+    requiredVisibles: Array.isArray(
+      panel.requiredVisibles || panel.required_visibles
+    )
+      ? (panel.requiredVisibles || panel.required_visibles)
+          .map((entry) => normalizeText(entry))
+          .filter(Boolean)
+      : [],
+  }))
+}
+
+function getMatchedLabels(text, patterns) {
+  return patterns
+    .filter((pattern) => pattern.test(text))
+    .map((pattern) =>
+      String(pattern)
+        .replace(/^\/\\b?/, '')
+        .replace(/\\b\/i$/, '')
+        .replace(/^\//, '')
+        .replace(/\/i$/, '')
+    )
+}
+
+function countPatternMatches(text, patterns) {
+  return getMatchedLabels(text, patterns).length
+}
+
+function isGenericStateChange(text) {
+  const value = normalizeText(text)
+  if (!value) return true
+  return GENERIC_STATE_CHANGE_PATTERNS.some((pattern) => pattern.test(value))
+}
+
+function tokenize(text) {
+  return normalizeText(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token && !STOPWORDS.has(token))
+}
+
+function jaccardSimilarity(left, right) {
+  const leftTokens = new Set(tokenize(left))
+  const rightTokens = new Set(tokenize(right))
+  if (leftTokens.size < 1 || rightTokens.size < 1) return 0
+
+  let intersection = 0
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) {
+      intersection += 1
+    }
+  })
+
+  const union = new Set([...leftTokens, ...rightTokens]).size
+  return union > 0 ? intersection / union : 0
+}
+
+function hasExternalChange(panel) {
+  const description = normalizeText(panel && panel.description)
+  const stateChange = normalizeText(panel && panel.stateChangeFromPrevious)
+  return (
+    countPatternMatches(description, EXTERNAL_CHANGE_PATTERNS) > 0 ||
+    (stateChange && !isGenericStateChange(stateChange))
+  )
+}
+
+function hasConcreteAction(text) {
+  return countPatternMatches(text, CONCRETE_ACTION_PATTERNS) > 0
+}
+
+function hasReactionSignal(panel) {
+  const description = normalizeText(panel && panel.description)
+  return (
+    countPatternMatches(description, REACTION_PATTERNS) > 0 ||
+    countPatternMatches(description, EMOTION_PATTERNS) > 0 ||
+    hasExternalChange(panel)
+  )
+}
+
+function hasResultSignal(panel) {
+  const description = normalizeText(panel && panel.description)
+  return (
+    countPatternMatches(description, RESULT_STATE_PATTERNS) > 0 ||
+    hasExternalChange(panel)
+  )
+}
+
+function buildPanelChecks(panelDetails) {
+  return panelDetails.map((panel, index) => ({
+    panel: index + 1,
+    role: panel.role,
+    description: panel.description,
+    abstractHits: getMatchedLabels(panel.description, ABSTRACT_PATTERNS),
+    genericHits: getMatchedLabels(panel.description, GENERIC_WORDING_PATTERNS),
+    concreteActionCount: countPatternMatches(
+      panel.description,
+      CONCRETE_ACTION_PATTERNS
+    ),
+    externalChange: index === 0 ? false : hasExternalChange(panel),
+    genericStateChange:
+      index === 0 ? false : isGenericStateChange(panel.stateChangeFromPrevious),
+  }))
+}
+
+function evaluateStoryQuality(story) {
+  const panelDetails = toPanelDetails(story)
+  const panelChecks = buildPanelChecks(panelDetails)
+  const consecutiveSimilarities = []
+  const nearDuplicatePairs = []
+
+  for (let index = 0; index < panelChecks.length - 1; index += 1) {
+    const similarity = jaccardSimilarity(
+      panelChecks[index].description,
+      panelChecks[index + 1].description
+    )
+    const roundedSimilarity = Number(similarity.toFixed(2))
+    consecutiveSimilarities.push(roundedSimilarity)
+    if (roundedSimilarity >= 0.74) {
+      nearDuplicatePairs.push({
+        leftPanel: index + 1,
+        rightPanel: index + 2,
+        similarity: roundedSimilarity,
+      })
+    }
+  }
+
+  const abstractHits = panelChecks.reduce(
+    (acc, panel) => acc.concat(panel.abstractHits),
+    []
+  )
+  const genericPhraseHits = panelChecks.reduce(
+    (acc, panel) => acc.concat(panel.genericHits),
+    []
+  )
+  const concreteActionCount = panelChecks.reduce(
+    (acc, panel) => acc + panel.concreteActionCount,
+    0
+  )
+  const externalChangeCount = panelChecks.filter(
+    (panel) => panel.externalChange
+  ).length
+  const weakStateChangeCount = panelChecks
+    .slice(1)
+    .filter((panel) => panel.genericStateChange).length
+
+  const hasInitialState =
+    panelChecks[0].description.length >= 18 &&
+    panelChecks[0].abstractHits.length < 1
+  const hasTriggerEvent =
+    hasConcreteAction(panelChecks[1].description) || panelChecks[1].externalChange
+  const hasReaction = hasReactionSignal(panelDetails[2])
+  const hasResultState = hasResultSignal(panelDetails[3])
+
+  const emotionalPanelIndexes = panelChecks
+    .map((panel, index) =>
+      countPatternMatches(panel.description, EMOTION_PATTERNS) > 0 ? index : -1
+    )
+    .filter((index) => index >= 0)
+
+  const emotionalWithoutVisibleConsequence = emotionalPanelIndexes.some(
+    (panelIndex) => {
+      const relatedChecks = panelChecks.slice(
+        panelIndex,
+        Math.min(panelChecks.length, panelIndex + 2)
+      )
+      return !relatedChecks.some((panel) => panel.externalChange)
+    }
+  )
+
+  const lowConcretenessFail =
+    abstractHits.length > 0 ||
+    genericPhraseHits.length >= 2 ||
+    (concreteActionCount < 2 && externalChangeCount < 2)
+
+  const weakProgressionFail =
+    externalChangeCount < 2 ||
+    nearDuplicatePairs.length > 0 ||
+    weakStateChangeCount >= 2 ||
+    !hasTriggerEvent ||
+    !hasResultState
+
+  const failures = []
+  if (!hasInitialState) failures.push('missing_initial_state')
+  if (!hasTriggerEvent) failures.push('missing_trigger_event')
+  if (!hasReaction) failures.push('missing_reaction')
+  if (!hasResultState) failures.push('missing_result_state')
+  if (emotionalWithoutVisibleConsequence) {
+    failures.push('emotional_no_visible_consequence')
+  }
+  if (lowConcretenessFail) failures.push('low_concreteness')
+  if (weakProgressionFail) failures.push('weak_progression')
+  if (nearDuplicatePairs.length > 0) failures.push('near_duplicate_panels')
+
+  const score = clampScore(
+    74 +
+      concreteActionCount * 6 +
+      externalChangeCount * 8 -
+      abstractHits.length * 18 -
+      genericPhraseHits.length * 10 -
+      weakStateChangeCount * 6 -
+      nearDuplicatePairs.length * 22 -
+      (emotionalWithoutVisibleConsequence ? 16 : 0) -
+      (hasInitialState ? 0 : 10) -
+      (hasTriggerEvent ? 0 : 12) -
+      (hasReaction ? 0 : 10) -
+      (hasResultState ? 0 : 12)
+  )
+
+  return {
+    ok: failures.length < 1 && score >= 60,
+    score,
+    failures: Array.from(new Set(failures)),
+    panelChecks,
+    metrics: {
+      hasInitialState,
+      hasTriggerEvent,
+      hasReaction,
+      hasResultState,
+      externalChangeCount,
+      concreteActionCount,
+      abstractHitCount: abstractHits.length,
+      genericPhraseCount: genericPhraseHits.length,
+      weakStateChangeCount,
+      maxConsecutiveSimilarity:
+        consecutiveSimilarities.length > 0
+          ? Math.max(...consecutiveSimilarities)
+          : 0,
+      nearDuplicatePairs,
+      emotionalWithoutVisibleConsequence,
+      lowConcretenessFail,
+      weakProgressionFail,
+    },
+  }
+}
+
+module.exports = {
+  evaluateStoryQuality,
+}
