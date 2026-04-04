@@ -1268,6 +1268,7 @@ describe('createAiProviderBridge', () => {
         .schema.properties.stories.maxItems
     ).toBe(1)
     expect(result.stories).toHaveLength(1)
+    expect(result.stories[0].title).toBe('Porch giant curl')
     expect(result.stories[0].panels[0].toLowerCase()).toContain('curl')
     expect(result.stories[0].panels[1].toLowerCase()).toContain('giant')
     expect(result.metrics.fallback_used).toBe(false)

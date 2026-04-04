@@ -1738,6 +1738,44 @@ function buildLocalFallbackEditingTip(selection, keywordA, keywordB) {
   return 'Treat this as a starting point, not a finished answer. If the beat feels stiff, rewrite the place, prop, trigger, or aftermath in your own words before building images.'
 }
 
+function buildProviderDraftEditingTip(keywordA, keywordB) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || 'keyword 1'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || 'keyword 2'
+  return `The provider produced a readable draft, but it was still weak for auto-approval. Rewrite the place, trigger, and visible aftermath in your own words before building images for "${safeKeywordA}" and "${safeKeywordB}".`
+}
+
+function isProviderDraftRescueCandidate(story) {
+  const item = story && typeof story === 'object' ? story : null
+  if (!item) return false
+  const source = String(item.candidateSource || '')
+    .trim()
+    .toLowerCase()
+  if (!source || source === 'local_fallback') return false
+  if (!hasMeaningfulStoryPanels(item.panels)) return false
+  const report =
+    item.qualityReport && typeof item.qualityReport === 'object'
+      ? item.qualityReport
+      : null
+  if (!report || !Number.isFinite(Number(report.score))) return false
+  const failures = Array.isArray(report.failures) ? report.failures : []
+  const allowedFailures = new Set(['low_concreteness', 'weak_progression'])
+  if (
+    failures.length < 1 ||
+    failures.some((failure) => !allowedFailures.has(failure))
+  ) {
+    return false
+  }
+  return Number(report.score) >= 70
+}
+
+function pickBestProviderDraftCandidate(stories) {
+  return sortStoriesByQuality(
+    (Array.isArray(stories) ? stories : []).filter(
+      isProviderDraftRescueCandidate
+    )
+  )[0]
+}
+
 function buildKeywordFallbackPanels(
   keywordA,
   keywordB,
@@ -4080,6 +4118,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const storyEvaluationCache = new Map()
     let fallbackCandidateQuality = null
     let storyFallbackReasonText = 'provider output could not be parsed reliably'
+    const providerDraftRejectedCandidates = []
 
     function evaluateCandidateStories(candidateStories, source) {
       const accepted = []
@@ -4144,6 +4183,16 @@ function createAiProviderBridge(logger, dependencies = {}) {
         accepted,
         rejected,
       }
+    }
+
+    function collectProviderDraftRejectedCandidates(quality) {
+      const rejectedStories =
+        quality && Array.isArray(quality.rejected) ? quality.rejected : []
+      rejectedStories.forEach((story) => {
+        if (isProviderDraftRescueCandidate(story)) {
+          providerDraftRejectedCandidates.push(story)
+        }
+      })
     }
 
     function rerankStoriesForDiversity(candidateStories, primaryStories = []) {
@@ -4857,9 +4906,16 @@ function createAiProviderBridge(logger, dependencies = {}) {
         selectedAttempt,
         selectedAttempt.attemptLabel || 'provider_story_options'
       )
+    collectProviderDraftRejectedCandidates(initialQuality)
+
+    const shouldSkipRepairForProviderDraftRescue =
+      requestedStoryCount === 1 &&
+      initialQuality.accepted.length < 1 &&
+      Boolean(pickBestProviderDraftCandidate(providerDraftRejectedCandidates))
 
     if (
       initialQuality.accepted.length < requestedStoryCount &&
+      !shouldSkipRepairForProviderDraftRescue &&
       selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.REFUSAL &&
       selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.SAFETY_BLOCK &&
       selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.TRANSPORT_ERROR
@@ -4884,6 +4940,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
           replacementAttempt.attemptLabel ||
             'provider_story_options_repair_missing'
         )
+        collectProviderDraftRejectedCandidates(replacementEvaluation.quality)
 
         if (replacementEvaluation.quality.accepted.length > 0) {
           const mergedCandidates = dedupeStoriesForSelection(
@@ -4933,6 +4990,40 @@ function createAiProviderBridge(logger, dependencies = {}) {
       selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SUCCESS
         ? selectedAttempt.attemptLabel
         : null
+    if (stories.length < 1 && requestedStoryCount === 1) {
+      const rescuedProviderDraft = pickBestProviderDraftCandidate(
+        providerDraftRejectedCandidates
+      )
+      if (rescuedProviderDraft) {
+        logger.info('AI story provider draft rescue path', {
+          provider,
+          model,
+          source: rescuedProviderDraft.candidateSource,
+          failures:
+            rescuedProviderDraft.qualityReport &&
+            rescuedProviderDraft.qualityReport.failures,
+          score:
+            rescuedProviderDraft.qualityReport &&
+            rescuedProviderDraft.qualityReport.score,
+        })
+        stories = [
+          normalizeStoryOption(
+            {
+              ...rescuedProviderDraft,
+              title:
+                String(rescuedProviderDraft.title || '').trim() || 'Option 1',
+              rationale:
+                'Provider draft kept as an editable storyboard starter after quality checks judged it too weak for auto-approval.',
+              editingTip: buildProviderDraftEditingTip(keywordA, keywordB),
+              isStoryboardStarter: true,
+              senseSelection,
+            },
+            0
+          ),
+        ]
+        generationPath = `${selectedAttempt.attemptLabel}_provider_draft_rescue`
+      }
+    }
     if (!generationPath && initialQualitySource.endsWith('_lenient_salvage')) {
       generationPath = initialQualitySource
     }
@@ -5056,7 +5147,13 @@ function createAiProviderBridge(logger, dependencies = {}) {
         {
           ...story,
           id: `option-${index + 1}`,
-          title: String(story && story.title ? story.title : '').trim() || null,
+          title:
+            requestedStoryCount === 1 &&
+            /^option\s+\d+$/i.test(
+              String(story && story.title ? story.title : '').trim()
+            )
+              ? 'Option 1'
+              : String(story && story.title ? story.title : '').trim() || null,
           senseSelection,
           qualityReport:
             story &&
