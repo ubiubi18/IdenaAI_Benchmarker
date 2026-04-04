@@ -1738,6 +1738,17 @@ export default function NewFlipPage() {
     .trim()
     .toLowerCase()
   const isRandomKeywordSource = keywordSource === 'random'
+  const keywordPairPosition = useMemo(() => {
+    if (!Array.isArray(availableKeywords) || availableKeywords.length === 0) {
+      return 1
+    }
+
+    const currentIndex = availableKeywords.findIndex(
+      ({id}) => String(id) === String(keywordPairId)
+    )
+
+    return currentIndex >= 0 ? currentIndex + 1 : 1
+  }, [availableKeywords, keywordPairId])
   const hasUsableKeywords = useMemo(() => {
     const words = Array.isArray(keywords && keywords.words)
       ? keywords.words.slice(0, 2)
@@ -1779,6 +1790,11 @@ export default function NewFlipPage() {
   const approveRandomKeywordsForSubmit = useCallback(() => {
     pendingSubmitStepOpenRef.current = true
     send('USE_RANDOM_KEYWORDS')
+  }, [send])
+
+  const advanceKeywordPairForSubmit = useCallback(() => {
+    pendingSubmitStepOpenRef.current = true
+    send('CHANGE_KEYWORDS')
   }, [send])
 
   const isOffline = is('keywords.loaded.fetchTranslationsFailed')
@@ -3216,7 +3232,7 @@ export default function NewFlipPage() {
                               <SecondaryButton
                                 onClick={approveRandomKeywordsForSubmit}
                               >
-                                {t('Load random test words')}
+                                {t('Load 9 random test pairs')}
                               </SecondaryButton>
                             </Stack>
                           </Stack>
@@ -3237,11 +3253,13 @@ export default function NewFlipPage() {
                         isDisabled={
                           availableKeywords.length < 2 || is('keywords.loading')
                         }
-                        onClick={() => send('CHANGE_KEYWORDS')}
+                        onClick={advanceKeywordPairForSubmit}
                       >
-                        {t('Change words')}{' '}
+                        {isRandomKeywordSource
+                          ? t('Next test pair')
+                          : t('Change words')}{' '}
                         {availableKeywords.length > 1
-                          ? `(#${keywordPairId + 1})`
+                          ? `(#${keywordPairPosition}/${availableKeywords.length})`
                           : null}
                       </IconButton2>
                       <IconButton2
@@ -3249,7 +3267,7 @@ export default function NewFlipPage() {
                         isDisabled={is('keywords.loading')}
                         onClick={approveRandomKeywordsForSubmit}
                       >
-                        {t('Use random test words (off-chain)')}
+                        {t('Use 9 random test pairs (off-chain)')}
                       </IconButton2>
                       <IconButton2
                         icon={<InfoIcon />}
@@ -3319,7 +3337,7 @@ export default function NewFlipPage() {
                           <SecondaryButton
                             onClick={approveRandomKeywordsForSubmit}
                           >
-                            {t('Load random test words')}
+                            {t('Load 9 random test pairs')}
                           </SecondaryButton>
                         </Stack>
                       </Stack>
@@ -3525,6 +3543,30 @@ export default function NewFlipPage() {
                               }
                             )}
                           </Text>
+                          <Stack isInline spacing={2}>
+                            <SecondaryButton
+                              isDisabled={
+                                availableKeywords.length < 2 ||
+                                is('keywords.loading')
+                              }
+                              onClick={advanceKeywordPairForSubmit}
+                            >
+                              {isRandomKeywordSource
+                                ? t('Next random pair')
+                                : t('Change keyword pair')}{' '}
+                              {availableKeywords.length > 1
+                                ? `(#${keywordPairPosition}/${availableKeywords.length})`
+                                : null}
+                            </SecondaryButton>
+                            {!isRandomKeywordSource ? (
+                              <SecondaryButton
+                                isDisabled={is('keywords.loading')}
+                                onClick={approveRandomKeywordsForSubmit}
+                              >
+                                {t('Switch to 9 random test pairs')}
+                              </SecondaryButton>
+                            ) : null}
+                          </Stack>
                           <SimpleGrid columns={[1, 6]} spacing={2}>
                             <Box>
                               <Text fontSize="xs" color="muted" mb={1}>

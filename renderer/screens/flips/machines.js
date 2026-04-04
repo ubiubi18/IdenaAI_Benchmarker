@@ -19,12 +19,27 @@ import {deleteFlip} from '../../shared/api/dna'
 import {persistState} from '../../shared/utils/persist'
 
 const OFFLINE_KEYWORD_WORD_RANGE_START = 3300
+const RANDOM_KEYWORD_PAIR_COUNT = 9
 
-function buildRandomKeywordPairs(count = 12) {
+function buildRandomKeywordPairs(count = RANDOM_KEYWORD_PAIR_COUNT) {
   return Array.from({length: Math.max(1, count)}).map((_, index) => ({
     id: index,
     words: getRandomKeywordPair().words,
   }))
+}
+
+function getNextKeywordPairId(availableKeywords, keywordPairId) {
+  const list = Array.isArray(availableKeywords) ? availableKeywords : []
+  if (list.length === 0) {
+    return 0
+  }
+
+  const currentIdx = list.findIndex(
+    ({id}) => String(id) === String(keywordPairId)
+  )
+  const nextIdx = (currentIdx + 1 + list.length) % list.length
+  const nextPair = list[nextIdx]
+  return nextPair && nextPair.id != null ? nextPair.id : 0
 }
 
 function resolveKeywordPair(availableKeywords, keywordPairId) {
@@ -636,17 +651,8 @@ export const flipMasterMachine = Machine(
               CHANGE_KEYWORDS: {
                 target: '.loading',
                 actions: assign({
-                  keywordPairId: ({keywordPairId, availableKeywords}) => {
-                    if (availableKeywords.length === 0) return 0
-
-                    const currentIdx = availableKeywords.findIndex(
-                      // eslint-disable-next-line no-shadow
-                      ({id}) => id === keywordPairId
-                    )
-                    const nextIdx = (currentIdx + 1) % availableKeywords.length
-                    const {id} = availableKeywords[nextIdx]
-                    return id
-                  },
+                  keywordPairId: ({keywordPairId, availableKeywords}) =>
+                    getNextKeywordPairId(availableKeywords, keywordPairId),
                   adversarialImage: '',
                   adversarialImages: Array.from({length: 8}),
                 }),
@@ -1050,6 +1056,15 @@ export const flipMasterMachine = Machine(
           },
         },
         on: {
+          CHANGE_KEYWORDS: {
+            target: '.keywords.loading',
+            actions: assign({
+              keywordPairId: ({keywordPairId, availableKeywords}) =>
+                getNextKeywordPairId(availableKeywords, keywordPairId),
+              adversarialImage: '',
+              adversarialImages: Array.from({length: 8}),
+            }),
+          },
           USE_NODE_KEYWORDS: {
             target: '.keywords.loading',
             actions: assign({
