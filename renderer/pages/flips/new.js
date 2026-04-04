@@ -1007,6 +1007,29 @@ function normalizeStoryOptionFromBackend(item, index) {
     .map((entry) => String(entry || '').trim())
     .filter(Boolean)
     .slice(0, 3)
+  let qualityReport = null
+  if (next.qualityReport && typeof next.qualityReport === 'object') {
+    qualityReport = next.qualityReport
+  } else if (next.quality_report && typeof next.quality_report === 'object') {
+    qualityReport = next.quality_report
+  }
+  const qualityFailures =
+    qualityReport && Array.isArray(qualityReport.failures)
+      ? qualityReport.failures.map((failure) => String(failure || '').trim())
+      : []
+  const qualityScore =
+    qualityReport && Number.isFinite(Number(qualityReport.score))
+      ? Number(qualityReport.score)
+      : null
+  const isStoryboardStarter = Boolean(
+    next.isStoryboardStarter || next.is_storyboard_starter
+  )
+  const isWeakStoryDraft =
+    isStoryboardStarter ||
+    failedComplianceKeys.length > 0 ||
+    riskFlags.length > 0 ||
+    qualityFailures.length > 0
+
   return {
     id: String(next.id || `option-${index + 1}`),
     title: String(
@@ -1025,13 +1048,14 @@ function normalizeStoryOptionFromBackend(item, index) {
         : null,
     rationale: String(next.rationale || '').trim(),
     editingTip: String(next.editingTip || next.editing_tip || '').trim(),
-    isStoryboardStarter: Boolean(
-      next.isStoryboardStarter || next.is_storyboard_starter
-    ),
+    isStoryboardStarter,
+    isWeakStoryDraft,
     storySummary: String(next.storySummary || next.story_summary || '').trim(),
     complianceReport,
     failedComplianceKeys,
     riskFlags,
+    qualityScore,
+    qualityFailures,
     revisionIfRisky: String(
       next.revisionIfRisky || next.revision_if_risky || ''
     ).trim(),
@@ -1053,6 +1077,32 @@ function normalizeStoryOptionFromBackend(item, index) {
   }
 }
 
+function getStoryDraftReview(option) {
+  const next = option && typeof option === 'object' ? option : {}
+  if (next.isStoryboardStarter) {
+    return {
+      kind: 'starter',
+      label: 'Weak draft',
+      description:
+        'Readable starting point, but you should rewrite it or run Optimize before building images.',
+    }
+  }
+  if (next.isWeakStoryDraft) {
+    return {
+      kind: 'review',
+      label: 'Needs review',
+      description:
+        'Usable draft, but check the trigger, consequence, and final aftermath before building images.',
+    }
+  }
+  return {
+    kind: 'strong',
+    label: 'Ready to edit',
+    description:
+      'Looks usable as a base draft. You can still personalize the 4 panels before building.',
+  }
+}
+
 export default function NewFlipPage() {
   const {t, i18n} = useTranslation()
 
@@ -1070,6 +1120,7 @@ export default function NewFlipPage() {
   const didBootstrapEpochFallback = useRef(false)
   const didAutostepSubmitRef = useRef(false)
   const pendingSubmitStepOpenRef = useRef(false)
+  const didAutoOpenAiGuideRef = useRef(false)
   const [isOfflineBuilderMode, setIsOfflineBuilderMode] = useState(false)
   const [isAiDraftTesting, setIsAiDraftTesting] = useState(false)
   const [isAddingToTestUnit, setIsAddingToTestUnit] = useState(false)
@@ -1113,6 +1164,12 @@ export default function NewFlipPage() {
   const [storyOptions, setStoryOptions] = useState([])
   const [selectedStoryId, setSelectedStoryId] = useState('')
   const [storyOptionCount, setStoryOptionCount] = useState(1)
+  const [aiProviderKeyStatus, setAiProviderKeyStatus] = useState({
+    checked: false,
+    hasKey: false,
+    provider: '',
+  })
+  const [showAiGuideDetails, setShowAiGuideDetails] = useState(false)
   const [storyPanelsDraft, setStoryPanelsDraft] = useState(
     coerceStoryPanelsDraft([])
   )
@@ -1133,11 +1190,91 @@ export default function NewFlipPage() {
   )
   const [generationCostLedger, setGenerationCostLedger] = useState([])
   const benchmarkSessionDisclosure = useDisclosure()
+  const aiGuideDisclosure = useDisclosure()
 
   const aiSolverSettings = useMemo(
     () => ({...DEFAULT_AI_SOLVER_SETTINGS, ...(settings.aiSolver || {})}),
     [settings.aiSolver]
   )
+  const isLegacyOnlyMode =
+    aiSolverSettings.legacyHeuristicEnabled &&
+    aiSolverSettings.legacyHeuristicOnly
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadProviderKeyStatus() {
+      if (
+        isLegacyOnlyMode ||
+        !global.aiSolver ||
+        typeof global.aiSolver.hasProviderKey !== 'function'
+      ) {
+        if (!cancelled) {
+          setAiProviderKeyStatus({
+            checked: true,
+            hasKey: true,
+            provider: String(aiSolverSettings.provider || ''),
+          })
+        }
+        return
+      }
+
+      try {
+        const state = await global.aiSolver.hasProviderKey({
+          provider: aiSolverSettings.provider,
+        })
+        if (!cancelled) {
+          setAiProviderKeyStatus({
+            checked: true,
+            hasKey: Boolean(state && state.hasKey),
+            provider: String(
+              (state && state.provider) || aiSolverSettings.provider || ''
+            ),
+          })
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAiProviderKeyStatus({
+            checked: true,
+            hasKey: false,
+            provider: String(aiSolverSettings.provider || ''),
+          })
+        }
+      }
+    }
+
+    loadProviderKeyStatus()
+
+    return () => {
+      cancelled = true
+    }
+  }, [aiSolverSettings.provider, isLegacyOnlyMode])
+
+  useEffect(() => {
+    if (didAutoOpenAiGuideRef.current) return
+    if (!aiProviderKeyStatus.checked) return
+    if (typeof window === 'undefined') return
+
+    const dismissed = window.localStorage.getItem(
+      'idenaAiBenchmarkGuideDismissedV1'
+    )
+    const shouldAutoOpen =
+      router.query?.focus === 'ai-benchmark' ||
+      dismissed !== '1' ||
+      !aiSolverSettings.enabled ||
+      !aiProviderKeyStatus.hasKey
+
+    if (shouldAutoOpen) {
+      aiGuideDisclosure.onOpen()
+      didAutoOpenAiGuideRef.current = true
+    }
+  }, [
+    aiGuideDisclosure,
+    aiProviderKeyStatus.checked,
+    aiProviderKeyStatus.hasKey,
+    aiSolverSettings.enabled,
+    router.query,
+  ])
 
   useEffect(() => {
     if (!String(aiReasoningModel || '').trim()) {
@@ -1597,6 +1734,26 @@ export default function NewFlipPage() {
     }
   }
 
+  const closeAiGuide = () => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('idenaAiBenchmarkGuideDismissedV1', '1')
+    }
+    aiGuideDisclosure.onClose()
+  }
+
+  const applyStoryOptionToDraft = (option) => {
+    const next = option && typeof option === 'object' ? option : null
+    if (!next) return
+    setSelectedStoryId(next.id)
+    setStoryPanelsDraft(normalizeStoryPanelsInput(next.panels))
+    setStoryIncludeNoise(Boolean(next.includeNoise))
+    if (next.includeNoise) {
+      if (Number.isFinite(Number(next.noisePanelIndex))) {
+        setStoryNoisePanelIndex(Number(next.noisePanelIndex))
+      }
+    }
+  }
+
   const ensureAiRunReady = async ({requireEnabled = false} = {}) => {
     ensureAiSolverBridge()
 
@@ -1605,10 +1762,6 @@ export default function NewFlipPage() {
     if (requireEnabled && !aiSolverSettings.enabled) {
       throw new Error('AI helper is disabled')
     }
-
-    const isLegacyOnlyMode =
-      aiSolverSettings.legacyHeuristicEnabled &&
-      aiSolverSettings.legacyHeuristicOnly
 
     if (
       !isLegacyOnlyMode &&
@@ -1660,7 +1813,10 @@ export default function NewFlipPage() {
     )
   }
 
-  const generateStoryAlternatives = async ({optimize = false} = {}) => {
+  const generateStoryAlternatives = async ({
+    optimize = false,
+    basePanels = null,
+  } = {}) => {
     setIsGeneratingStoryOptions(true)
     try {
       await ensureAiRunReady()
@@ -1678,6 +1834,10 @@ export default function NewFlipPage() {
       } else if (!isFastMode && optimize) {
         storyTemperature = 0.9
       }
+      const seededPanels =
+        optimize && Array.isArray(basePanels) && basePanels.length > 0
+          ? normalizeStoryPanelsInput(basePanels)
+          : storyPanelsDraft
 
       const response = await global.aiSolver.generateStoryOptions({
         ...baseRunPayload,
@@ -1688,7 +1848,7 @@ export default function NewFlipPage() {
         keywords: [keywordA, keywordB],
         includeNoise: storyIncludeNoise,
         noisePanelIndex: storyNoisePanelIndex,
-        customStoryPanels: storyPanelsDraft,
+        customStoryPanels: seededPanels,
         hasCustomStory: optimize,
         maxOutputTokens: Math.max(
           300,
@@ -1710,16 +1870,15 @@ export default function NewFlipPage() {
       setStoryOptions(options)
       const defaultSelected = options[0]
       if (defaultSelected) {
-        setSelectedStoryId(defaultSelected.id)
-        setStoryPanelsDraft(normalizeStoryPanelsInput(defaultSelected.panels))
-        setStoryIncludeNoise(
-          optimize ? storyIncludeNoise : Boolean(defaultSelected.includeNoise)
-        )
-        setStoryNoisePanelIndex(
-          Number.isFinite(Number(defaultSelected.noisePanelIndex))
-            ? Number(defaultSelected.noisePanelIndex)
-            : storyNoisePanelIndex
-        )
+        applyStoryOptionToDraft(defaultSelected)
+        if (!optimize) {
+          setStoryIncludeNoise(Boolean(defaultSelected.includeNoise))
+          setStoryNoisePanelIndex(
+            Number.isFinite(Number(defaultSelected.noisePanelIndex))
+              ? Number(defaultSelected.noisePanelIndex)
+              : storyNoisePanelIndex
+          )
+        }
       }
 
       appendGenerationLedger({
@@ -1741,6 +1900,7 @@ export default function NewFlipPage() {
       const fallbackWasUsed = Boolean(
         response && response.metrics && response.metrics.fallback_used
       )
+      const weakDraftReturned = options.some((item) => item.isWeakStoryDraft)
       let storyOptionsMessage = t(
         'Choose the better option, customize if needed, then build flip.'
       )
@@ -1749,9 +1909,14 @@ export default function NewFlipPage() {
           'Review the story draft, rewrite any weak panel text, then build flip.'
         )
       }
+      if (weakDraftReturned && !fallbackStorySeed && !fallbackWasUsed) {
+        storyOptionsMessage = t(
+          'The AI returned a weak but editable draft. Tighten the place, trigger, and aftermath yourself or run Optimize story further.'
+        )
+      }
       if (fallbackStorySeed || fallbackWasUsed) {
         storyOptionsMessage = t(
-          'The AI returned a rough storyboard starter. Rewrite any weak panel text directly before building the flip.'
+          'The AI returned a rough storyboard starter. It is loaded into the panel editor so you can rewrite the place, trigger, and aftermath, or run Optimize story further before building the flip.'
         )
       }
 
@@ -2612,6 +2777,26 @@ export default function NewFlipPage() {
   const isBenchmarkPopupBusy =
     benchmarkPopupStatus === 'countdown' || benchmarkPopupStatus === 'running'
   const benchmarkPresetLabel = benchmarkPresetToLabel(benchmarkRunPreset)
+  const activeStoryDraft =
+    storyOptions.find((item) => String(item.id) === String(selectedStoryId)) ||
+    storyOptions[0] ||
+    null
+  const activeStoryDraftReview = activeStoryDraft
+    ? getStoryDraftReview(activeStoryDraft)
+    : null
+  let aiProviderKeyStatusLabel = t('Checking...')
+  let aiProviderKeyStatusColor = 'muted'
+  if (isLegacyOnlyMode) {
+    aiProviderKeyStatusLabel = t('Not required in legacy-only mode')
+  } else if (!aiProviderKeyStatus.checked) {
+    aiProviderKeyStatusLabel = t('Checking...')
+  } else if (aiProviderKeyStatus.hasKey) {
+    aiProviderKeyStatusLabel = t('Ready')
+    aiProviderKeyStatusColor = 'green.500'
+  } else {
+    aiProviderKeyStatusLabel = t('Missing')
+    aiProviderKeyStatusColor = 'orange.500'
+  }
   const flipBuildStatusBorderColorByKind = {
     idle: 'gray.100',
     running: 'gray.100',
@@ -3070,6 +3255,155 @@ export default function NewFlipPage() {
                       </Text>
                       <Box
                         borderWidth="1px"
+                        borderColor="blue.050"
+                        borderRadius="md"
+                        p={3}
+                        bg="blue.012"
+                      >
+                        <Stack spacing={3}>
+                          <Flex
+                            align={['flex-start', 'center']}
+                            justify="space-between"
+                            direction={['column', 'row']}
+                          >
+                            <Box>
+                              <Text fontSize="sm" fontWeight={500}>
+                                {t('Quick start')}
+                              </Text>
+                              <Text fontSize="xs" color="muted">
+                                {t(
+                                  '1. Choose provider and set a session API key. 2. Generate one draft and edit weak panels. 3. Build images or add the draft to the benchmark queue.'
+                                )}
+                              </Text>
+                            </Box>
+                            <Stack isInline spacing={2}>
+                              <SecondaryButton
+                                onClick={aiGuideDisclosure.onOpen}
+                              >
+                                {t('Setup & FAQ')}
+                              </SecondaryButton>
+                              <SecondaryButton
+                                onClick={() => router.push('/settings/ai')}
+                              >
+                                {t('AI settings')}
+                              </SecondaryButton>
+                            </Stack>
+                          </Flex>
+                          <SimpleGrid columns={[1, 3]} spacing={2}>
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.100"
+                              borderRadius="md"
+                              p={2}
+                              bg="white"
+                            >
+                              <Text fontSize="xs" color="muted">
+                                {t('Provider')}
+                              </Text>
+                              <Text fontSize="sm" fontWeight={500}>
+                                {String(aiSolverSettings.provider || 'openai')}
+                              </Text>
+                            </Box>
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.100"
+                              borderRadius="md"
+                              p={2}
+                              bg="white"
+                            >
+                              <Text fontSize="xs" color="muted">
+                                {t('Session API key')}
+                              </Text>
+                              <Text
+                                fontSize="sm"
+                                fontWeight={500}
+                                color={aiProviderKeyStatusColor}
+                              >
+                                {aiProviderKeyStatusLabel}
+                              </Text>
+                            </Box>
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.100"
+                              borderRadius="md"
+                              p={2}
+                              bg="white"
+                            >
+                              <Text fontSize="xs" color="muted">
+                                {t('Advanced options')}
+                              </Text>
+                              <Text fontSize="sm" fontWeight={500}>
+                                {t('Hidden unless you need them')}
+                              </Text>
+                            </Box>
+                          </SimpleGrid>
+                          <Stack isInline justify="flex-end" spacing={2}>
+                            <SecondaryButton
+                              onClick={() =>
+                                setShowAiGuideDetails((value) => !value)
+                              }
+                            >
+                              {showAiGuideDetails
+                                ? t('Hide inline FAQ')
+                                : t('Show inline FAQ')}
+                            </SecondaryButton>
+                          </Stack>
+                          {showAiGuideDetails ? (
+                            <Stack spacing={2}>
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.100"
+                                borderRadius="md"
+                                p={2}
+                                bg="white"
+                              >
+                                <Text fontSize="sm" fontWeight={500}>
+                                  {t('What is flip generation?')}
+                                </Text>
+                                <Text fontSize="xs" color="muted">
+                                  {t(
+                                    'Generate a story draft from the current keyword pair, rewrite any weak panel text, then build four images from the edited draft.'
+                                  )}
+                                </Text>
+                              </Box>
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.100"
+                                borderRadius="md"
+                                p={2}
+                                bg="white"
+                              >
+                                <Text fontSize="sm" fontWeight={500}>
+                                  {t('What is flip solving / benchmark mode?')}
+                                </Text>
+                                <Text fontSize="xs" color="muted">
+                                  {t(
+                                    'Use the queue below to run short or long benchmark sessions on saved draft flips. Solving happens on those queued flips, not only on the story generator.'
+                                  )}
+                                </Text>
+                              </Box>
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.100"
+                                borderRadius="md"
+                                p={2}
+                                bg="white"
+                              >
+                                <Text fontSize="sm" fontWeight={500}>
+                                  {t('When should I use advanced settings?')}
+                                </Text>
+                                <Text fontSize="xs" color="muted">
+                                  {t(
+                                    'Only when you want to tune retries, timeouts, custom models, or benchmark queue behavior. The default path should work with fewer clicks.'
+                                  )}
+                                </Text>
+                              </Box>
+                            </Stack>
+                          ) : null}
+                        </Stack>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
                         borderColor="gray.100"
                         borderRadius="md"
                         p={3}
@@ -3345,26 +3679,74 @@ export default function NewFlipPage() {
                           {storyOptions.length > 0 ? (
                             <SimpleGrid columns={[1, 2]} spacing={2}>
                               {storyOptions.map((option) => {
+                                const reviewState = getStoryDraftReview(option)
                                 const hasComplianceReport =
                                   Object.keys(option.complianceReport || {})
                                     .length > 0
+                                const optionIsSelected =
+                                  String(selectedStoryId) === String(option.id)
+                                let optionBorderColor = 'gray.100'
+                                if (optionIsSelected) {
+                                  optionBorderColor = 'blue.300'
+                                } else if (reviewState.kind !== 'strong') {
+                                  optionBorderColor = 'orange.200'
+                                }
+                                const optionBg =
+                                  reviewState.kind === 'strong'
+                                    ? 'white'
+                                    : 'orange.012'
+                                const reviewBorderColor =
+                                  reviewState.kind === 'strong'
+                                    ? 'green.100'
+                                    : 'orange.200'
+                                const reviewAccentColor =
+                                  reviewState.kind === 'strong'
+                                    ? 'green.500'
+                                    : 'orange.500'
                                 return (
                                   <Box
                                     key={option.id}
                                     borderWidth="1px"
-                                    borderColor={
-                                      String(selectedStoryId) ===
-                                      String(option.id)
-                                        ? 'blue.300'
-                                        : 'gray.100'
-                                    }
+                                    borderColor={optionBorderColor}
                                     borderRadius="md"
                                     p={2}
+                                    bg={optionBg}
                                   >
                                     <Stack spacing={1}>
                                       <Text fontSize="sm" fontWeight={500}>
                                         {option.title}
                                       </Text>
+                                      <Box
+                                        borderWidth="1px"
+                                        borderColor={reviewBorderColor}
+                                        borderRadius="md"
+                                        p={2}
+                                        bg="white"
+                                      >
+                                        <Text
+                                          fontSize="xs"
+                                          fontWeight={500}
+                                          color={reviewAccentColor}
+                                        >
+                                          {reviewState.label}
+                                        </Text>
+                                        <Text fontSize="xs" color="muted">
+                                          {reviewState.description}
+                                        </Text>
+                                        {Number.isFinite(
+                                          Number(option.qualityScore)
+                                        ) ? (
+                                          <Text
+                                            fontSize="xs"
+                                            color="muted"
+                                            mt={1}
+                                          >
+                                            {t('Quality score: {{score}}', {
+                                              score: option.qualityScore,
+                                            })}
+                                          </Text>
+                                        ) : null}
+                                      </Box>
                                       {option.panels.map((panel, idx) => (
                                         <Text
                                           key={`${option.id}-panel-${idx}`}
@@ -3410,37 +3792,102 @@ export default function NewFlipPage() {
                                           )}`}
                                         </Text>
                                       ) : null}
+                                      {option.qualityFailures.length > 0 ? (
+                                        <Text fontSize="xs" color="orange.500">
+                                          {`Story quality warnings: ${option.qualityFailures.join(
+                                            ', '
+                                          )}`}
+                                        </Text>
+                                      ) : null}
                                       <Stack isInline justify="flex-end">
                                         <SecondaryButton
                                           onClick={() => {
-                                            setSelectedStoryId(option.id)
-                                            setStoryPanelsDraft(
-                                              normalizeStoryPanelsInput(
-                                                option.panels
-                                              )
-                                            )
-                                            if (option.includeNoise) {
-                                              setStoryIncludeNoise(true)
-                                              if (
-                                                Number.isFinite(
-                                                  Number(option.noisePanelIndex)
-                                                )
-                                              ) {
-                                                setStoryNoisePanelIndex(
-                                                  Number(option.noisePanelIndex)
-                                                )
-                                              }
-                                            }
+                                            applyStoryOptionToDraft(option)
                                           }}
                                         >
-                                          {t('Use this story')}
+                                          {reviewState.kind === 'strong'
+                                            ? t('Use this story')
+                                            : t('Use this draft')}
                                         </SecondaryButton>
+                                        {reviewState.kind !== 'strong' ? (
+                                          <SecondaryButton
+                                            isLoading={isGeneratingStoryOptions}
+                                            onClick={async () => {
+                                              applyStoryOptionToDraft(option)
+                                              await generateStoryAlternatives({
+                                                optimize: true,
+                                                basePanels: option.panels,
+                                              })
+                                            }}
+                                          >
+                                            {t('Optimize this weak draft')}
+                                          </SecondaryButton>
+                                        ) : null}
                                       </Stack>
                                     </Stack>
                                   </Box>
                                 )
                               })}
                             </SimpleGrid>
+                          ) : null}
+
+                          {activeStoryDraft && activeStoryDraftReview ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor={
+                                activeStoryDraftReview.kind === 'strong'
+                                  ? 'green.100'
+                                  : 'orange.200'
+                              }
+                              borderRadius="md"
+                              p={3}
+                              bg={
+                                activeStoryDraftReview.kind === 'strong'
+                                  ? 'green.012'
+                                  : 'orange.012'
+                              }
+                            >
+                              <Stack spacing={2}>
+                                <Text
+                                  fontSize="sm"
+                                  fontWeight={500}
+                                  color={
+                                    activeStoryDraftReview.kind === 'strong'
+                                      ? 'green.500'
+                                      : 'orange.500'
+                                  }
+                                >
+                                  {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
+                                </Text>
+                                <Text fontSize="xs" color="muted">
+                                  {activeStoryDraftReview.description}
+                                </Text>
+                                <Text fontSize="xs" color="muted">
+                                  {activeStoryDraftReview.kind === 'strong'
+                                    ? t(
+                                        'Recommended flow: make any final wording tweaks, then build all 4 panels.'
+                                      )
+                                    : t(
+                                        'Recommended flow: rewrite the place, trigger, and visible aftermath first. If it still feels weak, run Optimize this weak draft.'
+                                      )}
+                                </Text>
+                                {activeStoryDraftReview.kind !== 'strong' ? (
+                                  <Stack isInline justify="flex-end">
+                                    <SecondaryButton
+                                      isLoading={isGeneratingStoryOptions}
+                                      onClick={() =>
+                                        generateStoryAlternatives({
+                                          optimize: true,
+                                          basePanels: storyPanelsDraft,
+                                        })
+                                      }
+                                    >
+                                      {t('Optimize selected draft')}
+                                    </SecondaryButton>
+                                  </Stack>
+                                ) : null}
+                              </Stack>
+                            </Box>
                           ) : null}
 
                           <SimpleGrid columns={[1, 2]} spacing={2}>
@@ -4240,6 +4687,114 @@ export default function NewFlipPage() {
             onCloseBadFlipDialog()
           }}
         />
+
+        <Modal
+          isOpen={aiGuideDisclosure.isOpen}
+          onClose={closeAiGuide}
+          size="3xl"
+        >
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>{t('AI benchmark helper quick start')}</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              <Stack spacing={4}>
+                <Box
+                  borderWidth="1px"
+                  borderColor="blue.050"
+                  borderRadius="md"
+                  p={3}
+                  bg="blue.012"
+                >
+                  <Text fontSize="sm" fontWeight={500}>
+                    {t('Before you start')}
+                  </Text>
+                  <Text fontSize="sm" color="muted" mt={1}>
+                    {t(
+                      'To run the IdenaAI benchmark helper, choose your preferred AI provider, insert a session API key for that provider, and keep advanced settings hidden unless you really need them.'
+                    )}
+                  </Text>
+                </Box>
+
+                <SimpleGrid columns={[1, 2]} spacing={3}>
+                  <Box
+                    borderWidth="1px"
+                    borderColor="gray.100"
+                    borderRadius="md"
+                    p={3}
+                  >
+                    <Text fontSize="sm" fontWeight={500}>
+                      {t('Flip generation')}
+                    </Text>
+                    <Text fontSize="xs" color="muted" mt={1}>
+                      {t(
+                        'Generate one draft from the current keyword pair, rewrite any weak panel text, then build the 4 panel images. This is the fastest way to create a benchmarkable flip.'
+                      )}
+                    </Text>
+                  </Box>
+                  <Box
+                    borderWidth="1px"
+                    borderColor="gray.100"
+                    borderRadius="md"
+                    p={3}
+                  >
+                    <Text fontSize="sm" fontWeight={500}>
+                      {t('Flip solving / benchmark queue')}
+                    </Text>
+                    <Text fontSize="xs" color="muted" mt={1}>
+                      {t(
+                        'Add drafts to the queue below and run short or long sessions. That is the built-in path for solving flips with your chosen provider and comparing runs.'
+                      )}
+                    </Text>
+                  </Box>
+                </SimpleGrid>
+
+                <Box
+                  borderWidth="1px"
+                  borderColor="gray.100"
+                  borderRadius="md"
+                  p={3}
+                >
+                  <Stack spacing={2}>
+                    <Text fontSize="sm" fontWeight={500}>
+                      {t('FAQ')}
+                    </Text>
+                    <Text fontSize="xs" color="muted">
+                      {t(
+                        'Do I need advanced settings? Usually no. The default path is provider -> API key -> generate draft -> edit weak panels -> build images or queue the draft.'
+                      )}
+                    </Text>
+                    <Text fontSize="xs" color="muted">
+                      {t(
+                        'What should I do with weak drafts? Keep them editable, rewrite the place/trigger/aftermath yourself, or run Optimize story further. Weak does not automatically mean unusable.'
+                      )}
+                    </Text>
+                    <Text fontSize="xs" color="muted">
+                      {t(
+                        'When should I open AI settings? On first setup, when you change provider/model, or when a session key is missing.'
+                      )}
+                    </Text>
+                  </Stack>
+                </Box>
+              </Stack>
+            </ModalBody>
+            <ModalFooter>
+              <Stack isInline spacing={2}>
+                <SecondaryButton onClick={closeAiGuide}>
+                  {t('Stay in builder')}
+                </SecondaryButton>
+                <PrimaryButton
+                  onClick={() => {
+                    closeAiGuide()
+                    router.push('/settings/ai')
+                  }}
+                >
+                  {t('Open AI settings')}
+                </PrimaryButton>
+              </Stack>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
 
         <Modal
           isOpen={benchmarkSessionDisclosure.isOpen}
