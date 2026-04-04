@@ -1013,6 +1013,7 @@ export function FlipSubmitStep({
   originalOrder,
   order,
   images,
+  onManualShuffle,
 }) {
   const {t} = useTranslation()
   return (
@@ -1054,17 +1055,69 @@ export function FlipSubmitStep({
               ))}
             </FlipImageList>
             <FlipImageList>
-              {order.map((num, idx) => (
-                <FlipImageListItem
-                  key={num}
-                  src={images[num]}
-                  isFirst={idx === 0}
-                  isLast={idx === images.length - 1}
-                />
-              ))}
+              <DragDropContext
+                onDragEnd={(result) => {
+                  if (
+                    typeof onManualShuffle !== 'function' ||
+                    !result.destination ||
+                    result.destination.index === result.source.index
+                  ) {
+                    return
+                  }
+
+                  onManualShuffle(
+                    reorder(
+                      order,
+                      result.source.index,
+                      result.destination.index
+                    )
+                  )
+                }}
+              >
+                <Droppable droppableId="flip-submit-shuffle">
+                  {(provided) => (
+                    <div ref={provided.innerRef} {...provided.droppableProps}>
+                      {order.map((num, idx) => (
+                        <DraggableItem
+                          key={num}
+                          draggableId={`submit-pic-${num}`}
+                          index={idx}
+                        >
+                          <Box position="relative">
+                            <Flex
+                              align="center"
+                              justify="center"
+                              bg="brandGray.080"
+                              size={8}
+                              rounded="md"
+                              position="absolute"
+                              top={1}
+                              right={1}
+                              zIndex={1}
+                            >
+                              <MoveIcon boxSize="5" color="white" />
+                            </Flex>
+                            <FlipImageListItem
+                              src={images[num]}
+                              isFirst={idx === 0}
+                              isLast={idx === images.length - 1}
+                            />
+                          </Box>
+                        </DraggableItem>
+                      ))}
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              </DragDropContext>
             </FlipImageList>
           </Stack>
         </Stack>
+        <Text fontSize="xs" color="muted" mt={3}>
+          {t(
+            'Drag the shuffled panels on the right to reshuffle manually before submitting.'
+          )}
+        </Text>
       </FlipStepBody>
     </FlipStep>
   )

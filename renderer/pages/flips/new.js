@@ -3333,6 +3333,9 @@ export default function NewFlipPage() {
                     originalOrder={originalOrder}
                     order={order}
                     images={draftImages}
+                    onManualShuffle={(nextOrder) =>
+                      send('MANUAL_SHUFFLE', {order: nextOrder})
+                    }
                   />
                   <Box
                     id="ai-benchmark"
