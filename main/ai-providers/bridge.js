@@ -1562,6 +1562,44 @@ function buildSingleStoryLastChanceRescuePrompt({
     .join('\n')
 }
 
+function buildSingleStoryScaffoldRewritePrompt({
+  keywordA,
+  keywordB,
+  senseSelection,
+  scaffoldPanels = [],
+}) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || 'keyword 1'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || 'keyword 2'
+  const lockedSenseLines = formatSensePromptLines(
+    senseSelection,
+    safeKeywordA,
+    safeKeywordB
+  )
+  const normalizedScaffold = normalizeStoryPanels(scaffoldPanels)
+  const scaffoldText = normalizedScaffold
+    .map((panel, index) => `${index + 1}) ${panel}`)
+    .join('\n')
+
+  return [
+    'Concrete storyboard rewrite:',
+    'Rewrite the weak scaffold below into one actual 4-panel silent storyboard.',
+    'Return exactly 4 plain storyboard lines only.',
+    'Each line must describe what is visibly happening in that panel, not give instructions to the user.',
+    `Keep "${safeKeywordA}" and "${safeKeywordB}" visibly important in the scene.`,
+    'Use one specific place, one visible trigger, one concrete physical consequence, and one stable final aftermath.',
+    'Bad: "Pick one specific actor or object and one specific place..."',
+    'Bad: "Use X as the trigger that makes the scene change..."',
+    'Good: "At an airport gate, a disappointed pilot sets a milk carton on a rolling suitcase."',
+    'Good: "The suitcase jerks forward, the milk carton slides off, and white milk splashes across the floor."',
+    'No numbering, no labels, no markdown, no JSON, and no commentary.',
+    ...lockedSenseLines,
+    'Weak scaffold to rewrite:',
+    scaffoldText,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 function classifyTextualStoryProviderOutcome(rawText) {
   const text = String(rawText || '').trim()
   if (!text) return null
@@ -1813,6 +1851,14 @@ function isLowValueStoryPanel(panelText) {
   if (/^panel\s*[1-4]\s*:\s*describe panel/i.test(value)) {
     return true
   }
+  if (
+    /^(choose|pick|use|bring|show|end|rewrite)\b/.test(value) &&
+    /(specific place|specific actor|bring .* into the scene|use .* as the trigger|show the biggest visible consequence|show the strongest physical consequence|rewrite the ending|final stable image|before anything changes|not as a background detail)/.test(
+      value
+    )
+  ) {
+    return true
+  }
   return false
 }
 
@@ -1990,30 +2036,119 @@ function buildKeywordFallbackPanels(
   const usesLiteralFallbackSense =
     senseHasTag(firstSense, 'fallback') || senseHasTag(secondSense, 'fallback')
 
+  const looksLikeActorLabel = (label) => {
+    const normalized = normalizeKeywordValue(label).trim().toLowerCase()
+    if (!normalized) return false
+    if (ACTOR_KEYWORD_HINTS.has(normalized)) {
+      return true
+    }
+    return /\b(person|man|woman|child|kid|boy|girl|pilot|king|queen|clown|nurse|doctor|teacher|officer|chef|farmer|wolf|centaur|robot|ghost)\b/.test(
+      normalized
+    )
+  }
+
   const buildRawKeywordStoryboardStarterPanels = () => {
     const primaryLabel = getSensePromptLabel(firstSense, keywordA)
     const secondaryLabel = getSensePromptLabel(secondSense, keywordB)
+    let actorLabel = 'person'
+    if (looksLikeActorLabel(primaryLabel)) {
+      actorLabel = primaryLabel
+    } else if (looksLikeActorLabel(secondaryLabel)) {
+      actorLabel = secondaryLabel
+    }
+    const actorIsPrimary = actorLabel === primaryLabel
+    const actorIsSecondary = actorLabel === secondaryLabel
+    const place = chooseDeterministicItem(
+      [
+        'airport gate',
+        'school gym',
+        'busy kitchen',
+        'garage workbench',
+        'festival tent',
+        'museum hallway',
+      ],
+      `${primaryLabel}|${secondaryLabel}|${variant}|place`,
+      'busy kitchen'
+    )
+    const supportProp = chooseDeterministicItem(
+      ['rolling suitcase', 'small table', 'wooden stool', 'plastic crate'],
+      `${primaryLabel}|${secondaryLabel}|${variant}|prop`,
+      'small table'
+    )
+    const spillObject = chooseDeterministicItem(
+      ['papers', 'flowers', 'tools', 'cups'],
+      `${primaryLabel}|${secondaryLabel}|${variant}|spill`,
+      'papers'
+    )
 
     if (variant === 1) {
+      if (actorIsPrimary) {
+        return [
+          prependSeedToPanel(
+            `At a ${place}, the ${primaryLabel} stands beside the ${secondaryLabel} and a ${supportProp}.`,
+            humanStorySeed
+          ),
+          `The ${secondaryLabel} jerks into motion and bumps the ${supportProp}, startling the ${primaryLabel}.`,
+          `The ${supportProp} tips over and ${spillObject} scatter across the floor as the ${primaryLabel} recoils from the ${secondaryLabel}.`,
+          `The fallen ${supportProp}, scattered ${spillObject}, and the changed distance between the ${primaryLabel} and ${secondaryLabel} remain in the final aftermath.`,
+        ]
+      }
+
+      if (actorIsSecondary) {
+        return [
+          prependSeedToPanel(
+            `At a ${place}, the ${secondaryLabel} carries the ${primaryLabel} beside a ${supportProp}.`,
+            humanStorySeed
+          ),
+          `The ${secondaryLabel} slips and sends the ${primaryLabel} skidding across the ${supportProp}.`,
+          `The ${supportProp} overturns and ${spillObject} scatter as the ${secondaryLabel} jumps back from the moving ${primaryLabel}.`,
+          `The fallen ${supportProp}, the shifted ${primaryLabel}, and the startled ${secondaryLabel} stay visible in the new stable image.`,
+        ]
+      }
+
       return [
         prependSeedToPanel(
-          `Choose a concrete room, street, stage, or landscape and decide what "${primaryLabel}" literally looks like there before anything changes.`,
+          `In a ${place}, a person sets the ${primaryLabel} beside the ${secondaryLabel} on a ${supportProp}.`,
           humanStorySeed
         ),
-        `Bring "${secondaryLabel}" into the scene in the exact moment that starts the story, not as a background detail.`,
-        `Show the biggest visible consequence in panel 3, such as a spill, break, reveal, chase, collapse, or sudden movement.`,
-        `End on a final image where the new situation is obvious at a glance, not only a facial expression.`,
+        `A sudden bump sends the ${primaryLabel} into the ${secondaryLabel}, turning the setup into one clear visible event.`,
+        `The ${supportProp} tips over and ${spillObject} scatter while the ${secondaryLabel} drops to the floor beside the ${primaryLabel}.`,
+        `The mess, the fallen ${secondaryLabel}, and the shifted ${primaryLabel} remain in the final aftermath.`,
+      ]
+    }
+
+    if (actorIsPrimary) {
+      return [
+        prependSeedToPanel(
+          `In a ${place}, the ${primaryLabel} keeps the ${secondaryLabel} beside a ${supportProp}.`,
+          humanStorySeed
+        ),
+        `The ${secondaryLabel} suddenly lurches and knocks the ${supportProp} sideways, forcing the ${primaryLabel} to jerk back.`,
+        `The ${supportProp} spills ${spillObject} across the floor as the ${primaryLabel} loses grip on the ${secondaryLabel}.`,
+        `The scattered ${spillObject}, the fallen ${supportProp}, and the ${primaryLabel} facing the displaced ${secondaryLabel} hold the last panel together.`,
+      ]
+    }
+
+    if (actorIsSecondary) {
+      return [
+        prependSeedToPanel(
+          `In a ${place}, the ${secondaryLabel} studies the ${primaryLabel} beside a ${supportProp}.`,
+          humanStorySeed
+        ),
+        `A sudden slip sends the ${primaryLabel} into the ${supportProp}, and the ${secondaryLabel} jerks back in surprise.`,
+        `The ${supportProp} overturns and ${spillObject} spread across the ground while the ${primaryLabel} skids past the ${secondaryLabel}.`,
+        `The scattered ${spillObject}, the moved ${primaryLabel}, and the unsettled ${secondaryLabel} remain in the stable aftermath.`,
       ]
     }
 
     return [
       prependSeedToPanel(
-        `Pick one specific actor or object and one specific place where "${primaryLabel}" can become immediately visual.`,
+        `In a ${place}, a person places the ${primaryLabel} beside the ${secondaryLabel} on a ${supportProp}.`,
         humanStorySeed
       ),
-      `Use "${secondaryLabel}" as the trigger that makes the scene noticeably change in one readable moment.`,
-      `Show the strongest physical consequence and the reaction together, so the flip still reads without explanation.`,
-      `Rewrite the ending so both keywords still matter in the final stable image, not just in the setup.`,
+      `The person bumps the ${supportProp}, sending the ${primaryLabel} sliding hard into the ${secondaryLabel}.`,
+      `The ${supportProp} topples and ${spillObject} burst across the floor while the ${secondaryLabel} flips away from the ${primaryLabel}.`,
+      `The toppled ${supportProp}, scattered ${spillObject}, and changed positions of the ${primaryLabel} and ${secondaryLabel} remain easy to read in the final panel.`,
     ]
   }
 
@@ -4487,7 +4622,16 @@ function createAiProviderBridge(logger, dependencies = {}) {
       const rejectedStories =
         quality && Array.isArray(quality.rejected) ? quality.rejected : []
       rejectedStories.forEach((story) => {
-        if (isProviderDraftRescueCandidate(story)) {
+        if (!isProviderMeaningfulDraftCandidate(story)) return
+        const signature = normalizeStoryPanels(story.panels)
+          .join('|')
+          .toLowerCase()
+        const alreadyTracked = providerDraftRejectedCandidates.some(
+          (candidate) =>
+            normalizeStoryPanels(candidate.panels).join('|').toLowerCase() ===
+            signature
+        )
+        if (!alreadyTracked) {
           providerDraftRejectedCandidates.push(story)
         }
       })
@@ -5179,6 +5323,107 @@ function createAiProviderBridge(logger, dependencies = {}) {
       }
     }
 
+    async function runSingleStoryScaffoldRewriteAttempt({
+      scaffoldPanels = [],
+      attemptLabel = 'provider_story_options_scaffold_rewrite',
+      promptPhase = 'story_options_scaffold_rewrite',
+      profileOverride = buildExpandedStoryProfile(profile, {
+        minOutputTokens: 2200,
+        growthFactor: 1.8,
+        extraTokens: 700,
+        extraTimeoutMs: 8000,
+      }),
+      requestHash = `story-option-scaffold-rewrite-${startedAt}`,
+    } = {}) {
+      if (requestedStoryCount !== 1) {
+        return {
+          quality: {accepted: [], rejected: []},
+          parsedStories: [],
+        }
+      }
+
+      storyMetrics.retries_per_story += 1
+      logger.info('AI story provider draft rescue path', {
+        provider,
+        model,
+        reason: 'single_story_scaffold_rewrite',
+        attempt: attemptLabel,
+        maxOutputTokens: profileOverride.maxOutputTokens,
+      })
+
+      try {
+        const providerResponse = await invokeProvider({
+          provider,
+          model,
+          flip: {
+            hash: requestHash,
+            leftImage: '',
+            rightImage: '',
+            images: [],
+          },
+          profile: profileOverride,
+          apiKey,
+          providerConfig,
+          promptText: buildSingleStoryScaffoldRewritePrompt({
+            keywordA,
+            keywordB,
+            senseSelection,
+            scaffoldPanels,
+          }),
+          promptOptions: {
+            promptPhase,
+          },
+        })
+
+        const normalizedResponse = normalizeProviderResponse(providerResponse)
+        combinedUsage = addTokenUsage(
+          combinedUsage,
+          normalizedResponse.tokenUsage
+        )
+        attemptHistory.push({
+          attempt: attemptLabel,
+          promptPhase,
+          outcome: normalizedResponse.rawText
+            ? 'freeform_story_draft'
+            : 'empty',
+          detail: sanitizeStoryLogText(normalizedResponse.rawText, 180),
+        })
+
+        const parsedStories = parseStoryOptions(normalizedResponse.rawText, {
+          keywordA,
+          keywordB,
+          includeNoise,
+          customStory: hasCustomStory ? customStory : null,
+          humanStorySeed,
+          senseSelection,
+          allowLocalFallback: false,
+        }).slice(0, 1)
+        const quality = evaluateCandidateStories(
+          parsedStories,
+          'provider_story_options_scaffold_rewrite'
+        )
+        collectProviderDraftRejectedCandidates(quality)
+        return {
+          quality,
+          parsedStories,
+        }
+      } catch (error) {
+        attemptHistory.push({
+          attempt: attemptLabel,
+          promptPhase,
+          outcome: 'transport_error',
+          detail: sanitizeStoryLogText(
+            (error && error.message) || error || '',
+            180
+          ),
+        })
+        return {
+          quality: {accepted: [], rejected: []},
+          parsedStories: [],
+        }
+      }
+    }
+
     function evaluateAcceptedStoriesFromAttempt(attempt, sourceLabel) {
       const currentAttempt =
         attempt && typeof attempt === 'object' ? attempt : {}
@@ -5410,6 +5655,30 @@ function createAiProviderBridge(logger, dependencies = {}) {
           initialQualitySource = 'provider_story_options_last_chance_rescue'
         } else {
           collectProviderDraftRejectedCandidates(lastChanceRescue.quality)
+          const rewriteSeedStory = pickBestProviderDraftCandidate(
+            providerDraftRejectedCandidates,
+            {
+              strict: false,
+            }
+          )
+          const scaffoldPanels = rewriteSeedStory
+            ? normalizeStoryPanels(rewriteSeedStory.panels)
+            : buildKeywordFallbackPanels(
+                keywordA,
+                keywordB,
+                0,
+                humanStorySeed,
+                senseSelection
+              )
+          const scaffoldRewrite = await runSingleStoryScaffoldRewriteAttempt({
+            scaffoldPanels,
+          })
+          if (scaffoldRewrite.quality.accepted.length > 0) {
+            initialQuality = scaffoldRewrite.quality
+            initialQualitySource = 'provider_story_options_scaffold_rewrite'
+          } else {
+            collectProviderDraftRejectedCandidates(scaffoldRewrite.quality)
+          }
         }
       }
     }

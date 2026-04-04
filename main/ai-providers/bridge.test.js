@@ -1330,6 +1330,80 @@ describe('createAiProviderBridge', () => {
     )
   })
 
+  it('uses scaffold rewrite rescue before emergency fallback when rescue drafts stay meta', async () => {
+    const invokeProvider = jest.fn().mockImplementation(async (payload) => {
+      const phase =
+        payload && payload.promptOptions && payload.promptOptions.promptPhase
+          ? payload.promptOptions.promptPhase
+          : 'unknown'
+
+      if (phase === 'story_options_scaffold_rewrite') {
+        return {
+          rawText: [
+            'At an airport gate, a disappointed pilot sets a carton of milk on a rolling suitcase beside an empty seat.',
+            'The suitcase jerks forward when the disappointed pilot turns, and the milk carton slides off the handle.',
+            'The milk bursts across the floor and boarding papers skid under the seats while the disappointed pilot jumps back.',
+            'The spilled milk, soaked papers, and open suitcase remain scattered around the disappointed pilot in the final aftermath.',
+          ].join('\n'),
+          usage: {
+            promptTokens: 28,
+            completionTokens: 44,
+            totalTokens: 72,
+          },
+        }
+      }
+
+      return {
+        rawText: [
+          'Pick one specific actor or object and one specific place where "milk" can become immediately visual.',
+          'Use "disappointed pilot" as the trigger that makes the scene noticeably change in one readable moment.',
+          'Show the strongest physical consequence and the reaction together, so the flip still reads without explanation.',
+          'Rewrite the ending so both keywords still matter in the final stable image, not just in the setup.',
+        ].join('\n'),
+        usage: {
+          promptTokens: 20,
+          completionTokens: 20,
+          totalTokens: 40,
+        },
+      }
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['milk', 'disappointed pilot'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    expect(
+      invokeProvider.mock.calls.some(
+        ([payload]) =>
+          payload &&
+          payload.promptOptions &&
+          payload.promptOptions.promptPhase === 'story_options_scaffold_rewrite'
+      )
+    ).toBe(true)
+    expect(result.metrics.fallback_used).toBe(false)
+    expect(result.stories).toHaveLength(1)
+    expect(result.stories[0].rationale.toLowerCase()).not.toContain(
+      'emergency editable storyboard draft'
+    )
+    expect(result.stories[0].panels[0].toLowerCase()).toContain('airport gate')
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('milk')
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain(
+      'disappointed pilot'
+    )
+    expect(result.stories[0].panels[0].toLowerCase()).not.toContain(
+      'pick one specific actor'
+    )
+  })
+
   it('escalates token budget on last-chance provider rescue before any local fallback', async () => {
     const invokeProvider = jest.fn().mockImplementation(async (payload) => {
       const phase =
@@ -1684,13 +1758,13 @@ describe('createAiProviderBridge', () => {
     })
     expect(result.stories[0].rationale).toMatch(/storyboard starter/i)
     expect(result.stories[0].editingTip).toMatch(/Rewrite all 4 panels/i)
-    expect(
-      result.stories[0].panels[0].includes(
-        'Pick one specific actor or object'
-      ) || result.stories[0].panels[0].includes('Choose a concrete room')
-    ).toBe(true)
+    expect(result.stories[0].panels[0].toLowerCase()).toContain('jump')
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('sport')
     expect(result.stories[0].panels.join(' ')).not.toContain(
       'The person makes one concrete move'
+    )
+    expect(result.stories[0].panels.join(' ')).not.toMatch(
+      /pick one specific actor|choose a concrete room/i
     )
   })
 
@@ -2427,6 +2501,9 @@ describe('createAiProviderBridge', () => {
     expect(joinedPanels).not.toContain('starts interacting with both')
     expect(joinedPanels).not.toContain('uses shock as a clear tool')
     expect(joinedPanels).not.toContain('observes the final result')
+    expect(joinedPanels).not.toMatch(
+      /choose a concrete room|pick one specific actor/
+    )
     expect(logger.info).toHaveBeenCalledWith(
       'AI story fallback sense lock',
       expect.objectContaining({
@@ -2745,7 +2822,7 @@ describe('createAiProviderBridge', () => {
     )
   })
 
-  it('rejects weak generic provider stories and falls back to higher-quality locked-sense stories', async () => {
+  it('rescues weak generic provider stories as editable provider drafts before local fallback', async () => {
     const logger = mockLogger()
     const invokeProvider = jest.fn().mockResolvedValue({
       rawText: JSON.stringify({
@@ -2872,18 +2949,19 @@ describe('createAiProviderBridge', () => {
     })
 
     expect(result.metrics).toMatchObject({
-      fallback_used: true,
+      fallback_used: false,
       low_concreteness_fail: expect.any(Number),
       weak_progression_fail: expect.any(Number),
       total_latency_ms: expect.any(Number),
     })
+    expect(result.stories[0].rationale.toLowerCase()).toContain(
+      'provider draft kept as an editable storyboard draft'
+    )
+    expect(result.stories[0].editingTip).toMatch(
+      /provider produced a readable draft/i
+    )
     expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('ghost')
-    expect(result.stories[0].panels.join(' ').toLowerCase()).toMatch(
-      /startled|jolts|surprise/
-    )
-    expect(result.stories[0].panels.join(' ').toLowerCase()).not.toContain(
-      'interacts with'
-    )
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('shock')
     expect(logger.info).toHaveBeenCalledWith(
       'AI story quality reject',
       expect.objectContaining({
