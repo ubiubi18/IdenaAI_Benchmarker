@@ -7,7 +7,7 @@ const DEFAULT_PROFILE = {
   requestTimeoutMs: 9 * 1000,
   maxConcurrency: 1,
   maxRetries: 1,
-  maxOutputTokens: 120,
+  maxOutputTokens: 0,
   interFlipDelayMs: 650,
   temperature: 0,
   forceDecision: true,

@@ -37,7 +37,7 @@ describe('sanitizeBenchmarkProfile', () => {
       requestTimeoutMs: 1000,
       maxConcurrency: 6,
       maxRetries: 0,
-      maxOutputTokens: 16,
+      maxOutputTokens: 1,
       interFlipDelayMs: 0,
       temperature: 0,
       forceDecision: true,
@@ -48,6 +48,15 @@ describe('sanitizeBenchmarkProfile', () => {
       promptTemplateOverride: '',
       flipVisionMode: 'composite',
     })
+  })
+
+  it('preserves 0 maxOutputTokens as auto mode', () => {
+    expect(
+      sanitizeBenchmarkProfile({
+        benchmarkProfile: 'custom',
+        maxOutputTokens: 0,
+      }).maxOutputTokens
+    ).toBe(0)
   })
 
   it('normalizes custom flip vision mode values', () => {

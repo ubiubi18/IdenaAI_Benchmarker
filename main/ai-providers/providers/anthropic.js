@@ -51,6 +51,17 @@ function createAnthropicHeaders(apiKey, providerConfig = {}) {
   }
 }
 
+function resolveAnthropicMaxTokens(profile = {}) {
+  const configured = Number(profile.maxOutputTokens)
+  if (configured > 0) {
+    return configured
+  }
+
+  // Anthropic requires an explicit max_tokens field. In auto mode, keep this
+  // ceiling generous and let timeout/deadline handling do the real limiting.
+  return 1024
+}
+
 function normalizeAnthropicModelList(data) {
   let items = []
   if (Array.isArray(data && data.data)) {
@@ -118,7 +129,7 @@ async function callAnthropic({
     endpoint,
     {
       model,
-      max_tokens: profile.maxOutputTokens,
+      max_tokens: resolveAnthropicMaxTokens(profile),
       temperature: profile.temperature,
       messages: [
         {

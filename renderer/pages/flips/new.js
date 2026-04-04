@@ -87,7 +87,7 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   requestTimeoutMs: 9 * 1000,
   maxConcurrency: 1,
   maxRetries: 1,
-  maxOutputTokens: 120,
+  maxOutputTokens: 0,
   interFlipDelayMs: 650,
   temperature: 0,
   forceDecision: true,
@@ -867,7 +867,9 @@ function estimateHeuristicTokensPerFlip({
   const mode = String(flipVisionMode || 'composite')
     .trim()
     .toLowerCase()
-  const safeMaxOutput = Math.max(16, toInt(maxOutputTokens, 120))
+  const configuredMaxOutput = toInt(maxOutputTokens, 0)
+  const safeMaxOutput =
+    configuredMaxOutput > 0 ? Math.max(16, configuredMaxOutput) : 120
 
   let basePromptPerFlip = 2600
   let baseCompletionPerFlip = Math.max(40, Math.min(safeMaxOutput, 96))

@@ -248,8 +248,10 @@ async function callGemini({
       ],
       generationConfig: {
         temperature: profile.temperature,
-        maxOutputTokens: profile.maxOutputTokens,
         responseMimeType: 'application/json',
+        ...(Number(profile.maxOutputTokens) > 0
+          ? {maxOutputTokens: profile.maxOutputTokens}
+          : {}),
         ...(responseSchema ? {responseSchema} : {}),
       },
     },

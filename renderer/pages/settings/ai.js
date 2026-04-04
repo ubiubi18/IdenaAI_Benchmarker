@@ -110,7 +110,7 @@ const DEFAULT_AI_SETTINGS = {
   requestTimeoutMs: 9 * 1000,
   maxConcurrency: 1,
   maxRetries: 1,
-  maxOutputTokens: 120,
+  maxOutputTokens: 0,
   interFlipDelayMs: 650,
   temperature: 0,
   forceDecision: true,
@@ -1054,14 +1054,19 @@ export default function AiSettingsPage() {
                       </SettingsFormLabel>
                       <Input
                         type="number"
-                        min={16}
-                        max={512}
+                        min={0}
+                        max={8192}
                         value={aiSolver.maxOutputTokens}
                         onChange={(e) =>
                           updateNumberField('maxOutputTokens', e.target.value)
                         }
                         w="xs"
                       />
+                      <Text fontSize="xs" color="muted">
+                        {t(
+                          'Use 0 for auto. Timeouts and session deadline stay the real hard limits.'
+                        )}
+                      </Text>
                     </SettingsFormControl>
 
                     <SettingsFormControl>

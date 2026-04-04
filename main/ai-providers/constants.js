@@ -95,7 +95,9 @@ const STRICT_PROFILE = {
   requestTimeoutMs: 9 * 1000,
   maxConcurrency: 1,
   maxRetries: 1,
-  maxOutputTokens: 120,
+  // 0 means "auto": do not impose an explicit completion token cap unless a
+  // provider requires one. Runtime is bounded primarily by request/deadline.
+  maxOutputTokens: 0,
   interFlipDelayMs: 650,
   temperature: 0,
   forceDecision: true,
@@ -112,7 +114,7 @@ const CUSTOM_LIMITS = {
   requestTimeoutMs: [1000, 180 * 1000],
   maxConcurrency: [1, 6],
   maxRetries: [0, 3],
-  maxOutputTokens: [16, 512],
+  maxOutputTokens: [0, 8192],
   interFlipDelayMs: [0, 5000],
   temperature: [0, 2],
   uncertaintyConfidenceThreshold: [0, 1],
