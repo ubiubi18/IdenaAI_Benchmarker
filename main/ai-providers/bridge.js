@@ -1853,7 +1853,8 @@ function pickBestProviderDraftCandidate(stories, options = {}) {
 }
 
 function buildExpandedStoryProfile(baseProfile, options = {}) {
-  const profile = baseProfile && typeof baseProfile === 'object' ? baseProfile : {}
+  const profile =
+    baseProfile && typeof baseProfile === 'object' ? baseProfile : {}
   const growthFactor = Math.max(1, Number(options.growthFactor) || 1)
   const extraTokens = Math.max(0, Number(options.extraTokens) || 0)
   const minOutputTokens = Math.max(0, Number(options.minOutputTokens) || 0)
@@ -1880,12 +1881,16 @@ function buildExpandedStoryProfile(baseProfile, options = {}) {
 }
 
 function hasReachableProviderStoryAttempt(attemptHistory) {
-  return (Array.isArray(attemptHistory) ? attemptHistory : []).some((attempt) => {
-    const outcome = String(
-      attempt && attempt.outcome ? attempt.outcome : ''
-    ).trim()
-    return Boolean(outcome) && outcome !== STORY_PROVIDER_OUTCOMES.TRANSPORT_ERROR
-  })
+  return (Array.isArray(attemptHistory) ? attemptHistory : []).some(
+    (attempt) => {
+      const outcome = String(
+        attempt && attempt.outcome ? attempt.outcome : ''
+      ).trim()
+      return (
+        Boolean(outcome) && outcome !== STORY_PROVIDER_OUTCOMES.TRANSPORT_ERROR
+      )
+    }
+  )
 }
 
 function buildProviderDraftRescueStory({
@@ -4234,43 +4239,31 @@ function createAiProviderBridge(logger, dependencies = {}) {
       Number.isFinite(Number(payload.temperature)) &&
       Number(payload.temperature) >= 0
     const defaultTemperature = fastStoryMode ? 0.7 : 0.85
+    let defaultStoryRequestTimeoutMs = 34000
+    if (fastStoryMode) {
+      defaultStoryRequestTimeoutMs = requestedStoryCount === 1 ? 18000 : 22000
+    } else if (requestedStoryCount === 1) {
+      defaultStoryRequestTimeoutMs = 28000
+    }
+    let defaultStoryMaxOutputTokens = 2600
+    if (fastStoryMode) {
+      defaultStoryMaxOutputTokens = requestedStoryCount === 1 ? 1200 : 1600
+    } else if (requestedStoryCount === 1) {
+      defaultStoryMaxOutputTokens = 1800
+    }
 
     const profile = sanitizeBenchmarkProfile({
       benchmarkProfile: 'custom',
       requestTimeoutMs:
-        payload.requestTimeoutMs ||
-        (fastStoryMode
-          ? requestedStoryCount === 1
-            ? 18000
-            : 22000
-          : requestedStoryCount === 1
-            ? 28000
-            : 34000),
-      maxOutputTokens:
-        payload.maxOutputTokens ||
-        (fastStoryMode
-          ? requestedStoryCount === 1
-            ? 1200
-            : 1600
-          : requestedStoryCount === 1
-            ? 1800
-            : 2600),
+        payload.requestTimeoutMs || defaultStoryRequestTimeoutMs,
+      maxOutputTokens: payload.maxOutputTokens || defaultStoryMaxOutputTokens,
       temperature: hasCustomTemperature
         ? Number(payload.temperature)
         : defaultTemperature,
       maxRetries: payload.maxRetries || 2,
       maxConcurrency: 1,
       deadlineMs: Math.max(
-        Number(
-          payload.requestTimeoutMs ||
-            (fastStoryMode
-              ? requestedStoryCount === 1
-                ? 18000
-                : 22000
-              : requestedStoryCount === 1
-                ? 28000
-                : 34000)
-        ) + 5000,
+        Number(payload.requestTimeoutMs || defaultStoryRequestTimeoutMs) + 5000,
         fastStoryMode ? 16000 : 22000
       ),
     })
@@ -5426,7 +5419,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
               senseSelection,
               index,
               rationale:
-              'Provider draft kept as an editable storyboard draft because stronger versions did not pass automatic quality checks.',
+                'Provider draft kept as an editable storyboard draft because stronger versions did not pass automatic quality checks.',
             })
           )
       : []

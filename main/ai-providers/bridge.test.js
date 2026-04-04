@@ -1143,7 +1143,9 @@ describe('createAiProviderBridge', () => {
   })
 
   it('builds keyword-based fallback story options only when the provider is unreachable', async () => {
-    const invokeProvider = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'))
+    const invokeProvider = jest
+      .fn()
+      .mockRejectedValue(new Error('ECONNREFUSED'))
 
     const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
     bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
@@ -1331,9 +1333,7 @@ describe('createAiProviderBridge', () => {
   it('escalates token budget on last-chance provider rescue before any local fallback', async () => {
     const invokeProvider = jest.fn().mockImplementation(async (payload) => {
       const phase =
-        payload &&
-        payload.promptOptions &&
-        payload.promptOptions.promptPhase
+        payload && payload.promptOptions && payload.promptOptions.promptPhase
           ? payload.promptOptions.promptPhase
           : 'unknown'
 

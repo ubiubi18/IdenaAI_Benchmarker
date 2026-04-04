@@ -1163,7 +1163,7 @@ export default function NewFlipPage() {
     useState(false)
   const [storyOptions, setStoryOptions] = useState([])
   const [selectedStoryId, setSelectedStoryId] = useState('')
-  const [storyOptionCount, setStoryOptionCount] = useState(1)
+  const storyOptionCount = 1
   const [aiProviderKeyStatus, setAiProviderKeyStatus] = useState({
     checked: false,
     hasKey: false,
@@ -1818,6 +1818,8 @@ export default function NewFlipPage() {
     basePanels = null,
   } = {}) => {
     setIsGeneratingStoryOptions(true)
+    setStoryOptions([])
+    setSelectedStoryId('')
     try {
       await ensureAiRunReady()
       ensureAiSolverBridge()
@@ -3573,40 +3575,24 @@ export default function NewFlipPage() {
                             </Box>
                             <Box>
                               <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Story options')}
+                                {t('Story draft mode')}
                               </Text>
-                              <Select
-                                value={String(storyOptionCount)}
-                                onChange={(e) =>
-                                  setStoryOptionCount(
-                                    Math.max(
-                                      1,
-                                      Math.min(
-                                        2,
-                                        toInt(
-                                          e && e.target
-                                            ? e.target.value
-                                            : storyOptionCount,
-                                          1
-                                        )
-                                      )
-                                    )
-                                  )
-                                }
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.100"
+                                borderRadius="md"
+                                px={3}
+                                py={2}
+                                bg="white"
                               >
-                                <option value="1">
+                                <Text fontSize="sm" fontWeight={500}>
                                   {t('1 strong editable draft')}
-                                </option>
-                                <option value="2">{t('2 alternatives')}</option>
-                              </Select>
+                                </Text>
+                              </Box>
                               <Text fontSize="xs" color="muted" mt={1}>
-                                {storyOptionCount === 1
-                                  ? t(
-                                      'Recommended for live use when you want one stronger draft and less fallback pressure.'
-                                    )
-                                  : t(
-                                      'Use two options when you want comparison and can tolerate stricter reranking.'
-                                    )}
+                                {t(
+                                  'Live builder uses one stronger editable draft to reduce fallback pressure and keep the flow simpler.'
+                                )}
                               </Text>
                             </Box>
                             <Box>
