@@ -2305,7 +2305,7 @@ describe('createAiProviderBridge', () => {
     )
   })
 
-  it('keeps refusal separate from parse_fail and throws instead of using local fallback after safe replan fails', async () => {
+  it('keeps refusal separate from parse_fail and returns an emergency editable draft after safe replan fails', async () => {
     const logger = mockLogger()
     const invokeProvider = jest
       .fn()
@@ -2335,20 +2335,30 @@ describe('createAiProviderBridge', () => {
     const bridge = createAiProviderBridge(logger, {invokeProvider})
     bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
 
-    await expect(
-      bridge.generateStoryOptions({
-        provider: 'openai',
-        model: 'gpt-4o-mini',
-        fastStoryMode: true,
-        storyOptionCount: 1,
-        keywords: ['shock', 'ghost'],
-        includeNoise: false,
-        hasCustomStory: false,
-      })
-    ).rejects.toThrow(
-      /Provider responded but no usable storyboard draft could be recovered/
-    )
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['shock', 'ghost'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
     expect(invokeProvider).toHaveBeenCalledTimes(2)
+    expect(result.metrics.parse_fail).toBe(0)
+    expect(result.metrics.safe_replan_used).toBe(true)
+    expect(result.metrics.fallback_used).toBe(false)
+    expect(result.stories).toHaveLength(1)
+    expect(result.stories[0].isStoryboardStarter).toBe(true)
+    expect(result.stories[0].rationale).toMatch(
+      /Emergency editable storyboard draft/i
+    )
+    expect(result.stories[0].editingTip).toMatch(/manual review/i)
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('ghost')
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toMatch(
+      /startled|shock|jolts/
+    )
   })
 
   it('uses locked senses in local fallback stories only when the provider is unreachable', async () => {

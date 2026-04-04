@@ -2317,6 +2317,45 @@ function buildKeywordFallbackStories({
   ]
 }
 
+function buildEmergencyStoryboardStarterStories({
+  keywordA,
+  keywordB,
+  includeNoise = false,
+  customStory = null,
+  humanStorySeed = '',
+  senseSelection = null,
+  emergencyReasonText = '',
+  requestedStoryCount = 1,
+}) {
+  const baseStories = buildKeywordFallbackStories({
+    keywordA,
+    keywordB,
+    includeNoise,
+    customStory,
+    humanStorySeed,
+    senseSelection,
+    fallbackReasonText: emergencyReasonText,
+  })
+  const reasonText = String(emergencyReasonText || '').trim()
+  const primaryRationale = reasonText
+    ? `Emergency editable storyboard draft shown because ${reasonText}. It does not meet automatic quality requirements yet.`
+    : 'Emergency editable storyboard draft shown because the provider did not return a usable draft. It does not meet automatic quality requirements yet.'
+  const secondaryRationale = reasonText
+    ? `Alternative emergency editable storyboard draft shown because ${reasonText}. It does not meet automatic quality requirements yet.`
+    : 'Alternative emergency editable storyboard draft shown because the provider did not return a usable draft. It does not meet automatic quality requirements yet.'
+
+  return baseStories.slice(0, requestedStoryCount).map((story, index) => ({
+    ...story,
+    rationale: index === 0 ? primaryRationale : secondaryRationale,
+    editingTip: `${buildLocalFallbackEditingTip(
+      senseSelection,
+      keywordA,
+      keywordB
+    )} This draft is intentionally weakly approved for manual review: either use it as a base or regenerate/optimize it.`,
+    isStoryboardStarter: true,
+  }))
+}
+
 function normalizeStoryOptionFromStructuredItem(item, index) {
   const option = item && typeof item === 'object' ? item : {}
   const sourcePanels = Array.isArray(option.panels)
@@ -5490,17 +5529,34 @@ function createAiProviderBridge(logger, dependencies = {}) {
 
     if (stories.length < 1) {
       if (!allowLocalFallback) {
-        throw new Error(
-          'Provider responded but no usable storyboard draft could be recovered after rescue attempts. Try Optimize story further or rewrite the draft seed.'
-        )
-      }
-      const emergencyFallbackQuality = getFallbackCandidateQuality()
-      stories = emergencyFallbackQuality.accepted.slice(0, requestedStoryCount)
-      if (stories.length < 1) {
-        stories = sortStoriesByQuality(emergencyFallbackQuality.rejected).slice(
+        logger.info('AI story emergency editable draft path', {
+          provider,
+          model,
+          lastOutcome: selectedAttempt.outcome,
+          attempts: attemptHistory,
+        })
+        stories = buildEmergencyStoryboardStarterStories({
+          keywordA,
+          keywordB,
+          includeNoise,
+          customStory: hasCustomStory ? customStory : null,
+          humanStorySeed,
+          senseSelection,
+          emergencyReasonText:
+            'the provider was reachable but rescue attempts still did not yield a usable storyboard draft',
+          requestedStoryCount,
+        })
+      } else {
+        const emergencyFallbackQuality = getFallbackCandidateQuality()
+        stories = emergencyFallbackQuality.accepted.slice(
           0,
           requestedStoryCount
         )
+        if (stories.length < 1) {
+          stories = sortStoriesByQuality(
+            emergencyFallbackQuality.rejected
+          ).slice(0, requestedStoryCount)
+        }
       }
     }
 
