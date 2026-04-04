@@ -1142,15 +1142,8 @@ describe('createAiProviderBridge', () => {
     })
   })
 
-  it('builds keyword-based fallback story options when provider returns empty text', async () => {
-    const invokeProvider = jest.fn().mockResolvedValue({
-      rawText: '',
-      usage: {
-        promptTokens: 18,
-        completionTokens: 0,
-        totalTokens: 18,
-      },
-    })
+  it('builds keyword-based fallback story options only when the provider is unreachable', async () => {
+    const invokeProvider = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'))
 
     const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
     bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
@@ -1158,22 +1151,22 @@ describe('createAiProviderBridge', () => {
     const result = await bridge.generateStoryOptions({
       provider: 'openai',
       model: 'gpt-4o-mini',
+      storyOptionCount: 1,
       keywords: ['monkey', 'focus'],
       includeNoise: false,
       hasCustomStory: false,
     })
 
-    expect(result.stories).toHaveLength(2)
+    expect(result.stories).toHaveLength(1)
     expect(result.stories[0].panels.join(' ')).toContain('monkey')
     expect(result.stories[0].panels.join(' ')).toContain('focus')
+    expect(result.metrics.fallback_used).toBe(true)
     expect(result.stories[0].panels).not.toEqual([
       'Panel 1: add a clear event in the story.',
       'Panel 2: add a clear event in the story.',
       'Panel 3: add a clear event in the story.',
       'Panel 4: add a clear event in the story.',
     ])
-    expect(result.stories[1].panels.join(' ')).toContain('monkey')
-    expect(result.stories[1].panels.join(' ')).toContain('focus')
   })
 
   it('supports a single strong story option without forcing a second fallback path', async () => {
@@ -1317,16 +1310,97 @@ describe('createAiProviderBridge', () => {
       hasCustomStory: false,
     })
 
-    expect(invokeProvider).toHaveBeenCalledTimes(3)
-    expect(invokeProvider.mock.calls[2][0].promptOptions.promptPhase).toBe(
-      'story_options_freeform_rescue'
-    )
+    expect(invokeProvider.mock.calls.length).toBeGreaterThanOrEqual(3)
+    expect(
+      invokeProvider.mock.calls.some(
+        ([payload]) =>
+          payload &&
+          payload.promptOptions &&
+          payload.promptOptions.promptPhase === 'story_options_freeform_rescue'
+      )
+    ).toBe(true)
     expect(result.metrics.fallback_used).toBe(false)
     expect(result.stories).toHaveLength(1)
     expect(result.stories[0].panels[0].toLowerCase()).toContain('magazine')
     expect(result.stories[0].panels[1].toLowerCase()).toContain('hoola hoop')
     expect(result.stories[0].rationale.toLowerCase()).not.toContain(
       'local fallback'
+    )
+  })
+
+  it('escalates token budget on last-chance provider rescue before any local fallback', async () => {
+    const invokeProvider = jest.fn().mockImplementation(async (payload) => {
+      const phase =
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase
+          ? payload.promptOptions.promptPhase
+          : 'unknown'
+
+      if (phase === 'story_options_last_chance_rescue') {
+        return {
+          rawText: [
+            'A child beats a drum beside a castle gate while a kind queen hands out flowers to the crowd.',
+            'The drum strap snaps and the rolling drum startles the queen, who drops the flower basket into a puddle.',
+            'Flowers scatter across the wet stones as the drum bumps against the gate and the queen reaches after the mess.',
+            'The soaked flowers lie around the stopped drum while the queen kneels by the gate and the crowd stares.',
+          ].join('\n'),
+          usage: {
+            promptTokens: 45,
+            completionTokens: 65,
+            totalTokens: 110,
+          },
+        }
+      }
+
+      return {
+        rawText: '',
+        usage: {
+          promptTokens: 40,
+          completionTokens: 0,
+          totalTokens: 40,
+        },
+      }
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['drum', 'kind king/queen'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    const freeformRescueCall = invokeProvider.mock.calls.find(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase === 'story_options_freeform_rescue'
+    )
+    const lastChanceRescueCall = invokeProvider.mock.calls.find(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase === 'story_options_last_chance_rescue'
+    )
+
+    expect(result.metrics.fallback_used).toBe(false)
+    expect(freeformRescueCall).toBeDefined()
+    expect(lastChanceRescueCall).toBeDefined()
+    expect(freeformRescueCall[0].profile.maxOutputTokens).toBeGreaterThan(
+      invokeProvider.mock.calls[0][0].profile.maxOutputTokens
+    )
+    expect(lastChanceRescueCall[0].profile.maxOutputTokens).toBeGreaterThan(
+      freeformRescueCall[0].profile.maxOutputTokens
+    )
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('drum')
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toMatch(
+      /queen|king/
     )
   })
 
@@ -1588,15 +1662,8 @@ describe('createAiProviderBridge', () => {
     )
   })
 
-  it('returns explicit storyboard starter guidance for ambiguous raw-keyword fallback', async () => {
-    const invokeProvider = jest.fn().mockResolvedValue({
-      rawText: '',
-      usage: {
-        promptTokens: 18,
-        completionTokens: 0,
-        totalTokens: 18,
-      },
-    })
+  it('returns explicit storyboard starter guidance only when fallback is forced by provider transport failure', async () => {
+    const invokeProvider = jest.fn().mockRejectedValue(new Error('ETIMEDOUT'))
 
     const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
     bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
@@ -1605,6 +1672,7 @@ describe('createAiProviderBridge', () => {
       provider: 'openai',
       model: 'gpt-4o-mini',
       fastStoryMode: true,
+      storyOptionCount: 1,
       keywords: ['jump', 'sport'],
       includeNoise: false,
       hasCustomStory: false,
@@ -2237,7 +2305,7 @@ describe('createAiProviderBridge', () => {
     )
   })
 
-  it('keeps refusal separate from parse_fail and still falls back with locked senses after safe replan fails', async () => {
+  it('keeps refusal separate from parse_fail and throws instead of using local fallback after safe replan fails', async () => {
     const logger = mockLogger()
     const invokeProvider = jest
       .fn()
@@ -2267,50 +2335,25 @@ describe('createAiProviderBridge', () => {
     const bridge = createAiProviderBridge(logger, {invokeProvider})
     bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
 
-    const result = await bridge.generateStoryOptions({
-      provider: 'openai',
-      model: 'gpt-4o-mini',
-      fastStoryMode: true,
-      keywords: ['shock', 'ghost'],
-      includeNoise: false,
-      hasCustomStory: false,
-    })
-
+    await expect(
+      bridge.generateStoryOptions({
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        fastStoryMode: true,
+        storyOptionCount: 1,
+        keywords: ['shock', 'ghost'],
+        includeNoise: false,
+        hasCustomStory: false,
+      })
+    ).rejects.toThrow(
+      /Provider responded but no usable storyboard draft could be recovered/
+    )
     expect(invokeProvider).toHaveBeenCalledTimes(2)
-    expect(result.metrics.parse_fail).toBe(0)
-    expect(result.metrics.safe_replan_used).toBe(true)
-    expect(result.metrics.fallback_used).toBe(true)
-    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('ghost')
-    expect(result.stories[0].panels.join(' ').toLowerCase()).toMatch(
-      /startled|shock|jolts/
-    )
-    expect(result.stories[0].panels.join(' ').toLowerCase()).not.toContain(
-      'electric'
-    )
-    expect(logger.info).toHaveBeenCalledWith(
-      'AI story final fallback path',
-      expect.objectContaining({
-        lastOutcome: 'refusal',
-      })
-    )
-    expect(logger.info).toHaveBeenCalledWith(
-      'AI story fallback sense lock',
-      expect.objectContaining({
-        fallbackUsedLockedSenses: true,
-      })
-    )
   })
 
-  it('uses locked senses in fallback stories instead of ambiguous raw keyword drift', async () => {
+  it('uses locked senses in local fallback stories only when the provider is unreachable', async () => {
     const logger = mockLogger()
-    const invokeProvider = jest.fn().mockResolvedValue({
-      rawText: '',
-      usage: {
-        promptTokens: 18,
-        completionTokens: 0,
-        totalTokens: 18,
-      },
-    })
+    const invokeProvider = jest.fn().mockRejectedValue(new Error('ENOTFOUND'))
 
     const bridge = createAiProviderBridge(logger, {invokeProvider})
     bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
@@ -2318,6 +2361,7 @@ describe('createAiProviderBridge', () => {
     const result = await bridge.generateStoryOptions({
       provider: 'openai',
       model: 'gpt-4o-mini',
+      storyOptionCount: 1,
       keywords: ['shock', 'ghost'],
       includeNoise: false,
       hasCustomStory: false,
@@ -2626,11 +2670,7 @@ describe('createAiProviderBridge', () => {
     expect(result.stories.map((story) => story.title)).toContain(
       'Mirror scare A'
     )
-    expect(
-      result.stories.some((story) =>
-        /local fallback/i.test(String(story.rationale || ''))
-      )
-    ).toBe(true)
+    expect(result.metrics.fallback_used).toBe(true)
     expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('mirror')
     expect(result.stories[1].panels.join(' ').toLowerCase()).toContain('ghost')
     expect(result.stories[0].senseSelection.selected_pair).toMatchObject({

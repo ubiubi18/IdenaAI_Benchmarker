@@ -1437,7 +1437,6 @@ function buildStoryOptionRepairPrompt({
 }
 
 function buildSingleStoryDraftRescuePrompt({
-  basePrompt,
   keywordA,
   keywordB,
   senseSelection,
@@ -1451,19 +1450,58 @@ function buildSingleStoryDraftRescuePrompt({
   )
 
   return [
-    basePrompt,
-    '',
     'Provider draft rescue:',
-    'The strict schema path failed to yield one usable story.',
-    'Now ignore JSON completely and return exactly 4 plain lines only.',
+    'Return exactly 4 plain storyboard lines only.',
     'Each line must be one real panel beat in order: before, trigger, reaction, after.',
-    'Write an actual storyboard, not instructions to the user.',
+    'Write an actual storyboard, not JSON, not instructions to the user, and not meta commentary.',
     'Do not say things like "choose a room", "bring X into the scene", or "show the consequence".',
     'Use one specific place, one visible trigger, one concrete physical consequence, and one final stable image.',
     `Keep "${safeKeywordA}" and "${safeKeywordB}" visibly important in the actual scene.`,
     'No numbering, no labels, no markdown, no JSON, and no commentary.',
     ...lockedSenseLines,
   ].join('\n')
+}
+
+function buildSingleStoryLastChanceRescuePrompt({
+  keywordA,
+  keywordB,
+  senseSelection,
+  customStory,
+}) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || 'keyword 1'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || 'keyword 2'
+  const lockedSenseLines = formatSensePromptLines(
+    senseSelection,
+    safeKeywordA,
+    safeKeywordB
+  )
+  const baseStory = normalizeStoryPanels(customStory)
+  const customStoryHint =
+    baseStory.length > 0
+      ? `If useful, keep the user's draft direction but rewrite it into better visual beats:
+1) ${baseStory[0]}
+2) ${baseStory[1]}
+3) ${baseStory[2]}
+4) ${baseStory[3]}`
+      : ''
+
+  return [
+    'Last-chance provider storyboard rescue:',
+    'Write one usable 4-panel silent storyboard for a human editor.',
+    'Return exactly 4 plain lines only.',
+    `Keywords: "${safeKeywordA}" and "${safeKeywordB}".`,
+    'Line 1: specific setup in one place.',
+    'Line 2: the exact trigger that visibly changes the scene.',
+    'Line 3: the strongest visible consequence.',
+    'Line 4: a stable final aftermath that is obvious at a glance.',
+    'Concrete props, accidents, reveals, spills, breakage, motion, and aftermath are good.',
+    'Forbidden filler: "choose a room", "bring X into the scene", "show the consequence", "interacts with both", "uses X as a tool", "observes the final result".',
+    'No numbering, no labels, no markdown, no JSON, no commentary.',
+    ...lockedSenseLines,
+    customStoryHint,
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function classifyTextualStoryProviderOutcome(rawText) {
@@ -1774,14 +1812,19 @@ function buildProviderDraftEditingTip(keywordA, keywordB) {
   return `The provider produced a readable draft, but it was still weak for auto-approval. Rewrite the place, trigger, and visible aftermath in your own words before building images for "${safeKeywordA}" and "${safeKeywordB}".`
 }
 
-function isProviderDraftRescueCandidate(story) {
+function isProviderMeaningfulDraftCandidate(story) {
   const item = story && typeof story === 'object' ? story : null
   if (!item) return false
   const source = String(item.candidateSource || '')
     .trim()
     .toLowerCase()
   if (!source || source === 'local_fallback') return false
-  if (!hasMeaningfulStoryPanels(item.panels)) return false
+  return hasMeaningfulStoryPanels(item.panels)
+}
+
+function isProviderDraftRescueCandidate(story) {
+  const item = story && typeof story === 'object' ? story : null
+  if (!isProviderMeaningfulDraftCandidate(item)) return false
   const report =
     item.qualityReport && typeof item.qualityReport === 'object'
       ? item.qualityReport
@@ -1798,12 +1841,77 @@ function isProviderDraftRescueCandidate(story) {
   return Number(report.score) >= 70
 }
 
-function pickBestProviderDraftCandidate(stories) {
+function pickBestProviderDraftCandidate(stories, options = {}) {
+  const useStrictFilter = options.strict !== false
   return sortStoriesByQuality(
     (Array.isArray(stories) ? stories : []).filter(
-      isProviderDraftRescueCandidate
+      useStrictFilter
+        ? isProviderDraftRescueCandidate
+        : isProviderMeaningfulDraftCandidate
     )
   )[0]
+}
+
+function buildExpandedStoryProfile(baseProfile, options = {}) {
+  const profile = baseProfile && typeof baseProfile === 'object' ? baseProfile : {}
+  const growthFactor = Math.max(1, Number(options.growthFactor) || 1)
+  const extraTokens = Math.max(0, Number(options.extraTokens) || 0)
+  const minOutputTokens = Math.max(0, Number(options.minOutputTokens) || 0)
+  const extraTimeoutMs = Math.max(0, Number(options.extraTimeoutMs) || 0)
+  const nextMaxOutputTokens = Math.max(
+    minOutputTokens,
+    Number(profile.maxOutputTokens || 0) + extraTokens,
+    Math.ceil(Number(profile.maxOutputTokens || 0) * growthFactor)
+  )
+  const nextRequestTimeoutMs = Math.max(
+    Number(profile.requestTimeoutMs || 0) + extraTimeoutMs,
+    Number(profile.requestTimeoutMs || 0)
+  )
+
+  return {
+    ...profile,
+    maxOutputTokens: nextMaxOutputTokens,
+    requestTimeoutMs: nextRequestTimeoutMs,
+    deadlineMs: Math.max(
+      Number(profile.deadlineMs || 0) + extraTimeoutMs,
+      nextRequestTimeoutMs + 5000
+    ),
+  }
+}
+
+function hasReachableProviderStoryAttempt(attemptHistory) {
+  return (Array.isArray(attemptHistory) ? attemptHistory : []).some((attempt) => {
+    const outcome = String(
+      attempt && attempt.outcome ? attempt.outcome : ''
+    ).trim()
+    return Boolean(outcome) && outcome !== STORY_PROVIDER_OUTCOMES.TRANSPORT_ERROR
+  })
+}
+
+function buildProviderDraftRescueStory({
+  story,
+  keywordA,
+  keywordB,
+  senseSelection,
+  index = 0,
+  rationale,
+}) {
+  const item = story && typeof story === 'object' ? story : {}
+  return normalizeStoryOption(
+    {
+      ...item,
+      title: String(item.title || '').trim() || `Option ${index + 1}`,
+      rationale: String(rationale || '').trim(),
+      editingTip: buildProviderDraftEditingTip(keywordA, keywordB),
+      isStoryboardStarter: true,
+      senseSelection,
+      qualityReport:
+        item.qualityReport && typeof item.qualityReport === 'object'
+          ? item.qualityReport
+          : null,
+    },
+    index
+  )
 }
 
 function buildKeywordFallbackPanels(
@@ -4130,17 +4238,40 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const profile = sanitizeBenchmarkProfile({
       benchmarkProfile: 'custom',
       requestTimeoutMs:
-        payload.requestTimeoutMs || (fastStoryMode ? 12000 : 20000),
-      maxOutputTokens: payload.maxOutputTokens || (fastStoryMode ? 700 : 1200),
+        payload.requestTimeoutMs ||
+        (fastStoryMode
+          ? requestedStoryCount === 1
+            ? 18000
+            : 22000
+          : requestedStoryCount === 1
+            ? 28000
+            : 34000),
+      maxOutputTokens:
+        payload.maxOutputTokens ||
+        (fastStoryMode
+          ? requestedStoryCount === 1
+            ? 1200
+            : 1600
+          : requestedStoryCount === 1
+            ? 1800
+            : 2600),
       temperature: hasCustomTemperature
         ? Number(payload.temperature)
         : defaultTemperature,
-      maxRetries: payload.maxRetries || 1,
+      maxRetries: payload.maxRetries || 2,
       maxConcurrency: 1,
       deadlineMs: Math.max(
-        Number(payload.requestTimeoutMs || (fastStoryMode ? 12000 : 20000)) +
-          3000,
-        fastStoryMode ? 10000 : 15000
+        Number(
+          payload.requestTimeoutMs ||
+            (fastStoryMode
+              ? requestedStoryCount === 1
+                ? 18000
+                : 22000
+              : requestedStoryCount === 1
+                ? 28000
+                : 34000)
+        ) + 5000,
+        fastStoryMode ? 16000 : 22000
       ),
     })
     const startedAt = now()
@@ -4802,7 +4933,18 @@ function createAiProviderBridge(logger, dependencies = {}) {
       return repairAttempt
     }
 
-    async function runSingleStoryDraftRescueAttempt() {
+    async function runSingleStoryDraftRescueAttempt({
+      attemptLabel = 'provider_story_options_freeform_rescue',
+      promptPhase = 'story_options_freeform_rescue',
+      profileOverride = buildExpandedStoryProfile(profile, {
+        minOutputTokens: 1800,
+        growthFactor: 1.6,
+        extraTokens: 500,
+        extraTimeoutMs: 6000,
+      }),
+      requestHash = `story-option-rescue-${startedAt}`,
+      lastChance = false,
+    } = {}) {
       if (requestedStoryCount !== 1) {
         return {
           quality: {accepted: [], rejected: []},
@@ -4814,7 +4956,11 @@ function createAiProviderBridge(logger, dependencies = {}) {
       logger.info('AI story provider draft rescue path', {
         provider,
         model,
-        reason: 'single_story_freeform_rescue',
+        reason: lastChance
+          ? 'single_story_last_chance_rescue'
+          : 'single_story_freeform_rescue',
+        attempt: attemptLabel,
+        maxOutputTokens: profileOverride.maxOutputTokens,
       })
 
       try {
@@ -4822,22 +4968,28 @@ function createAiProviderBridge(logger, dependencies = {}) {
           provider,
           model,
           flip: {
-            hash: `story-option-rescue-${startedAt}`,
+            hash: requestHash,
             leftImage: '',
             rightImage: '',
             images: [],
           },
-          profile,
+          profile: profileOverride,
           apiKey,
           providerConfig,
-          promptText: buildSingleStoryDraftRescuePrompt({
-            basePrompt: promptText,
-            keywordA,
-            keywordB,
-            senseSelection,
-          }),
+          promptText: lastChance
+            ? buildSingleStoryLastChanceRescuePrompt({
+                keywordA,
+                keywordB,
+                senseSelection,
+                customStory: hasCustomStory ? customStory : null,
+              })
+            : buildSingleStoryDraftRescuePrompt({
+                keywordA,
+                keywordB,
+                senseSelection,
+              }),
           promptOptions: {
-            promptPhase: 'story_options_freeform_rescue',
+            promptPhase,
           },
         })
 
@@ -4847,8 +4999,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
           normalizedResponse.tokenUsage
         )
         attemptHistory.push({
-          attempt: 'provider_story_options_freeform_rescue',
-          promptPhase: 'story_options_freeform_rescue',
+          attempt: attemptLabel,
+          promptPhase,
           outcome: normalizedResponse.rawText
             ? 'freeform_story_draft'
             : 'empty',
@@ -4875,8 +5027,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
         }
       } catch (error) {
         attemptHistory.push({
-          attempt: 'provider_story_options_freeform_rescue',
-          promptPhase: 'story_options_freeform_rescue',
+          attempt: attemptLabel,
+          promptPhase,
           outcome: 'transport_error',
           detail: sanitizeStoryLogText(
             (error && error.message) || error || '',
@@ -5102,8 +5254,30 @@ function createAiProviderBridge(logger, dependencies = {}) {
       if (freeformRescue.quality.accepted.length > 0) {
         initialQuality = freeformRescue.quality
         initialQualitySource = 'provider_story_options_freeform_rescue'
+      } else {
+        collectProviderDraftRejectedCandidates(freeformRescue.quality)
+        const lastChanceRescue = await runSingleStoryDraftRescueAttempt({
+          attemptLabel: 'provider_story_options_last_chance_rescue',
+          promptPhase: 'story_options_last_chance_rescue',
+          profileOverride: buildExpandedStoryProfile(profile, {
+            minOutputTokens: 2400,
+            growthFactor: 2,
+            extraTokens: 1000,
+            extraTimeoutMs: 10000,
+          }),
+          requestHash: `story-option-last-chance-${startedAt}`,
+          lastChance: true,
+        })
+        if (lastChanceRescue.quality.accepted.length > 0) {
+          initialQuality = lastChanceRescue.quality
+          initialQualitySource = 'provider_story_options_last_chance_rescue'
+        } else {
+          collectProviderDraftRejectedCandidates(lastChanceRescue.quality)
+        }
       }
     }
+
+    const providerReachable = hasReachableProviderStoryAttempt(attemptHistory)
 
     if (selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SCHEMA_INVALID) {
       storyFallbackReasonText =
@@ -5124,34 +5298,39 @@ function createAiProviderBridge(logger, dependencies = {}) {
         : null
     if (stories.length < 1 && requestedStoryCount === 1) {
       const rescuedProviderDraft = pickBestProviderDraftCandidate(
-        providerDraftRejectedCandidates
+        providerDraftRejectedCandidates,
+        {strict: true}
       )
-      if (rescuedProviderDraft) {
+      const broadProviderDraft =
+        rescuedProviderDraft ||
+        (providerReachable
+          ? pickBestProviderDraftCandidate(providerDraftRejectedCandidates, {
+              strict: false,
+            })
+          : null)
+      if (broadProviderDraft) {
         logger.info('AI story provider draft rescue path', {
           provider,
           model,
-          source: rescuedProviderDraft.candidateSource,
+          source: broadProviderDraft.candidateSource,
+          rescueStrength: rescuedProviderDraft ? 'strict' : 'broad',
           failures:
-            rescuedProviderDraft.qualityReport &&
-            rescuedProviderDraft.qualityReport.failures,
+            broadProviderDraft.qualityReport &&
+            broadProviderDraft.qualityReport.failures,
           score:
-            rescuedProviderDraft.qualityReport &&
-            rescuedProviderDraft.qualityReport.score,
+            broadProviderDraft.qualityReport &&
+            broadProviderDraft.qualityReport.score,
         })
         stories = [
-          normalizeStoryOption(
-            {
-              ...rescuedProviderDraft,
-              title:
-                String(rescuedProviderDraft.title || '').trim() || 'Option 1',
-              rationale:
-                'Provider draft kept as an editable storyboard starter after quality checks judged it too weak for auto-approval.',
-              editingTip: buildProviderDraftEditingTip(keywordA, keywordB),
-              isStoryboardStarter: true,
-              senseSelection,
-            },
-            0
-          ),
+          buildProviderDraftRescueStory({
+            story: broadProviderDraft,
+            keywordA,
+            keywordB,
+            senseSelection,
+            index: 0,
+            rationale:
+              'Provider draft kept as an editable storyboard draft after stronger repair attempts still judged it too weak for auto-approval.',
+          }),
         ]
         generationPath = `${selectedAttempt.attemptLabel}_provider_draft_rescue`
       }
@@ -5236,12 +5415,30 @@ function createAiProviderBridge(logger, dependencies = {}) {
       }
     }
 
-    const fallbackQuality = getFallbackCandidateQuality()
+    const providerDraftPool = providerReachable
+      ? sortStoriesByQuality(providerDraftRejectedCandidates)
+          .filter(isProviderMeaningfulDraftCandidate)
+          .map((story, index) =>
+            buildProviderDraftRescueStory({
+              story,
+              keywordA,
+              keywordB,
+              senseSelection,
+              index,
+              rationale:
+              'Provider draft kept as an editable storyboard draft because stronger versions did not pass automatic quality checks.',
+            })
+          )
+      : []
+    const allowLocalFallback = requestedStoryCount > 1 || !providerReachable
+    const fallbackQuality = allowLocalFallback
+      ? getFallbackCandidateQuality()
+      : {accepted: [], rejected: []}
     const shouldMixFallbackIntoSelection =
       requestedStoryCount > 1 || stories.length < requestedStoryCount
     const selectionPool = dedupeStoriesForSelection(
       shouldMixFallbackIntoSelection
-        ? stories.concat(fallbackQuality.accepted)
+        ? stories.concat(providerDraftPool, fallbackQuality.accepted)
         : stories
     )
     const diversitySelection = rerankStoriesForDiversity(selectionPool, stories)
@@ -5299,6 +5496,11 @@ function createAiProviderBridge(logger, dependencies = {}) {
     )
 
     if (stories.length < 1) {
+      if (!allowLocalFallback) {
+        throw new Error(
+          'Provider responded but no usable storyboard draft could be recovered after rescue attempts. Try Optimize story further or rewrite the draft seed.'
+        )
+      }
       const emergencyFallbackQuality = getFallbackCandidateQuality()
       stories = emergencyFallbackQuality.accepted.slice(0, requestedStoryCount)
       if (stories.length < 1) {
