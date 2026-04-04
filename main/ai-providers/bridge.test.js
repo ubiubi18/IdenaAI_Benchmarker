@@ -2361,6 +2361,44 @@ describe('createAiProviderBridge', () => {
     )
   })
 
+  it('enforces a higher single-story token floor and keeps reachable-provider failures out of local fallback mode', async () => {
+    const logger = mockLogger()
+    const invokeProvider = jest.fn().mockResolvedValue({
+      rawText: 'This response never becomes a usable storyboard draft.',
+      usage: {
+        promptTokens: 12,
+        completionTokens: 9,
+        totalTokens: 21,
+      },
+    })
+
+    const bridge = createAiProviderBridge(logger, {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      disableLocalFallback: true,
+      maxOutputTokens: 120,
+      keywords: ['storm', 'jump'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    expect(invokeProvider).toHaveBeenCalled()
+    expect(
+      invokeProvider.mock.calls[0][0].profile.maxOutputTokens
+    ).toBeGreaterThanOrEqual(1800)
+    expect(result.metrics.fallback_used).toBe(false)
+    expect(result.stories).toHaveLength(1)
+    expect(result.stories[0].rationale).toMatch(
+      /Emergency editable storyboard draft/i
+    )
+    expect(result.stories[0].rationale).not.toMatch(/local fallback/i)
+  })
+
   it('uses locked senses in local fallback stories only when the provider is unreachable', async () => {
     const logger = mockLogger()
     const invokeProvider = jest.fn().mockRejectedValue(new Error('ENOTFOUND'))

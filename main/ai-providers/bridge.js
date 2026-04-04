@@ -4257,6 +4257,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const requestedStoryCount = normalizeStoryOptionCount(
       payload.storyOptionCount
     )
+    const disableLocalFallback = payload.disableLocalFallback === true
     const fastStoryMode = payload.fastStoryMode === true
     const provider = normalizeProvider(payload.provider)
     const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
@@ -4286,26 +4287,66 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
     let defaultStoryMaxOutputTokens = 2600
     if (fastStoryMode) {
-      defaultStoryMaxOutputTokens = requestedStoryCount === 1 ? 1200 : 1600
+      defaultStoryMaxOutputTokens = requestedStoryCount === 1 ? 1800 : 2200
     } else if (requestedStoryCount === 1) {
-      defaultStoryMaxOutputTokens = 1800
+      defaultStoryMaxOutputTokens = 2600
+    }
+    let minimumStoryRequestTimeoutMs = 34000
+    if (fastStoryMode) {
+      minimumStoryRequestTimeoutMs = requestedStoryCount === 1 ? 20000 : 24000
+    } else if (requestedStoryCount === 1) {
+      minimumStoryRequestTimeoutMs = 30000
     }
 
-    const profile = sanitizeBenchmarkProfile({
+    let minimumStoryMaxOutputTokens = 3200
+    if (fastStoryMode) {
+      minimumStoryMaxOutputTokens = requestedStoryCount === 1 ? 1800 : 2200
+    } else if (requestedStoryCount === 1) {
+      minimumStoryMaxOutputTokens = 2600
+    }
+
+    let profile = sanitizeBenchmarkProfile({
       benchmarkProfile: 'custom',
-      requestTimeoutMs:
-        payload.requestTimeoutMs || defaultStoryRequestTimeoutMs,
-      maxOutputTokens: payload.maxOutputTokens || defaultStoryMaxOutputTokens,
+      requestTimeoutMs: Math.max(
+        Number(payload.requestTimeoutMs || defaultStoryRequestTimeoutMs),
+        minimumStoryRequestTimeoutMs
+      ),
+      maxOutputTokens: Math.max(
+        Number(payload.maxOutputTokens || defaultStoryMaxOutputTokens),
+        minimumStoryMaxOutputTokens
+      ),
       temperature: hasCustomTemperature
         ? Number(payload.temperature)
         : defaultTemperature,
       maxRetries: payload.maxRetries || 2,
       maxConcurrency: 1,
       deadlineMs: Math.max(
-        Number(payload.requestTimeoutMs || defaultStoryRequestTimeoutMs) + 5000,
+        Math.max(
+          Number(payload.requestTimeoutMs || defaultStoryRequestTimeoutMs),
+          minimumStoryRequestTimeoutMs
+        ) + 5000,
         fastStoryMode ? 16000 : 22000
       ),
     })
+    profile = {
+      ...profile,
+      requestTimeoutMs: Math.max(
+        Number(profile.requestTimeoutMs) || 0,
+        minimumStoryRequestTimeoutMs
+      ),
+      maxOutputTokens: Math.max(
+        Number(profile.maxOutputTokens) || 0,
+        minimumStoryMaxOutputTokens
+      ),
+      deadlineMs: Math.max(
+        Number(profile.deadlineMs) || 0,
+        Math.max(
+          Number(profile.requestTimeoutMs) || 0,
+          minimumStoryRequestTimeoutMs
+        ) + 5000,
+        fastStoryMode ? 16000 : 22000
+      ),
+    }
     const startedAt = now()
     const storyMetrics = createStoryGenerationMetrics()
     const storyEvaluationCache = new Map()
@@ -5462,7 +5503,9 @@ function createAiProviderBridge(logger, dependencies = {}) {
             })
           )
       : []
-    const allowLocalFallback = requestedStoryCount > 1 || !providerReachable
+    const allowLocalFallback = disableLocalFallback
+      ? !providerReachable
+      : requestedStoryCount > 1 || !providerReachable
     const fallbackQuality = allowLocalFallback
       ? getFallbackCandidateQuality()
       : {accepted: [], rejected: []}

@@ -234,6 +234,92 @@ function normalizeWeight(value, fallback = 1) {
   return Math.min(10, Math.max(0.05, parsed))
 }
 
+function resolveStoryGenerationMaxOutputTokens({
+  configuredMaxOutputTokens,
+  fastMode = true,
+  storyOptionCount = 1,
+  optimize = false,
+}) {
+  const configured = Math.max(0, toInt(configuredMaxOutputTokens, 0))
+  let minimum = 2600
+
+  if (fastMode) {
+    minimum = storyOptionCount > 1 ? 1800 : 1400
+    if (optimize) {
+      minimum += 400
+    }
+  } else {
+    minimum = storyOptionCount > 1 ? 3000 : 2200
+    if (optimize) {
+      minimum += 600
+    }
+  }
+
+  return Math.max(minimum, configured)
+}
+
+function isLocalFallbackStoryOption(option) {
+  const next = option && typeof option === 'object' ? option : {}
+  return /local fallback(?: storyboard starter)? generated because/i.test(
+    String(next.rationale || '')
+  )
+}
+
+function scorePreferredLiveStoryOption(option) {
+  const next = option && typeof option === 'object' ? option : {}
+  let score = 0
+
+  if (!isLocalFallbackStoryOption(next)) {
+    score += 90
+  }
+  if (!next.isStoryboardStarter) {
+    score += 40
+  }
+  if (!next.isWeakStoryDraft) {
+    score += 20
+  }
+  if (Number.isFinite(Number(next.qualityScore))) {
+    score += Number(next.qualityScore)
+  }
+  if (Array.isArray(next.qualityFailures)) {
+    score -= next.qualityFailures.length * 8
+  }
+
+  return score
+}
+
+function selectPreferredStoryOptions(options, requestedCount = 1) {
+  const source = Array.isArray(options) ? options.slice() : []
+  if (requestedCount !== 1) {
+    return source.slice(0, requestedCount)
+  }
+
+  const [best] = source
+    .map((option, index) => ({
+      option,
+      index,
+      score: scorePreferredLiveStoryOption(option),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score
+      }
+      return a.index - b.index
+    })
+
+  if (!best || !best.option) {
+    return []
+  }
+
+  return [
+    {
+      ...best.option,
+      id: 'option-1',
+      title: 'Option 1',
+    },
+  ]
+}
+
 function normalizeImageModelForPricing(model) {
   const normalized = String(model || '')
     .trim()
@@ -1840,6 +1926,13 @@ export default function NewFlipPage() {
         optimize && Array.isArray(basePanels) && basePanels.length > 0
           ? normalizeStoryPanelsInput(basePanels)
           : storyPanelsDraft
+      const storyGenerationMaxOutputTokens =
+        resolveStoryGenerationMaxOutputTokens({
+          configuredMaxOutputTokens: aiSolverSettings.maxOutputTokens,
+          fastMode: isFastMode,
+          storyOptionCount,
+          optimize,
+        })
 
       const response = await global.aiSolver.generateStoryOptions({
         ...baseRunPayload,
@@ -1847,23 +1940,24 @@ export default function NewFlipPage() {
         provider: aiSolverSettings.provider,
         model: reasoningModel,
         storyOptionCount,
+        disableLocalFallback: true,
         keywords: [keywordA, keywordB],
         includeNoise: storyIncludeNoise,
         noisePanelIndex: storyNoisePanelIndex,
         customStoryPanels: seededPanels,
         hasCustomStory: optimize,
-        maxOutputTokens: Math.max(
-          300,
-          toInt(aiSolverSettings.maxOutputTokens, 120)
-        ),
+        maxOutputTokens: storyGenerationMaxOutputTokens,
         temperature: storyTemperature,
       })
 
-      const options = Array.isArray(response && response.stories)
-        ? response.stories.map((item, index) =>
-            normalizeStoryOptionFromBackend(item, index)
-          )
-        : []
+      const options = selectPreferredStoryOptions(
+        Array.isArray(response && response.stories)
+          ? response.stories.map((item, index) =>
+              normalizeStoryOptionFromBackend(item, index)
+            )
+          : [],
+        storyOptionCount
+      )
 
       if (!options.length) {
         throw new Error('Story generation returned no options')
