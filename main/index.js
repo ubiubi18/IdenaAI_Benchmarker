@@ -76,6 +76,8 @@ const aiTestUnitBridge = createAiTestUnitBridge({
   aiProviderBridge,
 })
 
+const IMAGE_SEARCH_SOURCE_TIMEOUT_MS = 8000
+
 let mainWindow
 let node
 let nodeDownloadPromise = null
@@ -113,6 +115,25 @@ function normalizeImageSearchResult(item) {
   }
 
   return {image, thumbnail}
+}
+
+function withSearchSourceTimeout(
+  promise,
+  label,
+  timeoutMs = IMAGE_SEARCH_SOURCE_TIMEOUT_MS
+) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      setTimeout(() => {
+        logger.warn(`${label} timed out after ${timeoutMs}ms`)
+        resolve([])
+      }, timeoutMs)
+    }),
+  ]).catch((error) => {
+    logger.warn(`${label} failed`, error.toString())
+    return []
+  })
 }
 
 async function searchDuckDuckGoImages(query) {
@@ -218,9 +239,18 @@ async function searchImages(query) {
   if (!normalizedQuery) return []
 
   const [duckResults, openverseResults, wikimediaResults] = await Promise.all([
-    searchDuckDuckGoImages(normalizedQuery),
-    searchOpenverseImages(normalizedQuery),
-    searchWikimediaImages(normalizedQuery),
+    withSearchSourceTimeout(
+      searchDuckDuckGoImages(normalizedQuery),
+      'duckduckgo image search'
+    ),
+    withSearchSourceTimeout(
+      searchOpenverseImages(normalizedQuery),
+      'openverse image search'
+    ),
+    withSearchSourceTimeout(
+      searchWikimediaImages(normalizedQuery),
+      'wikimedia image search'
+    ),
   ])
 
   const merged = dedupeSearchResults(

@@ -103,6 +103,8 @@ const OPENAI_IMAGE_PRICING_USD_PER_IMAGE = {
   },
 }
 
+const SUPPORTED_PROVIDER_IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536']
+
 const SEMANTIC_ROLE_VALUES = [
   'actor',
   'tool',
@@ -202,6 +204,7 @@ const CONCEPT_REPRESENTATIONS = {
 }
 
 const MIN_IMAGE_REQUEST_TIMEOUT_MS = 180 * 1000
+const MIN_IMAGE_SEARCH_REQUEST_TIMEOUT_MS = 20 * 1000
 const IMAGE_TIMEOUT_BACKOFF_STEPS_MS = [0, 90 * 1000, 180 * 1000]
 const PYTHON_FLIP_PIPELINE_SCRIPT = path.resolve(
   __dirname,
@@ -325,6 +328,61 @@ function resolveOpenAiImageUnitPrice(model, size) {
   const byModel = OPENAI_IMAGE_PRICING_USD_PER_IMAGE[normalizedModel]
   if (!byModel) return null
   return byModel[normalizedSize] || byModel['1024x1024'] || null
+}
+
+function parseImageSizeParts(value) {
+  const match = String(value || '')
+    .trim()
+    .match(/^(\d{2,5})x(\d{2,5})$/i)
+  if (!match) {
+    return null
+  }
+
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null
+  }
+
+  return {width, height}
+}
+
+function normalizeProviderImageSize(value, fallback = '1536x1024') {
+  const requested = String(value || '').trim()
+  if (SUPPORTED_PROVIDER_IMAGE_SIZES.includes(requested)) {
+    return requested
+  }
+
+  const parsedRequested = parseImageSizeParts(requested)
+  if (!parsedRequested) {
+    return fallback
+  }
+
+  const requestedRatio = parsedRequested.width / parsedRequested.height
+  const [closest] = SUPPORTED_PROVIDER_IMAGE_SIZES.map((size) => {
+    const parsedSize = parseImageSizeParts(size)
+    const ratio = parsedSize.width / parsedSize.height
+    return {
+      size,
+      ratioDelta: Math.abs(ratio - requestedRatio),
+      areaDelta: Math.abs(
+        parsedSize.width * parsedSize.height -
+          parsedRequested.width * parsedRequested.height
+      ),
+    }
+  }).sort((a, b) => {
+    if (a.ratioDelta !== b.ratioDelta) {
+      return a.ratioDelta - b.ratioDelta
+    }
+    return a.areaDelta - b.areaDelta
+  })
+
+  return closest ? closest.size : fallback
 }
 
 function normalizeKeywordValue(item) {
@@ -3369,18 +3427,24 @@ function isTimeoutError(error) {
   )
 }
 
-function buildImageTimeoutCandidates(baseTimeoutMs) {
+function buildImageTimeoutCandidates(
+  baseTimeoutMs,
+  {
+    minimumTimeoutMs = MIN_IMAGE_REQUEST_TIMEOUT_MS,
+    stepsMs = IMAGE_TIMEOUT_BACKOFF_STEPS_MS,
+  } = {}
+) {
   const base = Math.max(
-    MIN_IMAGE_REQUEST_TIMEOUT_MS,
-    Number(baseTimeoutMs) || MIN_IMAGE_REQUEST_TIMEOUT_MS
+    minimumTimeoutMs,
+    Number(baseTimeoutMs) || minimumTimeoutMs
   )
-  const values = IMAGE_TIMEOUT_BACKOFF_STEPS_MS.map((step) => base + step)
+  const values = stepsMs.map((step) => base + step)
   return Array.from(new Set(values))
 }
 
 function buildImageProfileCandidates({provider, imageModel, imageSize}) {
   const model = String(imageModel || '').trim() || 'gpt-image-1-mini'
-  const size = String(imageSize || '').trim() || '1024x1024'
+  const size = normalizeProviderImageSize(imageSize)
   const candidates = [{imageModel: model, imageSize: size, reason: 'requested'}]
 
   if (size !== '1024x1024') {
@@ -5644,7 +5708,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const fastBuild = payload.fastBuild !== false
     const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
     const imageModel = String(payload.imageModel || 'gpt-image-1-mini').trim()
-    const imageSize = String(payload.imageSize || '1024x1024').trim()
+    const requestedImageSize = String(payload.imageSize || '1024x1024').trim()
+    const imageSize = normalizeProviderImageSize(requestedImageSize)
     const imageQuality = String(payload.imageQuality || '').trim()
     const imageStyle = String(payload.imageStyle || '').trim()
     const providerConfig = payload.providerConfig || null
@@ -5859,6 +5924,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       model,
       imageModel,
       imageSize,
+      requestedImageSize,
       requestTimeoutMs: profile.requestTimeoutMs,
       maxRetries: profile.maxRetries,
       textAuditEnabled,
@@ -5872,6 +5938,13 @@ function createAiProviderBridge(logger, dependencies = {}) {
       selectedStoryId: activeStory.id,
       alternativeStoryCount: alternativeStoryOptions.length,
     })
+    if (requestedImageSize && requestedImageSize !== imageSize) {
+      logger.info('AI image size normalized for provider request', {
+        provider,
+        requestedImageSize,
+        normalizedImageSize: imageSize,
+      })
+    }
     const nextPanels = existingPanels.slice(0, 4)
     const promptByPanel = Array.from({length: 4}, () => '')
     const panelImageModelUsed = Array.from({length: 4}, () => imageModel)
@@ -6409,7 +6482,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const provider = normalizeProvider(payload.provider)
     const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
     const imageModel = String(payload.imageModel || 'gpt-image-1-mini').trim()
-    const imageSize = String(payload.imageSize || '1024x1024').trim()
+    const requestedImageSize = String(payload.imageSize || '1024x1024').trim()
+    const imageSize = normalizeProviderImageSize(requestedImageSize)
     const imageQuality = String(payload.imageQuality || '').trim()
     const imageStyle = String(payload.imageStyle || '').trim()
     const maxImages = Math.max(
@@ -6434,7 +6508,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
 
     const imageRequestTimeoutMs = Math.max(
       Number(payload.requestTimeoutMs) || 0,
-      MIN_IMAGE_REQUEST_TIMEOUT_MS
+      MIN_IMAGE_SEARCH_REQUEST_TIMEOUT_MS
     )
 
     const profile = sanitizeBenchmarkProfile({
@@ -6444,7 +6518,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       temperature: 0,
       maxRetries: payload.maxRetries ?? 1,
       maxConcurrency: 1,
-      deadlineMs: 180000,
+      deadlineMs: 60000,
     })
     profile.requestTimeoutMs = imageRequestTimeoutMs
 
@@ -6462,7 +6536,11 @@ function createAiProviderBridge(logger, dependencies = {}) {
           : prompt
 
       const timeoutCandidates = buildImageTimeoutCandidates(
-        profile.requestTimeoutMs
+        profile.requestTimeoutMs,
+        {
+          minimumTimeoutMs: MIN_IMAGE_SEARCH_REQUEST_TIMEOUT_MS,
+          stepsMs: [0],
+        }
       )
       let response = null
       let timeoutFailure = null
@@ -6547,6 +6625,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       model,
       imageModel,
       imageSize,
+      requestedImageSize,
       latencyMs: now() - startedAt,
       images,
       tokenUsage: normalizeTokenUsage(usage),

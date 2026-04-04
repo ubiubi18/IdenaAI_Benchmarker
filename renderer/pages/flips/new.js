@@ -1797,6 +1797,35 @@ export default function NewFlipPage() {
     send('CHANGE_KEYWORDS')
   }, [send])
 
+  const scrollToBuilderAnchor = useCallback((anchorId) => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.requestAnimationFrame(() => {
+      const node = document.getElementById(anchorId)
+      if (node && typeof node.scrollIntoView === 'function') {
+        node.scrollIntoView({behavior: 'smooth', block: 'start'})
+      }
+    })
+  }, [])
+
+  const openAiImagesBridge = useCallback(async () => {
+    send('PICK_IMAGES')
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    scrollToBuilderAnchor('ai-image-step-bridge')
+  }, [scrollToBuilderAnchor, send])
+
+  const openAiSubmitBridge = useCallback(async () => {
+    send('PICK_SUBMIT')
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    scrollToBuilderAnchor('ai-benchmark')
+  }, [scrollToBuilderAnchor, send])
+
   const isOffline = is('keywords.loaded.fetchTranslationsFailed')
 
   const {
@@ -3143,161 +3172,378 @@ export default function NewFlipPage() {
                 </Stack>
               </Box>
               {is('keywords') && (
-                <FlipStoryStep>
-                  <FlipStepBody minH="180px">
-                    <Box>
-                      <FlipKeywordPanel>
-                        {is('keywords.loaded') && (
-                          <>
-                            <Box
-                              mb={3}
-                              p={2}
-                              borderWidth="1px"
-                              borderColor={
-                                isRandomKeywordSource
-                                  ? 'orange.200'
-                                  : 'green.200'
-                              }
-                              borderRadius="md"
-                              bg={
-                                isRandomKeywordSource ? 'orange.50' : 'green.50'
-                              }
-                            >
-                              <Text
-                                fontSize="xs"
-                                color={
+                <>
+                  <FlipStoryStep>
+                    <FlipStepBody minH="180px">
+                      <Box>
+                        <FlipKeywordPanel>
+                          {is('keywords.loaded') && (
+                            <>
+                              <Box
+                                mb={3}
+                                p={2}
+                                borderWidth="1px"
+                                borderColor={
                                   isRandomKeywordSource
-                                    ? 'orange.800'
-                                    : 'green.800'
+                                    ? 'orange.200'
+                                    : 'green.200'
+                                }
+                                borderRadius="md"
+                                bg={
+                                  isRandomKeywordSource
+                                    ? 'orange.50'
+                                    : 'green.50'
                                 }
                               >
-                                {isRandomKeywordSource
-                                  ? t(
-                                      'Keyword source: Local random test words (off-chain, not from synced node).'
-                                    )
-                                  : t(
-                                      'Keyword source: Node keywords (preferred, from synced node).'
-                                    )}
+                                <Text
+                                  fontSize="xs"
+                                  color={
+                                    isRandomKeywordSource
+                                      ? 'orange.800'
+                                      : 'green.800'
+                                  }
+                                >
+                                  {isRandomKeywordSource
+                                    ? t(
+                                        'Keyword source: Local random test words (off-chain, not from synced node).'
+                                      )
+                                    : t(
+                                        'Keyword source: Node keywords (preferred, from synced node).'
+                                      )}
+                                </Text>
+                              </Box>
+                              <FlipKeywordTranslationSwitch
+                                keywords={keywords}
+                                showTranslation={showTranslation}
+                                locale={i18n.language}
+                                onSwitchLocale={() => send('SWITCH_LOCALE')}
+                              />
+                              {(i18n.language || 'en').toUpperCase() !== 'EN' &&
+                                !isOffline && (
+                                  <>
+                                    <Divider
+                                      borderColor="gray.300"
+                                      mx={-10}
+                                      mt={4}
+                                      mb={6}
+                                    />
+                                    <CommunityTranslations
+                                      keywords={keywords}
+                                      onVote={(e) => send('VOTE', e)}
+                                      onSuggest={(e) => send('SUGGEST', e)}
+                                      isOpen={isCommunityTranslationsExpanded}
+                                      isPending={is(
+                                        'keywords.loaded.fetchedTranslations.suggesting'
+                                      )}
+                                      onToggle={() =>
+                                        send('TOGGLE_COMMUNITY_TRANSLATIONS')
+                                      }
+                                    />
+                                  </>
+                                )}
+                            </>
+                          )}
+                          {is('keywords.failure') && (
+                            <Stack spacing={2}>
+                              <FlipKeyword>
+                                <FlipKeywordName>
+                                  {t('Missing keywords')}
+                                </FlipKeywordName>
+                              </FlipKeyword>
+                              <Text fontSize="xs" color="muted">
+                                {t(
+                                  'Preferred path is node keywords. If node keywords are unavailable, approve local random test words explicitly.'
+                                )}
                               </Text>
-                            </Box>
-                            <FlipKeywordTranslationSwitch
-                              keywords={keywords}
-                              showTranslation={showTranslation}
-                              locale={i18n.language}
-                              onSwitchLocale={() => send('SWITCH_LOCALE')}
-                            />
-                            {(i18n.language || 'en').toUpperCase() !== 'EN' &&
-                              !isOffline && (
-                                <>
-                                  <Divider
-                                    borderColor="gray.300"
-                                    mx={-10}
-                                    mt={4}
-                                    mb={6}
-                                  />
-                                  <CommunityTranslations
-                                    keywords={keywords}
-                                    onVote={(e) => send('VOTE', e)}
-                                    onSuggest={(e) => send('SUGGEST', e)}
-                                    isOpen={isCommunityTranslationsExpanded}
-                                    isPending={is(
-                                      'keywords.loaded.fetchedTranslations.suggesting'
-                                    )}
-                                    onToggle={() =>
-                                      send('TOGGLE_COMMUNITY_TRANSLATIONS')
-                                    }
-                                  />
-                                </>
-                              )}
-                          </>
-                        )}
-                        {is('keywords.failure') && (
-                          <Stack spacing={2}>
-                            <FlipKeyword>
-                              <FlipKeywordName>
-                                {t('Missing keywords')}
-                              </FlipKeywordName>
-                            </FlipKeyword>
-                            <Text fontSize="xs" color="muted">
-                              {t(
-                                'Preferred path is node keywords. If node keywords are unavailable, approve local random test words explicitly.'
-                              )}
-                            </Text>
-                            <Stack isInline spacing={2}>
-                              <SecondaryButton
-                                onClick={() => send('USE_NODE_KEYWORDS')}
-                              >
-                                {t('Retry node keywords')}
-                              </SecondaryButton>
-                              <SecondaryButton
-                                onClick={approveRandomKeywordsForSubmit}
-                              >
-                                {t('Load 9 random test pairs')}
-                              </SecondaryButton>
+                              <Stack isInline spacing={2}>
+                                <SecondaryButton
+                                  onClick={() => send('USE_NODE_KEYWORDS')}
+                                >
+                                  {t('Retry node keywords')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  onClick={approveRandomKeywordsForSubmit}
+                                >
+                                  {t('Load 9 random test pairs')}
+                                </SecondaryButton>
+                              </Stack>
                             </Stack>
-                          </Stack>
+                          )}
+                        </FlipKeywordPanel>
+                        {isOffline && <CommunityTranslationUnavailable />}
+                      </Box>
+                      <FlipStoryAside>
+                        <IconButton2
+                          icon={<RefreshIcon />}
+                          isDisabled={is('keywords.loading')}
+                          onClick={() => send('USE_NODE_KEYWORDS')}
+                        >
+                          {t('Retry node keywords')}
+                        </IconButton2>
+                        <IconButton2
+                          icon={<RefreshIcon />}
+                          isDisabled={
+                            availableKeywords.length < 2 ||
+                            is('keywords.loading')
+                          }
+                          onClick={advanceKeywordPairForSubmit}
+                        >
+                          {isRandomKeywordSource
+                            ? t('Next test pair')
+                            : t('Change words')}{' '}
+                          {availableKeywords.length > 1
+                            ? `(#${keywordPairPosition}/${availableKeywords.length})`
+                            : null}
+                        </IconButton2>
+                        <IconButton2
+                          icon={<RefreshIcon />}
+                          isDisabled={is('keywords.loading')}
+                          onClick={approveRandomKeywordsForSubmit}
+                        >
+                          {t('Use 9 random test pairs (off-chain)')}
+                        </IconButton2>
+                        <IconButton2
+                          icon={<InfoIcon />}
+                          onClick={onOpenBadFlipDialog}
+                        >
+                          {t('What is a bad flip')}
+                        </IconButton2>
+                      </FlipStoryAside>
+                    </FlipStepBody>
+                  </FlipStoryStep>
+                  <Box
+                    id="ai-story-draft-step"
+                    mt={4}
+                    borderWidth="1px"
+                    borderColor="blue.050"
+                    borderRadius="md"
+                    p={4}
+                    bg="blue.012"
+                  >
+                    <Stack spacing={3}>
+                      <Text fontSize="sm" fontWeight={500}>
+                        {t('AI story draft for current keyword pair')}
+                      </Text>
+                      <Text fontSize="xs" color="muted">
+                        {t(
+                          'Use the current node or random keyword pair to generate one editable AI story draft first. Then continue to AI image building in the next step.'
                         )}
-                      </FlipKeywordPanel>
-                      {isOffline && <CommunityTranslationUnavailable />}
-                    </Box>
-                    <FlipStoryAside>
-                      <IconButton2
-                        icon={<RefreshIcon />}
-                        isDisabled={is('keywords.loading')}
-                        onClick={() => send('USE_NODE_KEYWORDS')}
-                      >
-                        {t('Retry node keywords')}
-                      </IconButton2>
-                      <IconButton2
-                        icon={<RefreshIcon />}
-                        isDisabled={
-                          availableKeywords.length < 2 || is('keywords.loading')
-                        }
-                        onClick={advanceKeywordPairForSubmit}
-                      >
-                        {isRandomKeywordSource
-                          ? t('Next test pair')
-                          : t('Change words')}{' '}
-                        {availableKeywords.length > 1
-                          ? `(#${keywordPairPosition}/${availableKeywords.length})`
-                          : null}
-                      </IconButton2>
-                      <IconButton2
-                        icon={<RefreshIcon />}
-                        isDisabled={is('keywords.loading')}
-                        onClick={approveRandomKeywordsForSubmit}
-                      >
-                        {t('Use 9 random test pairs (off-chain)')}
-                      </IconButton2>
-                      <IconButton2
-                        icon={<InfoIcon />}
-                        onClick={onOpenBadFlipDialog}
-                      >
-                        {t('What is a bad flip')}
-                      </IconButton2>
-                    </FlipStoryAside>
-                  </FlipStepBody>
-                </FlipStoryStep>
+                      </Text>
+                      <Stack isInline spacing={2} flexWrap="wrap">
+                        <SecondaryButton
+                          isDisabled={
+                            !hasUsableKeywords || is('keywords.loading')
+                          }
+                          isLoading={isGeneratingStoryOptions}
+                          onClick={() =>
+                            generateStoryAlternatives({optimize: false})
+                          }
+                        >
+                          {t('Generate AI story draft')}
+                        </SecondaryButton>
+                        {activeStoryDraft ? (
+                          <SecondaryButton onClick={openAiImagesBridge}>
+                            {t('Continue to AI image step')}
+                          </SecondaryButton>
+                        ) : null}
+                        {activeStoryDraft &&
+                        activeStoryDraftReview &&
+                        activeStoryDraftReview.kind !== 'strong' ? (
+                          <SecondaryButton
+                            isLoading={isGeneratingStoryOptions}
+                            onClick={() =>
+                              generateStoryAlternatives({
+                                optimize: true,
+                                basePanels: storyPanelsDraft,
+                              })
+                            }
+                          >
+                            {t('Optimize current draft')}
+                          </SecondaryButton>
+                        ) : null}
+                        {activeStoryDraft ? (
+                          <SecondaryButton onClick={openAiSubmitBridge}>
+                            {t('Open full draft editor')}
+                          </SecondaryButton>
+                        ) : null}
+                      </Stack>
+                      {activeStoryDraft && activeStoryDraftReview ? (
+                        <Box
+                          borderWidth="1px"
+                          borderColor={
+                            activeStoryDraftReview.kind === 'strong'
+                              ? 'green.100'
+                              : 'orange.200'
+                          }
+                          borderRadius="md"
+                          p={3}
+                          bg="white"
+                        >
+                          <Stack spacing={2}>
+                            <Text
+                              fontSize="xs"
+                              fontWeight={500}
+                              color={
+                                activeStoryDraftReview.kind === 'strong'
+                                  ? 'green.500'
+                                  : 'orange.500'
+                              }
+                            >
+                              {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
+                            </Text>
+                            <Text fontSize="xs" color="muted">
+                              {activeStoryDraftReview.description}
+                            </Text>
+                            {activeStoryDraft.panels.map(
+                              (panel, panelIndex) => (
+                                <Text
+                                  key={`keyword-ai-story-${panelIndex}`}
+                                  fontSize="xs"
+                                  color="muted"
+                                >
+                                  {`${panelIndex + 1}. ${panel}`}
+                                </Text>
+                              )
+                            )}
+                          </Stack>
+                        </Box>
+                      ) : null}
+                    </Stack>
+                  </Box>
+                </>
               )}
               {is('images') && (
-                <FlipEditorStep
-                  keywords={keywords}
-                  showTranslation={showTranslation}
-                  originalOrder={originalOrder}
-                  images={images}
-                  adversarialImageId={adversarialImageId}
-                  onChangeImage={(image, currentIndex) =>
-                    send('CHANGE_IMAGES', {image, currentIndex})
-                  }
-                  // eslint-disable-next-line no-shadow
-                  onChangeOriginalOrder={(order) =>
-                    send('CHANGE_ORIGINAL_ORDER', {order})
-                  }
-                  onPainting={() => send('PAINTING')}
-                  onChangeAdversarialId={(newIndex) => {
-                    send('CHANGE_ADVERSARIAL_ID', {newIndex})
-                  }}
-                />
+                <>
+                  <Box
+                    id="ai-image-step-bridge"
+                    mb={4}
+                    borderWidth="1px"
+                    borderColor="blue.050"
+                    borderRadius="md"
+                    p={4}
+                    bg="blue.012"
+                  >
+                    <Stack spacing={3}>
+                      <Text fontSize="sm" fontWeight={500}>
+                        {t('AI images from the current story draft')}
+                      </Text>
+                      <Text fontSize="xs" color="muted">
+                        {t(
+                          'Step 1: create a story draft from the current keyword pair. Step 2: build all 4 images from that draft. You can still replace single panels manually afterwards.'
+                        )}
+                      </Text>
+                      {activeStoryDraft && activeStoryDraftReview ? (
+                        <Box
+                          borderWidth="1px"
+                          borderColor={
+                            activeStoryDraftReview.kind === 'strong'
+                              ? 'green.100'
+                              : 'orange.200'
+                          }
+                          borderRadius="md"
+                          p={3}
+                          bg="white"
+                        >
+                          <Stack spacing={2}>
+                            <Text
+                              fontSize="xs"
+                              fontWeight={500}
+                              color={
+                                activeStoryDraftReview.kind === 'strong'
+                                  ? 'green.500'
+                                  : 'orange.500'
+                              }
+                            >
+                              {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
+                            </Text>
+                            <Text fontSize="xs" color="muted">
+                              {activeStoryDraftReview.description}
+                            </Text>
+                          </Stack>
+                        </Box>
+                      ) : (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="orange.200"
+                          borderRadius="md"
+                          p={3}
+                          bg="white"
+                        >
+                          <Text fontSize="xs" color="muted">
+                            {t(
+                              'No AI story draft exists yet for this keyword pair. Generate the draft first, then build all four images from it.'
+                            )}
+                          </Text>
+                        </Box>
+                      )}
+                      <Stack isInline spacing={2} flexWrap="wrap">
+                        <SecondaryButton
+                          isDisabled={!hasUsableKeywords}
+                          isLoading={isGeneratingStoryOptions}
+                          onClick={() =>
+                            generateStoryAlternatives({optimize: false})
+                          }
+                        >
+                          {activeStoryDraft
+                            ? t('Regenerate AI story draft')
+                            : t('Generate AI story draft')}
+                        </SecondaryButton>
+                        {activeStoryDraft &&
+                        activeStoryDraftReview &&
+                        activeStoryDraftReview.kind !== 'strong' ? (
+                          <SecondaryButton
+                            isLoading={isGeneratingStoryOptions}
+                            onClick={() =>
+                              generateStoryAlternatives({
+                                optimize: true,
+                                basePanels: storyPanelsDraft,
+                              })
+                            }
+                          >
+                            {t('Optimize draft')}
+                          </SecondaryButton>
+                        ) : null}
+                        <PrimaryButton
+                          isDisabled={!activeStoryDraft}
+                          isLoading={isGeneratingFlipPanels}
+                          onClick={() =>
+                            buildFlipWithAi({
+                              regenerateIndices: [0, 1, 2, 3],
+                            })
+                          }
+                        >
+                          {t('Build 4 AI images from draft')}
+                        </PrimaryButton>
+                        {activeStoryDraft ? (
+                          <SecondaryButton onClick={openAiSubmitBridge}>
+                            {t('Open full draft editor')}
+                          </SecondaryButton>
+                        ) : null}
+                      </Stack>
+                    </Stack>
+                  </Box>
+                  <FlipEditorStep
+                    keywords={keywords}
+                    showTranslation={showTranslation}
+                    originalOrder={originalOrder}
+                    images={images}
+                    adversarialImageId={adversarialImageId}
+                    onChangeImage={(image, currentIndex) =>
+                      send('CHANGE_IMAGES', {image, currentIndex})
+                    }
+                    // eslint-disable-next-line no-shadow
+                    onChangeOriginalOrder={(order) =>
+                      send('CHANGE_ORIGINAL_ORDER', {order})
+                    }
+                    onPainting={() => send('PAINTING')}
+                    onChangeAdversarialId={(newIndex) => {
+                      send('CHANGE_ADVERSARIAL_ID', {newIndex})
+                    }}
+                    onUseAiFlipFlow={() => {
+                      scrollToBuilderAnchor('ai-image-step-bridge')
+                    }}
+                  />
+                </>
               )}
               {is('shuffle') && (
                 <FlipShuffleStep
@@ -3683,7 +3929,12 @@ export default function NewFlipPage() {
                               />
                               <Text fontSize="xs" color="muted" mt={1}>
                                 {t(
-                                  'Provider output is normalized to Idena panel size 440x330 (2x2 composite: 880x660) before submit.'
+                                  'Provider-native image sizes are limited (for example 1024x1024, 1536x1024, 1024x1536). Generated images are normalized to Idena panel size 440x330 and to the 2x2 composite 880x660 before submit.'
+                                )}
+                              </Text>
+                              <Text fontSize="xs" color="muted" mt={1}>
+                                {t(
+                                  'If you type an unsupported size such as 880x660, the app now auto-maps it to the closest provider-supported size.'
                                 )}
                               </Text>
                               {aiImageGenerationCostHint ? (

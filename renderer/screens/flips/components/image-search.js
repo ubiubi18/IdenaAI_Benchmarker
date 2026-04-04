@@ -41,7 +41,13 @@ function buildProviderConfig(provider, settings = {}) {
   }
 }
 
-export function ImageSearchDialog({onPick, onClose, onError, ...props}) {
+export function ImageSearchDialog({
+  onPick,
+  onClose,
+  onError,
+  onUseAiFlipFlow,
+  ...props
+}) {
   const {t} = useTranslation()
   const settings = useSettingsState()
   const aiSolverSettings = React.useMemo(
@@ -181,52 +187,67 @@ export function ImageSearchDialog({onPick, onClose, onError, ...props}) {
             </FillCenter>
           )}
 
-          {eitherState(current, 'done') && (
-            <SimpleGrid
-              columns={4}
-              spacing={2}
-              overflow="auto"
-              px="8"
-              sx={{
-                marginInlineStart: '-32px !important',
-                marginInlineEnd: '-32px !important',
-              }}
-            >
-              {images.map(({thumbnail, image}, idx) => (
-                <Center
-                  key={`${image}-${idx}`}
-                  h="88px"
-                  w="88px"
-                  bg={thumbnail === selectedImage ? 'blue.032' : 'white'}
-                  borderColor={
-                    thumbnail === selectedImage ? 'blue.500' : 'gray.50'
-                  }
-                  borderWidth={1}
-                  borderRadius="md"
-                  overflow="hidden"
-                  transition="all 0.6s cubic-bezier(0.16, 1, 0.3, 1)"
-                  onClick={() => {
-                    send('PICK', {image: thumbnail})
-                  }}
-                  onDoubleClick={() => {
-                    onPick(selectedImage)
-                  }}
-                >
-                  <Image
-                    src={thumbnail}
-                    objectFit="contain"
-                    objectPosition="center"
+          {eitherState(current, 'done') &&
+            (images.length > 0 ? (
+              <SimpleGrid
+                columns={4}
+                spacing={2}
+                overflow="auto"
+                px="8"
+                sx={{
+                  marginInlineStart: '-32px !important',
+                  marginInlineEnd: '-32px !important',
+                }}
+              >
+                {images.map(({thumbnail, image}, idx) => (
+                  <Center
+                    key={`${image}-${idx}`}
+                    h="88px"
+                    w="88px"
+                    bg={thumbnail === selectedImage ? 'blue.032' : 'white'}
                     borderColor={
-                      thumbnail === selectedImage ? 'blue.500' : 'transparent'
+                      thumbnail === selectedImage ? 'blue.500' : 'gray.50'
                     }
                     borderWidth={1}
                     borderRadius="md"
-                    w="88px"
-                  />
-                </Center>
-              ))}
-            </SimpleGrid>
-          )}
+                    overflow="hidden"
+                    transition="all 0.6s cubic-bezier(0.16, 1, 0.3, 1)"
+                    onClick={() => {
+                      send('PICK', {image: thumbnail})
+                    }}
+                    onDoubleClick={() => {
+                      onPick(selectedImage)
+                    }}
+                  >
+                    <Image
+                      src={thumbnail}
+                      objectFit="contain"
+                      objectPosition="center"
+                      borderColor={
+                        thumbnail === selectedImage ? 'blue.500' : 'transparent'
+                      }
+                      borderWidth={1}
+                      borderRadius="md"
+                      w="88px"
+                    />
+                  </Center>
+                ))}
+              </SimpleGrid>
+            ) : (
+              <FillCenter>
+                <Stack spacing={3} align="center" w="3xs">
+                  <Text color="muted" textAlign="center" w="full">
+                    {searchMode === 'ai'
+                      ? t(
+                          'No AI images returned yet. Try a shorter prompt or switch to web search.'
+                        )
+                      : t(
+                          'No web images found. Try different words or switch to AI image search.'
+                        )}
+                  </Text>
+                </Stack>
+              </FillCenter>
+            ))}
           {eitherState(current, 'searching') && (
             <FillCenter>
               <Spinner color="blue.500" />
@@ -235,6 +256,11 @@ export function ImageSearchDialog({onPick, onClose, onError, ...props}) {
         </Stack>
       </DialogBody>
       <DialogFooter>
+        {typeof onUseAiFlipFlow === 'function' ? (
+          <SecondaryButton onClick={onUseAiFlipFlow}>
+            {t('AI story + 4 images')}
+          </SecondaryButton>
+        ) : null}
         <SecondaryButton onClick={onClose}>{t('Cancel')}</SecondaryButton>
         <PrimaryButton
           onClick={() => {

@@ -628,6 +628,7 @@ export function FlipEditorStep({
   onChangeOriginalOrder,
   onPainting,
   onChangeAdversarialId,
+  onUseAiFlipFlow,
 }) {
   const {t} = useTranslation()
 
@@ -724,6 +725,7 @@ export function FlipEditorStep({
               }}
               onChanging={onPainting}
               onChangeAdversarial={onChangeAdversarialId}
+              onUseAiFlipFlow={onUseAiFlipFlow}
             />
           ))}
         </Box>

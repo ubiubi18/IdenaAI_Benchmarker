@@ -1375,6 +1375,17 @@ function resolveImageSearchList(data) {
   return []
 }
 
+function withImageSearchTimeout(promise, timeoutMs, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(message))
+      }, timeoutMs)
+    }),
+  ])
+}
+
 export const imageSearchMachine = createMachine({
   context: {
     images: [],
@@ -1396,15 +1407,25 @@ export const imageSearchMachine = createMachine({
         ) => {
           const nextQuery = query || queryParam
           if (searchMode === 'ai') {
-            return global.aiSolver.generateImageSearchResults({
-              provider: aiProvider,
-              model: aiModel,
-              prompt: nextQuery,
-              providerConfig: aiProviderConfig,
-              maxImages: 8,
-            })
+            return withImageSearchTimeout(
+              global.aiSolver.generateImageSearchResults({
+                provider: aiProvider,
+                model: aiModel,
+                prompt: nextQuery,
+                providerConfig: aiProviderConfig,
+                maxImages: 4,
+                maxRetries: 0,
+                requestTimeoutMs: 20000,
+              }),
+              30000,
+              'AI image search timed out. Try fewer words or switch to web search.'
+            )
           }
-          return global.ipcRenderer.invoke('search-image', nextQuery)
+          return withImageSearchTimeout(
+            global.ipcRenderer.invoke('search-image', nextQuery),
+            15000,
+            'Web image search timed out. Try different words or switch to AI image search.'
+          )
         },
         onDone: {
           target: 'done',

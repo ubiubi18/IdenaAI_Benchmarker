@@ -98,6 +98,7 @@ export default function FlipEditor({
   onChange,
   onChanging,
   onChangeAdversarial,
+  onUseAiFlipFlow,
 }) {
   const {t} = useTranslation()
 
@@ -1054,6 +1055,12 @@ export default function FlipEditor({
         }}
         onClose={() => {
           setShowImageSearch(false)
+        }}
+        onUseAiFlipFlow={() => {
+          setShowImageSearch(false)
+          if (typeof onUseAiFlipFlow === 'function') {
+            onUseAiFlipFlow()
+          }
         }}
         onError={(error) =>
           toast({
