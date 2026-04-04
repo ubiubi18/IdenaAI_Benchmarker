@@ -245,6 +245,12 @@ export default function AiSettingsPage() {
     return global.aiSolver
   }
 
+  const hasSessionKeyForProvider = async (provider) => {
+    const bridge = ensureBridge()
+    const result = await bridge.hasProviderKey({provider})
+    return Boolean(result && result.hasKey)
+  }
+
   const refreshModelsForProvider = async (provider) => {
     const bridge = ensureBridge()
     const result = await bridge.listModels({
@@ -537,29 +543,56 @@ export default function AiSettingsPage() {
                           (item) => item.value
                         )
                         let loaded = 0
+                        let skipped = 0
                         let failed = 0
+                        const failedProviders = []
 
                         // Run sequentially to avoid rate spikes and noisy provider errors.
                         // eslint-disable-next-line no-restricted-syntax
                         for (const provider of providers) {
                           try {
                             // eslint-disable-next-line no-await-in-loop
+                            const hasKey = await hasSessionKeyForProvider(
+                              provider
+                            )
+                            if (!hasKey) {
+                              skipped += 1
+                              // eslint-disable-next-line no-continue
+                              continue
+                            }
+                            // eslint-disable-next-line no-await-in-loop
                             await refreshModelsForProvider(provider)
                             loaded += 1
                           } catch (error) {
                             failed += 1
+                            failedProviders.push(provider)
                           }
                         }
 
                         notify(
                           t('Latest model scan finished'),
-                          t(
-                            '{{loaded}} providers loaded, {{failed}} skipped/failed',
-                            {
-                              loaded,
-                              failed,
-                            }
-                          ),
+                          [
+                            t(
+                              '{{loaded}} loaded, {{skipped}} skipped (no session key), {{failed}} failed',
+                              {
+                                loaded,
+                                skipped,
+                                failed,
+                              }
+                            ),
+                            skipped > 0
+                              ? t(
+                                  'Keys are stored per provider. Switch provider and load a key for each provider you want to scan.'
+                                )
+                              : null,
+                            failedProviders.length > 0
+                              ? t('Failed: {{providers}}', {
+                                  providers: failedProviders.join(', '),
+                                })
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' '),
                           failed > 0 ? 'warning' : 'success'
                         )
                       } catch (error) {
@@ -1219,6 +1252,11 @@ export default function AiSettingsPage() {
             <Text color="muted" fontSize="sm">
               {t(
                 'The API key is kept in memory only for this desktop run and is not persisted to settings by default.'
+              )}
+            </Text>
+            <Text color="muted" fontSize="sm">
+              {t(
+                'Keys are stored separately per provider. Setting an OpenAI key does not automatically enable Gemini, Anthropic, xAI, Groq, OpenRouter, or other providers.'
               )}
             </Text>
 
