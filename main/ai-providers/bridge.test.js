@@ -1274,6 +1274,62 @@ describe('createAiProviderBridge', () => {
     expect(result.metrics.fallback_used).toBe(false)
   })
 
+  it('uses provider freeform draft rescue before local fallback in single-story mode', async () => {
+    const weakStructuredStory = makeStrictStoryOption({
+      title: 'Weak draft',
+      storySummary:
+        'A vague draft that should fail quality and trigger rescue.',
+      panels: [
+        'A person interacts with a magazine near a hoola hoop.',
+        'The person interacts with the hoola hoop in the same scene.',
+        'The person uses the magazine as a clear tool beside the hoola hoop.',
+        'The person observes the final result.',
+      ],
+    })
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValueOnce(makeStrictStoryResponse([weakStructuredStory]))
+      .mockResolvedValueOnce(makeStrictStoryResponse([weakStructuredStory]))
+      .mockResolvedValueOnce({
+        rawText: [
+          'A child flips through a magazine beside a park bench while a hoola hoop leans against the bench.',
+          'A gust catches the magazine pages and the child spins into the hoola hoop, knocking it off the bench.',
+          'The hoola hoop rolls downhill and bumps a paint bucket so bright paint splashes across the path.',
+          'The magazine lies open beside the toppled bucket while the paint-covered hoola hoop rests at the bottom of the hill.',
+        ].join('\n'),
+        usage: {
+          promptTokens: 20,
+          completionTokens: 30,
+          totalTokens: 50,
+        },
+      })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['magazine', 'hoola hoop'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(3)
+    expect(invokeProvider.mock.calls[2][0].promptOptions.promptPhase).toBe(
+      'story_options_freeform_rescue'
+    )
+    expect(result.metrics.fallback_used).toBe(false)
+    expect(result.stories).toHaveLength(1)
+    expect(result.stories[0].panels[0].toLowerCase()).toContain('magazine')
+    expect(result.stories[0].panels[1].toLowerCase()).toContain('hoola hoop')
+    expect(result.stories[0].rationale.toLowerCase()).not.toContain(
+      'local fallback'
+    )
+  })
+
   it('salvages readable unstructured story text before dropping to local fallback', async () => {
     const invokeProvider = jest
       .fn()

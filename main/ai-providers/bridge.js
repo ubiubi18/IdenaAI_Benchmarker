@@ -1436,6 +1436,36 @@ function buildStoryOptionRepairPrompt({
     .join('\n')
 }
 
+function buildSingleStoryDraftRescuePrompt({
+  basePrompt,
+  keywordA,
+  keywordB,
+  senseSelection,
+}) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || 'keyword 1'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || 'keyword 2'
+  const lockedSenseLines = formatSensePromptLines(
+    senseSelection,
+    safeKeywordA,
+    safeKeywordB
+  )
+
+  return [
+    basePrompt,
+    '',
+    'Provider draft rescue:',
+    'The strict schema path failed to yield one usable story.',
+    'Now ignore JSON completely and return exactly 4 plain lines only.',
+    'Each line must be one real panel beat in order: before, trigger, reaction, after.',
+    'Write an actual storyboard, not instructions to the user.',
+    'Do not say things like "choose a room", "bring X into the scene", or "show the consequence".',
+    'Use one specific place, one visible trigger, one concrete physical consequence, and one final stable image.',
+    `Keep "${safeKeywordA}" and "${safeKeywordB}" visibly important in the actual scene.`,
+    'No numbering, no labels, no markdown, no JSON, and no commentary.',
+    ...lockedSenseLines,
+  ].join('\n')
+}
+
 function classifyTextualStoryProviderOutcome(rawText) {
   const text = String(rawText || '').trim()
   if (!text) return null
@@ -4772,6 +4802,94 @@ function createAiProviderBridge(logger, dependencies = {}) {
       return repairAttempt
     }
 
+    async function runSingleStoryDraftRescueAttempt() {
+      if (requestedStoryCount !== 1) {
+        return {
+          quality: {accepted: [], rejected: []},
+          parsedStories: [],
+        }
+      }
+
+      storyMetrics.retries_per_story += 1
+      logger.info('AI story provider draft rescue path', {
+        provider,
+        model,
+        reason: 'single_story_freeform_rescue',
+      })
+
+      try {
+        const providerResponse = await invokeProvider({
+          provider,
+          model,
+          flip: {
+            hash: `story-option-rescue-${startedAt}`,
+            leftImage: '',
+            rightImage: '',
+            images: [],
+          },
+          profile,
+          apiKey,
+          providerConfig,
+          promptText: buildSingleStoryDraftRescuePrompt({
+            basePrompt: promptText,
+            keywordA,
+            keywordB,
+            senseSelection,
+          }),
+          promptOptions: {
+            promptPhase: 'story_options_freeform_rescue',
+          },
+        })
+
+        const normalizedResponse = normalizeProviderResponse(providerResponse)
+        combinedUsage = addTokenUsage(
+          combinedUsage,
+          normalizedResponse.tokenUsage
+        )
+        attemptHistory.push({
+          attempt: 'provider_story_options_freeform_rescue',
+          promptPhase: 'story_options_freeform_rescue',
+          outcome: normalizedResponse.rawText
+            ? 'freeform_story_draft'
+            : 'empty',
+          detail: sanitizeStoryLogText(normalizedResponse.rawText, 180),
+        })
+
+        const parsedStories = parseStoryOptions(normalizedResponse.rawText, {
+          keywordA,
+          keywordB,
+          includeNoise,
+          customStory: hasCustomStory ? customStory : null,
+          humanStorySeed,
+          senseSelection,
+          allowLocalFallback: false,
+        }).slice(0, 1)
+        const quality = evaluateCandidateStories(
+          parsedStories,
+          'provider_story_options_freeform_rescue'
+        )
+        collectProviderDraftRejectedCandidates(quality)
+        return {
+          quality,
+          parsedStories,
+        }
+      } catch (error) {
+        attemptHistory.push({
+          attempt: 'provider_story_options_freeform_rescue',
+          promptPhase: 'story_options_freeform_rescue',
+          outcome: 'transport_error',
+          detail: sanitizeStoryLogText(
+            (error && error.message) || error || '',
+            180
+          ),
+        })
+        return {
+          quality: {accepted: [], rejected: []},
+          parsedStories: [],
+        }
+      }
+    }
+
     function evaluateAcceptedStoriesFromAttempt(attempt, sourceLabel) {
       const currentAttempt =
         attempt && typeof attempt === 'object' ? attempt : {}
@@ -4970,6 +5088,20 @@ function createAiProviderBridge(logger, dependencies = {}) {
         ) {
           break
         }
+      }
+    }
+
+    if (
+      requestedStoryCount === 1 &&
+      initialQuality.accepted.length < 1 &&
+      selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.REFUSAL &&
+      selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.SAFETY_BLOCK &&
+      selectedAttempt.outcome !== STORY_PROVIDER_OUTCOMES.TRANSPORT_ERROR
+    ) {
+      const freeformRescue = await runSingleStoryDraftRescueAttempt()
+      if (freeformRescue.quality.accepted.length > 0) {
+        initialQuality = freeformRescue.quality
+        initialQualitySource = 'provider_story_options_freeform_rescue'
       }
     }
 
