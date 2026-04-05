@@ -1239,6 +1239,29 @@ function getStoryDraftReview(option) {
   }
 }
 
+function getCheapestImagePricingEntry(pricingBySize) {
+  if (!pricingBySize || typeof pricingBySize !== 'object') {
+    return null
+  }
+
+  let cheapestKey = ''
+  let cheapestValue = Number.POSITIVE_INFINITY
+
+  Object.entries(pricingBySize).forEach(([size, rawValue]) => {
+    const nextValue = Number(rawValue)
+    if (Number.isFinite(nextValue) && nextValue < cheapestValue) {
+      cheapestKey = size
+      cheapestValue = nextValue
+    }
+  })
+
+  if (!cheapestKey || !Number.isFinite(cheapestValue)) {
+    return null
+  }
+
+  return [cheapestKey, cheapestValue]
+}
+
 export default function NewFlipPage() {
   const {t, i18n} = useTranslation()
 
@@ -1530,9 +1553,7 @@ export default function NewFlipPage() {
     if (!Number.isFinite(unitUsd)) {
       return null
     }
-    const cheapestEntry = Object.entries(pricingBySize).sort(
-      (a, b) => Number(a[1]) - Number(b[1])
-    )[0]
+    const cheapestEntry = getCheapestImagePricingEntry(pricingBySize)
     return {
       model: pricingModel,
       unitUsd,
@@ -3543,26 +3564,73 @@ export default function NewFlipPage() {
   const isBenchmarkPopupBusy =
     benchmarkPopupStatus === 'countdown' || benchmarkPopupStatus === 'running'
   const benchmarkPresetLabel = benchmarkPresetToLabel(benchmarkRunPreset)
-  const activeStoryDraft =
-    storyOptions.find((item) => String(item.id) === String(selectedStoryId)) ||
-    storyOptions[0] ||
-    null
-  const activeStoryDraftReview = activeStoryDraft
-    ? getStoryDraftReview(activeStoryDraft)
-    : null
-  let aiProviderKeyStatusLabel = t('Checking...')
-  let aiProviderKeyStatusColor = 'muted'
-  if (isLegacyOnlyMode) {
-    aiProviderKeyStatusLabel = t('Not required in legacy-only mode')
-  } else if (!aiProviderKeyStatus.checked) {
-    aiProviderKeyStatusLabel = t('Checking...')
-  } else if (aiProviderKeyStatus.hasKey) {
-    aiProviderKeyStatusLabel = t('Ready')
-    aiProviderKeyStatusColor = 'green.500'
-  } else {
-    aiProviderKeyStatusLabel = t('Missing')
-    aiProviderKeyStatusColor = 'orange.500'
-  }
+  const activeStoryDraft = useMemo(
+    () =>
+      storyOptions.find(
+        (item) => String(item.id) === String(selectedStoryId)
+      ) ||
+      storyOptions[0] ||
+      null,
+    [selectedStoryId, storyOptions]
+  )
+  const activeStoryDraftReview = useMemo(
+    () => (activeStoryDraft ? getStoryDraftReview(activeStoryDraft) : null),
+    [activeStoryDraft]
+  )
+  const storyOptionCards = useMemo(
+    () =>
+      storyOptions.map((option) => {
+        const reviewState = getStoryDraftReview(option)
+        const hasComplianceReport =
+          Object.keys(option.complianceReport || {}).length > 0
+        const optionIsSelected = String(selectedStoryId) === String(option.id)
+        let optionBorderColor = 'gray.100'
+        if (optionIsSelected) {
+          optionBorderColor = 'blue.300'
+        } else if (reviewState.kind !== 'strong') {
+          optionBorderColor = 'orange.200'
+        }
+
+        return {
+          option,
+          reviewState,
+          hasComplianceReport,
+          optionBorderColor,
+          optionBg: reviewState.kind === 'strong' ? 'white' : 'orange.012',
+          reviewBorderColor:
+            reviewState.kind === 'strong' ? 'green.100' : 'orange.200',
+          reviewAccentColor:
+            reviewState.kind === 'strong' ? 'green.500' : 'orange.500',
+          shouldShowStorySummary: Boolean(
+            option.storySummary &&
+              (!option.rationale ||
+                option.storySummary.trim().toLowerCase() !==
+                  option.rationale.trim().toLowerCase())
+          ),
+        }
+      }),
+    [selectedStoryId, storyOptions]
+  )
+  const aiProviderKeyStatusUi = useMemo(() => {
+    if (isLegacyOnlyMode) {
+      return {
+        label: t('Not required in legacy-only mode'),
+        color: 'muted',
+      }
+    }
+    if (!aiProviderKeyStatus.checked) {
+      return {label: t('Checking...'), color: 'muted'}
+    }
+    if (aiProviderKeyStatus.hasKey) {
+      return {label: t('Ready'), color: 'green.500'}
+    }
+    return {label: t('Missing'), color: 'orange.500'}
+  }, [
+    aiProviderKeyStatus.checked,
+    aiProviderKeyStatus.hasKey,
+    isLegacyOnlyMode,
+    t,
+  ])
   const flipBuildStatusBorderColorByKind = {
     idle: 'gray.100',
     running: 'gray.100',
@@ -4303,9 +4371,9 @@ export default function NewFlipPage() {
                               <Text
                                 fontSize="sm"
                                 fontWeight={500}
-                                color={aiProviderKeyStatusColor}
+                                color={aiProviderKeyStatusUi.color}
                               >
-                                {aiProviderKeyStatusLabel}
+                                {aiProviderKeyStatusUi.label}
                               </Text>
                             </Box>
                             <Box
@@ -4795,40 +4863,17 @@ export default function NewFlipPage() {
 
                           {storyOptions.length > 0 ? (
                             <SimpleGrid columns={[1, 2]} spacing={2}>
-                              {storyOptions.map((option) => {
-                                const reviewState = getStoryDraftReview(option)
-                                const hasComplianceReport =
-                                  Object.keys(option.complianceReport || {})
-                                    .length > 0
-                                const optionIsSelected =
-                                  String(selectedStoryId) === String(option.id)
-                                let optionBorderColor = 'gray.100'
-                                if (optionIsSelected) {
-                                  optionBorderColor = 'blue.300'
-                                } else if (reviewState.kind !== 'strong') {
-                                  optionBorderColor = 'orange.200'
-                                }
-                                const optionBg =
-                                  reviewState.kind === 'strong'
-                                    ? 'white'
-                                    : 'orange.012'
-                                const reviewBorderColor =
-                                  reviewState.kind === 'strong'
-                                    ? 'green.100'
-                                    : 'orange.200'
-                                const reviewAccentColor =
-                                  reviewState.kind === 'strong'
-                                    ? 'green.500'
-                                    : 'orange.500'
-                                const shouldShowStorySummary = Boolean(
-                                  option.storySummary &&
-                                    (!option.rationale ||
-                                      option.storySummary
-                                        .trim()
-                                        .toLowerCase() !==
-                                        option.rationale.trim().toLowerCase())
-                                )
-                                return (
+                              {storyOptionCards.map(
+                                ({
+                                  option,
+                                  reviewState,
+                                  hasComplianceReport,
+                                  optionBorderColor,
+                                  optionBg,
+                                  reviewBorderColor,
+                                  reviewAccentColor,
+                                  shouldShowStorySummary,
+                                }) => (
                                   <Box
                                     key={option.id}
                                     borderWidth="1px"
@@ -4952,7 +4997,7 @@ export default function NewFlipPage() {
                                     </Stack>
                                   </Box>
                                 )
-                              })}
+                              )}
                             </SimpleGrid>
                           ) : null}
 
