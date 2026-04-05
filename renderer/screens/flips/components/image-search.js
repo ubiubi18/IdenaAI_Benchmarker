@@ -258,7 +258,7 @@ export function ImageSearchDialog({
       <DialogFooter>
         {typeof onUseAiFlipFlow === 'function' ? (
           <SecondaryButton onClick={onUseAiFlipFlow}>
-            {t('AI story + 4 images')}
+            {t('Auto AI flip builder')}
           </SecondaryButton>
         ) : null}
         <SecondaryButton onClick={onClose}>{t('Cancel')}</SecondaryButton>
