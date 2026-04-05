@@ -1253,20 +1253,168 @@ describe('createAiProviderBridge', () => {
     expect(invokeProvider).toHaveBeenCalledTimes(1)
     const callPayload = invokeProvider.mock.calls[0][0]
     expect(callPayload.promptText).toContain(
-      'Generate exactly 1 strong editable flip story option as strict JSON only.'
+      'Generate exactly 1 editable 4-panel flip storyboard as strict JSON only.'
     )
     expect(callPayload.promptText).toContain(
-      '- make the one option vivid, specific, and easy for a human to tweak'
+      'Think like a storyboard collaborator, not a policy robot.'
     )
+    expect(callPayload.promptText).not.toContain('Scoring rubric')
+    expect(callPayload.promptText).not.toContain('Internal workflow:')
+    expect(callPayload.promptText).not.toContain('"compliance_report"')
     expect(
       callPayload.promptOptions.structuredOutput.responseFormat.json_schema
         .schema.properties.stories.maxItems
     ).toBe(1)
+    expect(
+      callPayload.promptOptions.structuredOutput.responseFormat.json_schema
+        .schema.properties.stories.items.required
+    ).toEqual(['title', 'story_summary', 'panels'])
     expect(result.stories).toHaveLength(1)
     expect(result.stories[0].title).toBe('Porch giant curl')
     expect(result.stories[0].panels[0].toLowerCase()).toContain('curl')
     expect(result.stories[0].panels[1].toLowerCase()).toContain('giant')
     expect(result.metrics.fallback_used).toBe(false)
+  })
+
+  it('accepts minimal strict single-story JSON without compliance fields', async () => {
+    const invokeProvider = jest.fn().mockResolvedValue({
+      rawText: JSON.stringify({
+        stories: [
+          {
+            title: 'Milk runway',
+            story_summary:
+              'A pilot sets down milk, startles at bad news, and leaves a tipped chair behind.',
+            panels: [
+              {
+                panel: 1,
+                role: 'before',
+                description:
+                  'A disappointed pilot sets a milk carton on a small airport waiting-room table.',
+                required_visibles: ['disappointed pilot', 'milk carton'],
+                state_change_from_previous: 'n/a',
+              },
+              {
+                panel: 2,
+                role: 'trigger',
+                description:
+                  'The pilot jolts upright when an announcement crackles from the ceiling speaker.',
+                required_visibles: ['pilot', 'ceiling speaker'],
+                state_change_from_previous:
+                  'The pilot is now standing and the chair begins to slide back.',
+              },
+              {
+                panel: 3,
+                role: 'reaction',
+                description:
+                  'The chair tips and the milk carton skids off the table while the pilot grabs the armrest.',
+                required_visibles: ['tipping chair', 'milk carton', 'pilot'],
+                state_change_from_previous:
+                  'The chair is tipping and the milk carton is now falling.',
+              },
+              {
+                panel: 4,
+                role: 'after',
+                description:
+                  'The tipped chair and fallen milk carton remain beside the embarrassed pilot in the waiting room.',
+                required_visibles: [
+                  'tipped chair',
+                  'fallen milk carton',
+                  'pilot',
+                ],
+                state_change_from_previous:
+                  'The chair remains tipped and the milk carton stays on the floor.',
+              },
+            ],
+          },
+        ],
+      }),
+      usage: {
+        promptTokens: 30,
+        completionTokens: 24,
+        totalTokens: 54,
+      },
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['milk', 'disappointed pilot'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    expect(result.stories).toHaveLength(1)
+    expect(result.stories[0].title).toBe('Milk runway')
+    expect(result.stories[0].panels[0].toLowerCase()).toContain('milk')
+    expect(result.metrics.fallback_used).toBe(false)
+  })
+
+  it('adds pair-fit steering for awkward object-object single-story prompts', async () => {
+    const invokeProvider = jest.fn().mockResolvedValue(
+      makeStrictStoryResponse([
+        makeStrictStoryOption({
+          title: 'Store aisle surprise',
+          storySummary:
+            'A shopper hooks a magazine rack with a hoola hoop and leaves the aisle tangled.',
+          panels: [
+            {
+              description:
+                'A shopper carries a hoola hoop beside a freestanding magazine rack in a store aisle.',
+              required_visibles: ['shopper', 'hoola hoop', 'magazine rack'],
+              state_change_from_previous: 'n/a',
+            },
+            {
+              description:
+                'The hoola hoop catches the corner of the magazine rack as the shopper turns.',
+              required_visibles: ['hoola hoop', 'magazine rack', 'shopper'],
+              state_change_from_previous:
+                'The hoola hoop is now snagged on the magazine rack.',
+            },
+            {
+              description:
+                'The rack twists sideways and magazine bundles slide into the hoola hoop while the shopper jerks back.',
+              required_visibles: ['twisted rack', 'magazines', 'hoola hoop'],
+              state_change_from_previous:
+                'The rack has twisted and the magazines are now tangled in the hoop.',
+            },
+            {
+              description:
+                'The bent magazine rack and tangled hoola hoop remain in the aisle beside the shopper.',
+              required_visibles: ['bent rack', 'tangled hoola hoop', 'shopper'],
+              state_change_from_previous:
+                'The aisle remains blocked by the tangled hoop and bent rack.',
+            },
+          ],
+        }),
+      ])
+    )
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['magazine', 'hoola hoop'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    const callPayload = invokeProvider.mock.calls[0][0]
+    expect(callPayload.promptText).toContain('Pair-fit steering:')
+    expect(callPayload.promptText).toContain(
+      'If both keywords are mostly objects, place them inside one believable human situation'
+    )
+    expect(callPayload.promptText).toContain(
+      'Avoid object-object collisions as the default.'
+    )
   })
 
   it('uses provider freeform draft rescue before local fallback in single-story mode', async () => {
@@ -1321,6 +1469,16 @@ describe('createAiProviderBridge', () => {
           payload.promptOptions.promptPhase === 'story_options_freeform_rescue'
       )
     ).toBe(true)
+    const rescueCall = invokeProvider.mock.calls.find(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase === 'story_options_freeform_rescue'
+    )
+    expect(rescueCall[0].promptText).toContain('Pair-fit steering:')
+    expect(rescueCall[0].promptText).toContain(
+      'If both keywords are mostly objects, place them inside one believable human situation'
+    )
     expect(result.metrics.fallback_used).toBe(false)
     expect(result.stories).toHaveLength(1)
     expect(result.stories[0].panels[0].toLowerCase()).toContain('magazine')
@@ -1736,7 +1894,7 @@ describe('createAiProviderBridge', () => {
     )
   })
 
-  it('returns explicit storyboard starter guidance only when fallback is forced by provider transport failure', async () => {
+  it('returns explicit local backup guidance only when fallback is forced by provider transport failure', async () => {
     const invokeProvider = jest.fn().mockRejectedValue(new Error('ETIMEDOUT'))
 
     const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
@@ -1756,8 +1914,12 @@ describe('createAiProviderBridge', () => {
     expect(result.stories[0]).toMatchObject({
       isStoryboardStarter: true,
     })
-    expect(result.stories[0].rationale).toMatch(/storyboard starter/i)
-    expect(result.stories[0].editingTip).toMatch(/Rewrite all 4 panels/i)
+    expect(result.stories[0].rationale).toMatch(
+      /local fallback storyboard draft/i
+    )
+    expect(result.stories[0].editingTip).toMatch(
+      /local backup as a rough storyboard proposal/i
+    )
     expect(result.stories[0].panels[0].toLowerCase()).toContain('jump')
     expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('sport')
     expect(result.stories[0].panels.join(' ')).not.toContain(
@@ -1955,6 +2117,9 @@ describe('createAiProviderBridge', () => {
     expect(fastPrompt).toContain('Negative:')
     expect(fastPrompt).toContain(
       'same porch repeated four times, tiny expression changes'
+    )
+    expect(fastPrompt).toContain(
+      'vary archetype choice; do not default to bump-and-spill unless it is the clearest fit'
     )
     expect(fastPrompt).toContain(
       'Keyword 1 "shock" -> emotional shock or startled reaction that is visible on a person'
@@ -2520,6 +2685,34 @@ describe('createAiProviderBridge', () => {
     )
   })
 
+  it('varies ambiguous local fallback consequences beyond spilled objects', async () => {
+    const logger = mockLogger()
+    const invokeProvider = jest.fn().mockRejectedValue(new Error('ENOTFOUND'))
+
+    const bridge = createAiProviderBridge(logger, {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      storyOptionCount: 1,
+      keywords: ['magazine', 'hoola hoop'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    const joinedPanels = result.stories[0].panels.join(' ').toLowerCase()
+
+    expect(result.metrics.fallback_used).toBe(true)
+    expect(joinedPanels).not.toMatch(/\bspill|spills|spilled\b/)
+    expect(joinedPanels).not.toContain('a sudden bump sends')
+    expect(joinedPanels).not.toContain('a person places the magazine beside')
+    expect(joinedPanels).toMatch(/rolls away|snaps open|unfurls|tangles|blocks/)
+    expect(joinedPanels).toMatch(
+      /shopper|stagehand|traveler|teacher|vendor|gardener/
+    )
+  })
+
   it('keeps tense but non-graphic tool-use stories instead of over-blocking them', async () => {
     const invokeProvider = jest.fn().mockResolvedValue({
       rawText: JSON.stringify({
@@ -2954,6 +3147,8 @@ describe('createAiProviderBridge', () => {
       weak_progression_fail: expect.any(Number),
       total_latency_ms: expect.any(Number),
     })
+    expect(result.stories[0].isStoryboardStarter).toBe(false)
+    expect(result.stories[0].isProviderEditableDraft).toBe(true)
     expect(result.stories[0].rationale.toLowerCase()).toContain(
       'provider draft kept as an editable storyboard draft'
     )
@@ -2966,6 +3161,18 @@ describe('createAiProviderBridge', () => {
       'AI story quality reject',
       expect.objectContaining({
         source: 'provider_story_options',
+      })
+    )
+    expect(logger.info).toHaveBeenCalledWith(
+      'AI story provider draft candidate retained for rescue',
+      expect.objectContaining({
+        rescuePoolSize: 1,
+        candidate: expect.objectContaining({
+          source: 'provider_story_options',
+          score: expect.any(Number),
+          failures: expect.any(Array),
+          panelPreview: expect.any(Array),
+        }),
       })
     )
   })

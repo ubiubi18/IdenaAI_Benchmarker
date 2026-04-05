@@ -260,7 +260,7 @@ function resolveStoryGenerationMaxOutputTokens({
 
 function isLocalFallbackStoryOption(option) {
   const next = option && typeof option === 'object' ? option : {}
-  return /local fallback(?: storyboard starter)? generated because/i.test(
+  return /local fallback(?: storyboard (?:starter|draft))? (?:generated|shown) because/i.test(
     String(next.rationale || '')
   )
 }
@@ -1112,11 +1112,26 @@ function normalizeStoryOptionFromBackend(item, index) {
   const isStoryboardStarter = Boolean(
     next.isStoryboardStarter || next.is_storyboard_starter
   )
+  const isProviderEditableDraft = Boolean(
+    next.isProviderEditableDraft || next.is_provider_editable_draft
+  )
+  const severeQualityFailures = new Set([
+    'missing_initial_state',
+    'missing_trigger_event',
+    'emotional_no_visible_consequence',
+    'near_duplicate_panels',
+  ])
+  const hasSevereQualityFailure = qualityFailures.some((failure) =>
+    severeQualityFailures.has(failure)
+  )
   const isWeakStoryDraft =
     isStoryboardStarter ||
     failedComplianceKeys.length > 0 ||
     riskFlags.length > 0 ||
-    qualityFailures.length > 0
+    (qualityFailures.length > 0 &&
+      (!isProviderEditableDraft ||
+        hasSevereQualityFailure ||
+        (Number.isFinite(qualityScore) && qualityScore < 60)))
 
   return {
     id: String(next.id || `option-${index + 1}`),
@@ -1137,6 +1152,7 @@ function normalizeStoryOptionFromBackend(item, index) {
     rationale: String(next.rationale || '').trim(),
     editingTip: String(next.editingTip || next.editing_tip || '').trim(),
     isStoryboardStarter,
+    isProviderEditableDraft,
     isWeakStoryDraft,
     storySummary: String(next.storySummary || next.story_summary || '').trim(),
     complianceReport,
@@ -1170,22 +1186,30 @@ function getStoryDraftReview(option) {
   if (next.isStoryboardStarter) {
     return {
       kind: 'starter',
-      label: 'Weak draft',
+      label: 'Storyboard proposal',
       description:
-        'Readable starting point, but you should rewrite it or run Optimize before building images.',
+        'Editable storyboard proposal. Sharpen the place, trigger, and final aftermath before building images.',
+    }
+  }
+  if (next.isProviderEditableDraft) {
+    return {
+      kind: 'review',
+      label: 'AI storyboard',
+      description:
+        'Readable AI-generated storyboard kept despite minor quality warnings. Review the trigger, consequence, and ending before building images.',
     }
   }
   if (next.isWeakStoryDraft) {
     return {
       kind: 'review',
-      label: 'Needs review',
+      label: 'Draft to refine',
       description:
-        'Usable draft, but check the trigger, consequence, and final aftermath before building images.',
+        'Usable storyboard draft, but refine the trigger, consequence, and final aftermath before building images.',
     }
   }
   return {
     kind: 'strong',
-    label: 'Ready to edit',
+    label: 'Ready to build',
     description:
       'Looks usable as a base draft. You can still personalize the 4 panels before building.',
   }
@@ -1774,7 +1798,10 @@ export default function NewFlipPage() {
   )
 
   const not = (state) => !current.matches({editing: state})
-  const is = (state) => current.matches({editing: state})
+  const is = useCallback(
+    (state) => current.matches({editing: state}),
+    [current]
+  )
   const either = (...states) =>
     eitherState(current, ...states.map((s) => ({editing: s})))
 
@@ -1836,13 +1863,16 @@ export default function NewFlipPage() {
 
   const publishDrawerDisclosure = useDisclosure()
 
-  const notify = (title, description, status = 'info') => {
-    toast({
-      render: () => (
-        <Toast title={title} description={description} status={status} />
-      ),
-    })
-  }
+  const notify = useCallback(
+    (title, description, status = 'info') => {
+      toast({
+        render: () => (
+          <Toast title={title} description={description} status={status} />
+        ),
+      })
+    },
+    [toast]
+  )
 
   const shuffleDraftForSubmit = useCallback(async () => {
     send('PICK_SHUFFLE')
@@ -1861,11 +1891,11 @@ export default function NewFlipPage() {
     send('PICK_SUBMIT')
   }, [adversarialImageId, order, originalOrder, send])
 
-  const ensureAiSolverBridge = () => {
+  const ensureAiSolverBridge = useCallback(() => {
     if (!global.aiSolver) {
       throw new Error('AI solver bridge is not available in this build')
     }
-  }
+  }, [])
 
   const closeAiGuide = () => {
     if (typeof window !== 'undefined') {
@@ -1874,7 +1904,7 @@ export default function NewFlipPage() {
     aiGuideDisclosure.onClose()
   }
 
-  const applyStoryOptionToDraft = (option) => {
+  const applyStoryOptionToDraft = useCallback((option) => {
     const next = option && typeof option === 'object' ? option : null
     if (!next) return
     setSelectedStoryId(next.id)
@@ -1885,531 +1915,586 @@ export default function NewFlipPage() {
         setStoryNoisePanelIndex(Number(next.noisePanelIndex))
       }
     }
-  }
+  }, [])
 
-  const ensureAiRunReady = async ({requireEnabled = false} = {}) => {
-    ensureAiSolverBridge()
-
-    // Manual benchmark runs in the flip builder should work even if
-    // auto-session AI helper is disabled in global settings.
-    if (requireEnabled && !aiSolverSettings.enabled) {
-      throw new Error('AI helper is disabled')
-    }
-
-    if (
-      !isLegacyOnlyMode &&
-      global.aiSolver &&
-      typeof global.aiSolver.hasProviderKey === 'function'
-    ) {
-      const state = await global.aiSolver.hasProviderKey({
-        provider: aiSolverSettings.provider,
-      })
-      if (!state || !state.hasKey) {
-        throw new Error(
-          `API key is not set for provider: ${
-            (state && state.provider) || aiSolverSettings.provider
-          }`
-        )
-      }
-    }
-  }
-
-  const appendGenerationLedger = ({
-    action,
-    provider,
-    model,
-    tokenUsage,
-    estimatedUsd,
-    actualUsd,
-  }) => {
-    setGenerationCostLedger((prev) =>
-      [
-        {
-          id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-          time: new Date().toISOString(),
-          action: String(action || 'unknown'),
-          provider: String(provider || aiSolverSettings.provider),
-          model: String(model || aiReasoningModel || aiSolverSettings.model),
-          tokenUsage: tokenUsage || null,
-          estimatedUsd:
-            Number.isFinite(Number(estimatedUsd)) && Number(estimatedUsd) >= 0
-              ? Number(estimatedUsd)
-              : null,
-          actualUsd:
-            Number.isFinite(Number(actualUsd)) && Number(actualUsd) >= 0
-              ? Number(actualUsd)
-              : null,
-        },
-      ]
-        .concat(prev)
-        .slice(0, 30)
-    )
-  }
-
-  const generateStoryAlternatives = async ({
-    optimize = false,
-    basePanels = null,
-  } = {}) => {
-    setIsGeneratingStoryOptions(true)
-    setStoryOptions([])
-    setSelectedStoryId('')
-    try {
-      await ensureAiRunReady()
+  const ensureAiRunReady = useCallback(
+    async ({requireEnabled = false} = {}) => {
       ensureAiSolverBridge()
 
-      const reasoningModel = String(
-        aiReasoningModel || aiSolverSettings.model
-      ).trim()
-      const isFastMode = aiGenerationMode !== 'strict'
-      let storyTemperature = 0.72
-      if (isFastMode && optimize) {
-        storyTemperature = 0.82
-      } else if (!isFastMode && !optimize) {
-        storyTemperature = 0.8
-      } else if (!isFastMode && optimize) {
-        storyTemperature = 0.9
+      // Manual benchmark runs in the flip builder should work even if
+      // auto-session AI helper is disabled in global settings.
+      if (requireEnabled && !aiSolverSettings.enabled) {
+        throw new Error('AI helper is disabled')
       }
-      const seededPanels =
-        optimize && Array.isArray(basePanels) && basePanels.length > 0
-          ? normalizeStoryPanelsInput(basePanels)
-          : storyPanelsDraft
-      const storyGenerationMaxOutputTokens =
-        resolveStoryGenerationMaxOutputTokens({
-          configuredMaxOutputTokens: aiSolverSettings.maxOutputTokens,
-          fastMode: isFastMode,
-          storyOptionCount,
-          optimize,
+
+      if (
+        !isLegacyOnlyMode &&
+        global.aiSolver &&
+        typeof global.aiSolver.hasProviderKey === 'function'
+      ) {
+        const state = await global.aiSolver.hasProviderKey({
+          provider: aiSolverSettings.provider,
         })
-
-      const response = await global.aiSolver.generateStoryOptions({
-        ...baseRunPayload,
-        fastStoryMode: isFastMode,
-        provider: aiSolverSettings.provider,
-        model: reasoningModel,
-        storyOptionCount,
-        disableLocalFallback: true,
-        keywords: [keywordA, keywordB],
-        includeNoise: storyIncludeNoise,
-        noisePanelIndex: storyNoisePanelIndex,
-        customStoryPanels: seededPanels,
-        hasCustomStory: optimize,
-        maxOutputTokens: storyGenerationMaxOutputTokens,
-        temperature: storyTemperature,
-      })
-
-      const options = selectPreferredStoryOptions(
-        Array.isArray(response && response.stories)
-          ? response.stories.map((item, index) =>
-              normalizeStoryOptionFromBackend(item, index)
-            )
-          : [],
-        storyOptionCount
-      )
-
-      if (!options.length) {
-        throw new Error('Story generation returned no options')
-      }
-
-      setStoryOptions(options)
-      const defaultSelected = options[0]
-      if (defaultSelected) {
-        applyStoryOptionToDraft(defaultSelected)
-        if (!optimize) {
-          setStoryIncludeNoise(Boolean(defaultSelected.includeNoise))
-          setStoryNoisePanelIndex(
-            Number.isFinite(Number(defaultSelected.noisePanelIndex))
-              ? Number(defaultSelected.noisePanelIndex)
-              : storyNoisePanelIndex
+        if (!state || !state.hasKey) {
+          throw new Error(
+            `API key is not set for provider: ${
+              (state && state.provider) || aiSolverSettings.provider
+            }`
           )
         }
       }
+    },
+    [
+      aiSolverSettings.enabled,
+      aiSolverSettings.provider,
+      ensureAiSolverBridge,
+      isLegacyOnlyMode,
+    ]
+  )
 
-      appendGenerationLedger({
-        action: optimize ? 'story_optimize' : 'story_generate',
-        provider: response.provider,
-        model: response.model,
-        tokenUsage: response.tokenUsage,
-        estimatedUsd:
-          response.costs && Number.isFinite(Number(response.costs.estimatedUsd))
-            ? Number(response.costs.estimatedUsd)
-            : null,
-        actualUsd:
-          response.costs && Number.isFinite(Number(response.costs.actualUsd))
-            ? Number(response.costs.actualUsd)
-            : null,
-      })
-
-      const fallbackStorySeed = options.some((item) => item.isStoryboardStarter)
-      const fallbackWasUsed = Boolean(
-        response && response.metrics && response.metrics.fallback_used
+  const appendGenerationLedger = useCallback(
+    ({action, provider, model, tokenUsage, estimatedUsd, actualUsd}) => {
+      setGenerationCostLedger((prev) =>
+        [
+          {
+            id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+            time: new Date().toISOString(),
+            action: String(action || 'unknown'),
+            provider: String(provider || aiSolverSettings.provider),
+            model: String(model || aiReasoningModel || aiSolverSettings.model),
+            tokenUsage: tokenUsage || null,
+            estimatedUsd:
+              Number.isFinite(Number(estimatedUsd)) && Number(estimatedUsd) >= 0
+                ? Number(estimatedUsd)
+                : null,
+            actualUsd:
+              Number.isFinite(Number(actualUsd)) && Number(actualUsd) >= 0
+                ? Number(actualUsd)
+                : null,
+          },
+        ]
+          .concat(prev)
+          .slice(0, 30)
       )
-      const weakDraftReturned = options.some((item) => item.isWeakStoryDraft)
-      let storyOptionsMessage = t(
-        'Choose the better option, customize if needed, then build flip.'
-      )
-      if (storyOptionCount === 1) {
-        storyOptionsMessage = t(
-          'Review the story draft, rewrite any weak panel text, then build flip.'
+    },
+    [aiReasoningModel, aiSolverSettings.model, aiSolverSettings.provider]
+  )
+
+  const generateStoryAlternatives = useCallback(
+    async ({optimize = false, basePanels = null} = {}) => {
+      setIsGeneratingStoryOptions(true)
+      setStoryOptions([])
+      setSelectedStoryId('')
+      try {
+        await ensureAiRunReady()
+        ensureAiSolverBridge()
+
+        const reasoningModel = String(
+          aiReasoningModel || aiSolverSettings.model
+        ).trim()
+        const isFastMode = aiGenerationMode !== 'strict'
+        let storyTemperature = 0.72
+        if (isFastMode && optimize) {
+          storyTemperature = 0.82
+        } else if (!isFastMode && !optimize) {
+          storyTemperature = 0.8
+        } else if (!isFastMode && optimize) {
+          storyTemperature = 0.9
+        }
+        const seededPanels =
+          optimize && Array.isArray(basePanels) && basePanels.length > 0
+            ? normalizeStoryPanelsInput(basePanels)
+            : storyPanelsDraft
+        const storyGenerationMaxOutputTokens =
+          resolveStoryGenerationMaxOutputTokens({
+            configuredMaxOutputTokens: aiSolverSettings.maxOutputTokens,
+            fastMode: isFastMode,
+            storyOptionCount,
+            optimize,
+          })
+
+        const response = await global.aiSolver.generateStoryOptions({
+          ...baseRunPayload,
+          fastStoryMode: isFastMode,
+          provider: aiSolverSettings.provider,
+          model: reasoningModel,
+          storyOptionCount,
+          disableLocalFallback: true,
+          keywords: [keywordA, keywordB],
+          includeNoise: storyIncludeNoise,
+          noisePanelIndex: storyNoisePanelIndex,
+          customStoryPanels: seededPanels,
+          hasCustomStory: optimize,
+          maxOutputTokens: storyGenerationMaxOutputTokens,
+          temperature: storyTemperature,
+        })
+
+        const options = selectPreferredStoryOptions(
+          Array.isArray(response && response.stories)
+            ? response.stories.map((item, index) =>
+                normalizeStoryOptionFromBackend(item, index)
+              )
+            : [],
+          storyOptionCount
         )
-      }
-      if (weakDraftReturned && !fallbackStorySeed && !fallbackWasUsed) {
-        storyOptionsMessage = t(
-          'The AI returned a weak but editable draft. Tighten the place, trigger, and aftermath yourself or run Optimize story further.'
+
+        if (!options.length) {
+          throw new Error('Story generation returned no options')
+        }
+
+        setStoryOptions(options)
+        const defaultSelected = options[0]
+        if (defaultSelected) {
+          applyStoryOptionToDraft(defaultSelected)
+          if (!optimize) {
+            setStoryIncludeNoise(Boolean(defaultSelected.includeNoise))
+            setStoryNoisePanelIndex(
+              Number.isFinite(Number(defaultSelected.noisePanelIndex))
+                ? Number(defaultSelected.noisePanelIndex)
+                : storyNoisePanelIndex
+            )
+          }
+        }
+
+        appendGenerationLedger({
+          action: optimize ? 'story_optimize' : 'story_generate',
+          provider: response.provider,
+          model: response.model,
+          tokenUsage: response.tokenUsage,
+          estimatedUsd:
+            response.costs &&
+            Number.isFinite(Number(response.costs.estimatedUsd))
+              ? Number(response.costs.estimatedUsd)
+              : null,
+          actualUsd:
+            response.costs && Number.isFinite(Number(response.costs.actualUsd))
+              ? Number(response.costs.actualUsd)
+              : null,
+        })
+
+        const fallbackStorySeed = options.some(
+          (item) => item.isStoryboardStarter
         )
-      }
-      if (fallbackStorySeed || fallbackWasUsed) {
-        storyOptionsMessage = t(
-          'The AI returned a rough storyboard starter. It is loaded into the panel editor so you can rewrite the place, trigger, and aftermath, or run Optimize story further before building the flip.'
+        const fallbackWasUsed = Boolean(
+          response && response.metrics && response.metrics.fallback_used
         )
+        const weakDraftReturned = options.some((item) => item.isWeakStoryDraft)
+        let storyOptionsMessage = t(
+          'Choose the better option, customize if needed, then build flip.'
+        )
+        if (storyOptionCount === 1) {
+          storyOptionsMessage = t(
+            'Review the story draft, rewrite any weak panel text, then build flip.'
+          )
+        }
+        if (weakDraftReturned && !fallbackStorySeed && !fallbackWasUsed) {
+          storyOptionsMessage = t(
+            'The AI returned an editable storyboard draft with minor warnings. Tighten the place, trigger, and aftermath yourself or run Refine with AI.'
+          )
+        }
+        if (fallbackStorySeed || fallbackWasUsed) {
+          storyOptionsMessage = t(
+            'The AI returned an editable storyboard proposal. It is loaded into the panel editor so you can sharpen the place, trigger, and aftermath, or run Refine with AI before building the flip.'
+          )
+        }
+
+        notify(t('Story options generated'), storyOptionsMessage)
+        return {
+          options,
+          selectedStoryId: defaultSelected
+            ? String(defaultSelected.id || '')
+            : '',
+          storyPanels: defaultSelected
+            ? normalizeStoryPanelsInput(defaultSelected.panels)
+            : seededPanels,
+          includeNoise: Boolean(
+            defaultSelected ? defaultSelected.includeNoise : storyIncludeNoise
+          ),
+          noisePanelIndex:
+            defaultSelected &&
+            Number.isFinite(Number(defaultSelected.noisePanelIndex))
+              ? Number(defaultSelected.noisePanelIndex)
+              : storyNoisePanelIndex,
+        }
+      } catch (error) {
+        const message = formatAiRunError(error)
+        notify(t('Could not finish the story draft'), message, 'error')
+        if (/API key missing|AI helper is disabled/i.test(message)) {
+          router.push('/settings/ai')
+        }
+        return null
+      } finally {
+        setIsGeneratingStoryOptions(false)
       }
+    },
+    [
+      aiGenerationMode,
+      aiReasoningModel,
+      aiSolverSettings.maxOutputTokens,
+      aiSolverSettings.model,
+      aiSolverSettings.provider,
+      appendGenerationLedger,
+      applyStoryOptionToDraft,
+      baseRunPayload,
+      ensureAiRunReady,
+      ensureAiSolverBridge,
+      keywordA,
+      keywordB,
+      notify,
+      router,
+      storyIncludeNoise,
+      storyNoisePanelIndex,
+      storyOptionCount,
+      storyPanelsDraft,
+      t,
+    ]
+  )
 
-      notify(t('Story options generated'), storyOptionsMessage)
-      return {
-        options,
-        selectedStoryId: defaultSelected
-          ? String(defaultSelected.id || '')
-          : '',
-        storyPanels: defaultSelected
-          ? normalizeStoryPanelsInput(defaultSelected.panels)
-          : seededPanels,
-        includeNoise: Boolean(
-          defaultSelected ? defaultSelected.includeNoise : storyIncludeNoise
-        ),
-        noisePanelIndex:
-          defaultSelected &&
-          Number.isFinite(Number(defaultSelected.noisePanelIndex))
-            ? Number(defaultSelected.noisePanelIndex)
-            : storyNoisePanelIndex,
-      }
-    } catch (error) {
-      const message = formatAiRunError(error)
-      notify(t('Unable to generate story options'), message, 'error')
-      if (/API key missing|AI helper is disabled/i.test(message)) {
-        router.push('/settings/ai')
-      }
-      return null
-    } finally {
-      setIsGeneratingStoryOptions(false)
-    }
-  }
+  const applyGeneratedPanelsToBuilder = useCallback(
+    async (
+      panels,
+      {returnToSubmit = false, autoShuffleSubmit = false} = {}
+    ) => {
+      const normalizedPanels = await normalizeGeneratedPanelsForBuilder(panels)
+      const shouldReturnToSubmit = returnToSubmit || is('submit')
 
-  const applyGeneratedPanelsToBuilder = async (
-    panels,
-    {returnToSubmit = false, autoShuffleSubmit = false} = {}
-  ) => {
-    const normalizedPanels = await normalizeGeneratedPanelsForBuilder(panels)
-    const shouldReturnToSubmit = returnToSubmit || is('submit')
-
-    // Ensure CHANGE_IMAGES events are handled by the editor state.
-    send('PICK_IMAGES')
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0)
-    })
-
-    for (let index = 0; index < 4; index += 1) {
-      const imageDataUrl = String(normalizedPanels[index] || '').trim()
-      // eslint-disable-next-line no-await-in-loop
-      await Promise.resolve(
-        send('CHANGE_IMAGES', {image: imageDataUrl, currentIndex: index})
-      )
-    }
-
-    if (shouldReturnToSubmit) {
-      if (autoShuffleSubmit) {
-        await shuffleDraftForSubmit()
-        return
-      }
+      // Ensure CHANGE_IMAGES events are handled by the editor state.
+      send('PICK_IMAGES')
       await new Promise((resolve) => {
         setTimeout(resolve, 0)
       })
-      send('PICK_SUBMIT')
-    }
-  }
 
-  const buildFlipWithAi = async ({
-    regenerateIndices = [0, 1, 2, 3],
-    storyOptionsOverride = null,
-    selectedStoryIdOverride = '',
-    storyPanelsOverride = null,
-    includeNoiseOverride = null,
-    noisePanelIndexOverride = null,
-  } = {}) => {
-    setIsGeneratingFlipPanels(true)
-    setFlipBuildStatus({
-      kind: 'running',
-      message: t('Building flip panels...'),
-    })
-    const startedAt = Date.now()
-    try {
-      await ensureAiRunReady()
-      ensureAiSolverBridge()
-      const reasoningModel = String(
-        aiReasoningModel || aiSolverSettings.model
-      ).trim()
-      const isFastMode = aiGenerationMode !== 'strict'
-      const effectiveStoryOptions = Array.isArray(storyOptionsOverride)
-        ? storyOptionsOverride
-        : storyOptions
-      const effectiveSelectedStoryId = String(
-        selectedStoryIdOverride || selectedStoryId
-      )
-      const effectiveStoryPanels = Array.isArray(storyPanelsOverride)
-        ? normalizeStoryPanelsInput(storyPanelsOverride)
-        : storyPanelsDraft
-      const effectiveIncludeNoise =
-        includeNoiseOverride == null
-          ? storyIncludeNoise
-          : Boolean(includeNoiseOverride)
-      const effectiveNoisePanelIndex =
-        noisePanelIndexOverride == null
-          ? storyNoisePanelIndex
-          : Math.max(0, Math.min(3, toInt(noisePanelIndexOverride, 0)))
-      const selectedStoryOption = effectiveStoryOptions.find(
-        (item) => String(item.id) === effectiveSelectedStoryId
-      )
-
-      const response = await global.aiSolver.generateFlipPanels({
-        ...baseRunPayload,
-        fastBuild: isFastMode,
-        panelRenderMode: isFastMode ? 'sheet_fast' : 'panels',
-        provider: aiSolverSettings.provider,
-        model: reasoningModel,
-        textAuditModel: reasoningModel,
-        textAuditEnabled: !isFastMode,
-        textAuditMaxRetries: isFastMode ? 0 : 1,
-        imageModel: aiImageModel,
-        imageSize: aiImageSize,
-        imageStyle: '',
-        visualStyle: aiImageStyle,
-        keywords: [keywordA, keywordB],
-        storyPanels: effectiveStoryPanels,
-        storyOptions: effectiveStoryOptions,
-        selectedStoryId: effectiveSelectedStoryId,
-        senseSelection:
-          selectedStoryOption && selectedStoryOption.senseSelection
-            ? selectedStoryOption.senseSelection
-            : null,
-        includeNoise: effectiveIncludeNoise,
-        noisePanelIndex: effectiveNoisePanelIndex,
-        regenerateIndices,
-        existingPanels: generatedFlipPanels.map((item) => item.imageDataUrl),
-      })
-
-      const nextPanels = Array.isArray(response && response.panels)
-        ? response.panels.slice(0, 4)
-        : []
-      if (nextPanels.length < 1) {
-        throw new Error('Panel generation returned no panels')
+      for (let index = 0; index < 4; index += 1) {
+        const imageDataUrl = String(normalizedPanels[index] || '').trim()
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.resolve(
+          send('CHANGE_IMAGES', {image: imageDataUrl, currentIndex: index})
+        )
       }
-      if (
-        response &&
-        response.selectedStory &&
-        typeof response.selectedStory === 'object'
-      ) {
-        const nextStoryId = String(response.selectedStory.id || '').trim()
-        if (nextStoryId && nextStoryId !== String(selectedStoryId)) {
-          setSelectedStoryId(nextStoryId)
+
+      if (shouldReturnToSubmit) {
+        if (autoShuffleSubmit) {
+          await shuffleDraftForSubmit()
+          return
         }
-        if (Array.isArray(response.selectedStory.panels)) {
-          setStoryPanelsDraft(
-            normalizeStoryPanelsInput(response.selectedStory.panels)
+        await new Promise((resolve) => {
+          setTimeout(resolve, 0)
+        })
+        send('PICK_SUBMIT')
+      }
+    },
+    [is, send, shuffleDraftForSubmit]
+  )
+
+  const buildFlipWithAi = useCallback(
+    async ({
+      regenerateIndices = [0, 1, 2, 3],
+      storyOptionsOverride = null,
+      selectedStoryIdOverride = '',
+      storyPanelsOverride = null,
+      includeNoiseOverride = null,
+      noisePanelIndexOverride = null,
+    } = {}) => {
+      setIsGeneratingFlipPanels(true)
+      setFlipBuildStatus({
+        kind: 'running',
+        message: t('Building flip panels...'),
+      })
+      const startedAt = Date.now()
+      try {
+        await ensureAiRunReady()
+        ensureAiSolverBridge()
+        const reasoningModel = String(
+          aiReasoningModel || aiSolverSettings.model
+        ).trim()
+        const isFastMode = aiGenerationMode !== 'strict'
+        const effectiveStoryOptions = Array.isArray(storyOptionsOverride)
+          ? storyOptionsOverride
+          : storyOptions
+        const effectiveSelectedStoryId = String(
+          selectedStoryIdOverride || selectedStoryId
+        )
+        const effectiveStoryPanels = Array.isArray(storyPanelsOverride)
+          ? normalizeStoryPanelsInput(storyPanelsOverride)
+          : storyPanelsDraft
+        const effectiveIncludeNoise =
+          includeNoiseOverride == null
+            ? storyIncludeNoise
+            : Boolean(includeNoiseOverride)
+        const effectiveNoisePanelIndex =
+          noisePanelIndexOverride == null
+            ? storyNoisePanelIndex
+            : Math.max(0, Math.min(3, toInt(noisePanelIndexOverride, 0)))
+        const selectedStoryOption = effectiveStoryOptions.find(
+          (item) => String(item.id) === effectiveSelectedStoryId
+        )
+
+        const response = await global.aiSolver.generateFlipPanels({
+          ...baseRunPayload,
+          fastBuild: isFastMode,
+          panelRenderMode: isFastMode ? 'sheet_fast' : 'panels',
+          provider: aiSolverSettings.provider,
+          model: reasoningModel,
+          textAuditModel: reasoningModel,
+          textAuditEnabled: !isFastMode,
+          textAuditMaxRetries: isFastMode ? 0 : 1,
+          imageModel: aiImageModel,
+          imageSize: aiImageSize,
+          imageStyle: '',
+          visualStyle: aiImageStyle,
+          keywords: [keywordA, keywordB],
+          storyPanels: effectiveStoryPanels,
+          storyOptions: effectiveStoryOptions,
+          selectedStoryId: effectiveSelectedStoryId,
+          senseSelection:
+            selectedStoryOption && selectedStoryOption.senseSelection
+              ? selectedStoryOption.senseSelection
+              : null,
+          includeNoise: effectiveIncludeNoise,
+          noisePanelIndex: effectiveNoisePanelIndex,
+          regenerateIndices,
+          existingPanels: generatedFlipPanels.map((item) => item.imageDataUrl),
+        })
+
+        const nextPanels = Array.isArray(response && response.panels)
+          ? response.panels.slice(0, 4)
+          : []
+        if (nextPanels.length < 1) {
+          throw new Error('Panel generation returned no panels')
+        }
+        if (
+          response &&
+          response.selectedStory &&
+          typeof response.selectedStory === 'object'
+        ) {
+          const nextStoryId = String(response.selectedStory.id || '').trim()
+          if (nextStoryId && nextStoryId !== String(selectedStoryId)) {
+            setSelectedStoryId(nextStoryId)
+          }
+          if (Array.isArray(response.selectedStory.panels)) {
+            setStoryPanelsDraft(
+              normalizeStoryPanelsInput(response.selectedStory.panels)
+            )
+          }
+        }
+
+        const normalizedPanelDataUrls =
+          await normalizeGeneratedPanelsForBuilder(nextPanels)
+        if (normalizedPanelDataUrls.length < 4) {
+          throw new Error('Panel generation returned less than 4 panels')
+        }
+        let finalPanelDataUrls = normalizedPanelDataUrls.slice(0, 4)
+        const panelMetadataByIndex =
+          response && Array.isArray(response.panelMetadataByIndex)
+            ? response.panelMetadataByIndex.slice(0, 4)
+            : []
+        const normalizedNoiseIndex = Math.max(
+          0,
+          Math.min(3, toInt(effectiveNoisePanelIndex, 0))
+        )
+        const shouldApplyLegacyNoise =
+          effectiveIncludeNoise &&
+          regenerateIndices.includes(normalizedNoiseIndex)
+        let noiseApplyResult = {
+          applied: false,
+          noisePanelIndex: normalizedNoiseIndex,
+          error: '',
+        }
+
+        if (shouldApplyLegacyNoise) {
+          noiseApplyResult = await applyLegacyNoiseToPanel(
+            finalPanelDataUrls,
+            normalizedNoiseIndex
+          )
+          finalPanelDataUrls = noiseApplyResult.panels
+          if (noiseApplyResult.error) {
+            notify(
+              t('Noise post-process failed'),
+              noiseApplyResult.error,
+              'warning'
+            )
+          }
+        }
+
+        setGeneratedFlipPanels(
+          finalPanelDataUrls.map((imageDataUrl, index) => {
+            let panelMetadata = {}
+            if (typeof panelMetadataByIndex[index] === 'object') {
+              panelMetadata = panelMetadataByIndex[index]
+            } else if (typeof nextPanels[index] === 'object') {
+              panelMetadata = nextPanels[index]
+            }
+
+            return {
+              ...panelMetadata,
+              index,
+              imageDataUrl,
+              legacyNoiseApplied:
+                Boolean(noiseApplyResult.applied) &&
+                index === Number(noiseApplyResult.noisePanelIndex),
+            }
+          })
+        )
+
+        await applyGeneratedPanelsToBuilder(finalPanelDataUrls, {
+          returnToSubmit: true,
+          autoShuffleSubmit: true,
+        })
+
+        if (
+          noiseApplyResult.applied &&
+          Number.isFinite(Number(noiseApplyResult.noisePanelIndex))
+        ) {
+          setStoryNoisePanelIndex(Number(noiseApplyResult.noisePanelIndex))
+        } else if (
+          response.includeNoise &&
+          Number.isFinite(Number(response.noisePanelIndex))
+        ) {
+          setStoryNoisePanelIndex(Number(response.noisePanelIndex))
+        }
+
+        appendGenerationLedger({
+          action:
+            regenerateIndices.length === 4
+              ? 'flip_build'
+              : `flip_regenerate_${regenerateIndices.join('_')}`,
+          provider: response.provider,
+          model: response.imageModel || response.model,
+          tokenUsage: response.tokenUsage,
+          estimatedUsd:
+            response.costs &&
+            Number.isFinite(Number(response.costs.estimatedUsd))
+              ? Number(response.costs.estimatedUsd)
+              : null,
+          actualUsd:
+            response.costs && Number.isFinite(Number(response.costs.actualUsd))
+              ? Number(response.costs.actualUsd)
+              : null,
+        })
+
+        const textAuditItems = Array.isArray(response.textAuditByPanel)
+          ? response.textAuditByPanel
+          : []
+        const textAuditFailed = textAuditItems.filter(
+          (item) => item && item.checked && item.hasText
+        )
+        const textAuditRetried = Math.max(
+          0,
+          Number(response.textOverlayRetryCount) || 0
+        )
+
+        let buildSuccessDescription = t(
+          'Panels were applied and shuffled for submit. You can still reshuffle or regenerate panels.'
+        )
+        if (response && response.panelRenderModeUsed === 'sheet_fast') {
+          buildSuccessDescription = t(
+            'Panels were generated as one fast 2x2 storyboard sheet, split into 4 panels, and shuffled for submit. You can still reshuffle or regenerate panels.'
+          )
+        } else if (noiseApplyResult.applied) {
+          buildSuccessDescription = t(
+            'Panels were applied and shuffled for submit. Legacy adversarial image noise was applied to panel {{panel}}. You can still reshuffle or regenerate panels.',
+            {panel: Number(noiseApplyResult.noisePanelIndex) + 1}
           )
         }
-      }
 
-      const normalizedPanelDataUrls = await normalizeGeneratedPanelsForBuilder(
-        nextPanels
-      )
-      if (normalizedPanelDataUrls.length < 4) {
-        throw new Error('Panel generation returned less than 4 panels')
-      }
-      let finalPanelDataUrls = normalizedPanelDataUrls.slice(0, 4)
-      const panelMetadataByIndex =
-        response && Array.isArray(response.panelMetadataByIndex)
-          ? response.panelMetadataByIndex.slice(0, 4)
-          : []
-      const normalizedNoiseIndex = Math.max(
-        0,
-        Math.min(3, toInt(effectiveNoisePanelIndex, 0))
-      )
-      const shouldApplyLegacyNoise =
-        effectiveIncludeNoise &&
-        regenerateIndices.includes(normalizedNoiseIndex)
-      let noiseApplyResult = {
-        applied: false,
-        noisePanelIndex: normalizedNoiseIndex,
-        error: '',
-      }
-
-      if (shouldApplyLegacyNoise) {
-        noiseApplyResult = await applyLegacyNoiseToPanel(
-          finalPanelDataUrls,
-          normalizedNoiseIndex
-        )
-        finalPanelDataUrls = noiseApplyResult.panels
-        if (noiseApplyResult.error) {
+        notify(t('Flip panels generated'), buildSuccessDescription)
+        if (
+          response &&
+          response.renderFeedback &&
+          response.renderFeedback.switchedToAlternativeOption
+        ) {
           notify(
-            t('Noise post-process failed'),
-            noiseApplyResult.error,
+            t('Switched to stronger rendered story'),
+            t(
+              'The original story rendered weakly, so the stronger alternative story option was used for the generated panels.'
+            )
+          )
+        } else if (
+          response &&
+          response.renderFeedback &&
+          response.renderFeedback.verdict === 'replan_story'
+        ) {
+          notify(
+            t('Rendered story looks weak'),
+            t(
+              'The rendered sequence still looks ambiguous after generation. Consider switching story option or regenerating again.'
+            ),
             'warning'
           )
         }
-      }
-
-      setGeneratedFlipPanels(
-        finalPanelDataUrls.map((imageDataUrl, index) => {
-          let panelMetadata = {}
-          if (typeof panelMetadataByIndex[index] === 'object') {
-            panelMetadata = panelMetadataByIndex[index]
-          } else if (typeof nextPanels[index] === 'object') {
-            panelMetadata = nextPanels[index]
-          }
-
-          return {
-            ...panelMetadata,
-            index,
-            imageDataUrl,
-            legacyNoiseApplied:
-              Boolean(noiseApplyResult.applied) &&
-              index === Number(noiseApplyResult.noisePanelIndex),
-          }
-        })
-      )
-
-      // Make generated result immediately visible in the regular builder draft.
-      // Keep user in submit step when this action was triggered there.
-      await applyGeneratedPanelsToBuilder(finalPanelDataUrls, {
-        returnToSubmit: true,
-        autoShuffleSubmit: true,
-      })
-
-      if (
-        noiseApplyResult.applied &&
-        Number.isFinite(Number(noiseApplyResult.noisePanelIndex))
-      ) {
-        setStoryNoisePanelIndex(Number(noiseApplyResult.noisePanelIndex))
-      } else if (
-        response.includeNoise &&
-        Number.isFinite(Number(response.noisePanelIndex))
-      ) {
-        setStoryNoisePanelIndex(Number(response.noisePanelIndex))
-      }
-
-      appendGenerationLedger({
-        action:
-          regenerateIndices.length === 4
-            ? 'flip_build'
-            : `flip_regenerate_${regenerateIndices.join('_')}`,
-        provider: response.provider,
-        model: response.imageModel || response.model,
-        tokenUsage: response.tokenUsage,
-        estimatedUsd:
-          response.costs && Number.isFinite(Number(response.costs.estimatedUsd))
-            ? Number(response.costs.estimatedUsd)
-            : null,
-        actualUsd:
-          response.costs && Number.isFinite(Number(response.costs.actualUsd))
-            ? Number(response.costs.actualUsd)
-            : null,
-      })
-
-      const textAuditItems = Array.isArray(response.textAuditByPanel)
-        ? response.textAuditByPanel
-        : []
-      const textAuditFailed = textAuditItems.filter(
-        (item) => item && item.checked && item.hasText
-      )
-      const textAuditRetried = Math.max(
-        0,
-        Number(response.textOverlayRetryCount) || 0
-      )
-
-      let buildSuccessDescription = t(
-        'Panels were applied and shuffled for submit. You can still reshuffle or regenerate panels.'
-      )
-      if (response && response.panelRenderModeUsed === 'sheet_fast') {
-        buildSuccessDescription = t(
-          'Panels were generated as one fast 2x2 storyboard sheet, split into 4 panels, and shuffled for submit. You can still reshuffle or regenerate panels.'
-        )
-      } else if (noiseApplyResult.applied) {
-        buildSuccessDescription = t(
-          'Panels were applied and shuffled for submit. Legacy adversarial image noise was applied to panel {{panel}}. You can still reshuffle or regenerate panels.',
-          {panel: Number(noiseApplyResult.noisePanelIndex) + 1}
-        )
-      }
-
-      notify(t('Flip panels generated'), buildSuccessDescription)
-      if (
-        response &&
-        response.renderFeedback &&
-        response.renderFeedback.switchedToAlternativeOption
-      ) {
-        notify(
-          t('Switched to stronger rendered story'),
-          t(
-            'The original story rendered weakly, so the stronger alternative story option was used for the generated panels.'
+        if (textAuditFailed.length > 0) {
+          notify(
+            t('Text detected in generated panel'),
+            t(
+              'One or more panels still contain text after retries. Use "Redo panel" for affected panels before submit.'
+            ),
+            'warning'
           )
-        )
-      } else if (
-        response &&
-        response.renderFeedback &&
-        response.renderFeedback.verdict === 'replan_story'
-      ) {
-        notify(
-          t('Rendered story looks weak'),
-          t(
-            'The rendered sequence still looks ambiguous after generation. Consider switching story option or regenerating again.'
-          ),
-          'warning'
-        )
-      }
-      if (textAuditFailed.length > 0) {
-        notify(
-          t('Text detected in generated panel'),
-          t(
-            'One or more panels still contain text after retries. Use "Redo panel" for affected panels before submit.'
-          ),
-          'warning'
-        )
-      } else if (textAuditRetried > 0) {
-        notify(
-          t('Text audit retries applied'),
-          t(
-            '{{count}} panel retry attempts were used to remove detected text overlays.',
-            {count: textAuditRetried}
+        } else if (textAuditRetried > 0) {
+          notify(
+            t('Text audit retries applied'),
+            t(
+              '{{count}} panel retry attempts were used to remove detected text overlays.',
+              {count: textAuditRetried}
+            )
           )
-        )
-      }
-      const elapsedMs = Math.max(0, Date.now() - startedAt)
-      setFlipBuildStatus({
-        kind: 'success',
-        message:
-          textAuditRetried > 0
-            ? t(
-                'Panels generated and applied to draft ({{elapsed}} ms, text-audit retries: {{retries}}).',
-                {
+        }
+        const elapsedMs = Math.max(0, Date.now() - startedAt)
+        setFlipBuildStatus({
+          kind: 'success',
+          message:
+            textAuditRetried > 0
+              ? t(
+                  'Panels generated and applied to draft ({{elapsed}} ms, text-audit retries: {{retries}}).',
+                  {
+                    elapsed: elapsedMs,
+                    retries: textAuditRetried,
+                  }
+                )
+              : t('Panels generated and applied to draft ({{elapsed}} ms).', {
                   elapsed: elapsedMs,
-                  retries: textAuditRetried,
-                }
-              )
-            : t('Panels generated and applied to draft ({{elapsed}} ms).', {
-                elapsed: elapsedMs,
-              }),
-      })
-    } catch (error) {
-      const message = formatAiRunError(error)
-      notify(t('Flip generation failed'), message, 'error')
-      setFlipBuildStatus({
-        kind: 'error',
-        message,
-      })
-      if (/API key missing|AI helper is disabled/i.test(message)) {
-        router.push('/settings/ai')
+                }),
+        })
+      } catch (error) {
+        const message = formatAiRunError(error)
+        notify(t('Flip generation failed'), message, 'error')
+        setFlipBuildStatus({
+          kind: 'error',
+          message,
+        })
+        if (/API key missing|AI helper is disabled/i.test(message)) {
+          router.push('/settings/ai')
+        }
+      } finally {
+        setIsGeneratingFlipPanels(false)
       }
-    } finally {
-      setIsGeneratingFlipPanels(false)
-    }
-  }
+    },
+    [
+      aiGenerationMode,
+      aiImageModel,
+      aiImageSize,
+      aiImageStyle,
+      aiReasoningModel,
+      aiSolverSettings.model,
+      aiSolverSettings.provider,
+      appendGenerationLedger,
+      applyGeneratedPanelsToBuilder,
+      baseRunPayload,
+      ensureAiRunReady,
+      ensureAiSolverBridge,
+      generatedFlipPanels,
+      keywordA,
+      keywordB,
+      notify,
+      router,
+      selectedStoryId,
+      storyIncludeNoise,
+      storyNoisePanelIndex,
+      storyOptions,
+      storyPanelsDraft,
+      t,
+    ]
+  )
 
   const runAiAutoFlipBuilder = useCallback(async () => {
     const currentDraft =
@@ -4290,7 +4375,7 @@ export default function NewFlipPage() {
                                         >
                                           {reviewState.kind === 'strong'
                                             ? t('Use this story')
-                                            : t('Use this draft')}
+                                            : t('Use this storyboard')}
                                         </SecondaryButton>
                                         {reviewState.kind !== 'strong' ? (
                                           <SecondaryButton
@@ -4303,7 +4388,7 @@ export default function NewFlipPage() {
                                               })
                                             }}
                                           >
-                                            {t('Optimize this weak draft')}
+                                            {t('Refine with AI')}
                                           </SecondaryButton>
                                         ) : null}
                                       </Stack>
@@ -4351,7 +4436,7 @@ export default function NewFlipPage() {
                                         'Recommended flow: make any final wording tweaks, then build all 4 panels.'
                                       )
                                     : t(
-                                        'Recommended flow: rewrite the place, trigger, and visible aftermath first. If it still feels weak, run Optimize this weak draft.'
+                                        'Recommended flow: tighten the place, trigger, and visible aftermath first. If you want a stronger pass, run Refine with AI.'
                                       )}
                                 </Text>
                                 {activeStoryDraftReview.kind !== 'strong' ? (
@@ -4365,7 +4450,7 @@ export default function NewFlipPage() {
                                         })
                                       }
                                     >
-                                      {t('Optimize selected draft')}
+                                      {t('Refine selected draft')}
                                     </SecondaryButton>
                                   </Stack>
                                 ) : null}

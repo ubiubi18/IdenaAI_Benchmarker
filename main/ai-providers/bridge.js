@@ -594,10 +594,227 @@ function getContentSafetyBoundaryLines() {
   ]
 }
 
+function buildSingleStoryPairFitLines(senseSelection, keywordA, keywordB) {
+  const selection = getLockedSenseSelection(senseSelection, keywordA, keywordB)
+  const firstSense = getLockedSense(selection, 'keyword_1', keywordA)
+  const secondSense = getLockedSense(selection, 'keyword_2', keywordB)
+  const firstLabel = getSensePromptLabel(firstSense, keywordA)
+  const secondLabel = getSensePromptLabel(secondSense, keywordB)
+  const firstKeyword = normalizeKeywordValue(keywordA)
+  const secondKeyword = normalizeKeywordValue(keywordB)
+  const firstActorLike =
+    isActorSense(firstSense) || isStoryActorLikeLabel(firstLabel)
+  const secondActorLike =
+    isActorSense(secondSense) || isStoryActorLikeLabel(secondLabel)
+  const firstToolLike =
+    isToolSense(firstSense) ||
+    hasAnyKeywordHint(firstKeyword, TOOL_KEYWORD_HINTS)
+  const secondToolLike =
+    isToolSense(secondSense) ||
+    hasAnyKeywordHint(secondKeyword, TOOL_KEYWORD_HINTS)
+  const firstSettingLike =
+    senseHasAnyTag(firstSense, ['setting', 'season']) ||
+    hasAnyKeywordHint(firstKeyword, LOCATION_KEYWORD_HINTS)
+  const secondSettingLike =
+    senseHasAnyTag(secondSense, ['setting', 'season']) ||
+    hasAnyKeywordHint(secondKeyword, LOCATION_KEYWORD_HINTS)
+  const firstMotionLike = isMotionSense(firstSense)
+  const secondMotionLike = isMotionSense(secondSense)
+  const emotionalPair =
+    isEmotionSense(firstSense) || isEmotionSense(secondSense)
+  const reflectivePair =
+    isReflectionSense(firstSense) || isReflectionSense(secondSense)
+  const bothMostlyObjects =
+    !emotionalPair &&
+    !firstActorLike &&
+    !secondActorLike &&
+    !firstSettingLike &&
+    !secondSettingLike &&
+    !firstToolLike &&
+    !secondToolLike
+
+  const lines = ['Pair-fit steering:']
+
+  if (emotionalPair) {
+    lines.push(
+      '- Anchor the emotion to one visible trigger and one physical aftermath. Do not stop at a facial expression.'
+    )
+  }
+
+  if (
+    (firstActorLike && secondToolLike) ||
+    (secondActorLike && firstToolLike)
+  ) {
+    lines.push(
+      '- Use the actor and tool in one believable task, rehearsal, repair, cleanup, performance, or work moment instead of forcing danger for its own sake.'
+    )
+  }
+
+  if (
+    (firstSettingLike && !secondSettingLike) ||
+    (secondSettingLike && !firstSettingLike)
+  ) {
+    lines.push(
+      '- Treat the setting keyword as the stage for the event, not as a decorative background. Let the other keyword cause the visible change inside that place.'
+    )
+  }
+
+  if (
+    (firstMotionLike && !secondMotionLike) ||
+    (secondMotionLike && !firstMotionLike)
+  ) {
+    lines.push(
+      '- Turn the motion-like keyword into the trigger beat, then let the other keyword show the strongest visible consequence.'
+    )
+  }
+
+  if (reflectivePair) {
+    lines.push(
+      '- Use reflection, reveal, concealment, or mistaken appearance as the causal hook, not as a static prop-only scene.'
+    )
+  }
+
+  if (bothMostlyObjects) {
+    lines.push(
+      '- If both keywords are mostly objects, place them inside one believable human situation such as packing, cleaning, rehearsal, delivery, costume prep, shopping, repair, or travel.'
+    )
+    lines.push(
+      '- Avoid object-object collisions as the default. Prefer snag, reveal, tangle, blocked path, runaway object, concealment, or recovery.'
+    )
+  }
+
+  if (lines.length === 1) {
+    lines.push(
+      '- If the pair feels awkward, solve it with one simple human situation that naturally makes both keywords matter.'
+    )
+  }
+
+  return lines
+}
+
 function chooseDeterministicItem(items, seed, fallback = '') {
   const list = Array.isArray(items) ? items.filter(Boolean) : []
   if (list.length < 1) return fallback
   return list[hashScore(seed) % list.length]
+}
+
+function chooseDeterministicAftermathPattern({
+  seed,
+  primaryLabel,
+  secondaryLabel,
+  supportProp,
+  looseItems,
+  reactionBeat,
+  aftermathBeat,
+  preferredPatternId = '',
+}) {
+  const patterns = [
+    {
+      id: 'scatter',
+      panel3: `The ${supportProp} tips and ${looseItems} scatter while ${reactionBeat}.`,
+      panel4: `The toppled ${supportProp}, scattered ${looseItems}, and ${aftermathBeat} remain obvious in the final panel.`,
+    },
+    {
+      id: 'crooked',
+      panel3: `The ${supportProp} twists sideways and leaves the ${secondaryLabel} hanging crooked while ${reactionBeat}.`,
+      panel4: `The crooked ${secondaryLabel}, twisted ${supportProp}, and ${aftermathBeat} remain obvious in the final panel.`,
+    },
+    {
+      id: 'reveal',
+      panel3: `The ${supportProp} snaps open and reveals bright contents around the ${secondaryLabel} while ${reactionBeat}.`,
+      panel4: `The open ${supportProp}, revealed contents, and ${aftermathBeat} remain easy to read in the final panel.`,
+    },
+    {
+      id: 'roll',
+      panel3: `The ${supportProp} rolls away and drags the ${secondaryLabel} out of place while ${reactionBeat}.`,
+      panel4: `The runaway ${supportProp}, displaced ${secondaryLabel}, and ${aftermathBeat} hold the last panel together.`,
+    },
+    {
+      id: 'tangle',
+      panel3: `A loose strap from the ${supportProp} wraps around the ${secondaryLabel} and tangles it against the ${primaryLabel} while ${reactionBeat}.`,
+      panel4: `The tangled ${secondaryLabel}, shifted ${supportProp}, and ${aftermathBeat} stay easy to read in the final panel.`,
+    },
+    {
+      id: 'unfurl',
+      panel3: `The ${supportProp} pops open and a folded cloth unfurls behind the ${secondaryLabel} while ${reactionBeat}.`,
+      panel4: `The unfurled cloth, open ${supportProp}, and ${aftermathBeat} remain obvious in the final image.`,
+    },
+  ]
+
+  const preferred = patterns.find(
+    (pattern) => pattern.id === preferredPatternId
+  )
+  if (preferred) {
+    return preferred
+  }
+  return chooseDeterministicItem(patterns, `${seed}|aftermath`, patterns[0])
+}
+
+function chooseDeterministicFallbackArchetype({
+  seed,
+  primaryLabel,
+  secondaryLabel,
+  supportProp,
+  allowReveal = true,
+  allowCollision = true,
+}) {
+  const patterns = [
+    {
+      id: 'collision',
+      trigger: `A sudden bump sends the ${primaryLabel} into the ${secondaryLabel} in one readable beat.`,
+      reactionBeat: `the ${secondaryLabel} jerks away from the ${primaryLabel}`,
+      aftermathBeat: `the changed positions of the ${primaryLabel} and ${secondaryLabel}`,
+      preferredAftermath: 'scatter',
+    },
+    {
+      id: 'snag',
+      trigger: `The ${primaryLabel} snags on the ${supportProp} and yanks the ${secondaryLabel} sideways in one sharp beat.`,
+      reactionBeat: `the ${secondaryLabel} twists against the ${supportProp}`,
+      aftermathBeat: `the ${primaryLabel} caught against the crooked ${secondaryLabel}`,
+      preferredAftermath: 'crooked',
+    },
+    {
+      id: 'reveal',
+      trigger: `The ${supportProp} snaps open and unexpectedly reveals the ${secondaryLabel} behind the ${primaryLabel}.`,
+      reactionBeat: `the ${primaryLabel} ends up dragged against the opened ${supportProp}`,
+      aftermathBeat: `the opened ${supportProp} with the ${secondaryLabel} newly exposed`,
+      preferredAftermath: 'reveal',
+    },
+    {
+      id: 'runaway',
+      trigger: `The ${secondaryLabel} rolls away from the ${supportProp} and pulls the ${primaryLabel} after it.`,
+      reactionBeat: `the ${primaryLabel} skids after the moving ${secondaryLabel}`,
+      aftermathBeat: `the runaway ${secondaryLabel} and displaced ${primaryLabel}`,
+      preferredAftermath: 'roll',
+    },
+    {
+      id: 'tangle',
+      trigger: `The ${primaryLabel} slips through the ${secondaryLabel} and tangles it against the ${supportProp}.`,
+      reactionBeat: `the ${secondaryLabel} tightens around the ${primaryLabel}`,
+      aftermathBeat: `the tangled ${secondaryLabel} around the shifted ${primaryLabel}`,
+      preferredAftermath: 'tangle',
+    },
+    {
+      id: 'block',
+      trigger: `The ${secondaryLabel} swings across the ${supportProp} and blocks the ${primaryLabel} in one sudden beat.`,
+      reactionBeat: `the ${primaryLabel} stops short against the blocked path`,
+      aftermathBeat: `the ${secondaryLabel} now blocking the ${primaryLabel}`,
+      preferredAftermath: 'unfurl',
+    },
+  ]
+
+  const filteredPatterns = allowReveal
+    ? patterns
+    : patterns.filter((pattern) => pattern.id !== 'reveal')
+  const finalPatterns = allowCollision
+    ? filteredPatterns
+    : filteredPatterns.filter((pattern) => pattern.id !== 'collision')
+
+  return chooseDeterministicItem(
+    finalPatterns,
+    `${seed}|archetype`,
+    finalPatterns[0]
+  )
 }
 
 function withIndefiniteArticle(text) {
@@ -624,6 +841,14 @@ function isCreatureLikeActorLabel(value) {
   const normalized = normalizeKeywordValue(value).trim().toLowerCase()
   if (!normalized) return false
   return /\b(dog|cat|bird|wolf|centaur|ghost|robot)\b/.test(normalized)
+}
+
+function isStoryActorLikeLabel(value) {
+  return (
+    isHumanLikeActorLabel(value) ||
+    isCreatureLikeActorLabel(value) ||
+    hasAnyKeywordHint(value, ACTOR_KEYWORD_HINTS)
+  )
 }
 
 function inferRecurringSubjectLabel({
@@ -1440,6 +1665,9 @@ function normalizeStoryOption(value, index) {
     isStoryboardStarter: Boolean(
       item.isStoryboardStarter || item.is_storyboard_starter
     ),
+    isProviderEditableDraft: Boolean(
+      item.isProviderEditableDraft || item.is_provider_editable_draft
+    ),
     storySummary,
     complianceReport,
     riskFlags,
@@ -1552,7 +1780,9 @@ function buildStorySchemaRetryPrompt(
     `Return exactly ${normalizedStoryCount} story option${
       normalizedStoryCount === 1 ? '' : 's'
     } and nothing else.`,
-    'Each story must include title, story_summary, 4 panel objects, compliance_report, risk_flags, and revision_if_risky.',
+    normalizedStoryCount === 1
+      ? 'Each story must include title, story_summary, and 4 panel objects. compliance_report, risk_flags, and revision_if_risky are optional in single-story mode.'
+      : 'Each story must include title, story_summary, 4 panel objects, compliance_report, risk_flags, and revision_if_risky.',
     'Each panel must be an object with: panel, role, description, required_visibles, state_change_from_previous.',
     'Panel roles must be exactly: before, trigger, reaction, after.',
     'Do not return panels as plain strings.',
@@ -1664,6 +1894,7 @@ function buildSingleStoryDraftRescuePrompt({
     'Do not say things like "choose a room", "bring X into the scene", or "show the consequence".',
     'Use one specific place, one visible trigger, one concrete physical consequence, and one final stable image.',
     `Keep "${safeKeywordA}" and "${safeKeywordB}" visibly important in the actual scene.`,
+    ...buildSingleStoryPairFitLines(senseSelection, safeKeywordA, safeKeywordB),
     'No numbering, no labels, no markdown, no JSON, and no commentary.',
     ...lockedSenseLines,
   ].join('\n')
@@ -1701,7 +1932,8 @@ function buildSingleStoryLastChanceRescuePrompt({
     'Line 2: the exact trigger that visibly changes the scene.',
     'Line 3: the strongest visible consequence.',
     'Line 4: a stable final aftermath that is obvious at a glance.',
-    'Concrete props, accidents, reveals, spills, breakage, motion, and aftermath are good.',
+    'Use varied visible consequence types: crooked objects, snapped straps, doors swinging open, rolling objects, bent props, light changes, tangles, reveals, or occasional spills.',
+    ...buildSingleStoryPairFitLines(senseSelection, safeKeywordA, safeKeywordB),
     'Forbidden filler: "choose a room", "bring X into the scene", "show the consequence", "interacts with both", "uses X as a tool", "observes the final result".',
     'No numbering, no labels, no markdown, no JSON, no commentary.',
     ...lockedSenseLines,
@@ -1736,10 +1968,12 @@ function buildSingleStoryScaffoldRewritePrompt({
     'Each line must describe what is visibly happening in that panel, not give instructions to the user.',
     `Keep "${safeKeywordA}" and "${safeKeywordB}" visibly important in the scene.`,
     'Use one specific place, one visible trigger, one concrete physical consequence, and one stable final aftermath.',
+    'Do not default every rewrite to an object spilling. Other good outcomes are doors swinging open, props hanging crooked, straps tangling, lights turning, curtains falling, or objects rolling away.',
     'Bad: "Pick one specific actor or object and one specific place..."',
     'Bad: "Use X as the trigger that makes the scene change..."',
     'Good: "At an airport gate, a disappointed pilot sets a milk carton on a rolling suitcase."',
-    'Good: "The suitcase jerks forward, the milk carton slides off, and white milk splashes across the floor."',
+    'Good: "The suitcase clips a curtain cord, the curtain tears loose, and the milk carton ends up wedged under the seat frame."',
+    ...buildSingleStoryPairFitLines(senseSelection, safeKeywordA, safeKeywordB),
     'No numbering, no labels, no markdown, no JSON, and no commentary.',
     ...lockedSenseLines,
     'Weak scaffold to rewrite:',
@@ -2053,10 +2287,10 @@ function buildLocalFallbackEditingTip(selection, keywordA, keywordB) {
     senseHasTag(chosenSecondSense, 'fallback')
 
   if (lockedSelection.used_raw_keyword_fallback || usesLiteralFallbackSense) {
-    return `These keywords stayed ambiguous, so treat this as a storyboard starter. Rewrite all 4 panels with a specific place, actor, trigger, and visible aftermath before building images for "${safeKeywordA}" and "${safeKeywordB}".`
+    return `These keywords stayed ambiguous, so use this local backup as a rough storyboard proposal. Personalize the place, actor, trigger, and visible aftermath before building images for "${safeKeywordA}" and "${safeKeywordB}".`
   }
 
-  return 'Treat this as a starting point, not a finished answer. If the beat feels stiff, rewrite the place, prop, trigger, or aftermath in your own words before building images.'
+  return 'Treat this as a local backup idea, not a finished answer. If a beat feels stiff, rewrite the place, prop, trigger, or aftermath in your own words before building images.'
 }
 
 function buildProviderDraftEditingTip(keywordA, keywordB) {
@@ -2084,14 +2318,23 @@ function isProviderDraftRescueCandidate(story) {
       : null
   if (!report || !Number.isFinite(Number(report.score))) return false
   const failures = Array.isArray(report.failures) ? report.failures : []
-  const allowedFailures = new Set(['low_concreteness', 'weak_progression'])
+  const allowedFailures = new Set([
+    'low_concreteness',
+    'weak_progression',
+    'missing_result_state',
+    'missing_reaction',
+  ])
   if (
     failures.length < 1 ||
     failures.some((failure) => !allowedFailures.has(failure))
   ) {
     return false
   }
-  return Number(report.score) >= 70
+  const metrics =
+    report.metrics && typeof report.metrics === 'object' ? report.metrics : {}
+  if (!metrics.hasTriggerEvent) return false
+  if (Number(metrics.externalChangeCount) < 1) return false
+  return Number(report.score) >= 58
 }
 
 function pickBestProviderDraftCandidate(stories, options = {}) {
@@ -2161,7 +2404,8 @@ function buildProviderDraftRescueStory({
       title: String(item.title || '').trim() || `Option ${index + 1}`,
       rationale: String(rationale || '').trim(),
       editingTip: buildProviderDraftEditingTip(keywordA, keywordB),
-      isStoryboardStarter: true,
+      isStoryboardStarter: false,
+      isProviderEditableDraft: true,
       senseSelection,
       qualityReport:
         item.qualityReport && typeof item.qualityReport === 'object'
@@ -2224,80 +2468,236 @@ function buildKeywordFallbackPanels(
       `${primaryLabel}|${secondaryLabel}|${variant}|prop`,
       'small table'
     )
+    const archetype = chooseDeterministicFallbackArchetype({
+      seed: `${primaryLabel}|${secondaryLabel}|${variant}`,
+      primaryLabel,
+      secondaryLabel,
+      supportProp,
+      allowReveal: false,
+      allowCollision: actorIsPrimary || actorIsSecondary,
+    })
     const spillObject = chooseDeterministicItem(
       ['papers', 'flowers', 'tools', 'cups'],
       `${primaryLabel}|${secondaryLabel}|${variant}|spill`,
       'papers'
     )
+    const scenario = chooseDeterministicItem(
+      [
+        {
+          actor: 'shopper',
+          place: 'store aisle',
+          setup: `arranges loose supplies beside ${withIndefiniteArticle(
+            supportProp
+          )}`,
+        },
+        {
+          actor: 'stagehand',
+          place: 'backstage prop corner',
+          setup: `sorts props beside ${withIndefiniteArticle(supportProp)}`,
+        },
+        {
+          actor: 'traveler',
+          place: 'airport waiting area',
+          setup: `packs belongings around ${withIndefiniteArticle(
+            supportProp
+          )}`,
+        },
+        {
+          actor: 'teacher',
+          place: 'classroom supply table',
+          setup: `sets out materials beside ${withIndefiniteArticle(
+            supportProp
+          )}`,
+        },
+        {
+          actor: 'vendor',
+          place: 'festival booth',
+          setup: `sorts stock beside ${withIndefiniteArticle(supportProp)}`,
+        },
+        {
+          actor: 'gardener',
+          place: 'potting bench',
+          setup: `arranges tools beside ${withIndefiniteArticle(supportProp)}`,
+        },
+      ],
+      `${primaryLabel}|${secondaryLabel}|${variant}|scenario`,
+      {
+        actor: 'shopper',
+        place: 'store aisle',
+        setup: `arranges supplies beside ${withIndefiniteArticle(supportProp)}`,
+      }
+    )
 
     if (variant === 1) {
       if (actorIsPrimary) {
+        const actorPrimaryAftermath = chooseDeterministicAftermathPattern({
+          seed: `${primaryLabel}|${secondaryLabel}|${variant}|actor-primary`,
+          primaryLabel,
+          secondaryLabel,
+          supportProp,
+          looseItems: spillObject,
+          reactionBeat:
+            archetype.id === 'collision'
+              ? `the ${primaryLabel} recoils from the ${secondaryLabel}`
+              : archetype.reactionBeat,
+          aftermathBeat:
+            archetype.id === 'collision'
+              ? `the new gap between the ${primaryLabel} and ${secondaryLabel}`
+              : archetype.aftermathBeat,
+          preferredPatternId: archetype.preferredAftermath,
+        })
         return [
           prependSeedToPanel(
-            `At a ${place}, the ${primaryLabel} stands beside the ${secondaryLabel} and a ${supportProp}.`,
+            `At a ${place}, the ${primaryLabel} ${scenario.setup} with the ${secondaryLabel} nearby.`,
             humanStorySeed
           ),
-          `The ${secondaryLabel} jerks into motion and bumps the ${supportProp}, startling the ${primaryLabel}.`,
-          `The ${supportProp} tips over and ${spillObject} scatter across the floor as the ${primaryLabel} recoils from the ${secondaryLabel}.`,
-          `The fallen ${supportProp}, scattered ${spillObject}, and the changed distance between the ${primaryLabel} and ${secondaryLabel} remain in the final aftermath.`,
+          archetype.id === 'collision'
+            ? `The ${secondaryLabel} jerks into motion and bumps the ${supportProp}, startling the ${primaryLabel}.`
+            : archetype.trigger,
+          actorPrimaryAftermath.panel3,
+          actorPrimaryAftermath.panel4,
         ]
       }
 
       if (actorIsSecondary) {
+        const actorSecondaryAftermath = chooseDeterministicAftermathPattern({
+          seed: `${primaryLabel}|${secondaryLabel}|${variant}|actor-secondary`,
+          primaryLabel,
+          secondaryLabel,
+          supportProp,
+          looseItems: spillObject,
+          reactionBeat:
+            archetype.id === 'collision'
+              ? `the ${secondaryLabel} jumps back from the moving ${primaryLabel}`
+              : archetype.reactionBeat,
+          aftermathBeat:
+            archetype.id === 'collision'
+              ? `the shifted ${primaryLabel} and startled ${secondaryLabel}`
+              : archetype.aftermathBeat,
+          preferredPatternId: archetype.preferredAftermath,
+        })
         return [
           prependSeedToPanel(
-            `At a ${place}, the ${secondaryLabel} carries the ${primaryLabel} beside a ${supportProp}.`,
+            `At a ${place}, the ${secondaryLabel} ${scenario.setup} while keeping the ${primaryLabel} nearby.`,
             humanStorySeed
           ),
-          `The ${secondaryLabel} slips and sends the ${primaryLabel} skidding across the ${supportProp}.`,
-          `The ${supportProp} overturns and ${spillObject} scatter as the ${secondaryLabel} jumps back from the moving ${primaryLabel}.`,
-          `The fallen ${supportProp}, the shifted ${primaryLabel}, and the startled ${secondaryLabel} stay visible in the new stable image.`,
+          archetype.id === 'collision'
+            ? `The ${secondaryLabel} slips and sends the ${primaryLabel} skidding across the ${supportProp}.`
+            : archetype.trigger,
+          actorSecondaryAftermath.panel3,
+          actorSecondaryAftermath.panel4,
         ]
       }
 
+      const neutralAftermath = chooseDeterministicAftermathPattern({
+        seed: `${primaryLabel}|${secondaryLabel}|${variant}|neutral`,
+        primaryLabel,
+        secondaryLabel,
+        supportProp,
+        looseItems: spillObject,
+        reactionBeat:
+          archetype.id === 'collision'
+            ? `the ${secondaryLabel} drops to the floor beside the ${primaryLabel}`
+            : archetype.reactionBeat,
+        aftermathBeat:
+          archetype.id === 'collision'
+            ? `the fallen ${secondaryLabel} and shifted ${primaryLabel}`
+            : archetype.aftermathBeat,
+        preferredPatternId: archetype.preferredAftermath,
+      })
       return [
         prependSeedToPanel(
-          `In a ${place}, a person sets the ${primaryLabel} beside the ${secondaryLabel} on a ${supportProp}.`,
+          `In a ${scenario.place}, a ${scenario.actor} ${scenario.setup} with the ${primaryLabel} and the ${secondaryLabel} together.`,
           humanStorySeed
         ),
-        `A sudden bump sends the ${primaryLabel} into the ${secondaryLabel}, turning the setup into one clear visible event.`,
-        `The ${supportProp} tips over and ${spillObject} scatter while the ${secondaryLabel} drops to the floor beside the ${primaryLabel}.`,
-        `The mess, the fallen ${secondaryLabel}, and the shifted ${primaryLabel} remain in the final aftermath.`,
+        archetype.trigger,
+        neutralAftermath.panel3,
+        neutralAftermath.panel4,
       ]
     }
 
     if (actorIsPrimary) {
+      const actorPrimaryReturnAftermath = chooseDeterministicAftermathPattern({
+        seed: `${primaryLabel}|${secondaryLabel}|${variant}|actor-primary-return`,
+        primaryLabel,
+        secondaryLabel,
+        supportProp,
+        looseItems: spillObject,
+        reactionBeat:
+          archetype.id === 'collision'
+            ? `the ${primaryLabel} loses grip on the ${secondaryLabel}`
+            : archetype.reactionBeat,
+        aftermathBeat:
+          archetype.id === 'collision'
+            ? `the ${primaryLabel} facing the displaced ${secondaryLabel}`
+            : archetype.aftermathBeat,
+        preferredPatternId: archetype.preferredAftermath,
+      })
       return [
         prependSeedToPanel(
-          `In a ${place}, the ${primaryLabel} keeps the ${secondaryLabel} beside a ${supportProp}.`,
+          `In a ${place}, the ${primaryLabel} ${scenario.setup} with the ${secondaryLabel} close by.`,
           humanStorySeed
         ),
-        `The ${secondaryLabel} suddenly lurches and knocks the ${supportProp} sideways, forcing the ${primaryLabel} to jerk back.`,
-        `The ${supportProp} spills ${spillObject} across the floor as the ${primaryLabel} loses grip on the ${secondaryLabel}.`,
-        `The scattered ${spillObject}, the fallen ${supportProp}, and the ${primaryLabel} facing the displaced ${secondaryLabel} hold the last panel together.`,
+        archetype.trigger,
+        actorPrimaryReturnAftermath.panel3,
+        actorPrimaryReturnAftermath.panel4,
       ]
     }
 
     if (actorIsSecondary) {
+      const actorSecondaryReturnAftermath = chooseDeterministicAftermathPattern(
+        {
+          seed: `${primaryLabel}|${secondaryLabel}|${variant}|actor-secondary-return`,
+          primaryLabel,
+          secondaryLabel,
+          supportProp,
+          looseItems: spillObject,
+          reactionBeat:
+            archetype.id === 'collision'
+              ? `the ${primaryLabel} skids past the ${secondaryLabel}`
+              : archetype.reactionBeat,
+          aftermathBeat:
+            archetype.id === 'collision'
+              ? `the moved ${primaryLabel} and unsettled ${secondaryLabel}`
+              : archetype.aftermathBeat,
+          preferredPatternId: archetype.preferredAftermath,
+        }
+      )
       return [
         prependSeedToPanel(
-          `In a ${place}, the ${secondaryLabel} studies the ${primaryLabel} beside a ${supportProp}.`,
+          `In a ${place}, the ${secondaryLabel} ${scenario.setup} with the ${primaryLabel} close by.`,
           humanStorySeed
         ),
-        `A sudden slip sends the ${primaryLabel} into the ${supportProp}, and the ${secondaryLabel} jerks back in surprise.`,
-        `The ${supportProp} overturns and ${spillObject} spread across the ground while the ${primaryLabel} skids past the ${secondaryLabel}.`,
-        `The scattered ${spillObject}, the moved ${primaryLabel}, and the unsettled ${secondaryLabel} remain in the stable aftermath.`,
+        archetype.trigger,
+        actorSecondaryReturnAftermath.panel3,
+        actorSecondaryReturnAftermath.panel4,
       ]
     }
 
+    const fallbackAftermath = chooseDeterministicAftermathPattern({
+      seed: `${primaryLabel}|${secondaryLabel}|${variant}|fallback`,
+      primaryLabel,
+      secondaryLabel,
+      supportProp,
+      looseItems: spillObject,
+      reactionBeat:
+        archetype.id === 'collision'
+          ? `the ${secondaryLabel} flips away from the ${primaryLabel}`
+          : archetype.reactionBeat,
+      aftermathBeat:
+        archetype.id === 'collision'
+          ? `the changed positions of the ${primaryLabel} and ${secondaryLabel}`
+          : archetype.aftermathBeat,
+      preferredPatternId: archetype.preferredAftermath,
+    })
     return [
       prependSeedToPanel(
-        `In a ${place}, a person places the ${primaryLabel} beside the ${secondaryLabel} on a ${supportProp}.`,
+        `In a ${scenario.place}, a ${scenario.actor} ${scenario.setup} with the ${primaryLabel} and the ${secondaryLabel} side by side.`,
         humanStorySeed
       ),
-      `The person bumps the ${supportProp}, sending the ${primaryLabel} sliding hard into the ${secondaryLabel}.`,
-      `The ${supportProp} topples and ${spillObject} burst across the floor while the ${secondaryLabel} flips away from the ${primaryLabel}.`,
-      `The toppled ${supportProp}, scattered ${spillObject}, and changed positions of the ${primaryLabel} and ${secondaryLabel} remain easy to read in the final panel.`,
+      archetype.trigger,
+      fallbackAftermath.panel3,
+      fallbackAftermath.panel4,
     ]
   }
 
@@ -2305,13 +2705,34 @@ function buildKeywordFallbackPanels(
     const seed = `${emotionSense.sense_id}|${triggerSense.sense_id}|${variant}`
     const carriedObject = chooseDeterministicItem(
       [
-        {item: 'cup', consequence: 'water spreads across the floor'},
-        {item: 'book', consequence: 'pages scatter across the floor'},
-        {item: 'fruit bowl', consequence: 'fruit rolls across the floor'},
-        {item: 'tray', consequence: 'small objects scatter across the floor'},
+        {
+          item: 'flashlight',
+          panel3Beat: 'drops hard and its beam sweeps across the wall',
+          finalBeat: 'the fallen flashlight still shining toward the trigger',
+        },
+        {
+          item: 'fruit bowl',
+          panel3Beat: 'hits the floor and fruit rolls under the table',
+          finalBeat: 'the fallen bowl and rolling fruit on the floor',
+        },
+        {
+          item: 'folding chair',
+          panel3Beat: 'snaps shut and skids across the landing',
+          finalBeat: 'the half-folded chair blocking part of the path',
+        },
+        {
+          item: 'umbrella',
+          panel3Beat: 'springs open across the hallway',
+          finalBeat:
+            'the open umbrella lying between the person and the trigger',
+        },
       ],
       `${seed}|object`,
-      {item: 'cup', consequence: 'water spreads across the floor'}
+      {
+        item: 'flashlight',
+        panel3Beat: 'drops hard and its beam sweeps across the wall',
+        finalBeat: 'the fallen flashlight still shining toward the trigger',
+      }
     )
     const location = chooseDeterministicItem(
       ['hallway', 'living room', 'studio corridor', 'quiet stair landing'],
@@ -2332,8 +2753,8 @@ function buildKeywordFallbackPanels(
           humanStorySeed
         ),
         `The ${triggerLabel} suddenly becomes impossible to miss, and the person jerks in a ${reactionLabel} as the ${carriedObject.item} slides off the table.`,
-        `The ${carriedObject.item} drops to the floor and ${carriedObject.consequence} while the ${triggerLabel} stays clearly visible.`,
-        `The person steps back from the mess, still showing the ${reactionLabel}, with the ${triggerLabel} nearby.`,
+        `The ${carriedObject.item} ${carriedObject.panel3Beat} while the ${triggerLabel} stays clearly visible.`,
+        `The person steps back, still showing the ${reactionLabel}, with ${carriedObject.finalBeat} and the ${triggerLabel} nearby.`,
       ]
     }
 
@@ -2347,13 +2768,12 @@ function buildKeywordFallbackPanels(
         humanStorySeed
       ),
       `The ${triggerLabel} moves fully into view, and the person jolts in a ${reactionLabel} as the ${carriedObject.item} slips from their hand.`,
-      `The ${carriedObject.item} hits the floor and ${carriedObject.consequence} while the ${triggerLabel} remains visible.`,
-      `The startled person backs away from the mess with the ${triggerLabel} still visible in the ${location}.`,
+      `The ${carriedObject.item} ${carriedObject.panel3Beat} while the ${triggerLabel} remains visible.`,
+      `The startled person backs away with ${carriedObject.finalBeat} and the ${triggerLabel} still visible in the ${location}.`,
     ]
   }
 
   const buildToolLockedFallbackPanels = (toolSense, actorSense, otherSense) => {
-    const seed = `${toolSense.sense_id}|${actorSense.sense_id}|${variant}`
     const actorLabel = isActorSense(actorSense)
       ? getSensePromptLabel(actorSense, actorSense.keyword || 'person')
       : 'person'
@@ -2483,32 +2903,88 @@ function buildKeywordFallbackPanels(
       `${seed}|prop`,
       'box'
     )
-    const location = chooseDeterministicItem(
-      ['kitchen counter', 'garage shelf', 'garden table', 'hall bench'],
-      `${seed}|location`,
-      'kitchen counter'
+    const looseItems = chooseDeterministicItem(
+      ['flowers', 'tools', 'postcards', 'cloth strips'],
+      `${seed}|loose-items`,
+      'flowers'
     )
+    const scenario = chooseDeterministicItem(
+      [
+        {
+          actor: 'shopper',
+          intro: `A shopper compares the ${primaryLabel} and the ${secondaryLabel} beside a ${prop} in a store aisle.`,
+          variantTwo: `In a store aisle, a shopper rearranges the ${primaryLabel} near the ${secondaryLabel} and a ${prop}.`,
+        },
+        {
+          actor: 'stagehand',
+          intro: `A stagehand sets the ${primaryLabel} and the ${secondaryLabel} beside a ${prop} in a backstage prop corner.`,
+          variantTwo: `Backstage, a stagehand repositions the ${primaryLabel} near the ${secondaryLabel} and a ${prop}.`,
+        },
+        {
+          actor: 'traveler',
+          intro: `A traveler keeps the ${primaryLabel} and the ${secondaryLabel} beside a ${prop} in an airport waiting area.`,
+          variantTwo: `In an airport waiting area, a traveler shifts the ${primaryLabel} near the ${secondaryLabel} and a ${prop}.`,
+        },
+        {
+          actor: 'teacher',
+          intro: `A teacher sorts the ${primaryLabel} and the ${secondaryLabel} beside a ${prop} on a classroom supply table.`,
+          variantTwo: `At a classroom supply table, a teacher rearranges the ${primaryLabel} near the ${secondaryLabel} and a ${prop}.`,
+        },
+      ],
+      `${seed}|scenario`,
+      {
+        actor: 'shopper',
+        intro: `A shopper compares the ${primaryLabel} and the ${secondaryLabel} beside a ${prop} in a store aisle.`,
+        variantTwo: `In a store aisle, a shopper rearranges the ${primaryLabel} near the ${secondaryLabel} and a ${prop}.`,
+      }
+    )
+    const archetype = chooseDeterministicFallbackArchetype({
+      seed,
+      primaryLabel,
+      secondaryLabel,
+      supportProp: prop,
+      allowReveal:
+        !isStoryActorLikeLabel(primaryLabel) &&
+        !isStoryActorLikeLabel(secondaryLabel),
+    })
 
     if (variant === 1) {
+      const variantOneAftermath = chooseDeterministicAftermathPattern({
+        seed: `${seed}|variant-1`,
+        primaryLabel,
+        secondaryLabel,
+        supportProp: prop,
+        looseItems,
+        reactionBeat: archetype.reactionBeat,
+        aftermathBeat:
+          archetype.id === 'collision'
+            ? `the new positions of the ${primaryLabel} and ${secondaryLabel}`
+            : archetype.aftermathBeat,
+        preferredPatternId: archetype.preferredAftermath,
+      })
       return [
-        prependSeedToPanel(
-          `A person notices the ${primaryLabel} and the ${secondaryLabel} together on a ${location}.`,
-          humanStorySeed
-        ),
-        `A sudden bump or slip makes the ${primaryLabel} collide with the ${secondaryLabel} in one readable beat.`,
-        `That impact tips the nearby ${prop} and changes the position of the ${secondaryLabel} in a way that is easy to see.`,
-        `The spilled ${prop} and the new positions of the ${primaryLabel} and ${secondaryLabel} remain visible as the aftermath.`,
+        prependSeedToPanel(scenario.intro, humanStorySeed),
+        archetype.trigger,
+        variantOneAftermath.panel3,
+        variantOneAftermath.panel4,
       ]
     }
 
+    const variantTwoAftermath = chooseDeterministicAftermathPattern({
+      seed: `${seed}|variant-2`,
+      primaryLabel,
+      secondaryLabel,
+      supportProp: prop,
+      looseItems,
+      reactionBeat: archetype.reactionBeat,
+      aftermathBeat: archetype.aftermathBeat,
+      preferredPatternId: archetype.preferredAftermath,
+    })
     return [
-      prependSeedToPanel(
-        `In a ${location}, a person is handling the ${primaryLabel} near the ${secondaryLabel} and a ${prop}.`,
-        humanStorySeed
-      ),
-      `A sudden movement sends the ${primaryLabel} into the ${secondaryLabel}, turning the setup into an obvious event.`,
-      `The collision shifts the ${secondaryLabel} and knocks the ${prop} over so the change reads instantly.`,
-      `The mess and the changed positions of the ${primaryLabel} and ${secondaryLabel} hold the final image together.`,
+      prependSeedToPanel(scenario.variantTwo, humanStorySeed),
+      archetype.trigger,
+      variantTwoAftermath.panel3,
+      variantTwoAftermath.panel4,
     ]
   }
 
@@ -2621,11 +3097,11 @@ function buildKeywordFallbackStories({
 
   const fallbackReason = String(fallbackReasonText || '').trim()
   const primaryFallbackRationale = fallbackReason
-    ? `Local fallback storyboard starter generated because ${fallbackReason}.`
-    : 'Local fallback storyboard starter generated because provider output could not be parsed reliably.'
+    ? `Local fallback storyboard draft shown because ${fallbackReason}.`
+    : 'Local fallback storyboard draft shown because provider output could not be parsed reliably.'
   const secondaryFallbackRationale = fallbackReason
-    ? `Alternative local fallback storyboard starter generated because ${fallbackReason}.`
-    : 'Alternative local fallback storyboard starter generated because provider output could not be parsed reliably.'
+    ? `Alternative local fallback storyboard draft shown because ${fallbackReason}.`
+    : 'Alternative local fallback storyboard draft shown because provider output could not be parsed reliably.'
 
   return [
     normalizeStoryOption(
@@ -2872,7 +3348,9 @@ function buildStoryCreativityLines({fastMode = false}) {
       '- Think like a storyboard partner helping a human creator get to a strong idea quickly.',
       '- Give vivid, editable story seeds, not stiff compliance prose.',
       '- Specific places, props, reveals, accidents, and reactions beat generic object bumps.',
+      '- Rotate archetypes: snag-and-reveal, runaway object, tangled props, blocked path, crooked result, concealment reveal, repair, escape, recovery.',
       '- Allow suspense, humor, eerie tone, awkwardness, and small surprises if the panel order stays obvious.',
+      '- Do not default to bump-and-spill stories unless that is clearly the strongest fit.',
       '- Never write filler like "one concrete move", "visible external change", or "stable aftermath".',
     ]
   }
@@ -2882,10 +3360,91 @@ function buildStoryCreativityLines({fastMode = false}) {
     '- Think like a storyboard collaborator, not a policy robot.',
     '- Return ideas a human would actually want to personalize and rewrite.',
     '- Specific rooms, props, accidents, reveals, and aftermaths beat neutral keyword collisions.',
+    '- Rotate story archetypes instead of repeating the same collision template: snag/reveal, blockage, runaway object, tangled props, concealment/discovery, crooked-result, repair, escape, cleanup, recovery.',
     '- Small suspense, weirdness, irony, or eerie mood are welcome if the order stays instantly readable.',
     '- If the keywords feel awkward together, invent a human situation that makes them feel natural.',
+    '- Do not default to drops, spills, and broken objects unless they are truly the clearest version.',
     '- Never write filler like "one concrete move", "visible external change", or "stable aftermath".',
   ]
+}
+
+function buildSingleStoryPromptLines({
+  safeKeywordA,
+  safeKeywordB,
+  includeNoise,
+  hasCustomStory,
+  baseStory,
+  senseSelection,
+  lockedSenseLines,
+  contentSafetyBoundaryLines,
+  creativityLines,
+  exemplarConfig,
+  outputEnvelopeLines,
+  outputSchema,
+  fastMode = false,
+}) {
+  const customStoryHint = hasCustomStory
+    ? `Use this draft as seed and improve it:
+1) ${baseStory[0]}
+2) ${baseStory[1]}
+3) ${baseStory[2]}
+4) ${baseStory[3]}`
+    : ''
+  const noiseHint = includeNoise
+    ? 'Noise is added later to one panel. Keep the story coherent and keep the main objects large and readable.'
+    : ''
+
+  return [
+    'Generate exactly 1 editable 4-panel flip storyboard as strict JSON only.',
+    fastMode
+      ? 'Goal: produce one vivid, human-editable story seed quickly.'
+      : 'Goal: produce one vivid, human-editable storyboard a person would actually want to refine.',
+    'Think like a storyboard collaborator, not a policy robot.',
+    'Write one concrete micro-story from the two keywords with a clear before -> trigger -> reaction -> after flow.',
+    'Keep it specific, visual, and easy to personalize. Do not write instruction-like filler.',
+    '',
+    ...creativityLines,
+    '',
+    'Hard rules:',
+    '- both keywords must visibly matter in the action, not just sit in the background',
+    '- one single story chain only',
+    '- panel 4 must be a real visible consequence of panel 3',
+    '- make panel 1 and panel 4 clearly look different',
+    '- no letters, numbers, labels, logos, watermarks, signs, or text-dependent clues',
+    ...contentSafetyBoundaryLines,
+    '- no waking-up template, no thumbs up/down ending, no counting trick, no page/screen keyword cheat',
+    '',
+    'Aim for:',
+    '- one specific place',
+    '- one readable trigger moment',
+    '- one strong visible consequence',
+    '- one final image that makes the new situation obvious at a glance',
+    '- natural wording instead of compliance prose',
+    '',
+    'Good story shapes:',
+    '- reveal and reaction',
+    '- obstacle and workaround',
+    '- runaway object or blocked path',
+    '- tangle, snag, concealment, recovery, repair, or crooked-result aftermath',
+    '',
+    ...buildSingleStoryPairFitLines(senseSelection, safeKeywordA, safeKeywordB),
+    '',
+    ...exemplarConfig.lines,
+    '',
+    ...lockedSenseLines,
+    '',
+    `Keyword 1: ${safeKeywordA}`,
+    `Keyword 2: ${safeKeywordB}`,
+    noiseHint,
+    customStoryHint,
+    'Return strict JSON with this exact envelope schema:',
+    ...outputEnvelopeLines,
+    'Concept schema:',
+    outputSchema,
+    'Return JSON only. No markdown.',
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function buildStoryOptionsPrompt({
@@ -2979,6 +3538,40 @@ function buildStoryOptionsPrompt({
   "risk_flags": ["<list any remaining ambiguity or report-risk factors>"],
   "revision_if_risky": "<if any risk flag exists, rewrite the concept once and provide the safer version instead>"
 }`
+  const singleStoryOutputSchema = `{
+  "title": "Option 1",
+  "story_summary": "<1 sentence, plain and literal>",
+  "panels": [
+    {
+      "panel": 1,
+      "role": "before",
+      "description": "<clear visual description>",
+      "required_visibles": ["<...>", "<...>"],
+      "state_change_from_previous": "n/a"
+    },
+    {
+      "panel": 2,
+      "role": "trigger",
+      "description": "<clear visual description>",
+      "required_visibles": ["<...>", "<...>"],
+      "state_change_from_previous": "<what changed visibly>"
+    },
+    {
+      "panel": 3,
+      "role": "reaction",
+      "description": "<clear visual description>",
+      "required_visibles": ["<...>", "<...>"],
+      "state_change_from_previous": "<what changed visibly>"
+    },
+    {
+      "panel": 4,
+      "role": "after",
+      "description": "<clear visual description>",
+      "required_visibles": ["<...>", "<...>"],
+      "state_change_from_previous": "<what changed visibly>"
+    }
+  ]
+}`
 
   const customStoryHint = hasCustomStory
     ? `Custom user draft panels to preserve/improve:
@@ -2990,6 +3583,24 @@ function buildStoryOptionsPrompt({
   const noiseHint = includeNoise
     ? 'Additional instruction: keep all 4 panels as one coherent story. Noise, if enabled, is applied later as adversarial image distortion on one panel; do not introduce random unrelated scenes.'
     : 'Additional instruction: do not include any extra noise semantics.'
+
+  if (normalizedStoryCount === 1) {
+    return buildSingleStoryPromptLines({
+      safeKeywordA,
+      safeKeywordB,
+      includeNoise,
+      hasCustomStory,
+      baseStory,
+      senseSelection,
+      lockedSenseLines,
+      contentSafetyBoundaryLines,
+      creativityLines,
+      exemplarConfig,
+      outputEnvelopeLines,
+      outputSchema: singleStoryOutputSchema,
+      fastMode: false,
+    })
+  }
 
   return [
     'You are an Idena flip storyline planner and compliance checker.',
@@ -3049,6 +3660,8 @@ function buildStoryOptionsPrompt({
     '- obstacle and workaround',
     '- pursuit, escape, containment, or recovery',
     '- repair, transformation, loss, or cleanup',
+    '- snag-and-reveal or tangled-prop chain reactions',
+    '- runaway object, blocked path, or crooked-result reversals',
     '',
     'Fast rejection rules:',
     '- reject if more than one panel order seems plausible',
@@ -3172,6 +3785,42 @@ function buildStoryOptionsPromptFast({
   const noiseHint = includeNoise
     ? 'Noise is added later to one panel. Keep one coherent story.'
     : ''
+
+  if (normalizedStoryCount === 1) {
+    const outputEnvelopeLines = [
+      '{',
+      '  "stories": [',
+      '    <concept_1_in_schema_below>',
+      '  ]',
+      '}',
+    ]
+    const outputSchema = `{
+  "title": "Option 1",
+  "story_summary": "<1 sentence, plain and literal>",
+  "panels": [
+    {"panel":1,"role":"before","description":"...","required_visibles":["...","..."],"state_change_from_previous":"n/a"},
+    {"panel":2,"role":"trigger","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."},
+    {"panel":3,"role":"reaction","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."},
+    {"panel":4,"role":"after","description":"...","required_visibles":["...","..."],"state_change_from_previous":"..."}
+  ]
+}`
+    return buildSingleStoryPromptLines({
+      safeKeywordA,
+      safeKeywordB,
+      includeNoise,
+      hasCustomStory,
+      baseStory,
+      senseSelection,
+      lockedSenseLines,
+      contentSafetyBoundaryLines,
+      creativityLines,
+      exemplarConfig,
+      outputEnvelopeLines,
+      outputSchema,
+      fastMode: true,
+    })
+  }
+
   return [
     `Generate exactly ${normalizedStoryCount} ${
       normalizedStoryCount === 1
@@ -3189,6 +3838,7 @@ function buildStoryOptionsPromptFast({
     normalizedStoryCount === 1
       ? '- make the one option vivid, specific, and easy for a human to tweak'
       : '- keep the two options meaningfully different in scene, action, or outcome',
+    '- vary archetype choice; do not default to bump-and-spill unless it is the clearest fit',
     '- panel 4 must be a visible consequence of panel 3',
     '- each panel must show a visible state progression from the previous panel',
     '- avoid repeated stock phrases; use natural concise wording',
@@ -3364,6 +4014,45 @@ function buildStoryAuditPrompt(basePrompt, conceptJson) {
   ].join('\n')
 }
 
+function summarizeStoryDraftForLog(story) {
+  const currentStory = story && typeof story === 'object' ? story : {}
+  const qualityReport =
+    currentStory.qualityReport && typeof currentStory.qualityReport === 'object'
+      ? currentStory.qualityReport
+      : {}
+  const metrics =
+    qualityReport.metrics && typeof qualityReport.metrics === 'object'
+      ? qualityReport.metrics
+      : {}
+  const panels = normalizeStoryPanels(currentStory.panels)
+  return {
+    title: sanitizeStoryLogText(currentStory.title, 60),
+    source: sanitizeStoryLogText(currentStory.candidateSource, 60),
+    score: Number.isFinite(Number(qualityReport.score))
+      ? Number(qualityReport.score)
+      : null,
+    failures: Array.isArray(qualityReport.failures)
+      ? qualityReport.failures.slice(0, 6)
+      : [],
+    externalChangeCount: Number.isFinite(Number(metrics.externalChangeCount))
+      ? Number(metrics.externalChangeCount)
+      : null,
+    maxConsecutiveSimilarity: Number.isFinite(
+      Number(metrics.maxConsecutiveSimilarity)
+    )
+      ? Number(metrics.maxConsecutiveSimilarity)
+      : null,
+    panelPreview: panels
+      .slice(0, 2)
+      .map((panel) => sanitizeStoryLogText(panel, 90)),
+  }
+}
+
+function summarizeStoryDraftCollectionForLog(stories, limit = 3) {
+  const list = Array.isArray(stories) ? stories : []
+  return list.slice(0, limit).map((story) => summarizeStoryDraftForLog(story))
+}
+
 function shouldRunStoryAudit(rawText, stories) {
   if (!Array.isArray(stories) || stories.length < 1) return false
   const value = String(rawText || '')
@@ -3490,56 +4179,6 @@ function buildStoryboardSheetPrompt({
   ]
     .filter(Boolean)
     .join('\n')
-}
-
-function buildPanelNoTextAuditPrompt({
-  panelIndex,
-  panelStory,
-  keywordA,
-  keywordB,
-}) {
-  return [
-    'You are checking one generated Idena flip panel for forbidden text.',
-    'Return strict JSON only.',
-    'Schema: {"hasText":true|false,"detectedText":["..."],"reason":"..."}',
-    `Panel index: ${Number(panelIndex) + 1}`,
-    `Story intent for this panel: ${String(panelStory || '').trim() || '-'}`,
-    `Keywords: ${String(keywordA || '-')} / ${String(keywordB || '-')}`,
-    'Mark hasText=true if any letters, words, numbers, signs, logos, watermarks, UI labels, or readable symbols are visible.',
-    'Ignore pure textures that are clearly not readable text.',
-  ].join('\n')
-}
-
-function parsePanelNoTextAudit(rawText) {
-  try {
-    const parsed = extractJsonBlock(rawText) || {}
-    const rawHasText = parsed.hasText
-    const hasText =
-      rawHasText === true ||
-      String(rawHasText || '')
-        .trim()
-        .toLowerCase() === 'true'
-    const detectedText = Array.isArray(parsed.detectedText)
-      ? parsed.detectedText
-          .map((item) => String(item || '').trim())
-          .filter(Boolean)
-          .slice(0, 6)
-      : []
-    const reason = String(parsed.reason || '').trim()
-    return {hasText, detectedText, reason}
-  } catch (error) {
-    const raw = String(rawText || '')
-      .trim()
-      .toLowerCase()
-    const hasText =
-      /"hastext"\s*:\s*true/.test(raw) ||
-      /has[\s_-]*text\s*[:=]\s*true/.test(raw)
-    return {
-      hasText,
-      detectedText: [],
-      reason: hasText ? 'fallback-parse-detected-text' : 'fallback-parse',
-    }
-  }
 }
 
 function createEmptyPanelTextAuditResult() {
@@ -4849,6 +5488,12 @@ function createAiProviderBridge(logger, dependencies = {}) {
         )
         if (!alreadyTracked) {
           providerDraftRejectedCandidates.push(story)
+          logger.info('AI story provider draft candidate retained for rescue', {
+            provider,
+            model,
+            candidate: summarizeStoryDraftForLog(story),
+            rescuePoolSize: providerDraftRejectedCandidates.length,
+          })
         }
       })
     }
@@ -5775,6 +6420,20 @@ function createAiProviderBridge(logger, dependencies = {}) {
         selectedAttempt.attemptLabel || 'provider_story_options'
       )
     collectProviderDraftRejectedCandidates(initialQuality)
+    if (
+      initialQuality.accepted.length < requestedStoryCount &&
+      providerDraftRejectedCandidates.length > 0
+    ) {
+      logger.info('AI story provider draft pool after initial quality gate', {
+        provider,
+        model,
+        acceptedCount: initialQuality.accepted.length,
+        rejectedRescueCandidates: providerDraftRejectedCandidates.length,
+        rejectedDrafts: summarizeStoryDraftCollectionForLog(
+          providerDraftRejectedCandidates
+        ),
+      })
+    }
 
     const shouldSkipRepairForProviderDraftRescue =
       requestedStoryCount === 1 &&
@@ -5955,6 +6614,13 @@ function createAiProviderBridge(logger, dependencies = {}) {
           }),
         ]
         generationPath = `${selectedAttempt.attemptLabel}_provider_draft_rescue`
+      } else if (providerReachable) {
+        logger.info('AI story provider draft rescue unavailable', {
+          provider,
+          model,
+          rejectedRescueCandidates: providerDraftRejectedCandidates.length,
+          attempts: attemptHistory,
+        })
       }
     }
     if (!generationPath && initialQualitySource.endsWith('_lenient_salvage')) {
@@ -6052,6 +6718,14 @@ function createAiProviderBridge(logger, dependencies = {}) {
             })
           )
       : []
+    if (providerDraftPool.length > 0) {
+      logger.info('AI story provider draft selection pool', {
+        provider,
+        model,
+        poolSize: providerDraftPool.length,
+        drafts: summarizeStoryDraftCollectionForLog(providerDraftPool),
+      })
+    }
     const allowLocalFallback = disableLocalFallback
       ? !providerReachable
       : requestedStoryCount > 1 || !providerReachable
@@ -6126,6 +6800,10 @@ function createAiProviderBridge(logger, dependencies = {}) {
           model,
           lastOutcome: selectedAttempt.outcome,
           attempts: attemptHistory,
+          rejectedRescueCandidates: providerDraftRejectedCandidates.length,
+          rejectedDrafts: summarizeStoryDraftCollectionForLog(
+            providerDraftRejectedCandidates
+          ),
         })
         stories = buildEmergencyStoryboardStarterStories({
           keywordA,
@@ -6153,7 +6831,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
 
     const fallbackUsed = stories.some((story) =>
-      /local fallback(?: storyboard starter)? generated because/i.test(
+      /local fallback(?: storyboard (?:starter|draft))? (?:generated|shown) because/i.test(
         String(story && story.rationale ? story.rationale : '')
       )
     )
@@ -6164,6 +6842,10 @@ function createAiProviderBridge(logger, dependencies = {}) {
         model,
         lastOutcome: selectedAttempt.outcome,
         attempts: attemptHistory,
+        rejectedRescueCandidates: providerDraftRejectedCandidates.length,
+        rejectedDrafts: summarizeStoryDraftCollectionForLog(
+          providerDraftRejectedCandidates
+        ),
       })
       logger.info('AI story fallback sense lock', {
         rawKeywords: senseSelection.raw_keywords,

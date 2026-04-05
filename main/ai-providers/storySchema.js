@@ -21,6 +21,111 @@ function normalizeStoryOptionCount(value) {
   return Math.max(1, Math.min(2, parsed))
 }
 
+function createStoryItemSchema(storyCount = 2) {
+  const normalizedStoryCount = normalizeStoryOptionCount(storyCount)
+  const requiredFields =
+    normalizedStoryCount === 1
+      ? ['title', 'story_summary', 'panels']
+      : [
+          'title',
+          'story_summary',
+          'panels',
+          'compliance_report',
+          'risk_flags',
+          'revision_if_risky',
+        ]
+
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: requiredFields,
+    properties: {
+      title: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 64,
+      },
+      story_summary: {
+        type: 'string',
+        minLength: 10,
+        maxLength: 220,
+      },
+      panels: {
+        type: 'array',
+        minItems: 4,
+        maxItems: 4,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'panel',
+            'role',
+            'description',
+            'required_visibles',
+            'state_change_from_previous',
+          ],
+          properties: {
+            panel: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 4,
+            },
+            role: {
+              type: 'string',
+              enum: STORY_PANEL_ROLES,
+            },
+            description: {
+              type: 'string',
+              minLength: 12,
+              maxLength: 240,
+            },
+            required_visibles: {
+              type: 'array',
+              minItems: 2,
+              maxItems: 5,
+              items: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 64,
+              },
+            },
+            state_change_from_previous: {
+              type: 'string',
+              minLength: 3,
+              maxLength: 140,
+            },
+          },
+        },
+      },
+      compliance_report: {
+        type: 'object',
+        additionalProperties: false,
+        required: STORY_COMPLIANCE_KEYS,
+        properties: STORY_COMPLIANCE_KEYS.reduce((acc, key) => {
+          acc[key] = {
+            type: 'string',
+            enum: ['pass', 'fail'],
+          }
+          return acc
+        }, {}),
+      },
+      risk_flags: {
+        type: 'array',
+        maxItems: 6,
+        items: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 120,
+        },
+      },
+      revision_if_risky: {
+        type: 'string',
+        maxLength: 320,
+      },
+    },
+  }
+}
+
 function createStoryOptionsJsonSchema(storyCount = 2) {
   const normalizedStoryCount = normalizeStoryOptionCount(storyCount)
   return {
@@ -32,102 +137,7 @@ function createStoryOptionsJsonSchema(storyCount = 2) {
         type: 'array',
         minItems: normalizedStoryCount,
         maxItems: normalizedStoryCount,
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: [
-            'title',
-            'story_summary',
-            'panels',
-            'compliance_report',
-            'risk_flags',
-            'revision_if_risky',
-          ],
-          properties: {
-            title: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 64,
-            },
-            story_summary: {
-              type: 'string',
-              minLength: 10,
-              maxLength: 220,
-            },
-            panels: {
-              type: 'array',
-              minItems: 4,
-              maxItems: 4,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: [
-                  'panel',
-                  'role',
-                  'description',
-                  'required_visibles',
-                  'state_change_from_previous',
-                ],
-                properties: {
-                  panel: {
-                    type: 'integer',
-                    minimum: 1,
-                    maximum: 4,
-                  },
-                  role: {
-                    type: 'string',
-                    enum: STORY_PANEL_ROLES,
-                  },
-                  description: {
-                    type: 'string',
-                    minLength: 12,
-                    maxLength: 240,
-                  },
-                  required_visibles: {
-                    type: 'array',
-                    minItems: 2,
-                    maxItems: 5,
-                    items: {
-                      type: 'string',
-                      minLength: 1,
-                      maxLength: 64,
-                    },
-                  },
-                  state_change_from_previous: {
-                    type: 'string',
-                    minLength: 3,
-                    maxLength: 140,
-                  },
-                },
-              },
-            },
-            compliance_report: {
-              type: 'object',
-              additionalProperties: false,
-              required: STORY_COMPLIANCE_KEYS,
-              properties: STORY_COMPLIANCE_KEYS.reduce((acc, key) => {
-                acc[key] = {
-                  type: 'string',
-                  enum: ['pass', 'fail'],
-                }
-                return acc
-              }, {}),
-            },
-            risk_flags: {
-              type: 'array',
-              maxItems: 6,
-              items: {
-                type: 'string',
-                minLength: 1,
-                maxLength: 120,
-              },
-            },
-            revision_if_risky: {
-              type: 'string',
-              maxLength: 320,
-            },
-          },
-        },
+        items: createStoryItemSchema(normalizedStoryCount),
       },
     },
   }
@@ -296,16 +306,27 @@ function validateComplianceReport(report, storyIndex, errors) {
   })
 }
 
-function validateStoryItem(item, storyIndex, errors) {
+function validateStoryItem(item, storyIndex, errors, storyCount = 2) {
   const path = `stories[${storyIndex}]`
-  const allowedKeys = [
-    'title',
-    'story_summary',
-    'panels',
-    'compliance_report',
-    'risk_flags',
-    'revision_if_risky',
-  ]
+  const normalizedStoryCount = normalizeStoryOptionCount(storyCount)
+  const allowedKeys =
+    normalizedStoryCount === 1
+      ? [
+          'title',
+          'story_summary',
+          'panels',
+          'compliance_report',
+          'risk_flags',
+          'revision_if_risky',
+        ]
+      : [
+          'title',
+          'story_summary',
+          'panels',
+          'compliance_report',
+          'risk_flags',
+          'revision_if_risky',
+        ]
   if (!isPlainObject(item)) {
     errors.push(`${path} must be an object`)
     return
@@ -329,22 +350,37 @@ function validateStoryItem(item, storyIndex, errors) {
     )
   }
 
-  validateComplianceReport(item.compliance_report, storyIndex, errors)
-
-  if (!Array.isArray(item.risk_flags)) {
-    errors.push(`${path}.risk_flags must be an array`)
-  } else if (item.risk_flags.length > 6) {
-    errors.push(`${path}.risk_flags must contain at most 6 items`)
-  } else {
-    item.risk_flags.forEach((flag, index) => {
-      if (!isNonEmptyString(flag)) {
-        errors.push(`${path}.risk_flags[${index}] must be a non-empty string`)
-      }
-    })
+  if (
+    normalizedStoryCount > 1 ||
+    Object.prototype.hasOwnProperty.call(item, 'compliance_report')
+  ) {
+    validateComplianceReport(item.compliance_report, storyIndex, errors)
   }
 
-  if (typeof item.revision_if_risky !== 'string') {
-    errors.push(`${path}.revision_if_risky must be a string`)
+  if (
+    normalizedStoryCount > 1 ||
+    Object.prototype.hasOwnProperty.call(item, 'risk_flags')
+  ) {
+    if (!Array.isArray(item.risk_flags)) {
+      errors.push(`${path}.risk_flags must be an array`)
+    } else if (item.risk_flags.length > 6) {
+      errors.push(`${path}.risk_flags must contain at most 6 items`)
+    } else {
+      item.risk_flags.forEach((flag, index) => {
+        if (!isNonEmptyString(flag)) {
+          errors.push(`${path}.risk_flags[${index}] must be a non-empty string`)
+        }
+      })
+    }
+  }
+
+  if (
+    normalizedStoryCount > 1 ||
+    Object.prototype.hasOwnProperty.call(item, 'revision_if_risky')
+  ) {
+    if (typeof item.revision_if_risky !== 'string') {
+      errors.push(`${path}.revision_if_risky must be a string`)
+    }
   }
 }
 
@@ -370,7 +406,7 @@ function validateStoryOptionsPayload(value, storyCount = 2) {
     )
   } else {
     value.stories.forEach((story, storyIndex) =>
-      validateStoryItem(story, storyIndex, errors)
+      validateStoryItem(story, storyIndex, errors, normalizedStoryCount)
     )
   }
 

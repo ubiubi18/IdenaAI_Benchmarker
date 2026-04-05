@@ -33,6 +33,8 @@ describe('story prompt exemplars', () => {
     expect(result.lines.join('\n')).toContain(
       'The person observes the final result.'
     )
+    expect(result.lines.join('\n')).toContain('curtain tears loose')
+    expect(result.lines.join('\n')).toContain('instead of defaulting to spills')
     expect(result.lines.join('\n')).not.toContain(
       'Do not include inappropriate, sexual, violent, or shocking content.'
     )
