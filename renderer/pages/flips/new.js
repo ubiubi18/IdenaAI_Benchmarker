@@ -115,6 +115,11 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
+const FULL_AUTO_NODE_PUBLISH_MAX_LEDGER_ACTIONS = 4
+const FULL_AUTO_NODE_PUBLISH_MAX_USD = 2
+const FULL_AUTO_NODE_PUBLISH_MAX_REQUEST_TIMEOUT_MS = 20 * 1000
+const FULL_AUTO_NODE_PUBLISH_MAX_DEADLINE_MS = 75 * 1000
+
 const CUSTOM_MODEL_OPTION = '__custom_model__'
 
 const REASONING_MODEL_PRESETS = {
@@ -1579,6 +1584,24 @@ export default function NewFlipPage() {
     [aiSolverSettings]
   )
 
+  const fullAutoNodePublishRunPayload = useMemo(
+    () => ({
+      deadlineMs: Math.min(
+        Math.max(Number(baseRunPayload.deadlineMs) || 0, 45 * 1000),
+        FULL_AUTO_NODE_PUBLISH_MAX_DEADLINE_MS
+      ),
+      requestTimeoutMs: Math.min(
+        Math.max(Number(baseRunPayload.requestTimeoutMs) || 0, 12 * 1000),
+        FULL_AUTO_NODE_PUBLISH_MAX_REQUEST_TIMEOUT_MS
+      ),
+      maxRetries: Math.min(
+        Math.max(Number(baseRunPayload.maxRetries) || 0, 0),
+        1
+      ),
+    }),
+    [baseRunPayload]
+  )
+
   const modelCostEstimate = useMemo(() => {
     const provider = String(aiSolverSettings.provider || '')
       .trim()
@@ -2093,7 +2116,11 @@ export default function NewFlipPage() {
   )
 
   const generateStoryAlternatives = useCallback(
-    async ({optimize = false, basePanels = null} = {}) => {
+    async ({
+      optimize = false,
+      basePanels = null,
+      runPayloadOverride = null,
+    } = {}) => {
       if (!(await ensureKeywordsReady())) {
         return null
       }
@@ -2135,6 +2162,7 @@ export default function NewFlipPage() {
 
         const response = await global.aiSolver.generateStoryOptions({
           ...baseRunPayload,
+          ...(runPayloadOverride || {}),
           fastStoryMode: isFastMode,
           provider: aiSolverSettings.provider,
           model: reasoningModel,
@@ -2225,6 +2253,21 @@ export default function NewFlipPage() {
         }
 
         notify(t('Story options generated'), storyOptionsMessage)
+        const storyRunMetrics = {
+          actionCount: 1,
+          estimatedUsd:
+            response &&
+            response.costs &&
+            Number.isFinite(Number(response.costs.estimatedUsd))
+              ? Number(response.costs.estimatedUsd)
+              : 0,
+          actualUsd:
+            response &&
+            response.costs &&
+            Number.isFinite(Number(response.costs.actualUsd))
+              ? Number(response.costs.actualUsd)
+              : 0,
+        }
         return {
           options,
           selectedStoryId: defaultSelected
@@ -2241,6 +2284,7 @@ export default function NewFlipPage() {
             Number.isFinite(Number(defaultSelected.noisePanelIndex))
               ? Number(defaultSelected.noisePanelIndex)
               : storyNoisePanelIndex,
+          storyRunMetrics,
         }
       } catch (error) {
         const message = formatAiRunError(error)
@@ -2321,6 +2365,7 @@ export default function NewFlipPage() {
       storyPanelsOverride = null,
       includeNoiseOverride = null,
       noisePanelIndexOverride = null,
+      runPayloadOverride = null,
     } = {}) => {
       if (!(await ensureKeywordsReady())) {
         return
@@ -2362,6 +2407,7 @@ export default function NewFlipPage() {
 
         const response = await global.aiSolver.generateFlipPanels({
           ...baseRunPayload,
+          ...(runPayloadOverride || {}),
           fastBuild: isFastMode,
           panelRenderMode: isFastMode ? 'sheet_fast' : 'panels',
           provider: aiSolverSettings.provider,
@@ -2593,6 +2639,21 @@ export default function NewFlipPage() {
             response && response.panelRenderModeUsed
               ? response.panelRenderModeUsed
               : '',
+          buildRunMetrics: {
+            actionCount: 1,
+            estimatedUsd:
+              response &&
+              response.costs &&
+              Number.isFinite(Number(response.costs.estimatedUsd))
+                ? Number(response.costs.estimatedUsd)
+                : 0,
+            actualUsd:
+              response &&
+              response.costs &&
+              Number.isFinite(Number(response.costs.actualUsd))
+                ? Number(response.costs.actualUsd)
+                : 0,
+          },
         }
       } catch (error) {
         const message = formatAiRunError(error)
@@ -2638,7 +2699,7 @@ export default function NewFlipPage() {
   )
 
   const resolveAutoFlipDraftResult = useCallback(
-    async ({forceFreshDraft = false} = {}) => {
+    async ({forceFreshDraft = false, runPayloadOverride = null} = {}) => {
       if (!(await ensureKeywordsReady())) {
         return null
       }
@@ -2663,7 +2724,10 @@ export default function NewFlipPage() {
             : storyNoisePanelIndex,
         }
       } else {
-        draftResult = await generateStoryAlternatives({optimize: false})
+        draftResult = await generateStoryAlternatives({
+          optimize: false,
+          runPayloadOverride,
+        })
       }
 
       if (!draftResult || !Array.isArray(draftResult.storyPanels)) {
@@ -2678,13 +2742,45 @@ export default function NewFlipPage() {
         const optimizedDraftResult = await generateStoryAlternatives({
           optimize: true,
           basePanels: draftResult.storyPanels,
+          runPayloadOverride,
         })
 
         if (
           optimizedDraftResult &&
           Array.isArray(optimizedDraftResult.storyPanels)
         ) {
-          draftResult = optimizedDraftResult
+          draftResult = {
+            ...optimizedDraftResult,
+            storyRunMetrics: {
+              actionCount:
+                (Number(
+                  draftResult.storyRunMetrics &&
+                    draftResult.storyRunMetrics.actionCount
+                ) || 0) +
+                (Number(
+                  optimizedDraftResult.storyRunMetrics &&
+                    optimizedDraftResult.storyRunMetrics.actionCount
+                ) || 0),
+              estimatedUsd:
+                (Number(
+                  draftResult.storyRunMetrics &&
+                    draftResult.storyRunMetrics.estimatedUsd
+                ) || 0) +
+                (Number(
+                  optimizedDraftResult.storyRunMetrics &&
+                    optimizedDraftResult.storyRunMetrics.estimatedUsd
+                ) || 0),
+              actualUsd:
+                (Number(
+                  draftResult.storyRunMetrics &&
+                    draftResult.storyRunMetrics.actualUsd
+                ) || 0) +
+                (Number(
+                  optimizedDraftResult.storyRunMetrics &&
+                    optimizedDraftResult.storyRunMetrics.actualUsd
+                ) || 0),
+            },
+          }
         }
       }
 
@@ -2757,6 +2853,7 @@ export default function NewFlipPage() {
       await ensureAiRunReady()
       const draftResult = await resolveAutoFlipDraftResult({
         forceFreshDraft: true,
+        runPayloadOverride: fullAutoNodePublishRunPayload,
       })
 
       if (!draftResult || !Array.isArray(draftResult.storyPanels)) {
@@ -2772,10 +2869,50 @@ export default function NewFlipPage() {
         storyPanelsOverride: draftResult.storyPanels,
         includeNoiseOverride: draftResult.includeNoise,
         noisePanelIndexOverride: draftResult.noisePanelIndex,
+        runPayloadOverride: fullAutoNodePublishRunPayload,
       })
 
       if (!buildResult || buildResult.ok !== true) {
         return
+      }
+
+      const autoRunActionCount =
+        (Number(
+          draftResult.storyRunMetrics && draftResult.storyRunMetrics.actionCount
+        ) || 0) +
+        (Number(
+          buildResult.buildRunMetrics && buildResult.buildRunMetrics.actionCount
+        ) || 0)
+      const autoRunEstimatedUsd =
+        (Number(
+          draftResult.storyRunMetrics &&
+            draftResult.storyRunMetrics.estimatedUsd
+        ) || 0) +
+        (Number(
+          buildResult.buildRunMetrics &&
+            buildResult.buildRunMetrics.estimatedUsd
+        ) || 0)
+      const autoRunActualUsd =
+        (Number(
+          draftResult.storyRunMetrics && draftResult.storyRunMetrics.actualUsd
+        ) || 0) +
+        (Number(
+          buildResult.buildRunMetrics && buildResult.buildRunMetrics.actualUsd
+        ) || 0)
+      const autoRunUsd = Math.max(autoRunEstimatedUsd, autoRunActualUsd)
+
+      if (autoRunActionCount > FULL_AUTO_NODE_PUBLISH_MAX_LEDGER_ACTIONS) {
+        throw new Error(
+          `Fully automated publish stopped before submit because it already used ${autoRunActionCount} AI actions. The safety cap is ${FULL_AUTO_NODE_PUBLISH_MAX_LEDGER_ACTIONS}.`
+        )
+      }
+
+      if (autoRunUsd > FULL_AUTO_NODE_PUBLISH_MAX_USD) {
+        throw new Error(
+          `Fully automated publish stopped before submit because the estimated run cost reached ~$${autoRunUsd.toFixed(
+            2
+          )}. The safety cap is ~$${FULL_AUTO_NODE_PUBLISH_MAX_USD.toFixed(2)}.`
+        )
       }
 
       await new Promise((resolve) => {
@@ -2803,6 +2940,7 @@ export default function NewFlipPage() {
     buildFlipWithAi,
     ensureAiRunReady,
     failToast,
+    fullAutoNodePublishRunPayload,
     keywordPairId,
     keywordSource,
     notify,
