@@ -3656,6 +3656,310 @@ export default function NewFlipPage() {
         )
       : flipBuildStatus.message
 
+  const keywordStepStoryPreview = useMemo(() => {
+    if (!activeStoryDraft || !activeStoryDraftReview) {
+      return null
+    }
+
+    return (
+      <Box
+        borderWidth="1px"
+        borderColor={
+          activeStoryDraftReview.kind === 'strong' ? 'green.100' : 'orange.200'
+        }
+        borderRadius="md"
+        p={3}
+        bg="white"
+      >
+        <Stack spacing={2}>
+          <Text
+            fontSize="xs"
+            fontWeight={500}
+            color={
+              activeStoryDraftReview.kind === 'strong'
+                ? 'green.500'
+                : 'orange.500'
+            }
+          >
+            {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {activeStoryDraftReview.description}
+          </Text>
+          {activeStoryDraft.panels.map((panel, panelIndex) => (
+            <Text
+              key={`keyword-ai-story-${panelIndex}`}
+              fontSize="xs"
+              color="muted"
+            >
+              {`${panelIndex + 1}. ${panel}`}
+            </Text>
+          ))}
+        </Stack>
+      </Box>
+    )
+  }, [activeStoryDraft, activeStoryDraftReview])
+
+  const imageStepStoryPreview = useMemo(() => {
+    if (!activeStoryDraft || !activeStoryDraftReview) {
+      return (
+        <Box
+          borderWidth="1px"
+          borderColor="orange.200"
+          borderRadius="md"
+          p={3}
+          bg="white"
+        >
+          <Text fontSize="xs" color="muted">
+            {t(
+              'No AI story draft exists yet for this keyword pair. Generate the draft first, then build all four images from it.'
+            )}
+          </Text>
+        </Box>
+      )
+    }
+
+    return (
+      <Box
+        borderWidth="1px"
+        borderColor={
+          activeStoryDraftReview.kind === 'strong' ? 'green.100' : 'orange.200'
+        }
+        borderRadius="md"
+        p={3}
+        bg="white"
+      >
+        <Stack spacing={2}>
+          <Text
+            fontSize="xs"
+            fontWeight={500}
+            color={
+              activeStoryDraftReview.kind === 'strong'
+                ? 'green.500'
+                : 'orange.500'
+            }
+          >
+            {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {activeStoryDraftReview.description}
+          </Text>
+        </Stack>
+      </Box>
+    )
+  }, [activeStoryDraft, activeStoryDraftReview, t])
+
+  const storyOptionsGrid = useMemo(() => {
+    if (!storyOptionCards.length) {
+      return null
+    }
+
+    return (
+      <SimpleGrid columns={[1, 2]} spacing={2}>
+        {storyOptionCards.map(
+          ({
+            option,
+            reviewState,
+            hasComplianceReport,
+            optionBorderColor,
+            optionBg,
+            reviewBorderColor,
+            reviewAccentColor,
+            shouldShowStorySummary,
+          }) => (
+            <Box
+              key={option.id}
+              borderWidth="1px"
+              borderColor={optionBorderColor}
+              borderRadius="md"
+              p={2}
+              bg={optionBg}
+            >
+              <Stack spacing={1}>
+                <Text fontSize="sm" fontWeight={500}>
+                  {option.title}
+                </Text>
+                <Box
+                  borderWidth="1px"
+                  borderColor={reviewBorderColor}
+                  borderRadius="md"
+                  p={2}
+                  bg="white"
+                >
+                  <Text
+                    fontSize="xs"
+                    fontWeight={500}
+                    color={reviewAccentColor}
+                  >
+                    {reviewState.label}
+                  </Text>
+                  <Text fontSize="xs" color="muted">
+                    {reviewState.description}
+                  </Text>
+                  {Number.isFinite(Number(option.qualityScore)) ? (
+                    <Text fontSize="xs" color="muted" mt={1}>
+                      {t('Quality score: {{score}}', {
+                        score: option.qualityScore,
+                      })}
+                    </Text>
+                  ) : null}
+                </Box>
+                {option.panels.map((panel, idx) => (
+                  <Text
+                    key={`${option.id}-panel-${idx}`}
+                    fontSize="xs"
+                    color="muted"
+                  >
+                    {`${idx + 1}. ${panel}`}
+                  </Text>
+                ))}
+                {option.rationale ? (
+                  <Text fontSize="xs" color="muted">
+                    {option.rationale}
+                  </Text>
+                ) : null}
+                {option.editingTip ? (
+                  <Text fontSize="xs" color="blue.500">
+                    {option.editingTip}
+                  </Text>
+                ) : null}
+                {shouldShowStorySummary ? (
+                  <Text fontSize="xs" color="muted">
+                    {option.storySummary}
+                  </Text>
+                ) : null}
+                {option.failedComplianceKeys.length > 0 ? (
+                  <Text fontSize="xs" color="orange.500">
+                    {`Compliance risk: ${option.failedComplianceKeys.join(
+                      ', '
+                    )}`}
+                  </Text>
+                ) : null}
+                {option.failedComplianceKeys.length === 0 &&
+                hasComplianceReport ? (
+                  <Text fontSize="xs" color="green.500">
+                    {t('Compliance checks passed')}
+                  </Text>
+                ) : null}
+                {option.riskFlags.length > 0 ? (
+                  <Text fontSize="xs" color="orange.500">
+                    {`Risk flags: ${option.riskFlags.join(' | ')}`}
+                  </Text>
+                ) : null}
+                {option.qualityFailures.length > 0 ? (
+                  <Text fontSize="xs" color="orange.500">
+                    {`Story quality warnings: ${option.qualityFailures.join(
+                      ', '
+                    )}`}
+                  </Text>
+                ) : null}
+                <Stack isInline justify="flex-end">
+                  <SecondaryButton
+                    onClick={() => {
+                      applyStoryOptionToDraft(option)
+                    }}
+                  >
+                    {reviewState.kind === 'strong'
+                      ? t('Use this story')
+                      : t('Use this storyboard')}
+                  </SecondaryButton>
+                  {reviewState.kind !== 'strong' ? (
+                    <SecondaryButton
+                      isLoading={isGeneratingStoryOptions}
+                      onClick={async () => {
+                        applyStoryOptionToDraft(option)
+                        await generateStoryAlternatives({
+                          optimize: true,
+                          basePanels: option.panels,
+                        })
+                      }}
+                    >
+                      {t('Make this draft more specific')}
+                    </SecondaryButton>
+                  ) : null}
+                </Stack>
+              </Stack>
+            </Box>
+          )
+        )}
+      </SimpleGrid>
+    )
+  }, [
+    applyStoryOptionToDraft,
+    generateStoryAlternatives,
+    isGeneratingStoryOptions,
+    storyOptionCards,
+    t,
+  ])
+
+  const activeStoryDraftSummaryCard = useMemo(() => {
+    if (!activeStoryDraft || !activeStoryDraftReview) {
+      return null
+    }
+
+    return (
+      <Box
+        borderWidth="1px"
+        borderColor={
+          activeStoryDraftReview.kind === 'strong' ? 'green.100' : 'orange.200'
+        }
+        borderRadius="md"
+        p={3}
+        bg={
+          activeStoryDraftReview.kind === 'strong' ? 'green.012' : 'orange.012'
+        }
+      >
+        <Stack spacing={2}>
+          <Text
+            fontSize="sm"
+            fontWeight={500}
+            color={
+              activeStoryDraftReview.kind === 'strong'
+                ? 'green.500'
+                : 'orange.500'
+            }
+          >
+            {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {activeStoryDraftReview.description}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {activeStoryDraftReview.kind === 'strong'
+              ? t(
+                  'Recommended flow: make any final wording tweaks, then build all 4 panels.'
+                )
+              : t(
+                  'Recommended flow: tighten the place, trigger, and visible aftermath first. If you want a stronger pass, run Refine with AI.'
+                )}
+          </Text>
+          {activeStoryDraftReview.kind !== 'strong' ? (
+            <Stack isInline justify="flex-end">
+              <SecondaryButton
+                isLoading={isGeneratingStoryOptions}
+                onClick={() =>
+                  generateStoryAlternatives({
+                    optimize: true,
+                    basePanels: storyPanelsDraft,
+                  })
+                }
+              >
+                {t('Make selected draft more specific')}
+              </SecondaryButton>
+            </Stack>
+          ) : null}
+        </Stack>
+      </Box>
+    )
+  }, [
+    activeStoryDraft,
+    activeStoryDraftReview,
+    generateStoryAlternatives,
+    isGeneratingStoryOptions,
+    storyPanelsDraft,
+    t,
+  ])
+
   return (
     <Layout>
       <Page p={0}>
@@ -4058,47 +4362,7 @@ export default function NewFlipPage() {
                           </SecondaryButton>
                         ) : null}
                       </Stack>
-                      {activeStoryDraft && activeStoryDraftReview ? (
-                        <Box
-                          borderWidth="1px"
-                          borderColor={
-                            activeStoryDraftReview.kind === 'strong'
-                              ? 'green.100'
-                              : 'orange.200'
-                          }
-                          borderRadius="md"
-                          p={3}
-                          bg="white"
-                        >
-                          <Stack spacing={2}>
-                            <Text
-                              fontSize="xs"
-                              fontWeight={500}
-                              color={
-                                activeStoryDraftReview.kind === 'strong'
-                                  ? 'green.500'
-                                  : 'orange.500'
-                              }
-                            >
-                              {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
-                            </Text>
-                            <Text fontSize="xs" color="muted">
-                              {activeStoryDraftReview.description}
-                            </Text>
-                            {activeStoryDraft.panels.map(
-                              (panel, panelIndex) => (
-                                <Text
-                                  key={`keyword-ai-story-${panelIndex}`}
-                                  fontSize="xs"
-                                  color="muted"
-                                >
-                                  {`${panelIndex + 1}. ${panel}`}
-                                </Text>
-                              )
-                            )}
-                          </Stack>
-                        </Box>
-                      ) : null}
+                      {keywordStepStoryPreview}
                     </Stack>
                   </Box>
                 </>
@@ -4123,50 +4387,7 @@ export default function NewFlipPage() {
                           'Step 1: create a story draft from the current keyword pair. Step 2: build all 4 images from that draft. You can still replace single panels manually afterwards.'
                         )}
                       </Text>
-                      {activeStoryDraft && activeStoryDraftReview ? (
-                        <Box
-                          borderWidth="1px"
-                          borderColor={
-                            activeStoryDraftReview.kind === 'strong'
-                              ? 'green.100'
-                              : 'orange.200'
-                          }
-                          borderRadius="md"
-                          p={3}
-                          bg="white"
-                        >
-                          <Stack spacing={2}>
-                            <Text
-                              fontSize="xs"
-                              fontWeight={500}
-                              color={
-                                activeStoryDraftReview.kind === 'strong'
-                                  ? 'green.500'
-                                  : 'orange.500'
-                              }
-                            >
-                              {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
-                            </Text>
-                            <Text fontSize="xs" color="muted">
-                              {activeStoryDraftReview.description}
-                            </Text>
-                          </Stack>
-                        </Box>
-                      ) : (
-                        <Box
-                          borderWidth="1px"
-                          borderColor="orange.200"
-                          borderRadius="md"
-                          p={3}
-                          bg="white"
-                        >
-                          <Text fontSize="xs" color="muted">
-                            {t(
-                              'No AI story draft exists yet for this keyword pair. Generate the draft first, then build all four images from it.'
-                            )}
-                          </Text>
-                        </Box>
-                      )}
+                      {imageStepStoryPreview}
                       <Stack isInline spacing={2} flexWrap="wrap">
                         <SecondaryButton
                           isDisabled={!hasUsableKeywords}
@@ -4861,204 +5082,9 @@ export default function NewFlipPage() {
                             </SecondaryButton>
                           </Stack>
 
-                          {storyOptions.length > 0 ? (
-                            <SimpleGrid columns={[1, 2]} spacing={2}>
-                              {storyOptionCards.map(
-                                ({
-                                  option,
-                                  reviewState,
-                                  hasComplianceReport,
-                                  optionBorderColor,
-                                  optionBg,
-                                  reviewBorderColor,
-                                  reviewAccentColor,
-                                  shouldShowStorySummary,
-                                }) => (
-                                  <Box
-                                    key={option.id}
-                                    borderWidth="1px"
-                                    borderColor={optionBorderColor}
-                                    borderRadius="md"
-                                    p={2}
-                                    bg={optionBg}
-                                  >
-                                    <Stack spacing={1}>
-                                      <Text fontSize="sm" fontWeight={500}>
-                                        {option.title}
-                                      </Text>
-                                      <Box
-                                        borderWidth="1px"
-                                        borderColor={reviewBorderColor}
-                                        borderRadius="md"
-                                        p={2}
-                                        bg="white"
-                                      >
-                                        <Text
-                                          fontSize="xs"
-                                          fontWeight={500}
-                                          color={reviewAccentColor}
-                                        >
-                                          {reviewState.label}
-                                        </Text>
-                                        <Text fontSize="xs" color="muted">
-                                          {reviewState.description}
-                                        </Text>
-                                        {Number.isFinite(
-                                          Number(option.qualityScore)
-                                        ) ? (
-                                          <Text
-                                            fontSize="xs"
-                                            color="muted"
-                                            mt={1}
-                                          >
-                                            {t('Quality score: {{score}}', {
-                                              score: option.qualityScore,
-                                            })}
-                                          </Text>
-                                        ) : null}
-                                      </Box>
-                                      {option.panels.map((panel, idx) => (
-                                        <Text
-                                          key={`${option.id}-panel-${idx}`}
-                                          fontSize="xs"
-                                          color="muted"
-                                        >
-                                          {`${idx + 1}. ${panel}`}
-                                        </Text>
-                                      ))}
-                                      {option.rationale ? (
-                                        <Text fontSize="xs" color="muted">
-                                          {option.rationale}
-                                        </Text>
-                                      ) : null}
-                                      {option.editingTip ? (
-                                        <Text fontSize="xs" color="blue.500">
-                                          {option.editingTip}
-                                        </Text>
-                                      ) : null}
-                                      {shouldShowStorySummary ? (
-                                        <Text fontSize="xs" color="muted">
-                                          {option.storySummary}
-                                        </Text>
-                                      ) : null}
-                                      {option.failedComplianceKeys.length >
-                                      0 ? (
-                                        <Text fontSize="xs" color="orange.500">
-                                          {`Compliance risk: ${option.failedComplianceKeys.join(
-                                            ', '
-                                          )}`}
-                                        </Text>
-                                      ) : null}
-                                      {option.failedComplianceKeys.length ===
-                                        0 && hasComplianceReport ? (
-                                        <Text fontSize="xs" color="green.500">
-                                          {t('Compliance checks passed')}
-                                        </Text>
-                                      ) : null}
-                                      {option.riskFlags.length > 0 ? (
-                                        <Text fontSize="xs" color="orange.500">
-                                          {`Risk flags: ${option.riskFlags.join(
-                                            ' | '
-                                          )}`}
-                                        </Text>
-                                      ) : null}
-                                      {option.qualityFailures.length > 0 ? (
-                                        <Text fontSize="xs" color="orange.500">
-                                          {`Story quality warnings: ${option.qualityFailures.join(
-                                            ', '
-                                          )}`}
-                                        </Text>
-                                      ) : null}
-                                      <Stack isInline justify="flex-end">
-                                        <SecondaryButton
-                                          onClick={() => {
-                                            applyStoryOptionToDraft(option)
-                                          }}
-                                        >
-                                          {reviewState.kind === 'strong'
-                                            ? t('Use this story')
-                                            : t('Use this storyboard')}
-                                        </SecondaryButton>
-                                        {reviewState.kind !== 'strong' ? (
-                                          <SecondaryButton
-                                            isLoading={isGeneratingStoryOptions}
-                                            onClick={async () => {
-                                              applyStoryOptionToDraft(option)
-                                              await generateStoryAlternatives({
-                                                optimize: true,
-                                                basePanels: option.panels,
-                                              })
-                                            }}
-                                          >
-                                            {t('Make this draft more specific')}
-                                          </SecondaryButton>
-                                        ) : null}
-                                      </Stack>
-                                    </Stack>
-                                  </Box>
-                                )
-                              )}
-                            </SimpleGrid>
-                          ) : null}
+                          {storyOptionsGrid}
 
-                          {activeStoryDraft && activeStoryDraftReview ? (
-                            <Box
-                              borderWidth="1px"
-                              borderColor={
-                                activeStoryDraftReview.kind === 'strong'
-                                  ? 'green.100'
-                                  : 'orange.200'
-                              }
-                              borderRadius="md"
-                              p={3}
-                              bg={
-                                activeStoryDraftReview.kind === 'strong'
-                                  ? 'green.012'
-                                  : 'orange.012'
-                              }
-                            >
-                              <Stack spacing={2}>
-                                <Text
-                                  fontSize="sm"
-                                  fontWeight={500}
-                                  color={
-                                    activeStoryDraftReview.kind === 'strong'
-                                      ? 'green.500'
-                                      : 'orange.500'
-                                  }
-                                >
-                                  {`${activeStoryDraft.title}: ${activeStoryDraftReview.label}`}
-                                </Text>
-                                <Text fontSize="xs" color="muted">
-                                  {activeStoryDraftReview.description}
-                                </Text>
-                                <Text fontSize="xs" color="muted">
-                                  {activeStoryDraftReview.kind === 'strong'
-                                    ? t(
-                                        'Recommended flow: make any final wording tweaks, then build all 4 panels.'
-                                      )
-                                    : t(
-                                        'Recommended flow: tighten the place, trigger, and visible aftermath first. If you want a stronger pass, run Refine with AI.'
-                                      )}
-                                </Text>
-                                {activeStoryDraftReview.kind !== 'strong' ? (
-                                  <Stack isInline justify="flex-end">
-                                    <SecondaryButton
-                                      isLoading={isGeneratingStoryOptions}
-                                      onClick={() =>
-                                        generateStoryAlternatives({
-                                          optimize: true,
-                                          basePanels: storyPanelsDraft,
-                                        })
-                                      }
-                                    >
-                                      {t('Make selected draft more specific')}
-                                    </SecondaryButton>
-                                  </Stack>
-                                ) : null}
-                              </Stack>
-                            </Box>
-                          ) : null}
+                          {activeStoryDraftSummaryCard}
 
                           <SimpleGrid columns={[1, 2]} spacing={2}>
                             {storyPanelsDraft.map((panelText, panelIndex) => (
