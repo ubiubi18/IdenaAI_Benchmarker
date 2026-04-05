@@ -1295,6 +1295,7 @@ export default function NewFlipPage() {
   const [benchmarkRunRuntimeMs, setBenchmarkRunRuntimeMs] = useState(0)
   const [showGlobalJsonTools, setShowGlobalJsonTools] = useState(false)
   const [showBenchmarkAdvanced, setShowBenchmarkAdvanced] = useState(false)
+  const [showAiGeneratorAdvanced, setShowAiGeneratorAdvanced] = useState(false)
   const [isGeneratingStoryOptions, setIsGeneratingStoryOptions] =
     useState(false)
   const [storyOptions, setStoryOptions] = useState([])
@@ -1998,6 +1999,16 @@ export default function NewFlipPage() {
     })
     scrollToBuilderAnchor('ai-benchmark')
   }, [ensureKeywordsReady, scrollToBuilderAnchor, send])
+
+  const openAiGeneratorPath = useCallback(async () => {
+    await openAiSubmitBridge()
+    scrollToBuilderAnchor('ai-generator-path')
+  }, [openAiSubmitBridge, scrollToBuilderAnchor])
+
+  const openAiSolverPath = useCallback(async () => {
+    await openAiSubmitBridge()
+    scrollToBuilderAnchor('ai-solver-path')
+  }, [openAiSubmitBridge, scrollToBuilderAnchor])
 
   const isOffline = is('keywords.loaded.fetchTranslationsFailed')
 
@@ -4383,10 +4394,85 @@ export default function NewFlipPage() {
                         borderColor="gray.100"
                         borderRadius="md"
                         p={3}
+                        bg="white"
                       >
                         <Stack spacing={3}>
                           <Text fontSize="sm" fontWeight={500}>
-                            {t('AI-assisted flip generation')}
+                            {t('Choose your AI path')}
+                          </Text>
+                          <Text fontSize="xs" color="muted">
+                            {t(
+                              'Beginner flow: first decide whether you want to create a flip or solve queued flips. You can still open advanced options later.'
+                            )}
+                          </Text>
+                          <SimpleGrid columns={[1, 2]} spacing={3}>
+                            <Box
+                              borderWidth="1px"
+                              borderColor="green.100"
+                              borderRadius="md"
+                              p={3}
+                              bg="green.012"
+                            >
+                              <Stack spacing={2}>
+                                <Text
+                                  fontSize="sm"
+                                  fontWeight={500}
+                                  color="green.600"
+                                >
+                                  {t('Path 1: Create a flip with AI')}
+                                </Text>
+                                <Text fontSize="xs" color="muted">
+                                  {t(
+                                    'Generate one draft, make it more specific if needed, edit the 4 text panels, then build the 4 images.'
+                                  )}
+                                </Text>
+                                <Stack isInline justify="flex-end">
+                                  <PrimaryButton onClick={openAiGeneratorPath}>
+                                    {t('Open flip generator')}
+                                  </PrimaryButton>
+                                </Stack>
+                              </Stack>
+                            </Box>
+                            <Box
+                              borderWidth="1px"
+                              borderColor="purple.100"
+                              borderRadius="md"
+                              p={3}
+                              bg="purple.012"
+                            >
+                              <Stack spacing={2}>
+                                <Text
+                                  fontSize="sm"
+                                  fontWeight={500}
+                                  color="purple.600"
+                                >
+                                  {t('Path 2: Solve queued flips with AI')}
+                                </Text>
+                                <Text fontSize="xs" color="muted">
+                                  {t(
+                                    'Add the current draft flip to the queue, then run a short or long AI session to benchmark solving performance.'
+                                  )}
+                                </Text>
+                                <Stack isInline justify="flex-end">
+                                  <PrimaryButton onClick={openAiSolverPath}>
+                                    {t('Open solver queue')}
+                                  </PrimaryButton>
+                                </Stack>
+                              </Stack>
+                            </Box>
+                          </SimpleGrid>
+                        </Stack>
+                      </Box>
+                      <Box
+                        id="ai-generator-path"
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        p={3}
+                      >
+                        <Stack spacing={3}>
+                          <Text fontSize="sm" fontWeight={500}>
+                            {t('Path 1: Create a flip with AI')}
                           </Text>
                           <Text fontSize="xs" color="muted">
                             {t(
@@ -4398,6 +4484,11 @@ export default function NewFlipPage() {
                                 a: keywordA || '-',
                                 b: keywordB || '-',
                               }
+                            )}
+                          </Text>
+                          <Text fontSize="xs" color="muted">
+                            {t(
+                              'Simple generator flow: 1. Generate 1 story draft. 2. Make the draft more specific if needed. 3. Edit any weak panel text. 4. Build flips.'
                             )}
                           </Text>
                           <Stack isInline spacing={2}>
@@ -4423,310 +4514,344 @@ export default function NewFlipPage() {
                                 {t('Switch to 9 random test pairs')}
                               </SecondaryButton>
                             ) : null}
+                            <SecondaryButton
+                              onClick={() =>
+                                setShowAiGeneratorAdvanced((value) => !value)
+                              }
+                            >
+                              {showAiGeneratorAdvanced
+                                ? t('Hide advanced generator settings')
+                                : t('Advanced generator settings')}
+                            </SecondaryButton>
                           </Stack>
-                          <SimpleGrid columns={[1, 6]} spacing={2}>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Generation mode')}
-                              </Text>
-                              <Select
-                                value={aiGenerationMode}
-                                onChange={(e) =>
-                                  setAiGenerationMode(
-                                    String(
-                                      e && e.target ? e.target.value : 'fast'
-                                    )
-                                  )
-                                }
-                              >
-                                <option value="fast">{t('Fast')}</option>
-                                <option value="strict">{t('Strict')}</option>
-                              </Select>
-                              <Text fontSize="xs" color="muted" mt={1}>
-                                {aiGenerationMode === 'strict'
-                                  ? t(
-                                      'Strict mode runs deeper story checks and can take longer.'
-                                    )
-                                  : t(
-                                      'Fast mode prioritizes speed with lighter checks.'
-                                    )}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Reasoning model (story + audit)')}
-                              </Text>
-                              <Select
-                                value={reasoningSelectValue}
-                                onChange={(e) => {
-                                  const next = String(
-                                    e && e.target ? e.target.value : ''
-                                  ).trim()
-                                  if (next && next !== CUSTOM_MODEL_OPTION) {
-                                    setAiReasoningModel(next)
-                                  }
-                                }}
-                              >
-                                {reasoningModelOptions.map((modelId) => (
-                                  <option key={modelId} value={modelId}>
-                                    {modelId}
-                                  </option>
-                                ))}
-                                <option value={CUSTOM_MODEL_OPTION}>
-                                  {t('Custom model ID...')}
-                                </option>
-                              </Select>
-                              {reasoningSelectValue === CUSTOM_MODEL_OPTION ? (
-                                <Input
-                                  mt={1}
-                                  value={aiReasoningModel}
-                                  onChange={(e) =>
-                                    setAiReasoningModel(e.target.value)
-                                  }
-                                  placeholder={
-                                    aiSolverSettings.model || 'gpt-4.1-mini'
-                                  }
-                                />
-                              ) : null}
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Image model')}
-                              </Text>
-                              <Select
-                                value={imageSelectValue}
-                                onChange={(e) => {
-                                  const next = String(
-                                    e && e.target ? e.target.value : ''
-                                  ).trim()
-                                  if (next && next !== CUSTOM_MODEL_OPTION) {
-                                    setAiImageModel(next)
-                                  }
-                                }}
-                              >
-                                {imageModelOptions.map((modelId) => (
-                                  <option key={modelId} value={modelId}>
-                                    {modelId}
-                                  </option>
-                                ))}
-                                <option value={CUSTOM_MODEL_OPTION}>
-                                  {t('Custom model ID...')}
-                                </option>
-                              </Select>
-                              {imageSelectValue === CUSTOM_MODEL_OPTION ? (
-                                <Input
-                                  mt={1}
-                                  value={aiImageModel}
-                                  onChange={(e) =>
-                                    setAiImageModel(e.target.value)
-                                  }
-                                  placeholder="gpt-image-1-mini"
-                                />
-                              ) : null}
-                              <Text fontSize="xs" color="muted" mt={1}>
-                                {t(
-                                  'Custom model IDs are allowed (for example: nano-banana or provider-specific variants).'
-                                )}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Image size')}
-                              </Text>
-                              <Input
-                                value={aiImageSize}
-                                onChange={(e) => setAiImageSize(e.target.value)}
-                                placeholder={DEFAULT_AI_IMAGE_SIZE}
-                              />
-                              <Text fontSize="xs" color="muted" mt={1}>
-                                {t(
-                                  'Provider-native image sizes are limited (for example 1024x1024, 1536x1024, 1024x1536). Generated images are normalized to Idena panel size 440x330 and to the 2x2 composite 880x660 before submit.'
-                                )}
-                              </Text>
-                              <Text fontSize="xs" color="muted" mt={1}>
-                                {t(
-                                  'If you type an unsupported size such as 880x660, the app now auto-maps it to the closest provider-supported size.'
-                                )}
-                              </Text>
-                              {aiImageGenerationCostHint ? (
-                                <Text fontSize="xs" color="muted" mt={1}>
-                                  {`Estimated image cost (${
-                                    aiImageGenerationCostHint.model
-                                  }): ~$${aiImageGenerationCostHint.unitUsd.toFixed(
-                                    3
-                                  )} per image, ~$${aiImageGenerationCostHint.fourPanelsUsd.toFixed(
-                                    3
-                                  )} for 4 panels.`}
-                                </Text>
-                              ) : null}
-                              <Text fontSize="xs" color="muted" mt={1}>
-                                {aiImageGenerationCostHint
-                                  ? `Cheapest known ${
-                                      aiImageGenerationCostHint.model
-                                    } size is ${
-                                      aiImageGenerationCostHint.cheapestSize
-                                    } (~$${aiImageGenerationCostHint.cheapestUnitUsd.toFixed(
-                                      3
-                                    )}/image, ~$${(
-                                      aiImageGenerationCostHint.cheapestUnitUsd *
-                                      4
-                                    ).toFixed(3)} per 4-panel flip).`
-                                  : t(
-                                      'Known price hints are available for gpt-image-1, gpt-image-1.5, and gpt-image-1-mini.'
-                                    )}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Story draft mode')}
-                              </Text>
-                              <Box
-                                borderWidth="1px"
-                                borderColor="gray.100"
-                                borderRadius="md"
-                                px={3}
-                                py={2}
-                                bg="white"
-                              >
-                                <Text fontSize="sm" fontWeight={500}>
-                                  {t('1 strong editable draft')}
-                                </Text>
-                              </Box>
-                              <Text fontSize="xs" color="muted" mt={1}>
-                                {t(
-                                  'Live builder uses one stronger editable draft to reduce fallback pressure and keep the flow simpler.'
-                                )}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Noise panel index (0-3)')}
-                              </Text>
-                              <Input
-                                type="number"
-                                min={0}
-                                max={3}
-                                value={storyNoisePanelIndex}
-                                onChange={(e) =>
-                                  setStoryNoisePanelIndex(
-                                    Math.max(
-                                      0,
-                                      Math.min(3, toInt(e.target.value, 0))
-                                    )
-                                  )
-                                }
-                              />
-                            </Box>
-                          </SimpleGrid>
-                          <Text fontSize="xs" color="muted">
-                            {t(
-                              'Reasoning model handles storyline generation and text-audit; image model handles panel rendering. Use cheaper image models to reduce cost.'
-                            )}
-                          </Text>
-                          <Box
-                            borderWidth="1px"
-                            borderColor="orange.200"
-                            borderRadius="md"
-                            p={3}
-                            bg="orange.012"
-                          >
-                            <Stack spacing={3}>
-                              <Flex
-                                align={['flex-start', 'center']}
-                                justify="space-between"
-                                direction={['column', 'row']}
-                              >
-                                <Box pr={[0, 3]}>
-                                  <Text
-                                    fontSize="sm"
-                                    fontWeight={500}
-                                    color="orange.700"
-                                  >
-                                    {t(
-                                      'Experimental: fully automated real-node flip publishing'
-                                    )}
+                          {showAiGeneratorAdvanced ? (
+                            <>
+                              <SimpleGrid columns={[1, 6]} spacing={2}>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Generation mode')}
                                   </Text>
-                                  <Text fontSize="xs" color="orange.700" mt={1}>
+                                  <Select
+                                    value={aiGenerationMode}
+                                    onChange={(e) =>
+                                      setAiGenerationMode(
+                                        String(
+                                          e && e.target
+                                            ? e.target.value
+                                            : 'fast'
+                                        )
+                                      )
+                                    }
+                                  >
+                                    <option value="fast">{t('Fast')}</option>
+                                    <option value="strict">
+                                      {t('Strict')}
+                                    </option>
+                                  </Select>
+                                  <Text fontSize="xs" color="muted" mt={1}>
+                                    {aiGenerationMode === 'strict'
+                                      ? t(
+                                          'Strict mode runs deeper story checks and can take longer.'
+                                        )
+                                      : t(
+                                          'Fast mode prioritizes speed with lighter checks.'
+                                        )}
+                                  </Text>
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Reasoning model (story + audit)')}
+                                  </Text>
+                                  <Select
+                                    value={reasoningSelectValue}
+                                    onChange={(e) => {
+                                      const next = String(
+                                        e && e.target ? e.target.value : ''
+                                      ).trim()
+                                      if (
+                                        next &&
+                                        next !== CUSTOM_MODEL_OPTION
+                                      ) {
+                                        setAiReasoningModel(next)
+                                      }
+                                    }}
+                                  >
+                                    {reasoningModelOptions.map((modelId) => (
+                                      <option key={modelId} value={modelId}>
+                                        {modelId}
+                                      </option>
+                                    ))}
+                                    <option value={CUSTOM_MODEL_OPTION}>
+                                      {t('Custom model ID...')}
+                                    </option>
+                                  </Select>
+                                  {reasoningSelectValue ===
+                                  CUSTOM_MODEL_OPTION ? (
+                                    <Input
+                                      mt={1}
+                                      value={aiReasoningModel}
+                                      onChange={(e) =>
+                                        setAiReasoningModel(e.target.value)
+                                      }
+                                      placeholder={
+                                        aiSolverSettings.model || 'gpt-4.1-mini'
+                                      }
+                                    />
+                                  ) : null}
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Image model')}
+                                  </Text>
+                                  <Select
+                                    value={imageSelectValue}
+                                    onChange={(e) => {
+                                      const next = String(
+                                        e && e.target ? e.target.value : ''
+                                      ).trim()
+                                      if (
+                                        next &&
+                                        next !== CUSTOM_MODEL_OPTION
+                                      ) {
+                                        setAiImageModel(next)
+                                      }
+                                    }}
+                                  >
+                                    {imageModelOptions.map((modelId) => (
+                                      <option key={modelId} value={modelId}>
+                                        {modelId}
+                                      </option>
+                                    ))}
+                                    <option value={CUSTOM_MODEL_OPTION}>
+                                      {t('Custom model ID...')}
+                                    </option>
+                                  </Select>
+                                  {imageSelectValue === CUSTOM_MODEL_OPTION ? (
+                                    <Input
+                                      mt={1}
+                                      value={aiImageModel}
+                                      onChange={(e) =>
+                                        setAiImageModel(e.target.value)
+                                      }
+                                      placeholder="gpt-image-1-mini"
+                                    />
+                                  ) : null}
+                                  <Text fontSize="xs" color="muted" mt={1}>
                                     {t(
-                                      'Disabled by default. In testing so far, the full pipeline from story to publish has not been reliable enough for consistently good results.'
+                                      'Custom model IDs are allowed (for example: nano-banana or provider-specific variants).'
                                     )}
                                   </Text>
                                 </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Image size')}
+                                  </Text>
+                                  <Input
+                                    value={aiImageSize}
+                                    onChange={(e) =>
+                                      setAiImageSize(e.target.value)
+                                    }
+                                    placeholder={DEFAULT_AI_IMAGE_SIZE}
+                                  />
+                                  <Text fontSize="xs" color="muted" mt={1}>
+                                    {t(
+                                      'Provider-native image sizes are limited (for example 1024x1024, 1536x1024, 1024x1536). Generated images are normalized to Idena panel size 440x330 and to the 2x2 composite 880x660 before submit.'
+                                    )}
+                                  </Text>
+                                  <Text fontSize="xs" color="muted" mt={1}>
+                                    {t(
+                                      'If you type an unsupported size such as 880x660, the app now auto-maps it to the closest provider-supported size.'
+                                    )}
+                                  </Text>
+                                  {aiImageGenerationCostHint ? (
+                                    <Text fontSize="xs" color="muted" mt={1}>
+                                      {`Estimated image cost (${
+                                        aiImageGenerationCostHint.model
+                                      }): ~$${aiImageGenerationCostHint.unitUsd.toFixed(
+                                        3
+                                      )} per image, ~$${aiImageGenerationCostHint.fourPanelsUsd.toFixed(
+                                        3
+                                      )} for 4 panels.`}
+                                    </Text>
+                                  ) : null}
+                                  <Text fontSize="xs" color="muted" mt={1}>
+                                    {aiImageGenerationCostHint
+                                      ? `Cheapest known ${
+                                          aiImageGenerationCostHint.model
+                                        } size is ${
+                                          aiImageGenerationCostHint.cheapestSize
+                                        } (~$${aiImageGenerationCostHint.cheapestUnitUsd.toFixed(
+                                          3
+                                        )}/image, ~$${(
+                                          aiImageGenerationCostHint.cheapestUnitUsd *
+                                          4
+                                        ).toFixed(3)} per 4-panel flip).`
+                                      : t(
+                                          'Known price hints are available for gpt-image-1, gpt-image-1.5, and gpt-image-1-mini.'
+                                        )}
+                                  </Text>
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Story draft mode')}
+                                  </Text>
+                                  <Box
+                                    borderWidth="1px"
+                                    borderColor="gray.100"
+                                    borderRadius="md"
+                                    px={3}
+                                    py={2}
+                                    bg="white"
+                                  >
+                                    <Text fontSize="sm" fontWeight={500}>
+                                      {t('1 strong editable draft')}
+                                    </Text>
+                                  </Box>
+                                  <Text fontSize="xs" color="muted" mt={1}>
+                                    {t(
+                                      'Live builder uses one stronger editable draft to reduce fallback pressure and keep the flow simpler.'
+                                    )}
+                                  </Text>
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Noise panel index (0-3)')}
+                                  </Text>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    max={3}
+                                    value={storyNoisePanelIndex}
+                                    onChange={(e) =>
+                                      setStoryNoisePanelIndex(
+                                        Math.max(
+                                          0,
+                                          Math.min(3, toInt(e.target.value, 0))
+                                        )
+                                      )
+                                    }
+                                  />
+                                </Box>
+                              </SimpleGrid>
+                              <Text fontSize="xs" color="muted">
+                                {t(
+                                  'Reasoning model handles storyline generation and text-audit; image model handles panel rendering. Use cheaper image models to reduce cost.'
+                                )}
+                              </Text>
+                              <Box
+                                borderWidth="1px"
+                                borderColor="orange.200"
+                                borderRadius="md"
+                                p={3}
+                                bg="orange.012"
+                              >
+                                <Stack spacing={3}>
+                                  <Flex
+                                    align={['flex-start', 'center']}
+                                    justify="space-between"
+                                    direction={['column', 'row']}
+                                  >
+                                    <Box pr={[0, 3]}>
+                                      <Text
+                                        fontSize="sm"
+                                        fontWeight={500}
+                                        color="orange.700"
+                                      >
+                                        {t(
+                                          'Experimental: fully automated real-node flip publishing'
+                                        )}
+                                      </Text>
+                                      <Text
+                                        fontSize="xs"
+                                        color="orange.700"
+                                        mt={1}
+                                      >
+                                        {t(
+                                          'Disabled by default. In testing so far, the full pipeline from story to publish has not been reliable enough for consistently good results.'
+                                        )}
+                                      </Text>
+                                    </Box>
+                                    <Switch
+                                      isChecked={allowFullyAutomatedNodePublish}
+                                      onChange={() =>
+                                        setAllowFullyAutomatedNodePublish(
+                                          !allowFullyAutomatedNodePublish
+                                        )
+                                      }
+                                    />
+                                  </Flex>
+                                  <Text fontSize="xs" color="muted">
+                                    {t(
+                                      'Use this on your own risk. Manual flip builder flow is still the recommended path: adjust the story text yourself, rebuild weak panels, and work over the final images before publishing.'
+                                    )}
+                                  </Text>
+                                  <Text fontSize="xs" color="muted">
+                                    {t(
+                                      'Cheapest models failed most often in early testing. If you still use full auto, expect to tune advanced settings yourself.'
+                                    )}
+                                  </Text>
+                                  <Text fontSize="xs" color="muted">
+                                    {t(
+                                      'Costs can explode if retries or image generation spiral. Use only API budgets you can afford, ideally prepaid budgets with a hard upper limit.'
+                                    )}
+                                  </Text>
+                                  <Text fontSize="xs" color="muted">
+                                    {keywordSource === 'node'
+                                      ? t(
+                                          'This mode is only intended for real blockchain-provided node keyword pairs tied to your identity.'
+                                        )
+                                      : t(
+                                          'This mode stays disabled for local random test pairs. Switch back to node keywords if you really want to use it.'
+                                        )}
+                                  </Text>
+                                  <Stack isInline justify="flex-end">
+                                    <SecondaryButton
+                                      isDisabled={
+                                        !allowFullyAutomatedNodePublish ||
+                                        keywordSource !== 'node' ||
+                                        !keywordPairId ||
+                                        syncing ||
+                                        offline ||
+                                        isGeneratingStoryOptions ||
+                                        isGeneratingFlipPanels ||
+                                        isRunningFullyAutomatedNodePublish ||
+                                        is('submit.submitting')
+                                      }
+                                      isLoading={
+                                        isRunningFullyAutomatedNodePublish
+                                      }
+                                      onClick={runFullyAutomatedNodeFlipPublish}
+                                    >
+                                      {t('Run full auto on current node pair')}
+                                    </SecondaryButton>
+                                  </Stack>
+                                </Stack>
+                              </Box>
+                              <Flex align="center" justify="space-between">
+                                <Text fontSize="sm" color="muted">
+                                  {t(
+                                    'Apply legacy adversarial image noise to one panel (human chooses index, AI helper executes).'
+                                  )}
+                                </Text>
                                 <Switch
-                                  isChecked={allowFullyAutomatedNodePublish}
+                                  isChecked={storyIncludeNoise}
                                   onChange={() =>
-                                    setAllowFullyAutomatedNodePublish(
-                                      !allowFullyAutomatedNodePublish
-                                    )
+                                    setStoryIncludeNoise(!storyIncludeNoise)
                                   }
                                 />
                               </Flex>
-                              <Text fontSize="xs" color="muted">
-                                {t(
-                                  'Use this on your own risk. Manual flip builder flow is still the recommended path: adjust the story text yourself, rebuild weak panels, and work over the final images before publishing.'
+                              <Textarea
+                                value={aiImageStyle}
+                                onChange={(e) =>
+                                  setAiImageStyle(e.target.value)
+                                }
+                                minH="76px"
+                                placeholder={t(
+                                  'Visual style instructions (applies to all panels)'
                                 )}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {t(
-                                  'Cheapest models failed most often in early testing. If you still use full auto, expect to tune advanced settings yourself.'
-                                )}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {t(
-                                  'Costs can explode if retries or image generation spiral. Use only API budgets you can afford, ideally prepaid budgets with a hard upper limit.'
-                                )}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {keywordSource === 'node'
-                                  ? t(
-                                      'This mode is only intended for real blockchain-provided node keyword pairs tied to your identity.'
-                                    )
-                                  : t(
-                                      'This mode stays disabled for local random test pairs. Switch back to node keywords if you really want to use it.'
-                                    )}
-                              </Text>
-                              <Stack isInline justify="flex-end">
-                                <SecondaryButton
-                                  isDisabled={
-                                    !allowFullyAutomatedNodePublish ||
-                                    keywordSource !== 'node' ||
-                                    !keywordPairId ||
-                                    syncing ||
-                                    offline ||
-                                    isGeneratingStoryOptions ||
-                                    isGeneratingFlipPanels ||
-                                    isRunningFullyAutomatedNodePublish ||
-                                    is('submit.submitting')
-                                  }
-                                  isLoading={isRunningFullyAutomatedNodePublish}
-                                  onClick={runFullyAutomatedNodeFlipPublish}
-                                >
-                                  {t('Run full auto on current node pair')}
-                                </SecondaryButton>
-                              </Stack>
-                            </Stack>
-                          </Box>
-                          <Flex align="center" justify="space-between">
-                            <Text fontSize="sm" color="muted">
-                              {t(
-                                'Apply legacy adversarial image noise to one panel (human chooses index, AI helper executes).'
-                              )}
-                            </Text>
-                            <Switch
-                              isChecked={storyIncludeNoise}
-                              onChange={() =>
-                                setStoryIncludeNoise(!storyIncludeNoise)
-                              }
-                            />
-                          </Flex>
-                          <Textarea
-                            value={aiImageStyle}
-                            onChange={(e) => setAiImageStyle(e.target.value)}
-                            minH="76px"
-                            placeholder={t(
-                              'Visual style instructions (applies to all panels)'
-                            )}
-                          />
+                              />
+                            </>
+                          ) : null}
                           <Stack isInline justify="flex-end" spacing={2}>
                             <SecondaryButton
                               isLoading={isGeneratingStoryOptions}
@@ -5167,6 +5292,7 @@ export default function NewFlipPage() {
                         </Stack>
                       </Box>
                       <Box
+                        id="ai-solver-path"
                         borderWidth="1px"
                         borderColor="blue.050"
                         borderRadius="md"
@@ -5175,11 +5301,11 @@ export default function NewFlipPage() {
                       >
                         <Stack spacing={2}>
                           <Text fontSize="sm" fontWeight={500}>
-                            {t('Quick benchmark flow')}
+                            {t('Path 2: Solve queued flips with AI')}
                           </Text>
                           <Text fontSize="xs" color="muted">
                             {t(
-                              'Simple path: Add current draft to queue, then run short or long session. Advanced options are hidden by default.'
+                              'Simple solver flow: 1. Add the current draft flip to the queue. 2. Run short (6) or long (14). 3. Review the AI session result.'
                             )}
                           </Text>
                           <Text fontSize="xs" color="muted">
