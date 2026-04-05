@@ -3960,6 +3960,271 @@ export default function NewFlipPage() {
     t,
   ])
 
+  const solverCostEstimateCard = useMemo(
+    () => (
+      <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+        <Stack spacing={1}>
+          <Text fontSize="sm" fontWeight={500}>
+            {t('Cost estimate before run')}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {modelCostEstimate.pricing
+              ? t(
+                  'Model {{model}} pricing: input {{inputUsd}} / output {{outputUsd}} per 1M tokens',
+                  {
+                    model: modelCostEstimate.model || '-',
+                    inputUsd: `$${modelCostEstimate.pricing.input}`,
+                    outputUsd: `$${modelCostEstimate.pricing.output}`,
+                  }
+                )
+              : t(
+                  'No built-in pricing available for current provider/model. Token estimate is still shown.'
+                )}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {modelCostEstimate.tokenProfile.basis === 'last_run'
+              ? t(
+                  'Token estimate basis: last run average for same provider/model.'
+                )
+              : t(
+                  'Token estimate basis: heuristic for selected flip vision mode.'
+                )}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {`short(6): ~${modelCostEstimate.short.expectedPromptTokens} in / ${
+              modelCostEstimate.short.expectedCompletionTokens
+            } out tokens | expected ${
+              modelCostEstimate.pricing
+                ? formatUsd(modelCostEstimate.short.expectedCost)
+                : '-'
+            } | worst ${
+              modelCostEstimate.pricing
+                ? formatUsd(modelCostEstimate.short.worstCost)
+                : '-'
+            }`}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {`long(14): ~${modelCostEstimate.long.expectedPromptTokens} in / ${
+              modelCostEstimate.long.expectedCompletionTokens
+            } out tokens | expected ${
+              modelCostEstimate.pricing
+                ? formatUsd(modelCostEstimate.long.expectedCost)
+                : '-'
+            } | worst ${
+              modelCostEstimate.pricing
+                ? formatUsd(modelCostEstimate.long.worstCost)
+                : '-'
+            }`}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {`custom(${modelCostEstimate.custom.flipCount}): ~$${
+              modelCostEstimate.custom.expectedPromptTokens
+            } in / ${
+              modelCostEstimate.custom.expectedCompletionTokens
+            } out tokens | expected ${
+              modelCostEstimate.pricing
+                ? formatUsd(modelCostEstimate.custom.expectedCost)
+                : '-'
+            } | worst ${
+              modelCostEstimate.pricing
+                ? formatUsd(modelCostEstimate.custom.worstCost)
+                : '-'
+            }`}
+          </Text>
+        </Stack>
+      </Box>
+    ),
+    [modelCostEstimate, t]
+  )
+
+  const solverSessionPackPreviewCard = useMemo(
+    () => (
+      <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+        <Stack spacing={2}>
+          <Text fontSize="sm" fontWeight={500}>
+            {t('Session split preview (20 flips)')}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {`short ${sessionPackPreview.shortFlips.length}/6 | long ${sessionPackPreview.longFlips.length}/14 | total ${sessionPackPreview.total}/20`}
+          </Text>
+          <SimpleGrid columns={[1, 2]} spacing={2}>
+            <Box>
+              <Text fontSize="xs" color="muted" mb={1}>
+                {t('Short session (6)')}
+              </Text>
+              <Stack spacing={1} maxH="110px" overflowY="auto">
+                {sessionPackPreview.shortFlips.length ? (
+                  sessionPackPreview.shortFlips.map((item) => (
+                    <Text
+                      key={`short-${item.id || item.hash}`}
+                      fontSize="xs"
+                      color="muted"
+                    >
+                      {item.hash}
+                    </Text>
+                  ))
+                ) : (
+                  <Text fontSize="xs" color="muted">
+                    {t('No flips loaded yet')}
+                  </Text>
+                )}
+              </Stack>
+            </Box>
+            <Box>
+              <Text fontSize="xs" color="muted" mb={1}>
+                {t('Long session (14)')}
+              </Text>
+              <Stack spacing={1} maxH="110px" overflowY="auto">
+                {sessionPackPreview.longFlips.length ? (
+                  sessionPackPreview.longFlips.map((item) => (
+                    <Text
+                      key={`long-${item.id || item.hash}`}
+                      fontSize="xs"
+                      color="muted"
+                    >
+                      {item.hash}
+                    </Text>
+                  ))
+                ) : (
+                  <Text fontSize="xs" color="muted">
+                    {t('No flips loaded yet')}
+                  </Text>
+                )}
+              </Stack>
+            </Box>
+          </SimpleGrid>
+        </Stack>
+      </Box>
+    ),
+    [sessionPackPreview, t]
+  )
+
+  const solverQueuePreview = useMemo(() => {
+    if (!builderQueue.length) {
+      return null
+    }
+
+    return (
+      <Stack
+        spacing={1}
+        borderWidth="1px"
+        borderColor="gray.100"
+        borderRadius="md"
+        p={3}
+        maxH="160px"
+        overflowY="auto"
+      >
+        {builderQueue.slice(0, 10).map((item) => (
+          <Text key={item.id || item.hash} fontSize="xs" color="muted">
+            {`${item.hash} (${item.source || 'manual'})`}
+          </Text>
+        ))}
+      </Stack>
+    )
+  }, [builderQueue])
+
+  const solverSessionMonitorCard = useMemo(
+    () => (
+      <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+        <Stack spacing={2}>
+          <Text fontSize="sm" fontWeight={500}>
+            {t('Session monitor')}
+          </Text>
+          <Text color="muted" fontSize="xs">
+            {`${builderLiveState.isRunning ? 'running' : 'idle'} | ${
+              builderLiveState.provider || aiSolverSettings.provider
+            } ${
+              builderLiveState.model || aiSolverSettings.model
+            } | ${benchmarkPresetLabel} | ${builderLiveState.processed || 0}/${
+              builderLiveState.totalFlips || 0
+            } flips | ${builderLiveState.totalBatches || 0} batches | elapsed ${
+              builderLiveState.elapsedMs || 0
+            }ms | runtime ${benchmarkRunRuntimeMs}ms`}
+          </Text>
+          <Text fontSize="xs" color="muted">
+            {builderLiveCurrentFlip
+              ? `#${(builderLiveCurrentFlip.flipIndex || 0) + 1} ${
+                  builderLiveCurrentFlip.hash || '-'
+                } -> ${String(
+                  builderLiveCurrentFlip.answer || 'analyzing'
+                ).toUpperCase()} | ${
+                  builderLiveCurrentFlip.latencyMs || 0
+                }ms | tokens ${tokenCount(
+                  builderLiveCurrentFlip
+                )}${expectedSuffix(
+                  builderLiveCurrentFlip.expectedAnswer,
+                  builderLiveCurrentFlip.isCorrect
+                )}`
+              : t('Start queue or JSON run to open live session preview.')}
+          </Text>
+          <Stack isInline justify="flex-end">
+            <SecondaryButton
+              onClick={() => benchmarkSessionDisclosure.onOpen()}
+            >
+              {t('Open live session preview')}
+            </SecondaryButton>
+          </Stack>
+        </Stack>
+      </Box>
+    ),
+    [
+      aiSolverSettings.model,
+      aiSolverSettings.provider,
+      benchmarkPresetLabel,
+      benchmarkRunRuntimeMs,
+      benchmarkSessionDisclosure,
+      builderLiveCurrentFlip,
+      builderLiveState,
+      t,
+    ]
+  )
+
+  const solverLastRunSummary = useMemo(() => {
+    if (!builderLastRun) {
+      return null
+    }
+
+    return (
+      <Stack spacing={1}>
+        <Text fontSize="xs" color="muted">
+          {`${builderLastRun.totalFlips} flips, ${
+            builderLastRun.totalBatches
+          } batches, ${builderLastRun.elapsedMs}ms | left ${
+            (builderLastRun.summary && builderLastRun.summary.left) || 0
+          }, right ${
+            (builderLastRun.summary && builderLastRun.summary.right) || 0
+          }, skipped ${
+            (builderLastRun.summary && builderLastRun.summary.skipped) || 0
+          }`}
+        </Text>
+        {builderLastRun.summary && builderLastRun.summary.evaluation ? (
+          <>
+            {builderLastRun.summary.evaluation.labeled > 0 ? (
+              <Text fontSize="xs" color="muted">
+                {`accuracy labeled ${toPercent(
+                  builderLastRun.summary.evaluation.accuracyLabeled
+                )} (${builderLastRun.summary.evaluation.correct}/${
+                  builderLastRun.summary.evaluation.labeled
+                }) | accuracy answered ${toPercent(
+                  builderLastRun.summary.evaluation.accuracyAnswered
+                )} (${builderLastRun.summary.evaluation.correctAnswered}/${
+                  builderLastRun.summary.evaluation.answered
+                })`}
+              </Text>
+            ) : null}
+            {builderLastRun.summary.evaluation.labeled < 1 ? (
+              <Text fontSize="xs" color="muted">
+                {t(
+                  'Audit unavailable for this run: flips had no expectedAnswer labels.'
+                )}
+              </Text>
+            ) : null}
+          </>
+        ) : null}
+      </Stack>
+    )
+  }, [builderLastRun, t])
+
   return (
     <Layout>
       <Page p={0}>
@@ -5469,325 +5734,11 @@ export default function NewFlipPage() {
                               count: builderQueueTotal,
                             })}
                           </Text>
-                          <Box
-                            borderWidth="1px"
-                            borderColor="gray.100"
-                            borderRadius="md"
-                            p={3}
-                          >
-                            <Stack spacing={1}>
-                              <Text fontSize="sm" fontWeight={500}>
-                                {t('Cost estimate before run')}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {modelCostEstimate.pricing
-                                  ? t(
-                                      'Model {{model}} pricing: input {{inputUsd}} / output {{outputUsd}} per 1M tokens',
-                                      {
-                                        model: modelCostEstimate.model || '-',
-                                        inputUsd: `$${modelCostEstimate.pricing.input}`,
-                                        outputUsd: `$${modelCostEstimate.pricing.output}`,
-                                      }
-                                    )
-                                  : t(
-                                      'No built-in pricing available for current provider/model. Token estimate is still shown.'
-                                    )}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {modelCostEstimate.tokenProfile.basis ===
-                                'last_run'
-                                  ? t(
-                                      'Token estimate basis: last run average for same provider/model.'
-                                    )
-                                  : t(
-                                      'Token estimate basis: heuristic for selected flip vision mode.'
-                                    )}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {`short(6): ~${
-                                  modelCostEstimate.short.expectedPromptTokens
-                                } in / ${
-                                  modelCostEstimate.short
-                                    .expectedCompletionTokens
-                                } out tokens | expected ${
-                                  modelCostEstimate.pricing
-                                    ? formatUsd(
-                                        modelCostEstimate.short.expectedCost
-                                      )
-                                    : '-'
-                                } | worst ${
-                                  modelCostEstimate.pricing
-                                    ? formatUsd(
-                                        modelCostEstimate.short.worstCost
-                                      )
-                                    : '-'
-                                }`}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {`long(14): ~${
-                                  modelCostEstimate.long.expectedPromptTokens
-                                } in / ${
-                                  modelCostEstimate.long
-                                    .expectedCompletionTokens
-                                } out tokens | expected ${
-                                  modelCostEstimate.pricing
-                                    ? formatUsd(
-                                        modelCostEstimate.long.expectedCost
-                                      )
-                                    : '-'
-                                } | worst ${
-                                  modelCostEstimate.pricing
-                                    ? formatUsd(
-                                        modelCostEstimate.long.worstCost
-                                      )
-                                    : '-'
-                                }`}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {`custom(${
-                                  modelCostEstimate.custom.flipCount
-                                }): ~${
-                                  modelCostEstimate.custom.expectedPromptTokens
-                                } in / ${
-                                  modelCostEstimate.custom
-                                    .expectedCompletionTokens
-                                } out tokens | expected ${
-                                  modelCostEstimate.pricing
-                                    ? formatUsd(
-                                        modelCostEstimate.custom.expectedCost
-                                      )
-                                    : '-'
-                                } | worst ${
-                                  modelCostEstimate.pricing
-                                    ? formatUsd(
-                                        modelCostEstimate.custom.worstCost
-                                      )
-                                    : '-'
-                                }`}
-                              </Text>
-                            </Stack>
-                          </Box>
-                          <Box
-                            borderWidth="1px"
-                            borderColor="gray.100"
-                            borderRadius="md"
-                            p={3}
-                          >
-                            <Stack spacing={2}>
-                              <Text fontSize="sm" fontWeight={500}>
-                                {t('Session split preview (20 flips)')}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {`short ${sessionPackPreview.shortFlips.length}/6 | long ${sessionPackPreview.longFlips.length}/14 | total ${sessionPackPreview.total}/20`}
-                              </Text>
-                              <SimpleGrid columns={[1, 2]} spacing={2}>
-                                <Box>
-                                  <Text fontSize="xs" color="muted" mb={1}>
-                                    {t('Short session (6)')}
-                                  </Text>
-                                  <Stack
-                                    spacing={1}
-                                    maxH="110px"
-                                    overflowY="auto"
-                                  >
-                                    {sessionPackPreview.shortFlips.length ? (
-                                      sessionPackPreview.shortFlips.map(
-                                        (item) => (
-                                          <Text
-                                            key={`short-${
-                                              item.id || item.hash
-                                            }`}
-                                            fontSize="xs"
-                                            color="muted"
-                                          >
-                                            {item.hash}
-                                          </Text>
-                                        )
-                                      )
-                                    ) : (
-                                      <Text fontSize="xs" color="muted">
-                                        {t('No flips loaded yet')}
-                                      </Text>
-                                    )}
-                                  </Stack>
-                                </Box>
-                                <Box>
-                                  <Text fontSize="xs" color="muted" mb={1}>
-                                    {t('Long session (14)')}
-                                  </Text>
-                                  <Stack
-                                    spacing={1}
-                                    maxH="110px"
-                                    overflowY="auto"
-                                  >
-                                    {sessionPackPreview.longFlips.length ? (
-                                      sessionPackPreview.longFlips.map(
-                                        (item) => (
-                                          <Text
-                                            key={`long-${item.id || item.hash}`}
-                                            fontSize="xs"
-                                            color="muted"
-                                          >
-                                            {item.hash}
-                                          </Text>
-                                        )
-                                      )
-                                    ) : (
-                                      <Text fontSize="xs" color="muted">
-                                        {t('No flips loaded yet')}
-                                      </Text>
-                                    )}
-                                  </Stack>
-                                </Box>
-                              </SimpleGrid>
-                            </Stack>
-                          </Box>
-
-                          {builderQueue.length > 0 ? (
-                            <Stack
-                              spacing={1}
-                              borderWidth="1px"
-                              borderColor="gray.100"
-                              borderRadius="md"
-                              p={3}
-                              maxH="160px"
-                              overflowY="auto"
-                            >
-                              {builderQueue.slice(0, 10).map((item) => (
-                                <Text
-                                  key={item.id || item.hash}
-                                  fontSize="xs"
-                                  color="muted"
-                                >
-                                  {`${item.hash} (${item.source || 'manual'})`}
-                                </Text>
-                              ))}
-                            </Stack>
-                          ) : null}
-
-                          <Box
-                            borderWidth="1px"
-                            borderColor="gray.100"
-                            borderRadius="md"
-                            p={3}
-                          >
-                            <Stack spacing={2}>
-                              <Text fontSize="sm" fontWeight={500}>
-                                {t('Session monitor')}
-                              </Text>
-                              <Text color="muted" fontSize="xs">
-                                {`${
-                                  builderLiveState.isRunning
-                                    ? 'running'
-                                    : 'idle'
-                                } | ${
-                                  builderLiveState.provider ||
-                                  aiSolverSettings.provider
-                                } ${
-                                  builderLiveState.model ||
-                                  aiSolverSettings.model
-                                } | ${benchmarkPresetLabel} | ${
-                                  builderLiveState.processed || 0
-                                }/${builderLiveState.totalFlips || 0} flips | ${
-                                  builderLiveState.totalBatches || 0
-                                } batches | elapsed ${
-                                  builderLiveState.elapsedMs || 0
-                                }ms | runtime ${benchmarkRunRuntimeMs}ms`}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {builderLiveCurrentFlip
-                                  ? `#${
-                                      (builderLiveCurrentFlip.flipIndex || 0) +
-                                      1
-                                    } ${
-                                      builderLiveCurrentFlip.hash || '-'
-                                    } -> ${String(
-                                      builderLiveCurrentFlip.answer ||
-                                        'analyzing'
-                                    ).toUpperCase()} | ${
-                                      builderLiveCurrentFlip.latencyMs || 0
-                                    }ms | tokens ${tokenCount(
-                                      builderLiveCurrentFlip
-                                    )}${expectedSuffix(
-                                      builderLiveCurrentFlip.expectedAnswer,
-                                      builderLiveCurrentFlip.isCorrect
-                                    )}`
-                                  : t(
-                                      'Start queue or JSON run to open live session preview.'
-                                    )}
-                              </Text>
-                              <Stack isInline justify="flex-end">
-                                <SecondaryButton
-                                  onClick={() =>
-                                    benchmarkSessionDisclosure.onOpen()
-                                  }
-                                >
-                                  {t('Open live session preview')}
-                                </SecondaryButton>
-                              </Stack>
-                            </Stack>
-                          </Box>
-
-                          {builderLastRun ? (
-                            <Stack spacing={1}>
-                              <Text fontSize="xs" color="muted">
-                                {`${builderLastRun.totalFlips} flips, ${
-                                  builderLastRun.totalBatches
-                                } batches, ${
-                                  builderLastRun.elapsedMs
-                                }ms | left ${
-                                  (builderLastRun.summary &&
-                                    builderLastRun.summary.left) ||
-                                  0
-                                }, right ${
-                                  (builderLastRun.summary &&
-                                    builderLastRun.summary.right) ||
-                                  0
-                                }, skipped ${
-                                  (builderLastRun.summary &&
-                                    builderLastRun.summary.skipped) ||
-                                  0
-                                }`}
-                              </Text>
-                              {builderLastRun.summary &&
-                              builderLastRun.summary.evaluation ? (
-                                <>
-                                  {builderLastRun.summary.evaluation.labeled >
-                                  0 ? (
-                                    <Text fontSize="xs" color="muted">
-                                      {`accuracy labeled ${toPercent(
-                                        builderLastRun.summary.evaluation
-                                          .accuracyLabeled
-                                      )} (${
-                                        builderLastRun.summary.evaluation
-                                          .correct
-                                      }/${
-                                        builderLastRun.summary.evaluation
-                                          .labeled
-                                      }) | accuracy answered ${toPercent(
-                                        builderLastRun.summary.evaluation
-                                          .accuracyAnswered
-                                      )} (${
-                                        builderLastRun.summary.evaluation
-                                          .correctAnswered
-                                      }/${
-                                        builderLastRun.summary.evaluation
-                                          .answered
-                                      })`}
-                                    </Text>
-                                  ) : null}
-                                  {builderLastRun.summary.evaluation.labeled <
-                                  1 ? (
-                                    <Text fontSize="xs" color="muted">
-                                      {t(
-                                        'Audit unavailable for this run: flips had no expectedAnswer labels.'
-                                      )}
-                                    </Text>
-                                  ) : null}
-                                </>
-                              ) : null}
-                            </Stack>
-                          ) : null}
+                          {solverCostEstimateCard}
+                          {solverSessionPackPreviewCard}
+                          {solverQueuePreview}
+                          {solverSessionMonitorCard}
+                          {solverLastRunSummary}
                         </>
                       ) : null}
                     </Stack>
