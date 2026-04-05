@@ -1566,6 +1566,181 @@ describe('createAiProviderBridge', () => {
     )
   })
 
+  it('attempts a specificity rewrite on readable generic provider drafts before editable rescue', async () => {
+    const weakStructuredStory = makeStrictStoryOption({
+      title: 'Weak draft',
+      storySummary:
+        'A readable but generic draft that should be rewritten more specifically.',
+      panels: [
+        'A person handles a magazine near a hoola hoop in a room.',
+        'The person bumps the hoola hoop and something changes in the room.',
+        'The person reacts while the magazine and hoola hoop shift position.',
+        'The person sees the final result in the same room.',
+      ],
+    })
+
+    const invokeProvider = jest.fn().mockImplementation(async (payload) => {
+      const phase =
+        payload && payload.promptOptions && payload.promptOptions.promptPhase
+          ? payload.promptOptions.promptPhase
+          : 'unknown'
+
+      if (phase === 'story_options') {
+        return makeStrictStoryResponse([weakStructuredStory])
+      }
+
+      if (phase === 'story_options_specificity_rewrite') {
+        return {
+          rawText: [
+            'At a cramped comic shop checkout, a teenager carries a magazine past a bright hoola hoop hanging from a peg beside the counter.',
+            'The magazine corner catches the hoola hoop and jerks it off the peg as the teenager turns toward the door.',
+            'The rolling hoola hoop loops around a stack of poster tubes and drags them across the aisle while the teenager lunges and the clerk jumps back.',
+            'The hoola hoop stays tangled around the poster tubes in the aisle while the fallen magazine lies open by the door and the clerk points at the mess.',
+          ].join('\n'),
+          usage: {
+            promptTokens: 24,
+            completionTokens: 38,
+            totalTokens: 62,
+          },
+        }
+      }
+
+      return {
+        rawText: '',
+        usage: {
+          promptTokens: 16,
+          completionTokens: 0,
+          totalTokens: 16,
+        },
+      }
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['magazine', 'hoola hoop'],
+      includeNoise: false,
+      hasCustomStory: false,
+    })
+
+    const specificityRewriteCallIndex = invokeProvider.mock.calls.findIndex(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase ===
+          'story_options_specificity_rewrite'
+    )
+    const scaffoldRewriteCallIndex = invokeProvider.mock.calls.findIndex(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase === 'story_options_scaffold_rewrite'
+    )
+    expect(specificityRewriteCallIndex).toBeGreaterThanOrEqual(0)
+    if (scaffoldRewriteCallIndex >= 0) {
+      expect(specificityRewriteCallIndex).toBeLessThan(scaffoldRewriteCallIndex)
+    }
+    expect(result.metrics.fallback_used).toBe(false)
+    expect(result.stories).toHaveLength(1)
+    expect(result.stories[0].isProviderEditableDraft).toBe(true)
+    expect(result.stories[0].rationale.toLowerCase()).toContain(
+      'editable storyboard draft'
+    )
+    expect(result.stories[0].panels[0].toLowerCase()).toContain('comic shop')
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain(
+      'magazine'
+    )
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain(
+      'hoola hoop'
+    )
+  })
+
+  it('uses direct specificity optimize intent for single-story custom draft rewrites', async () => {
+    const invokeProvider = jest.fn().mockImplementation(async (payload) => {
+      const phase =
+        payload && payload.promptOptions && payload.promptOptions.promptPhase
+          ? payload.promptOptions.promptPhase
+          : 'unknown'
+
+      if (phase === 'story_options_specificity_optimize') {
+        return {
+          rawText: [
+            'At a school gym doorway, a student carries a milk carton past a disappointed pilot costume hanging on a rack.',
+            'The carton clips the costume sleeve and knocks the disappointed pilot cap into the doorway.',
+            'The cap snags the milk straw, spraying a white arc across the gym floor while the student grabs the swaying rack.',
+            'The disappointed pilot costume hangs crooked in the doorway while the milk carton drips beside the fallen cap on the floor.',
+          ].join('\n'),
+          usage: {
+            promptTokens: 26,
+            completionTokens: 40,
+            totalTokens: 66,
+          },
+        }
+      }
+
+      return makeStrictStoryResponse([
+        makeStrictStoryOption({
+          title: 'Unexpected fallback',
+          storySummary:
+            'This should not be used when direct specificity optimize succeeds.',
+          panels: [
+            'Unused panel 1.',
+            'Unused panel 2.',
+            'Unused panel 3.',
+            'Unused panel 4.',
+          ],
+        }),
+      ])
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateStoryOptions({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fastStoryMode: true,
+      storyOptionCount: 1,
+      keywords: ['milk', 'disappointed pilot'],
+      includeNoise: false,
+      hasCustomStory: true,
+      customStoryPanels: [
+        'A person stands with milk near a disappointed pilot.',
+        'Something changes nearby.',
+        'The person reacts in the same place.',
+        'The result is visible.',
+      ],
+      optimizeIntent: 'specificity',
+    })
+
+    const specificityOptimizeCallIndex = invokeProvider.mock.calls.findIndex(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase ===
+          'story_options_specificity_optimize'
+    )
+    const genericStoryCallIndex = invokeProvider.mock.calls.findIndex(
+      ([payload]) =>
+        payload &&
+        payload.promptOptions &&
+        payload.promptOptions.promptPhase === 'story_options'
+    )
+    expect(specificityOptimizeCallIndex).toBe(0)
+    if (genericStoryCallIndex >= 0) {
+      expect(specificityOptimizeCallIndex).toBeLessThan(genericStoryCallIndex)
+    }
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain('milk')
+    expect(result.stories[0].panels.join(' ').toLowerCase()).toContain(
+      'disappointed pilot'
+    )
+  })
+
   it('escalates token budget on last-chance provider rescue before any local fallback', async () => {
     const invokeProvider = jest.fn().mockImplementation(async (payload) => {
       const phase =

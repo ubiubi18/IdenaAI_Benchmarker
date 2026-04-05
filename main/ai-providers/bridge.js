@@ -1982,6 +1982,44 @@ function buildSingleStoryScaffoldRewritePrompt({
     .join('\n')
 }
 
+function buildSingleStorySpecificityRewritePrompt({
+  keywordA,
+  keywordB,
+  senseSelection,
+  draftPanels = [],
+}) {
+  const safeKeywordA = normalizeKeywordValue(keywordA) || 'keyword 1'
+  const safeKeywordB = normalizeKeywordValue(keywordB) || 'keyword 2'
+  const lockedSenseLines = formatSensePromptLines(
+    senseSelection,
+    safeKeywordA,
+    safeKeywordB
+  )
+  const normalizedDraft = normalizeStoryPanels(draftPanels)
+  const draftText = normalizedDraft
+    .map((panel, index) => `${index + 1}) ${panel}`)
+    .join('\n')
+
+  return [
+    'Specificity rewrite:',
+    'Rewrite the readable but too-neutral storyboard below into one more vivid 4-panel silent storyboard.',
+    'Keep the same core causal idea when possible, but make the beats more specific and imageable.',
+    'Return exactly 4 plain storyboard lines only.',
+    'Each line must describe one panel beat: before, trigger, reaction, after.',
+    `Keep "${safeKeywordA}" and "${safeKeywordB}" visibly important in the actual scene.`,
+    'Add a real place, a clearer actor or prop anchor, a crisper trigger, and a more specific final aftermath.',
+    'Replace generic phrases like "interacts with", "uses as a tool", or "observes the result" with concrete visible actions.',
+    'Do not default to overturned furniture, toppled props, or spills when a more specific visible aftermath would read better.',
+    ...buildSingleStoryPairFitLines(senseSelection, safeKeywordA, safeKeywordB),
+    'No numbering, no labels, no markdown, no JSON, and no commentary.',
+    ...lockedSenseLines,
+    'Readable but weak draft to rewrite more specifically:',
+    draftText,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 function classifyTextualStoryProviderOutcome(rawText) {
   const text = String(rawText || '').trim()
   if (!text) return null
@@ -5324,6 +5362,12 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const includeNoise = Boolean(payload.includeNoise)
     const customStory = normalizeStoryPanels(payload.customStoryPanels)
     const hasCustomStory = Boolean(payload.hasCustomStory)
+    const optimizeIntent = String(payload.optimizeIntent || '').trim()
+    const specificityOptimizeRequested =
+      optimizeIntent === 'specificity' &&
+      requestedStoryCount === 1 &&
+      hasCustomStory &&
+      hasMeaningfulStoryPanels(customStory)
     const storyExemplarsEnabled = payload.storyExemplarsEnabled !== false
     const promptExemplarConfig = buildStoryPromptExemplarLines({
       provider,
@@ -6287,6 +6331,107 @@ function createAiProviderBridge(logger, dependencies = {}) {
       }
     }
 
+    async function runSingleStorySpecificityRewriteAttempt({
+      draftPanels = [],
+      attemptLabel = 'provider_story_options_specificity_rewrite',
+      promptPhase = 'story_options_specificity_rewrite',
+      profileOverride = buildExpandedStoryProfile(profile, {
+        minOutputTokens: 2100,
+        growthFactor: 1.7,
+        extraTokens: 600,
+        extraTimeoutMs: 7000,
+      }),
+      requestHash = `story-option-specificity-rewrite-${startedAt}`,
+    } = {}) {
+      if (requestedStoryCount !== 1) {
+        return {
+          quality: {accepted: [], rejected: []},
+          parsedStories: [],
+        }
+      }
+
+      storyMetrics.retries_per_story += 1
+      logger.info('AI story provider draft rescue path', {
+        provider,
+        model,
+        reason: 'single_story_specificity_rewrite',
+        attempt: attemptLabel,
+        maxOutputTokens: profileOverride.maxOutputTokens,
+      })
+
+      try {
+        const providerResponse = await invokeProvider({
+          provider,
+          model,
+          flip: {
+            hash: requestHash,
+            leftImage: '',
+            rightImage: '',
+            images: [],
+          },
+          profile: profileOverride,
+          apiKey,
+          providerConfig,
+          promptText: buildSingleStorySpecificityRewritePrompt({
+            keywordA,
+            keywordB,
+            senseSelection,
+            draftPanels,
+          }),
+          promptOptions: {
+            promptPhase,
+          },
+        })
+
+        const normalizedResponse = normalizeProviderResponse(providerResponse)
+        combinedUsage = addTokenUsage(
+          combinedUsage,
+          normalizedResponse.tokenUsage
+        )
+        attemptHistory.push({
+          attempt: attemptLabel,
+          promptPhase,
+          outcome: normalizedResponse.rawText
+            ? 'freeform_story_draft'
+            : 'empty',
+          detail: sanitizeStoryLogText(normalizedResponse.rawText, 180),
+        })
+
+        const parsedStories = parseStoryOptions(normalizedResponse.rawText, {
+          keywordA,
+          keywordB,
+          includeNoise,
+          customStory: hasCustomStory ? customStory : null,
+          humanStorySeed,
+          senseSelection,
+          allowLocalFallback: false,
+        }).slice(0, 1)
+        const quality = evaluateCandidateStories(
+          parsedStories,
+          'provider_story_options_specificity_rewrite'
+        )
+        collectProviderDraftRejectedCandidates(quality)
+        return {
+          quality,
+          parsedStories,
+        }
+      } catch (error) {
+        attemptHistory.push({
+          attempt: attemptLabel,
+          promptPhase,
+          outcome: 'transport_error',
+          detail: sanitizeStoryLogText(
+            (error && error.message) || error || '',
+            180
+          ),
+        })
+        return {
+          quality: {accepted: [], rejected: []},
+          parsedStories: [],
+        }
+      }
+    }
+
     function evaluateAcceptedStoriesFromAttempt(attempt, sourceLabel) {
       const currentAttempt =
         attempt && typeof attempt === 'object' ? attempt : {}
@@ -6342,11 +6487,63 @@ function createAiProviderBridge(logger, dependencies = {}) {
       }
     }
 
-    let selectedAttempt = await invokeStructuredStoryAttempt({
+    let selectedAttempt = null
+
+    if (specificityOptimizeRequested) {
+      const specificityRewrite = await runSingleStorySpecificityRewriteAttempt({
+        draftPanels: customStory,
+        attemptLabel: 'provider_story_options_specificity_optimize',
+        promptPhase: 'story_options_specificity_optimize',
+        requestHash: `story-option-specificity-optimize-${startedAt}`,
+      })
+
+      if (specificityRewrite.quality.accepted.length > 0) {
+        const directUsage = normalizeTokenUsage(combinedUsage)
+        const directEstimatedCostUsd = isOpenAiCompatibleProvider(provider)
+          ? estimateTextCostUsd(directUsage, model)
+          : null
+
+        return finalizeStoryResult({
+          stories: specificityRewrite.quality.accepted
+            .slice(0, requestedStoryCount)
+            .map((story, index) =>
+              normalizeStoryOption(
+                {
+                  ...story,
+                  id: `option-${index + 1}`,
+                  title:
+                    String(story && story.title ? story.title : '').trim() ||
+                    `Option ${index + 1}`,
+                  senseSelection,
+                  qualityReport:
+                    story &&
+                    story.qualityReport &&
+                    typeof story.qualityReport === 'object'
+                      ? story.qualityReport
+                      : null,
+                },
+                index
+              )
+            ),
+          promptText: buildSingleStorySpecificityRewritePrompt({
+            keywordA,
+            keywordB,
+            senseSelection,
+            draftPanels: customStory,
+          }),
+          generationPath: 'provider_story_options_specificity_optimize',
+          usage: directUsage,
+          estimatedCostUsd: directEstimatedCostUsd,
+        })
+      }
+    }
+
+    selectedAttempt = await invokeStructuredStoryAttempt({
       promptText,
       promptPhase: 'story_options',
       attemptLabel: 'provider_story_options',
     })
+
     recordStoryAttemptOutcome(selectedAttempt)
 
     if (selectedAttempt.outcome === STORY_PROVIDER_OUTCOMES.SCHEMA_INVALID) {
@@ -6538,23 +6735,38 @@ function createAiProviderBridge(logger, dependencies = {}) {
               strict: false,
             }
           )
-          const scaffoldPanels = rewriteSeedStory
-            ? normalizeStoryPanels(rewriteSeedStory.panels)
-            : buildKeywordFallbackPanels(
-                keywordA,
-                keywordB,
-                0,
-                humanStorySeed,
-                senseSelection
-              )
-          const scaffoldRewrite = await runSingleStoryScaffoldRewriteAttempt({
-            scaffoldPanels,
-          })
-          if (scaffoldRewrite.quality.accepted.length > 0) {
-            initialQuality = scaffoldRewrite.quality
-            initialQualitySource = 'provider_story_options_scaffold_rewrite'
-          } else {
-            collectProviderDraftRejectedCandidates(scaffoldRewrite.quality)
+          if (rewriteSeedStory) {
+            const specificityRewrite =
+              await runSingleStorySpecificityRewriteAttempt({
+                draftPanels: normalizeStoryPanels(rewriteSeedStory.panels),
+              })
+            if (specificityRewrite.quality.accepted.length > 0) {
+              initialQuality = specificityRewrite.quality
+              initialQualitySource =
+                'provider_story_options_specificity_rewrite'
+            } else {
+              collectProviderDraftRejectedCandidates(specificityRewrite.quality)
+            }
+          }
+          if (initialQuality.accepted.length < 1) {
+            const scaffoldPanels = rewriteSeedStory
+              ? normalizeStoryPanels(rewriteSeedStory.panels)
+              : buildKeywordFallbackPanels(
+                  keywordA,
+                  keywordB,
+                  0,
+                  humanStorySeed,
+                  senseSelection
+                )
+            const scaffoldRewrite = await runSingleStoryScaffoldRewriteAttempt({
+              scaffoldPanels,
+            })
+            if (scaffoldRewrite.quality.accepted.length > 0) {
+              initialQuality = scaffoldRewrite.quality
+              initialQualitySource = 'provider_story_options_scaffold_rewrite'
+            } else {
+              collectProviderDraftRejectedCandidates(scaffoldRewrite.quality)
+            }
           }
         }
       }

@@ -1050,6 +1050,25 @@ function coerceStoryPanelsDraft(value) {
   })
 }
 
+function hasMeaningfulDraftPanelsForSpecificity(value) {
+  const panels = Array.isArray(value) ? value.slice(0, 4) : []
+  return panels.some((panel) => {
+    const normalized = String(panel || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+    if (!normalized) return false
+    if (/^panel\s+\d+:\s*continue(?: the)? story\.?$/i.test(normalized)) {
+      return false
+    }
+    if (
+      /^panel\s+\d+:\s*add a clear event in the story\.?$/i.test(normalized)
+    ) {
+      return false
+    }
+    return true
+  })
+}
+
 function normalizeStoryOptionFromBackend(item, index) {
   const next = item && typeof item === 'object' ? item : {}
   let complianceSource = {}
@@ -2096,6 +2115,10 @@ export default function NewFlipPage() {
           optimize && Array.isArray(basePanels) && basePanels.length > 0
             ? normalizeStoryPanelsInput(basePanels)
             : storyPanelsDraft
+        const shouldUseSpecificityOptimize =
+          storyOptionCount === 1 &&
+          optimize &&
+          hasMeaningfulDraftPanelsForSpecificity(seededPanels)
         const storyGenerationMaxOutputTokens =
           resolveStoryGenerationMaxOutputTokens({
             configuredMaxOutputTokens: aiSolverSettings.maxOutputTokens,
@@ -2116,6 +2139,7 @@ export default function NewFlipPage() {
           noisePanelIndex: storyNoisePanelIndex,
           customStoryPanels: seededPanels,
           hasCustomStory: optimize,
+          optimizeIntent: shouldUseSpecificityOptimize ? 'specificity' : '',
           maxOutputTokens: storyGenerationMaxOutputTokens,
           temperature: storyTemperature,
         })
@@ -2176,6 +2200,11 @@ export default function NewFlipPage() {
         if (storyOptionCount === 1) {
           storyOptionsMessage = t(
             'Review the story draft, rewrite any weak panel text, then build flip.'
+          )
+        }
+        if (storyOptionCount === 1 && optimize) {
+          storyOptionsMessage = t(
+            'The draft was rewritten to be more specific. Check the place, trigger, and final aftermath, then build the flip.'
           )
         }
         if (weakDraftReturned && !fallbackStorySeed && !fallbackWasUsed) {
@@ -3660,7 +3689,7 @@ export default function NewFlipPage() {
                               })
                             }
                           >
-                            {t('Optimize current draft')}
+                            {t('Make current draft more specific')}
                           </SecondaryButton>
                         ) : null}
                         {activeStoryDraft ? (
@@ -3802,7 +3831,7 @@ export default function NewFlipPage() {
                               })
                             }
                           >
-                            {t('Optimize draft')}
+                            {t('Make draft more specific')}
                           </SecondaryButton>
                         ) : null}
                         <PrimaryButton
@@ -4350,7 +4379,9 @@ export default function NewFlipPage() {
                                 generateStoryAlternatives({optimize: true})
                               }
                             >
-                              {t('Optimize story further')}
+                              {storyOptionCount === 1
+                                ? t('Make draft more specific')
+                                : t('Optimize story further')}
                             </SecondaryButton>
                           </Stack>
 
@@ -4506,7 +4537,7 @@ export default function NewFlipPage() {
                                               })
                                             }}
                                           >
-                                            {t('Refine with AI')}
+                                            {t('Make this draft more specific')}
                                           </SecondaryButton>
                                         ) : null}
                                       </Stack>
@@ -4568,7 +4599,7 @@ export default function NewFlipPage() {
                                         })
                                       }
                                     >
-                                      {t('Refine selected draft')}
+                                      {t('Make selected draft more specific')}
                                     </SecondaryButton>
                                   </Stack>
                                 ) : null}
