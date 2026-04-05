@@ -673,7 +673,8 @@ export const flipMasterMachine = Machine(
               USE_RANDOM_KEYWORDS: {
                 target: '.loading',
                 actions: assign({
-                  availableKeywords: () => buildRandomKeywordPairs(12),
+                  availableKeywords: () =>
+                    buildRandomKeywordPairs(RANDOM_KEYWORD_PAIR_COUNT),
                   keywordPairId: () => 0,
                   keywordSource: () => 'random',
                   adversarialImage: '',
@@ -1110,7 +1111,8 @@ export const flipMasterMachine = Machine(
           USE_RANDOM_KEYWORDS: {
             target: '.keywords.loading',
             actions: assign({
-              availableKeywords: () => buildRandomKeywordPairs(12),
+              availableKeywords: () =>
+                buildRandomKeywordPairs(RANDOM_KEYWORD_PAIR_COUNT),
               keywordPairId: () => 0,
               keywordSource: () => 'random',
               adversarialImage: '',

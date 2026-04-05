@@ -43,24 +43,24 @@ function buildStoryPromptExemplarLines({
   const variants = {
     [STORY_PROMPT_VARIANTS.OPENAI_LIKE]: {
       positive:
-        'Positive: before: A courier carries a birdcage through a theater doorway. trigger: The cage snags a curtain cord. reaction: The curtain tears loose and the cage door swings open. after: The fallen curtain and open cage stay visible beside the courier.',
+        'Positive: before: A costume assistant carries a feathered mask past a garment rack. trigger: The mask ribbon snags a hidden zipper pull. reaction: The garment bag peels open and reveals a bright stage cape. after: The open bag, hanging mask, and exposed cape stay visible beside the assistant.',
       negative:
         'Negative: before: A person interacts with both jar and cat. trigger: The person uses jar as a clear tool. reaction: Same kitchen again with only a changed face. after: The person observes the final result.',
-      cue: 'Use short literal noun-verb sentences, make the aftermath physically obvious, and vary the archetype instead of defaulting to spills.',
+      cue: 'Use short literal noun-verb sentences, make the aftermath physically obvious, and vary the archetype instead of defaulting to spills or overturned props.',
     },
     [STORY_PROMPT_VARIANTS.GEMINI]: {
       positive:
-        'Positive: before: A gardener props a tall sunflower beside a porch rail. trigger: A gust slams the screen door into the pot. reaction: The pot cracks and the sunflower bends across the steps. after: The cracked pot and bent sunflower stay visible on the porch.',
+        'Positive: before: A gardener hangs a seed packet beside a porch hook. trigger: A gust catches the packet string and yanks open a folded shade. reaction: The shade drops across half the steps while the packet spins in the air. after: The lowered shade and dangling seed packet stay visible on the porch.',
       negative:
         'Negative: same porch repeated four times, tiny expression changes, and the final panel only says the gardener feels worried.',
-      cue: 'Keep each panel composition visibly distinct and rotate between bent, blocked, tangled, revealed, or runaway outcomes instead of repeating spills.',
+      cue: 'Keep each panel composition visibly distinct and rotate between bent, blocked, tangled, revealed, or runaway outcomes instead of repeating spills or toppled furniture.',
     },
     [STORY_PROMPT_VARIANTS.ANTHROPIC]: {
       positive:
-        'Positive: before: A student holds a flashlight near a basement door. trigger: The door swings open and a ghost appears on the stairs. reaction: The flashlight drops and its beam sweeps across hanging coats. after: The student backs against the wall while the ghost and fallen flashlight remain visible.',
+        'Positive: before: A student holds a flashlight near a basement door. trigger: The door swings open and a ghost appears on the stairs. reaction: The flashlight beam sweeps across hanging coats and catches a hidden exit sign shape in the mirror. after: The student backs against the wall while the ghost and bright beam remain visible.',
       negative:
         'Negative: abstract fear with no concrete accident, repeated staircase views, and no stable result state.',
-      cue: 'Prefer calm, literal, everyday physical scenes with one coherent cause-and-effect chain, and vary the visible consequence type.',
+      cue: 'Prefer calm, literal, everyday physical scenes with one coherent cause-and-effect chain, and vary the visible consequence type instead of leaning on dropped or overturned props.',
     },
   }
 

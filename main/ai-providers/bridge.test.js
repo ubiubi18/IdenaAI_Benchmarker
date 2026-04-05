@@ -1261,6 +1261,9 @@ describe('createAiProviderBridge', () => {
     expect(callPayload.promptText).not.toContain('Scoring rubric')
     expect(callPayload.promptText).not.toContain('Internal workflow:')
     expect(callPayload.promptText).not.toContain('"compliance_report"')
+    expect(callPayload.promptText).toContain(
+      'do not default the peak or ending to toppled props, overturned furniture, or scattered contents unless that is truly the clearest story beat'
+    )
     expect(
       callPayload.promptOptions.structuredOutput.responseFormat.json_schema
         .schema.properties.stories.maxItems
@@ -1351,6 +1354,7 @@ describe('createAiProviderBridge', () => {
     expect(result.stories).toHaveLength(1)
     expect(result.stories[0].title).toBe('Milk runway')
     expect(result.stories[0].panels[0].toLowerCase()).toContain('milk')
+    expect(result.stories[0].rationale).not.toBe(result.stories[0].storySummary)
     expect(result.metrics.fallback_used).toBe(false)
   })
 

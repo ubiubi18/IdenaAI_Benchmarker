@@ -1616,7 +1616,6 @@ function normalizeStoryOption(value, index) {
     .filter(([, status]) => status === 'fail')
     .map(([key]) => key)
   const autoRationale = []
-  if (storySummary) autoRationale.push(storySummary)
   if (failedChecks.length) {
     autoRationale.push(`failed checks: ${failedChecks.join(', ')}`)
   }
@@ -3351,6 +3350,7 @@ function buildStoryCreativityLines({fastMode = false}) {
       '- Rotate archetypes: snag-and-reveal, runaway object, tangled props, blocked path, crooked result, concealment reveal, repair, escape, recovery.',
       '- Allow suspense, humor, eerie tone, awkwardness, and small surprises if the panel order stays obvious.',
       '- Do not default to bump-and-spill stories unless that is clearly the strongest fit.',
+      '- Do not default to toppled racks, overturned trunks, dropped bags, or spilled contents as the ending shape.',
       '- Never write filler like "one concrete move", "visible external change", or "stable aftermath".',
     ]
   }
@@ -3364,6 +3364,7 @@ function buildStoryCreativityLines({fastMode = false}) {
     '- Small suspense, weirdness, irony, or eerie mood are welcome if the order stays instantly readable.',
     '- If the keywords feel awkward together, invent a human situation that makes them feel natural.',
     '- Do not default to drops, spills, and broken objects unless they are truly the clearest version.',
+    '- Do not keep ending on overturned props or toppled furniture when a more specific aftermath would read better.',
     '- Never write filler like "one concrete move", "visible external change", or "stable aftermath".',
   ]
 }
@@ -3410,6 +3411,7 @@ function buildSingleStoryPromptLines({
     '- one single story chain only',
     '- panel 4 must be a real visible consequence of panel 3',
     '- make panel 1 and panel 4 clearly look different',
+    '- do not default the peak or ending to toppled props, overturned furniture, or scattered contents unless that is truly the clearest story beat',
     '- no letters, numbers, labels, logos, watermarks, signs, or text-dependent clues',
     ...contentSafetyBoundaryLines,
     '- no waking-up template, no thumbs up/down ending, no counting trick, no page/screen keyword cheat',

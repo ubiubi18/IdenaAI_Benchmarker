@@ -1784,6 +1784,8 @@ export default function NewFlipPage() {
       )
     )
   }, [keywords])
+  const currentRef = useRef(current)
+  const hasUsableKeywordsRef = useRef(hasUsableKeywords)
 
   const flipNeedsShuffle = useMemo(
     () =>
@@ -1805,6 +1807,17 @@ export default function NewFlipPage() {
   const either = (...states) =>
     eitherState(current, ...states.map((s) => ({editing: s})))
 
+  const notify = useCallback(
+    (title, description, status = 'info') => {
+      toast({
+        render: () => (
+          <Toast title={title} description={description} status={status} />
+        ),
+      })
+    },
+    [toast]
+  )
+
   const openSubmitStepWithKeywordFallback = useCallback(() => {
     if (hasUsableKeywords) {
       send('PICK_SUBMIT')
@@ -1813,6 +1826,85 @@ export default function NewFlipPage() {
     pendingSubmitStepOpenRef.current = true
     send('PICK_KEYWORDS')
   }, [hasUsableKeywords, send])
+
+  const waitForKeywordsReady = useCallback(
+    ({timeoutMs = 4000} = {}) =>
+      new Promise((resolve, reject) => {
+        const startedAt = Date.now()
+
+        const check = () => {
+          if (hasUsableKeywordsRef.current) {
+            resolve(true)
+            return
+          }
+
+          if (currentRef.current.matches({editing: 'keywords.failure'})) {
+            reject(new Error('Keyword loading failed'))
+            return
+          }
+
+          if (Date.now() - startedAt >= timeoutMs) {
+            reject(new Error('Keyword loading timed out'))
+            return
+          }
+
+          setTimeout(check, 80)
+        }
+
+        check()
+      }),
+    []
+  )
+
+  const getEditingStepKey = useCallback((stateValue) => {
+    const snapshot = stateValue || currentRef.current
+    if (snapshot.matches({editing: 'submit'})) return 'submit'
+    if (snapshot.matches({editing: 'shuffle'})) return 'shuffle'
+    if (snapshot.matches({editing: 'images'})) return 'images'
+    return 'keywords'
+  }, [])
+
+  const ensureKeywordsReady = useCallback(
+    async ({notifyOnFailure = true, preserveStep = true} = {}) => {
+      if (hasUsableKeywordsRef.current) {
+        return true
+      }
+
+      const previousStep = getEditingStepKey()
+      send('PICK_KEYWORDS')
+
+      try {
+        await waitForKeywordsReady()
+        if (preserveStep && previousStep !== 'keywords') {
+          const stepEventByKey = {
+            images: 'PICK_IMAGES',
+            shuffle: 'PICK_SHUFFLE',
+            submit: 'PICK_SUBMIT',
+          }
+          const nextEvent = stepEventByKey[previousStep]
+          if (nextEvent) {
+            send(nextEvent)
+            await new Promise((resolve) => {
+              setTimeout(resolve, 0)
+            })
+          }
+        }
+        return true
+      } catch (error) {
+        if (notifyOnFailure) {
+          notify(
+            t('Keywords are not ready'),
+            t(
+              'The current keyword pair is still missing or failed to load. Retry node keywords or load 9 random test pairs first.'
+            ),
+            'warning'
+          )
+        }
+        return false
+      }
+    },
+    [getEditingStepKey, notify, send, t, waitForKeywordsReady]
+  )
 
   const approveRandomKeywordsForSubmit = useCallback(() => {
     pendingSubmitStepOpenRef.current = true
@@ -1838,20 +1930,26 @@ export default function NewFlipPage() {
   }, [])
 
   const openAiImagesBridge = useCallback(async () => {
+    if (!(await ensureKeywordsReady())) {
+      return
+    }
     send('PICK_IMAGES')
     await new Promise((resolve) => {
       setTimeout(resolve, 0)
     })
     scrollToBuilderAnchor('ai-image-step-bridge')
-  }, [scrollToBuilderAnchor, send])
+  }, [ensureKeywordsReady, scrollToBuilderAnchor, send])
 
   const openAiSubmitBridge = useCallback(async () => {
+    if (!(await ensureKeywordsReady())) {
+      return
+    }
     send('PICK_SUBMIT')
     await new Promise((resolve) => {
       setTimeout(resolve, 0)
     })
     scrollToBuilderAnchor('ai-benchmark')
-  }, [scrollToBuilderAnchor, send])
+  }, [ensureKeywordsReady, scrollToBuilderAnchor, send])
 
   const isOffline = is('keywords.loaded.fetchTranslationsFailed')
 
@@ -1862,17 +1960,6 @@ export default function NewFlipPage() {
   } = useDisclosure()
 
   const publishDrawerDisclosure = useDisclosure()
-
-  const notify = useCallback(
-    (title, description, status = 'info') => {
-      toast({
-        render: () => (
-          <Toast title={title} description={description} status={status} />
-        ),
-      })
-    },
-    [toast]
-  )
 
   const shuffleDraftForSubmit = useCallback(async () => {
     send('PICK_SHUFFLE')
@@ -1982,6 +2069,10 @@ export default function NewFlipPage() {
 
   const generateStoryAlternatives = useCallback(
     async ({optimize = false, basePanels = null} = {}) => {
+      if (!(await ensureKeywordsReady())) {
+        return null
+      }
+
       setIsGeneratingStoryOptions(true)
       setStoryOptions([])
       setSelectedStoryId('')
@@ -2138,6 +2229,7 @@ export default function NewFlipPage() {
       baseRunPayload,
       ensureAiRunReady,
       ensureAiSolverBridge,
+      ensureKeywordsReady,
       keywordA,
       keywordB,
       notify,
@@ -2195,6 +2287,10 @@ export default function NewFlipPage() {
       includeNoiseOverride = null,
       noisePanelIndexOverride = null,
     } = {}) => {
+      if (!(await ensureKeywordsReady())) {
+        return
+      }
+
       setIsGeneratingFlipPanels(true)
       setFlipBuildStatus({
         kind: 'running',
@@ -2482,6 +2578,7 @@ export default function NewFlipPage() {
       baseRunPayload,
       ensureAiRunReady,
       ensureAiSolverBridge,
+      ensureKeywordsReady,
       generatedFlipPanels,
       keywordA,
       keywordB,
@@ -2497,6 +2594,10 @@ export default function NewFlipPage() {
   )
 
   const runAiAutoFlipBuilder = useCallback(async () => {
+    if (!(await ensureKeywordsReady())) {
+      return
+    }
+
     const currentDraft =
       storyOptions.find(
         (item) => String(item.id) === String(selectedStoryId)
@@ -2533,6 +2634,7 @@ export default function NewFlipPage() {
     })
   }, [
     buildFlipWithAi,
+    ensureKeywordsReady,
     generateStoryAlternatives,
     selectedStoryId,
     storyNoisePanelIndex,
@@ -2976,6 +3078,14 @@ export default function NewFlipPage() {
     reloadBuilderQueue()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    currentRef.current = current
+  }, [current])
+
+  useEffect(() => {
+    hasUsableKeywordsRef.current = hasUsableKeywords
+  }, [hasUsableKeywords])
 
   useEffect(() => {
     if (pendingSubmitStepOpenRef.current && hasUsableKeywords) {
@@ -4271,6 +4381,14 @@ export default function NewFlipPage() {
                                   reviewState.kind === 'strong'
                                     ? 'green.500'
                                     : 'orange.500'
+                                const shouldShowStorySummary = Boolean(
+                                  option.storySummary &&
+                                    (!option.rationale ||
+                                      option.storySummary
+                                        .trim()
+                                        .toLowerCase() !==
+                                        option.rationale.trim().toLowerCase())
+                                )
                                 return (
                                   <Box
                                     key={option.id}
@@ -4334,7 +4452,7 @@ export default function NewFlipPage() {
                                           {option.editingTip}
                                         </Text>
                                       ) : null}
-                                      {option.storySummary ? (
+                                      {shouldShowStorySummary ? (
                                         <Text fontSize="xs" color="muted">
                                           {option.storySummary}
                                         </Text>
@@ -5199,7 +5317,12 @@ export default function NewFlipPage() {
           {not('submit') && (
             <PrimaryButton
               isDisabled={is('images.painting') || is('keywords.loading')}
-              onClick={() => send('NEXT')}
+              onClick={async () => {
+                if (!is('keywords') && !(await ensureKeywordsReady())) {
+                  return
+                }
+                send('NEXT')
+              }}
             >
               {t('Next step')}
             </PrimaryButton>
