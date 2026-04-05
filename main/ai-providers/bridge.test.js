@@ -3941,6 +3941,9 @@ describe('createAiProviderBridge', () => {
     expect(result.panels[0].panelPrompt).toContain(
       'Create one single 2x2 storyboard sheet image with four silent comic panels in reading order.'
     )
+    expect(result.panels[0].panelPrompt).toContain(
+      'Across the four quadrants, vary camera distance and framing: establishing setup, trigger moment, peak consequence, and settled aftermath.'
+    )
     expect(result.panelMetadataByIndex).toHaveLength(4)
     expect(httpClient.post).toHaveBeenCalledTimes(1)
   })
@@ -3988,6 +3991,9 @@ describe('createAiProviderBridge', () => {
     expect(result.ok).toBe(true)
     expect(result.panels[0].panelPrompt).toContain(
       'Continuity anchor for the full 4-panel sequence:'
+    )
+    expect(result.panels[0].panelPrompt).toContain(
+      'Panel-to-panel differentiation requirements:'
     )
     expect(result.panels[0].panelPrompt).toContain(
       'Recurring subject: keep the same person'

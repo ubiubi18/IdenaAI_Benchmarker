@@ -986,6 +986,60 @@ function buildPanelContinuityLines({
   ]
 }
 
+function buildPanelDifferentiationLines(panelIndex, role) {
+  const safeRole = String(role || '')
+    .trim()
+    .toLowerCase()
+  const roleName = STORY_PANEL_ROLES[panelIndex] || safeRole || 'progression'
+
+  if (roleName === 'before') {
+    return [
+      'Panel-specific differentiation:',
+      '- Use an establishing view that clearly shows the place, the recurring subject, and both key props before the main change.',
+      '- Keep this panel calmer and more intact than the later panels. Do not show the biggest consequence yet.',
+    ]
+  }
+
+  if (roleName === 'trigger') {
+    return [
+      'Panel-specific differentiation:',
+      '- Change the camera distance, angle, or crop from panel 1 so this panel captures the exact instant the trigger begins.',
+      '- Show one crisp new contact, snag, reveal, blockage, or motion that was not visible in panel 1.',
+    ]
+  }
+
+  if (roleName === 'reaction') {
+    return [
+      'Panel-specific differentiation:',
+      '- Make this the peak visible consequence of the sequence, with the strongest motion, displacement, or reaction.',
+      '- Make panel 3 the most visually dramatic frame. Do not let it look like a small variation of panel 2.',
+    ]
+  }
+
+  if (roleName === 'after') {
+    return [
+      'Panel-specific differentiation:',
+      '- Change the framing again so panel 4 reads as a settled aftermath, not a replay of panel 3.',
+      '- Show the final changed layout at a glance with stable positions, open/revealed elements, or a clearly altered environment.',
+    ]
+  }
+
+  return [
+    'Panel-specific differentiation:',
+    '- Change framing, pose, and visible state so this panel is clearly distinct from adjacent panels.',
+  ]
+}
+
+function buildStoryboardDifferentiationLines() {
+  return [
+    'Panel-to-panel differentiation requirements:',
+    '- Across the four quadrants, vary camera distance and framing: establishing setup, trigger moment, peak consequence, and settled aftermath.',
+    '- Keep adjacent panels visibly different in pose, crop, object layout, and dominant action.',
+    '- Do not let multiple quadrants look like the same room crop with only tiny expression changes.',
+    '- Make panel 3 the most dramatic frame and panel 4 the clearest stable result frame.',
+  ]
+}
+
 function isTruthyFlag(value) {
   if (typeof value === 'boolean') return value
   const normalized = String(value || '')
@@ -4144,6 +4198,7 @@ function buildPanelPrompt({
     keywordB,
     senseSelection,
   })
+  const differentiationLines = buildPanelDifferentiationLines(panelIndex, role)
   return [
     `Create panel ${
       panelIndex + 1
@@ -4151,6 +4206,7 @@ function buildPanelPrompt({
     `Keywords that must remain visually present across the story: ${keywordA} and ${keywordB}.`,
     ...lockedSenseLines,
     ...continuityLines,
+    ...differentiationLines,
     `Panel description: ${panelText}`,
     previousPanelText ? `Previous panel context: ${previousPanelText}` : '',
     nextPanelText ? `Next panel context: ${nextPanelText}` : '',
@@ -4189,6 +4245,7 @@ function buildStoryboardSheetPrompt({
     keywordB,
     senseSelection,
   })
+  const differentiationLines = buildStoryboardDifferentiationLines()
   const normalizedPanels = normalizeStoryPanels(storyPanels)
   const panelLines = normalizedPanels.map((panelText, index) => {
     const role = STORY_PANEL_ROLES[index] || 'progression'
@@ -4200,6 +4257,7 @@ function buildStoryboardSheetPrompt({
     `Keywords that must remain visually present across the story: ${keywordA} and ${keywordB}.`,
     ...lockedSenseLines,
     ...continuityLines,
+    ...differentiationLines,
     'Layout requirements:',
     '- Show exactly four panels arranged as a 2x2 grid with clear visual separation.',
     '- Reading order must be top-left panel 1, top-right panel 2, bottom-left panel 3, bottom-right panel 4.',
