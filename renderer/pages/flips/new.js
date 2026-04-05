@@ -2653,6 +2653,24 @@ export default function NewFlipPage() {
       return
     }
 
+    const canSpecificityOptimize =
+      storyOptionCount === 1 &&
+      hasMeaningfulDraftPanelsForSpecificity(draftResult.storyPanels)
+
+    if (canSpecificityOptimize) {
+      const optimizedDraftResult = await generateStoryAlternatives({
+        optimize: true,
+        basePanels: draftResult.storyPanels,
+      })
+
+      if (
+        optimizedDraftResult &&
+        Array.isArray(optimizedDraftResult.storyPanels)
+      ) {
+        draftResult = optimizedDraftResult
+      }
+    }
+
     await buildFlipWithAi({
       regenerateIndices: [0, 1, 2, 3],
       storyOptionsOverride: draftResult.options,
@@ -2667,6 +2685,7 @@ export default function NewFlipPage() {
     generateStoryAlternatives,
     selectedStoryId,
     storyNoisePanelIndex,
+    storyOptionCount,
     storyOptions,
   ])
 
