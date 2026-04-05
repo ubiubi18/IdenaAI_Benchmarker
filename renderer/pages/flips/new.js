@@ -1262,6 +1262,388 @@ function getCheapestImagePricingEntry(pricingBySize) {
   return [cheapestKey, cheapestValue]
 }
 
+/* eslint-disable react/prop-types */
+const AiBenchmarkQuickStartModal = React.memo(
+  ({isOpen, onClose, onOpenSettings, t}) => (
+    <Modal isOpen={isOpen} onClose={onClose} size="3xl">
+      <ModalOverlay />
+      <ModalContent>
+        <ModalHeader>{t('AI benchmark helper quick start')}</ModalHeader>
+        <ModalCloseButton />
+        <ModalBody>
+          <Stack spacing={4}>
+            <Box
+              borderWidth="1px"
+              borderColor="blue.050"
+              borderRadius="md"
+              p={3}
+              bg="blue.012"
+            >
+              <Text fontSize="sm" fontWeight={500}>
+                {t('Before you start')}
+              </Text>
+              <Text fontSize="sm" color="muted" mt={1}>
+                {t(
+                  'To run the IdenaAI benchmark helper, choose your preferred AI provider, insert a session API key for that provider, and keep advanced settings hidden unless you really need them.'
+                )}
+              </Text>
+            </Box>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              p={3}
+            >
+              <Stack spacing={2}>
+                <Text fontSize="sm" fontWeight={500}>
+                  {t('Create a flip with AI')}
+                </Text>
+                <Text fontSize="xs" color="muted">
+                  {t(
+                    'Generate one story draft, refine weak panel text, and then build the 4 images. Manual editing is still encouraged before publish.'
+                  )}
+                </Text>
+              </Stack>
+            </Box>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              p={3}
+            >
+              <Stack spacing={2}>
+                <Text fontSize="sm" fontWeight={500}>
+                  {t('Solve flips with AI')}
+                </Text>
+                <Text fontSize="xs" color="muted">
+                  {t(
+                    'Add drafts to the queue below and run short or long sessions. That is the built-in path for solving flips with your chosen provider and comparing runs.'
+                  )}
+                </Text>
+              </Stack>
+            </Box>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              p={3}
+            >
+              <Stack spacing={2}>
+                <Text fontSize="sm" fontWeight={500}>
+                  {t('FAQ')}
+                </Text>
+                <Text fontSize="xs" color="muted">
+                  {t(
+                    'Do I need advanced settings? Usually no. The default path is provider -> API key -> generate draft -> edit weak panels -> build images or queue the draft.'
+                  )}
+                </Text>
+                <Text fontSize="xs" color="muted">
+                  {t(
+                    'What should I do with weak drafts? Keep them editable, rewrite the place/trigger/aftermath yourself, or run Optimize story further. Weak does not automatically mean unusable.'
+                  )}
+                </Text>
+                <Text fontSize="xs" color="muted">
+                  {t(
+                    'When should I open AI settings? On first setup, when you change provider/model, or when a session key is missing.'
+                  )}
+                </Text>
+                <Text fontSize="xs" color="muted">
+                  {t(
+                    'Should I use full auto publish? Only with caution. It is disabled by default because testing so far showed the fully automated story -> flip -> publish pipeline is still not reliable enough for consistently good results.'
+                  )}
+                </Text>
+                <Text fontSize="xs" color="muted">
+                  {t(
+                    'What is the safer path? Use the builder as a manual helper: inspect the draft, rewrite the text beats, rebuild weak panels, and publish only after your own review.'
+                  )}
+                </Text>
+                <Text fontSize="xs" color="muted">
+                  {t(
+                    'What about cost? Cheap models failed most often in early testing, retries can snowball, and you are responsible for your own spending. Prefer prepaid API budgets with a hard upper limit.'
+                  )}
+                </Text>
+              </Stack>
+            </Box>
+          </Stack>
+        </ModalBody>
+        <ModalFooter>
+          <Stack isInline spacing={2}>
+            <SecondaryButton onClick={onClose}>
+              {t('Stay in builder')}
+            </SecondaryButton>
+            <PrimaryButton onClick={onOpenSettings}>
+              {t('Open AI settings')}
+            </PrimaryButton>
+          </Stack>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  )
+)
+AiBenchmarkQuickStartModal.displayName = 'AiBenchmarkQuickStartModal'
+
+const BenchmarkSessionPreviewModal = React.memo(
+  ({
+    isOpen,
+    isBusy,
+    onClose,
+    onOpenLiveSessionPreview,
+    benchmarkPresetLabel,
+    benchmarkPopupStatus,
+    benchmarkCountdown,
+    benchmarkRunRuntimeMs,
+    builderLiveState,
+    builderLiveCurrentFlip,
+    builderLiveTimeline,
+    expectedSuffixFn,
+    tokenCountFn,
+    t,
+  }) => (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      closeOnEsc={!isBusy}
+      closeOnOverlayClick={!isBusy}
+      size="5xl"
+    >
+      <ModalOverlay />
+      <ModalContent>
+        <ModalHeader>
+          {`${t('AI benchmark session preview')} (${benchmarkPresetLabel})`}
+        </ModalHeader>
+        {!isBusy && <ModalCloseButton />}
+        <ModalBody>
+          <Stack spacing={4}>
+            <Text color="muted" fontSize="sm">
+              {t(
+                'Regular solving-style preview. AI processes flips sequentially, one by one.'
+              )}
+            </Text>
+
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              p={3}
+              bg="black"
+            >
+              <Stack spacing={3}>
+                <Text fontSize="sm" color="white" fontWeight={500}>
+                  {t('Select meaningful story: left or right')}
+                </Text>
+                <Text fontSize="xs" color="whiteAlpha.800">
+                  {`${builderLiveState.processed || 0}/${
+                    builderLiveState.totalFlips || 0
+                  } flips | ${
+                    builderLiveState.totalBatches || 0
+                  } batches | elapsed ${
+                    builderLiveState.elapsedMs || 0
+                  }ms | runtime ${benchmarkRunRuntimeMs}ms`}
+                </Text>
+                {benchmarkPopupStatus === 'countdown' && (
+                  <Text fontSize="lg" color="orange.300" fontWeight={600}>
+                    {t('Starting in {{seconds}}s', {
+                      seconds: benchmarkCountdown || 0,
+                    })}
+                  </Text>
+                )}
+                {benchmarkPopupStatus === 'completed' && (
+                  <Text fontSize="sm" color="green.300" fontWeight={600}>
+                    {t('Benchmark run completed')}
+                  </Text>
+                )}
+                {benchmarkPopupStatus === 'failed' && (
+                  <Text fontSize="sm" color="red.300" fontWeight={600}>
+                    {t('Benchmark run failed')}
+                  </Text>
+                )}
+                {builderLiveCurrentFlip ? (
+                  <>
+                    <SimpleGrid columns={[1, 2]} spacing={3}>
+                      {String(
+                        builderLiveCurrentFlip.leftImage || ''
+                      ).startsWith('data:') ? (
+                        <Box>
+                          <Text
+                            mb={1}
+                            fontSize="xs"
+                            color={
+                              String(
+                                builderLiveCurrentFlip.answer || ''
+                              ).toLowerCase() === 'left'
+                                ? 'blue.200'
+                                : 'whiteAlpha.700'
+                            }
+                            fontWeight={600}
+                          >
+                            {t('Left side')}
+                          </Text>
+                          <img
+                            src={builderLiveCurrentFlip.leftImage}
+                            alt={`benchmark-left-${
+                              builderLiveCurrentFlip.hash || 'flip'
+                            }`}
+                            style={{
+                              width: '100%',
+                              maxHeight: 280,
+                              objectFit: 'contain',
+                              border:
+                                String(
+                                  builderLiveCurrentFlip.answer || ''
+                                ).toLowerCase() === 'left'
+                                  ? '2px solid #63b3ed'
+                                  : '1px solid rgba(255,255,255,0.25)',
+                              borderRadius: 8,
+                              background: 'rgba(255,255,255,0.06)',
+                            }}
+                          />
+                        </Box>
+                      ) : (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="whiteAlpha.300"
+                          borderRadius="md"
+                          p={3}
+                        >
+                          <Text fontSize="xs" color="whiteAlpha.800">
+                            {t('Left image unavailable')}
+                          </Text>
+                        </Box>
+                      )}
+                      {String(
+                        builderLiveCurrentFlip.rightImage || ''
+                      ).startsWith('data:') ? (
+                        <Box>
+                          <Text
+                            mb={1}
+                            fontSize="xs"
+                            color={
+                              String(
+                                builderLiveCurrentFlip.answer || ''
+                              ).toLowerCase() === 'right'
+                                ? 'blue.200'
+                                : 'whiteAlpha.700'
+                            }
+                            fontWeight={600}
+                          >
+                            {t('Right side')}
+                          </Text>
+                          <img
+                            src={builderLiveCurrentFlip.rightImage}
+                            alt={`benchmark-right-${
+                              builderLiveCurrentFlip.hash || 'flip'
+                            }`}
+                            style={{
+                              width: '100%',
+                              maxHeight: 280,
+                              objectFit: 'contain',
+                              border:
+                                String(
+                                  builderLiveCurrentFlip.answer || ''
+                                ).toLowerCase() === 'right'
+                                  ? '2px solid #63b3ed'
+                                  : '1px solid rgba(255,255,255,0.25)',
+                              borderRadius: 8,
+                              background: 'rgba(255,255,255,0.06)',
+                            }}
+                          />
+                        </Box>
+                      ) : (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="whiteAlpha.300"
+                          borderRadius="md"
+                          p={3}
+                        >
+                          <Text fontSize="xs" color="whiteAlpha.800">
+                            {t('Right image unavailable')}
+                          </Text>
+                        </Box>
+                      )}
+                    </SimpleGrid>
+
+                    <Text fontSize="sm" color="whiteAlpha.900">
+                      {builderLiveCurrentFlip.answer
+                        ? t(
+                            'AI selected {{side}} in {{latency}}ms (tokens {{tokens}})',
+                            {
+                              side: String(
+                                builderLiveCurrentFlip.answer || 'skip'
+                              ).toUpperCase(),
+                              latency: builderLiveCurrentFlip.latencyMs || 0,
+                              tokens: tokenCountFn(builderLiveCurrentFlip),
+                            }
+                          )
+                        : t('Analyzing current flip...')}
+                    </Text>
+                  </>
+                ) : (
+                  <Text fontSize="sm" color="whiteAlpha.800">
+                    {benchmarkPopupStatus === 'countdown'
+                      ? t('Preparing benchmark session...')
+                      : t('Waiting for first flip...')}
+                  </Text>
+                )}
+              </Stack>
+            </Box>
+
+            <Stack
+              spacing={1}
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              p={3}
+              maxH="160px"
+              overflowY="auto"
+            >
+              {builderLiveTimeline.length ? (
+                builderLiveTimeline.map((event, idx) => (
+                  <Text
+                    key={`${event.hash || 'flip'}-${
+                      event.flipIndex || 0
+                    }-${idx}`}
+                    fontSize="xs"
+                    color="muted"
+                  >
+                    {`#${(event.flipIndex || 0) + 1} ${String(
+                      event.answer || 'skip'
+                    ).toUpperCase()} ${event.hash || '-'} | ${
+                      event.latencyMs || 0
+                    }ms | tok ${tokenCountFn(event)}${expectedSuffixFn(
+                      event.expectedAnswer,
+                      event.isCorrect,
+                      {
+                        okLabel: 'ok',
+                        missLabel: 'miss',
+                      }
+                    ).replace(' | expected ', ' | exp ')}${
+                      event.sideSwapped ? ' | swap' : ''
+                    }${event.error ? ' | error' : ''}`}
+                  </Text>
+                ))
+              ) : (
+                <Text fontSize="xs" color="muted">
+                  {t('No decisions yet.')}
+                </Text>
+              )}
+            </Stack>
+          </Stack>
+        </ModalBody>
+        <ModalFooter>
+          <SecondaryButton
+            isDisabled={isBusy}
+            onClick={onOpenLiveSessionPreview}
+          >
+            {t('Close')}
+          </SecondaryButton>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  )
+)
+BenchmarkSessionPreviewModal.displayName = 'BenchmarkSessionPreviewModal'
+/* eslint-enable react/prop-types */
+
 export default function NewFlipPage() {
   const {t, i18n} = useTranslation()
 
@@ -2063,12 +2445,17 @@ export default function NewFlipPage() {
     }
   }, [])
 
-  const closeAiGuide = () => {
+  const closeAiGuide = useCallback(() => {
     if (typeof window !== 'undefined') {
       window.localStorage.setItem('idenaAiBenchmarkGuideDismissedV1', '1')
     }
     aiGuideDisclosure.onClose()
-  }
+  }, [aiGuideDisclosure])
+
+  const openAiSettingsFromGuide = useCallback(() => {
+    closeAiGuide()
+    router.push('/settings/ai')
+  }, [closeAiGuide, router])
 
   const applyStoryOptionToDraft = useCallback((option) => {
     const next = option && typeof option === 'object' ? option : null
@@ -3563,6 +3950,12 @@ export default function NewFlipPage() {
 
   const isBenchmarkPopupBusy =
     benchmarkPopupStatus === 'countdown' || benchmarkPopupStatus === 'running'
+  const closeBenchmarkSessionPreview = useCallback(() => {
+    if (!isBenchmarkPopupBusy) {
+      setBenchmarkPopupStatus('idle')
+      benchmarkSessionDisclosure.onClose()
+    }
+  }, [benchmarkSessionDisclosure, isBenchmarkPopupBusy])
   const benchmarkPresetLabel = benchmarkPresetToLabel(benchmarkRunPreset)
   const activeStoryDraft = useMemo(
     () =>
@@ -5822,378 +6215,29 @@ export default function NewFlipPage() {
           }}
         />
 
-        <Modal
+        <AiBenchmarkQuickStartModal
           isOpen={aiGuideDisclosure.isOpen}
           onClose={closeAiGuide}
-          size="3xl"
-        >
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>{t('AI benchmark helper quick start')}</ModalHeader>
-            <ModalCloseButton />
-            <ModalBody>
-              <Stack spacing={4}>
-                <Box
-                  borderWidth="1px"
-                  borderColor="blue.050"
-                  borderRadius="md"
-                  p={3}
-                  bg="blue.012"
-                >
-                  <Text fontSize="sm" fontWeight={500}>
-                    {t('Before you start')}
-                  </Text>
-                  <Text fontSize="sm" color="muted" mt={1}>
-                    {t(
-                      'To run the IdenaAI benchmark helper, choose your preferred AI provider, insert a session API key for that provider, and keep advanced settings hidden unless you really need them.'
-                    )}
-                  </Text>
-                </Box>
+          onOpenSettings={openAiSettingsFromGuide}
+          t={t}
+        />
 
-                <SimpleGrid columns={[1, 2]} spacing={3}>
-                  <Box
-                    borderWidth="1px"
-                    borderColor="gray.100"
-                    borderRadius="md"
-                    p={3}
-                  >
-                    <Text fontSize="sm" fontWeight={500}>
-                      {t('Flip generation')}
-                    </Text>
-                    <Text fontSize="xs" color="muted" mt={1}>
-                      {t(
-                        'Generate one draft from the current keyword pair, rewrite any weak panel text, then build the 4 panel images. This is the fastest way to create a benchmarkable flip.'
-                      )}
-                    </Text>
-                  </Box>
-                  <Box
-                    borderWidth="1px"
-                    borderColor="gray.100"
-                    borderRadius="md"
-                    p={3}
-                  >
-                    <Text fontSize="sm" fontWeight={500}>
-                      {t('Flip solving / benchmark queue')}
-                    </Text>
-                    <Text fontSize="xs" color="muted" mt={1}>
-                      {t(
-                        'Add drafts to the queue below and run short or long sessions. That is the built-in path for solving flips with your chosen provider and comparing runs.'
-                      )}
-                    </Text>
-                  </Box>
-                </SimpleGrid>
-
-                <Box
-                  borderWidth="1px"
-                  borderColor="gray.100"
-                  borderRadius="md"
-                  p={3}
-                >
-                  <Stack spacing={2}>
-                    <Text fontSize="sm" fontWeight={500}>
-                      {t('FAQ')}
-                    </Text>
-                    <Text fontSize="xs" color="muted">
-                      {t(
-                        'Do I need advanced settings? Usually no. The default path is provider -> API key -> generate draft -> edit weak panels -> build images or queue the draft.'
-                      )}
-                    </Text>
-                    <Text fontSize="xs" color="muted">
-                      {t(
-                        'What should I do with weak drafts? Keep them editable, rewrite the place/trigger/aftermath yourself, or run Optimize story further. Weak does not automatically mean unusable.'
-                      )}
-                    </Text>
-                    <Text fontSize="xs" color="muted">
-                      {t(
-                        'When should I open AI settings? On first setup, when you change provider/model, or when a session key is missing.'
-                      )}
-                    </Text>
-                    <Text fontSize="xs" color="muted">
-                      {t(
-                        'Should I use full auto publish? Only with caution. It is disabled by default because testing so far showed the fully automated story -> flip -> publish pipeline is still not reliable enough for consistently good results.'
-                      )}
-                    </Text>
-                    <Text fontSize="xs" color="muted">
-                      {t(
-                        'What is the safer path? Use the builder as a manual helper: inspect the draft, rewrite the text beats, rebuild weak panels, and publish only after your own review.'
-                      )}
-                    </Text>
-                    <Text fontSize="xs" color="muted">
-                      {t(
-                        'What about cost? Cheap models failed most often in early testing, retries can snowball, and you are responsible for your own spending. Prefer prepaid API budgets with a hard upper limit.'
-                      )}
-                    </Text>
-                  </Stack>
-                </Box>
-              </Stack>
-            </ModalBody>
-            <ModalFooter>
-              <Stack isInline spacing={2}>
-                <SecondaryButton onClick={closeAiGuide}>
-                  {t('Stay in builder')}
-                </SecondaryButton>
-                <PrimaryButton
-                  onClick={() => {
-                    closeAiGuide()
-                    router.push('/settings/ai')
-                  }}
-                >
-                  {t('Open AI settings')}
-                </PrimaryButton>
-              </Stack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-
-        <Modal
+        <BenchmarkSessionPreviewModal
           isOpen={benchmarkSessionDisclosure.isOpen}
-          onClose={() => {
-            if (!isBenchmarkPopupBusy) {
-              setBenchmarkPopupStatus('idle')
-              benchmarkSessionDisclosure.onClose()
-            }
-          }}
-          closeOnEsc={!isBenchmarkPopupBusy}
-          closeOnOverlayClick={!isBenchmarkPopupBusy}
-          size="5xl"
-        >
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>
-              {`${t('AI benchmark session preview')} (${benchmarkPresetLabel})`}
-            </ModalHeader>
-            {!isBenchmarkPopupBusy && <ModalCloseButton />}
-            <ModalBody>
-              <Stack spacing={4}>
-                <Text color="muted" fontSize="sm">
-                  {t(
-                    'Regular solving-style preview. AI processes flips sequentially, one by one.'
-                  )}
-                </Text>
-
-                <Box
-                  borderWidth="1px"
-                  borderColor="gray.100"
-                  borderRadius="md"
-                  p={3}
-                  bg="black"
-                >
-                  <Stack spacing={3}>
-                    <Text fontSize="sm" color="white" fontWeight={500}>
-                      {t('Select meaningful story: left or right')}
-                    </Text>
-                    <Text fontSize="xs" color="whiteAlpha.800">
-                      {`${builderLiveState.processed || 0}/${
-                        builderLiveState.totalFlips || 0
-                      } flips | ${
-                        builderLiveState.totalBatches || 0
-                      } batches | elapsed ${
-                        builderLiveState.elapsedMs || 0
-                      }ms | runtime ${benchmarkRunRuntimeMs}ms`}
-                    </Text>
-                    {benchmarkPopupStatus === 'countdown' && (
-                      <Text fontSize="lg" color="orange.300" fontWeight={600}>
-                        {t('Starting in {{seconds}}s', {
-                          seconds: benchmarkCountdown || 0,
-                        })}
-                      </Text>
-                    )}
-                    {benchmarkPopupStatus === 'completed' && (
-                      <Text fontSize="sm" color="green.300" fontWeight={600}>
-                        {t('Benchmark run completed')}
-                      </Text>
-                    )}
-                    {benchmarkPopupStatus === 'failed' && (
-                      <Text fontSize="sm" color="red.300" fontWeight={600}>
-                        {t('Benchmark run failed')}
-                      </Text>
-                    )}
-                    {builderLiveCurrentFlip ? (
-                      <>
-                        <SimpleGrid columns={[1, 2]} spacing={3}>
-                          {String(
-                            builderLiveCurrentFlip.leftImage || ''
-                          ).startsWith('data:') ? (
-                            <Box>
-                              <Text
-                                mb={1}
-                                fontSize="xs"
-                                color={
-                                  String(
-                                    builderLiveCurrentFlip.answer || ''
-                                  ).toLowerCase() === 'left'
-                                    ? 'blue.200'
-                                    : 'whiteAlpha.700'
-                                }
-                                fontWeight={600}
-                              >
-                                {t('Left side')}
-                              </Text>
-                              <img
-                                src={builderLiveCurrentFlip.leftImage}
-                                alt={`benchmark-left-${
-                                  builderLiveCurrentFlip.hash || 'flip'
-                                }`}
-                                style={{
-                                  width: '100%',
-                                  maxHeight: 280,
-                                  objectFit: 'contain',
-                                  border:
-                                    String(
-                                      builderLiveCurrentFlip.answer || ''
-                                    ).toLowerCase() === 'left'
-                                      ? '2px solid #63b3ed'
-                                      : '1px solid rgba(255,255,255,0.25)',
-                                  borderRadius: 8,
-                                  background: 'rgba(255,255,255,0.06)',
-                                }}
-                              />
-                            </Box>
-                          ) : (
-                            <Box
-                              borderWidth="1px"
-                              borderColor="whiteAlpha.300"
-                              borderRadius="md"
-                              p={3}
-                            >
-                              <Text fontSize="xs" color="whiteAlpha.800">
-                                {t('Left image unavailable')}
-                              </Text>
-                            </Box>
-                          )}
-                          {String(
-                            builderLiveCurrentFlip.rightImage || ''
-                          ).startsWith('data:') ? (
-                            <Box>
-                              <Text
-                                mb={1}
-                                fontSize="xs"
-                                color={
-                                  String(
-                                    builderLiveCurrentFlip.answer || ''
-                                  ).toLowerCase() === 'right'
-                                    ? 'blue.200'
-                                    : 'whiteAlpha.700'
-                                }
-                                fontWeight={600}
-                              >
-                                {t('Right side')}
-                              </Text>
-                              <img
-                                src={builderLiveCurrentFlip.rightImage}
-                                alt={`benchmark-right-${
-                                  builderLiveCurrentFlip.hash || 'flip'
-                                }`}
-                                style={{
-                                  width: '100%',
-                                  maxHeight: 280,
-                                  objectFit: 'contain',
-                                  border:
-                                    String(
-                                      builderLiveCurrentFlip.answer || ''
-                                    ).toLowerCase() === 'right'
-                                      ? '2px solid #63b3ed'
-                                      : '1px solid rgba(255,255,255,0.25)',
-                                  borderRadius: 8,
-                                  background: 'rgba(255,255,255,0.06)',
-                                }}
-                              />
-                            </Box>
-                          ) : (
-                            <Box
-                              borderWidth="1px"
-                              borderColor="whiteAlpha.300"
-                              borderRadius="md"
-                              p={3}
-                            >
-                              <Text fontSize="xs" color="whiteAlpha.800">
-                                {t('Right image unavailable')}
-                              </Text>
-                            </Box>
-                          )}
-                        </SimpleGrid>
-
-                        <Text fontSize="sm" color="whiteAlpha.900">
-                          {builderLiveCurrentFlip.answer
-                            ? t(
-                                'AI selected {{side}} in {{latency}}ms (tokens {{tokens}})',
-                                {
-                                  side: String(
-                                    builderLiveCurrentFlip.answer || 'skip'
-                                  ).toUpperCase(),
-                                  latency:
-                                    builderLiveCurrentFlip.latencyMs || 0,
-                                  tokens: tokenCount(builderLiveCurrentFlip),
-                                }
-                              )
-                            : t('Analyzing current flip...')}
-                        </Text>
-                      </>
-                    ) : (
-                      <Text fontSize="sm" color="whiteAlpha.800">
-                        {benchmarkPopupStatus === 'countdown'
-                          ? t('Preparing benchmark session...')
-                          : t('Waiting for first flip...')}
-                      </Text>
-                    )}
-                  </Stack>
-                </Box>
-
-                <Stack
-                  spacing={1}
-                  borderWidth="1px"
-                  borderColor="gray.100"
-                  borderRadius="md"
-                  p={3}
-                  maxH="160px"
-                  overflowY="auto"
-                >
-                  {builderLiveTimeline.length ? (
-                    builderLiveTimeline.map((event, idx) => (
-                      <Text
-                        key={`${event.hash || 'flip'}-${
-                          event.flipIndex || 0
-                        }-${idx}`}
-                        fontSize="xs"
-                        color="muted"
-                      >
-                        {`#${(event.flipIndex || 0) + 1} ${String(
-                          event.answer || 'skip'
-                        ).toUpperCase()} ${event.hash || '-'} | ${
-                          event.latencyMs || 0
-                        }ms | tok ${tokenCount(event)}${expectedSuffix(
-                          event.expectedAnswer,
-                          event.isCorrect,
-                          {
-                            okLabel: 'ok',
-                            missLabel: 'miss',
-                          }
-                        ).replace(' | expected ', ' | exp ')}${
-                          event.sideSwapped ? ' | swap' : ''
-                        }${event.error ? ' | error' : ''}`}
-                      </Text>
-                    ))
-                  ) : (
-                    <Text fontSize="xs" color="muted">
-                      {t('No decisions yet.')}
-                    </Text>
-                  )}
-                </Stack>
-              </Stack>
-            </ModalBody>
-            <ModalFooter>
-              <SecondaryButton
-                isDisabled={isBenchmarkPopupBusy}
-                onClick={() => {
-                  setBenchmarkPopupStatus('idle')
-                  benchmarkSessionDisclosure.onClose()
-                }}
-              >
-                {t('Close')}
-              </SecondaryButton>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+          isBusy={isBenchmarkPopupBusy}
+          onClose={closeBenchmarkSessionPreview}
+          onOpenLiveSessionPreview={closeBenchmarkSessionPreview}
+          benchmarkPresetLabel={benchmarkPresetLabel}
+          benchmarkPopupStatus={benchmarkPopupStatus}
+          benchmarkCountdown={benchmarkCountdown}
+          benchmarkRunRuntimeMs={benchmarkRunRuntimeMs}
+          builderLiveState={builderLiveState}
+          builderLiveCurrentFlip={builderLiveCurrentFlip}
+          builderLiveTimeline={builderLiveTimeline}
+          expectedSuffixFn={expectedSuffix}
+          tokenCountFn={tokenCount}
+          t={t}
+        />
 
         <PublishFlipDrawer
           {...publishDrawerDisclosure}
