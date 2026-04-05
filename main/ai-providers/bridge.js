@@ -679,7 +679,7 @@ function buildSingleStoryPairFitLines(senseSelection, keywordA, keywordB) {
       '- If both keywords are mostly objects, place them inside one believable human situation such as packing, cleaning, rehearsal, delivery, costume prep, shopping, repair, or travel.'
     )
     lines.push(
-      '- Avoid object-object collisions as the default. Prefer snag, reveal, tangle, blocked path, runaway object, concealment, or recovery.'
+      '- Avoid object-object collisions as the default. Prefer snag, reveal, tangle, blocked path, runaway object, concealment, recovery, repair-gone-wrong, or a chase after something slipping free.'
     )
   }
 
@@ -829,6 +829,34 @@ function chooseDeterministicFallbackArchetype({
       reactionBeat: `the ${primaryLabel} braces the ${secondaryLabel} against the ${supportProp}`,
       aftermathBeat: `the ${secondaryLabel} now caught and steadied beside the ${primaryLabel}`,
       preferredAftermath: 'recovery',
+    },
+    {
+      id: 'conceal',
+      trigger: `The ${supportProp} swings in front of the ${secondaryLabel} and hides it from the ${primaryLabel} in one sudden beat.`,
+      reactionBeat: `the ${primaryLabel} leans around the ${supportProp} trying to find the hidden ${secondaryLabel}`,
+      aftermathBeat: `the ${secondaryLabel} now partly hidden behind the shifted ${supportProp}`,
+      preferredAftermath: 'block',
+    },
+    {
+      id: 'escape',
+      trigger: `The ${secondaryLabel} slips free from the ${supportProp} and darts away, forcing the ${primaryLabel} to chase after it.`,
+      reactionBeat: `the ${primaryLabel} lunges after the escaping ${secondaryLabel}`,
+      aftermathBeat: `the ${secondaryLabel} now out of reach from the stretched ${primaryLabel}`,
+      preferredAftermath: 'roll',
+    },
+    {
+      id: 'repair',
+      trigger: `While trying to straighten the ${supportProp}, the ${primaryLabel} knocks the ${secondaryLabel} into a new position in one awkward repair beat.`,
+      reactionBeat: `the ${primaryLabel} freezes with one hand still on the ${supportProp}`,
+      aftermathBeat: `the ${secondaryLabel} left in a newly fixed but obviously changed arrangement`,
+      preferredAftermath: 'recovery',
+    },
+    {
+      id: 'mistaken',
+      trigger: `A shifted flap on the ${supportProp} makes the ${secondaryLabel} look like something else for a split second, and the ${primaryLabel} reacts to the mistaken appearance.`,
+      reactionBeat: `the ${primaryLabel} jerks back before noticing what the ${secondaryLabel} really is`,
+      aftermathBeat: `the ${secondaryLabel} now clearly revealed beside the moved ${supportProp}`,
+      preferredAftermath: 'reveal',
     },
   ]
 
@@ -3469,6 +3497,7 @@ function buildStoryCreativityLines({fastMode = false}) {
       '- Give vivid, editable story seeds, not stiff compliance prose.',
       '- Specific places, props, reveals, accidents, and reactions beat generic object bumps.',
       '- Rotate archetypes: snag-and-reveal, runaway object, tangled props, blocked path, crooked result, concealment reveal, repair, escape, recovery.',
+      '- Vary the trigger mechanism too: conceal/reveal, slip-and-chase, mistaken appearance, blocked route, awkward repair, escape, or sudden exposure to light.',
       '- Allow suspense, humor, eerie tone, awkwardness, and small surprises if the panel order stays obvious.',
       '- Do not default to bump-and-spill stories unless that is clearly the strongest fit.',
       '- Do not default to toppled racks, overturned trunks, dropped bags, or spilled contents as the ending shape.',
@@ -3483,6 +3512,7 @@ function buildStoryCreativityLines({fastMode = false}) {
     '- Return ideas a human would actually want to personalize and rewrite.',
     '- Specific rooms, props, accidents, reveals, and aftermaths beat neutral keyword collisions.',
     '- Rotate story archetypes instead of repeating the same collision template: snag/reveal, blockage, runaway object, tangled props, concealment/discovery, crooked-result, repair, escape, cleanup, recovery.',
+    '- Vary the trigger and reaction mechanism too: conceal/reveal, slip-and-chase, mistaken appearance, blocked route, awkward repair, escape, sudden exposure, pursuit, or containment.',
     '- Small suspense, weirdness, irony, or eerie mood are welcome if the order stays instantly readable.',
     '- If the keywords feel awkward together, invent a human situation that makes them feel natural.',
     '- Do not default to drops, spills, and broken objects unless they are truly the clearest version.',
@@ -3550,6 +3580,9 @@ function buildSingleStoryPromptLines({
     '- reveal and reaction',
     '- obstacle and workaround',
     '- runaway object or blocked path',
+    '- chase after something slipping free',
+    '- mistaken appearance followed by reveal',
+    '- awkward repair or recovery attempt',
     '- tangle, snag, concealment, recovery, repair, or crooked-result aftermath',
     '',
     ...buildSingleStoryPairFitLines(senseSelection, safeKeywordA, safeKeywordB),

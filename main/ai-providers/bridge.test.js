@@ -1267,6 +1267,12 @@ describe('createAiProviderBridge', () => {
     expect(callPayload.promptText).toContain(
       'Prefer final frames defined by a reveal, blocked route, trapped pose, bright exposure, repaired arrangement, clear escape gap, or newly stable layout instead of generic wreckage.'
     )
+    expect(callPayload.promptText).toContain(
+      'Vary the trigger mechanism too: conceal/reveal, slip-and-chase, mistaken appearance, blocked route, awkward repair, escape, or sudden exposure to light.'
+    )
+    expect(callPayload.promptText).toContain(
+      '- mistaken appearance followed by reveal'
+    )
     expect(
       callPayload.promptOptions.structuredOutput.responseFormat.json_schema
         .schema.properties.stories.maxItems
@@ -1421,6 +1427,10 @@ describe('createAiProviderBridge', () => {
     )
     expect(callPayload.promptText).toContain(
       'Avoid object-object collisions as the default.'
+    )
+    expect(callPayload.promptText).toContain('repair-gone-wrong')
+    expect(callPayload.promptText).toContain(
+      'chase after something slipping free'
     )
   })
 
