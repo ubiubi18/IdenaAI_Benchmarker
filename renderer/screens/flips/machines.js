@@ -1019,12 +1019,41 @@ export const flipMasterMachine = Machine(
           },
           submit: {
             on: {
+              MANUAL_SHUFFLE: {
+                target: '.persisting',
+                actions: ['changeOrder', log()],
+              },
+              RESET_SHUFFLE: {
+                target: '.persisting',
+                actions: [
+                  assign(({originalOrder}) => ({
+                    order: originalOrder,
+                    orderPermutations: originalOrder.map((_, index) => index),
+                  })),
+                  log(),
+                ],
+              },
               SUBMIT: '.submitting',
               PREV: 'shuffle',
             },
             initial: 'idle',
             states: {
               idle: {},
+              persisting: {
+                invoke: {
+                  id: 'persistFlipFromSubmit',
+                  src: 'persistFlip',
+                },
+                on: {
+                  PERSISTED: {
+                    target: 'idle',
+                    actions: [
+                      assign((context, {flip}) => ({...context, ...flip})),
+                      log(),
+                    ],
+                  },
+                },
+              },
               submitting: {
                 invoke: {
                   src: 'submitFlip',

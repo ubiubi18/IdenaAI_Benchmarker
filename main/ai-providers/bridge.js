@@ -612,6 +612,155 @@ function prependSeedToPanel(panelText, humanStorySeed) {
   return `${seed} ${panelText}`
 }
 
+function isHumanLikeActorLabel(value) {
+  const normalized = normalizeKeywordValue(value).trim().toLowerCase()
+  if (!normalized) return false
+  return /\b(person|man|woman|child|kid|boy|girl|pilot|king|queen|clown|nurse|doctor|teacher|officer|chef|farmer|worker)\b/.test(
+    normalized
+  )
+}
+
+function isCreatureLikeActorLabel(value) {
+  const normalized = normalizeKeywordValue(value).trim().toLowerCase()
+  if (!normalized) return false
+  return /\b(dog|cat|bird|wolf|centaur|ghost|robot)\b/.test(normalized)
+}
+
+function inferRecurringSubjectLabel({
+  storyPanels = [],
+  keywordA = '',
+  keywordB = '',
+  senseSelection = null,
+}) {
+  const selection = getLockedSenseSelection(senseSelection, keywordA, keywordB)
+  const firstSense = getLockedSense(selection, 'keyword_1', keywordA)
+  const secondSense = getLockedSense(selection, 'keyword_2', keywordB)
+  const panelText = normalizeStoryPanels(storyPanels).join(' ').toLowerCase()
+  const actorCandidates = [
+    getSensePromptLabel(firstSense, keywordA),
+    getSensePromptLabel(secondSense, keywordB),
+    normalizeKeywordValue(keywordA),
+    normalizeKeywordValue(keywordB),
+  ].filter(Boolean)
+
+  const panelActorMatch = panelText.match(
+    /\b(disappointed pilot|pilot|person|man|woman|child|kid|boy|girl|king|queen|clown|nurse|doctor|teacher|officer|chef|farmer|worker|ghost|wolf|centaur|robot|dog|cat|bird)\b/i
+  )
+  if (panelActorMatch && panelActorMatch[1]) {
+    return String(panelActorMatch[1]).trim()
+  }
+
+  const humanCandidate = actorCandidates.find(isHumanLikeActorLabel)
+  if (humanCandidate) return humanCandidate
+
+  const creatureCandidate = actorCandidates.find(isCreatureLikeActorLabel)
+  if (creatureCandidate) return creatureCandidate
+
+  const genericActor = actorCandidates.find((candidate) =>
+    hasAnyKeywordHint(candidate, ACTOR_KEYWORD_HINTS)
+  )
+  if (genericActor) return genericActor
+
+  return 'person'
+}
+
+function buildPanelContinuityLines({
+  storyPanels = [],
+  keywordA = '',
+  keywordB = '',
+  senseSelection = null,
+}) {
+  const selection = getLockedSenseSelection(senseSelection, keywordA, keywordB)
+  const firstSense = getLockedSense(selection, 'keyword_1', keywordA)
+  const secondSense = getLockedSense(selection, 'keyword_2', keywordB)
+  const subjectLabel = inferRecurringSubjectLabel({
+    storyPanels,
+    keywordA,
+    keywordB,
+    senseSelection,
+  })
+  const seed = `${normalizeStoryPanels(storyPanels).join(
+    '|'
+  )}|${keywordA}|${keywordB}|${firstSense.sense_id || 'sense1'}|${
+    secondSense.sense_id || 'sense2'
+  }`
+  const recurringFirstLabel = getSensePromptLabel(firstSense, keywordA)
+  const recurringSecondLabel = getSensePromptLabel(secondSense, keywordB)
+
+  if (isHumanLikeActorLabel(subjectLabel)) {
+    const hairDescriptor = chooseDeterministicItem(
+      [
+        'short dark hair',
+        'curly brown hair',
+        'neat black hair',
+        'wavy dark hair',
+      ],
+      `${seed}|hair`,
+      'short dark hair'
+    )
+    const outfitColor = chooseDeterministicItem(
+      ['blue', 'green', 'red', 'mustard yellow'],
+      `${seed}|outfit-color`,
+      'blue'
+    )
+    const outfitPiece = chooseDeterministicItem(
+      ['jacket', 'shirt', 'hoodie', 'coat'],
+      `${seed}|outfit-piece`,
+      'jacket'
+    )
+    const accent = chooseDeterministicItem(
+      [
+        'dark pants',
+        'white sneakers',
+        'a small shoulder bag',
+        'rolled sleeves',
+      ],
+      `${seed}|accent`,
+      'dark pants'
+    )
+
+    return [
+      'Continuity anchor for the full 4-panel sequence:',
+      `- Recurring subject: keep the same ${subjectLabel} in every panel where this character appears.`,
+      `- Keep the same face, age, hair, and outfit colors in all panels. Use ${hairDescriptor}, a ${outfitColor} ${outfitPiece}, and ${accent}.`,
+      `- Keep recurring keyword objects visually consistent too: the same ${recurringFirstLabel} design and the same ${recurringSecondLabel} design whenever they reappear.`,
+      '- Keep the same background location, lighting family, and cartoon rendering style across all 4 panels; only the action, pose, camera distance, and visible story state should change.',
+      '- Do not change clothing colors, face, hairstyle, or prop design between panels unless the story explicitly shows that change.',
+    ]
+  }
+
+  if (isCreatureLikeActorLabel(subjectLabel)) {
+    const markingDescriptor = chooseDeterministicItem(
+      [
+        'a pale blue glow',
+        'dark ear tips',
+        'a white chest patch',
+        'a torn cloak edge',
+      ],
+      `${seed}|markings`,
+      'a pale blue glow'
+    )
+    return [
+      'Continuity anchor for the full 4-panel sequence:',
+      `- Recurring subject: keep the same ${subjectLabel} in every panel where this character appears.`,
+      `- Keep the same body shape, face, silhouette, and distinctive markings in all panels, including ${markingDescriptor}.`,
+      `- Keep recurring keyword objects visually consistent too: the same ${recurringFirstLabel} design and the same ${recurringSecondLabel} design whenever they reappear.`,
+      '- Keep the same background location, lighting family, and cartoon rendering style across all 4 panels; only the action, pose, camera distance, and visible story state should change.',
+      '- Do not redesign the recurring creature or prop between panels unless the story explicitly shows that change.',
+    ]
+  }
+
+  return [
+    'Continuity anchor for the full 4-panel sequence:',
+    `- Keep the same recurring subject or main prop design in every panel where it appears, anchored around ${withIndefiniteArticle(
+      subjectLabel
+    )}.`,
+    `- Keep the same ${recurringFirstLabel} design and the same ${recurringSecondLabel} design whenever they reappear.`,
+    '- Keep the same background location, lighting family, and cartoon rendering style across all 4 panels; only the action, pose, camera distance, and visible story state should change.',
+    '- Do not change object colors, face-like features, shape language, or prop details between panels unless the story explicitly shows that change.',
+  ]
+}
+
 function isTruthyFlag(value) {
   if (typeof value === 'boolean') return value
   const normalized = String(value || '')
@@ -3260,12 +3409,19 @@ function buildPanelPrompt({
     keywordA,
     keywordB
   )
+  const continuityLines = buildPanelContinuityLines({
+    storyPanels,
+    keywordA,
+    keywordB,
+    senseSelection,
+  })
   return [
     `Create panel ${
       panelIndex + 1
     } of 4 (role: ${role}) for one coherent visual story.`,
     `Keywords that must remain visually present across the story: ${keywordA} and ${keywordB}.`,
     ...lockedSenseLines,
+    ...continuityLines,
     `Panel description: ${panelText}`,
     previousPanelText ? `Previous panel context: ${previousPanelText}` : '',
     nextPanelText ? `Next panel context: ${nextPanelText}` : '',

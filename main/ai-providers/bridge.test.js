@@ -3488,7 +3488,71 @@ describe('createAiProviderBridge', () => {
       'Human story seed to preserve:'
     )
     expect(result.panels[0].panelPrompt).not.toContain('human seed premise')
+    expect(result.panels[0].panelPrompt).toContain(
+      'Continuity anchor for the full 4-panel sequence:'
+    )
+    expect(result.panels[0].panelPrompt).toContain(
+      'Recurring subject: keep the same cat'
+    )
+    expect(result.panels[0].panelPrompt).toContain(
+      'Keep the same background location, lighting family, and cartoon rendering style across all 4 panels'
+    )
     expect(httpClient.post).toHaveBeenCalledTimes(4)
+  })
+
+  it('adds a stable human character continuity anchor to every panel prompt', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: {
+          data: [
+            {
+              b64_json: 'AAA=',
+              mime_type: 'image/png',
+            },
+          ],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 0,
+            total_tokens: 10,
+          },
+        },
+      }),
+      get: jest.fn(),
+    }
+
+    const bridge = createAiProviderBridge(mockLogger(), {httpClient})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateFlipPanels({
+      provider: 'openai',
+      model: 'gpt-4.1-mini',
+      imageModel: 'gpt-image-1-mini',
+      imageSize: '1024x1024',
+      requestTimeoutMs: 15000,
+      textAuditEnabled: false,
+      maxRetries: 0,
+      keywords: ['shock', 'ghost'],
+      storyPanels: [
+        'A person with a cup walks through a hallway.',
+        'A ghost appears and shocks the person.',
+        'The person drops the cup and jumps back.',
+        'Water spreads across the hallway while the person faces the ghost.',
+      ],
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.panels[0].panelPrompt).toContain(
+      'Continuity anchor for the full 4-panel sequence:'
+    )
+    expect(result.panels[0].panelPrompt).toContain(
+      'Recurring subject: keep the same person'
+    )
+    expect(result.panels[0].panelPrompt).toContain(
+      'Keep the same face, age, hair, and outfit colors in all panels.'
+    )
+    expect(result.panels[0].panelPrompt).toContain(
+      'Do not change clothing colors, face, hairstyle, or prop design between panels unless the story explicitly shows that change.'
+    )
   })
 
   it('retries a rendered panel when validator detects OCR leakage', async () => {
