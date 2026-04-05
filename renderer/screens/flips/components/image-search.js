@@ -25,6 +25,10 @@ import {FillCenter} from '../../oracles/components'
 import {SearchIcon} from '../../../shared/components/icons'
 import {imageSearchMachine} from '../machines'
 import {useSettingsState} from '../../../shared/providers/settings-context'
+import {
+  checkAiProviderReadiness,
+  formatMissingAiProviders,
+} from '../../../shared/utils/ai-provider-readiness'
 
 const AI_IMAGE_SEARCH_KEY_REQUIRED_ERROR =
   'this option is only available for users who provide an API key for a payed AI provider'
@@ -59,6 +63,12 @@ export function ImageSearchDialog({
     [settings]
   )
   const [searchMode, setSearchMode] = React.useState('web')
+  const [aiProviderKeyStatus, setAiProviderKeyStatus] = React.useState({
+    checked: false,
+    checking: true,
+    allReady: false,
+    missingProviders: [],
+  })
 
   const searchInputRef = React.useRef()
 
@@ -88,27 +98,62 @@ export function ImageSearchDialog({
     })
   }, [aiSolverSettings, send])
 
+  React.useEffect(() => {
+    let cancelled = false
+
+    async function loadAiProviderKeyStatus() {
+      try {
+        const nextState = await checkAiProviderReadiness({
+          bridge: global.aiSolver,
+          aiSolver: aiSolverSettings,
+        })
+        if (!cancelled) {
+          setAiProviderKeyStatus(nextState)
+        }
+      } catch {
+        if (!cancelled) {
+          setAiProviderKeyStatus({
+            checked: true,
+            checking: false,
+            allReady: false,
+            missingProviders: [String(aiSolverSettings.provider || 'openai')],
+          })
+        }
+      }
+    }
+
+    loadAiProviderKeyStatus()
+
+    return () => {
+      cancelled = true
+    }
+  }, [aiSolverSettings])
+
   const activateAiMode = async () => {
     try {
-      if (
-        !global.aiSolver ||
-        typeof global.aiSolver.hasProviderKey !== 'function'
-      ) {
-        throw new Error(AI_IMAGE_SEARCH_KEY_REQUIRED_ERROR)
-      }
-
-      const keyState = await global.aiSolver.hasProviderKey({
-        provider: aiSolverSettings.provider,
+      const keyState = await checkAiProviderReadiness({
+        bridge: global.aiSolver,
+        aiSolver: aiSolverSettings,
       })
 
-      if (!keyState || !keyState.hasKey) {
-        throw new Error(AI_IMAGE_SEARCH_KEY_REQUIRED_ERROR)
+      if (!keyState || !keyState.allReady) {
+        const missingProviders = formatMissingAiProviders(
+          keyState && keyState.missingProviders
+        )
+        throw new Error(
+          missingProviders
+            ? `${AI_IMAGE_SEARCH_KEY_REQUIRED_ERROR} (${missingProviders})`
+            : AI_IMAGE_SEARCH_KEY_REQUIRED_ERROR
+        )
       }
 
       setSearchMode('ai')
       send('SET_MODE', {mode: 'ai'})
-    } catch {
-      onError(AI_IMAGE_SEARCH_KEY_REQUIRED_ERROR)
+    } catch (error) {
+      onError(
+        String((error && error.message) || '').trim() ||
+          AI_IMAGE_SEARCH_KEY_REQUIRED_ERROR
+      )
       setSearchMode('web')
       send('SET_MODE', {mode: 'web'})
     }
@@ -157,7 +202,15 @@ export function ImageSearchDialog({
             >
               {t('Web')}
             </SecondaryButton>
-            <SecondaryButton type="button" onClick={activateAiMode}>
+            <SecondaryButton
+              type="button"
+              isDisabled={
+                aiProviderKeyStatus.checking ||
+                !aiProviderKeyStatus.checked ||
+                !aiProviderKeyStatus.allReady
+              }
+              onClick={activateAiMode}
+            >
               {t('AI image search')}
             </SecondaryButton>
             <PrimaryButton type="submit">Search</PrimaryButton>

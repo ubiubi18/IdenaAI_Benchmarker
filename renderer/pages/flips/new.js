@@ -77,6 +77,10 @@ import {
   normalizeInputFlipsInChunks,
   normalizeInputFlips,
 } from '../../screens/validation/ai/test-unit-utils'
+import {
+  checkAiProviderReadiness,
+  formatMissingAiProviders,
+} from '../../shared/utils/ai-provider-readiness'
 
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
@@ -985,6 +989,12 @@ function formatAiRunError(error) {
     return `API key missing for ${provider}. Open AI settings and set the session key, then retry.`
   }
 
+  if (/Session API key missing for providers:/i.test(message)) {
+    const providers =
+      (message.split(':')[1] || '').trim() || 'selected provider'
+    return `Session API key missing for ${providers}. Open AI settings, load the required provider keys, then retry.`
+  }
+
   if (/AI helper is disabled/i.test(message)) {
     return 'AI helper is disabled. Open AI settings, enable AI helper, then retry.'
   }
@@ -1708,8 +1718,14 @@ export default function NewFlipPage() {
   const storyOptionCount = 1
   const [aiProviderKeyStatus, setAiProviderKeyStatus] = useState({
     checked: false,
+    checking: true,
     hasKey: false,
-    provider: '',
+    activeProvider: '',
+    requiredProviders: [],
+    missingProviders: [],
+    primaryReady: false,
+    allReady: false,
+    error: '',
   })
   const [storyPanelsDraft, setStoryPanelsDraft] = useState(
     coerceStoryPanelsDraft([])
@@ -1747,45 +1763,101 @@ export default function NewFlipPage() {
     aiSolverSettings.legacyHeuristicEnabled &&
     aiSolverSettings.legacyHeuristicOnly
 
+  const refreshAiProviderKeyStatus = useCallback(async () => {
+    if (isLegacyOnlyMode) {
+      setAiProviderKeyStatus({
+        checked: true,
+        checking: false,
+        hasKey: true,
+        activeProvider: String(aiSolverSettings.provider || 'openai'),
+        requiredProviders: [],
+        missingProviders: [],
+        primaryReady: true,
+        allReady: true,
+        error: '',
+      })
+      return {
+        checked: true,
+        checking: false,
+        hasKey: true,
+        activeProvider: String(aiSolverSettings.provider || 'openai'),
+        requiredProviders: [],
+        missingProviders: [],
+        primaryReady: true,
+        allReady: true,
+        error: '',
+      }
+    }
+
+    if (
+      !global.aiSolver ||
+      typeof global.aiSolver.hasProviderKey !== 'function'
+    ) {
+      const fallbackState = {
+        checked: true,
+        checking: false,
+        hasKey: false,
+        activeProvider: String(aiSolverSettings.provider || 'openai'),
+        requiredProviders: [String(aiSolverSettings.provider || 'openai')],
+        missingProviders: [String(aiSolverSettings.provider || 'openai')],
+        primaryReady: false,
+        allReady: false,
+        error: 'ai_bridge_unavailable',
+      }
+      setAiProviderKeyStatus(fallbackState)
+      return fallbackState
+    }
+
+    setAiProviderKeyStatus((prev) => ({
+      ...prev,
+      checking: true,
+      error: '',
+    }))
+
+    try {
+      const nextState = await checkAiProviderReadiness({
+        bridge: global.aiSolver,
+        aiSolver: aiSolverSettings,
+      })
+      setAiProviderKeyStatus(nextState)
+      return nextState
+    } catch (error) {
+      const fallbackState = {
+        checked: true,
+        checking: false,
+        hasKey: false,
+        activeProvider: String(aiSolverSettings.provider || 'openai'),
+        requiredProviders: [String(aiSolverSettings.provider || 'openai')],
+        missingProviders: [String(aiSolverSettings.provider || 'openai')],
+        primaryReady: false,
+        allReady: false,
+        error: String((error && error.message) || error || '').trim(),
+      }
+      setAiProviderKeyStatus(fallbackState)
+      return fallbackState
+    }
+  }, [aiSolverSettings, isLegacyOnlyMode])
+
   useEffect(() => {
     let cancelled = false
 
     async function loadProviderKeyStatus() {
-      if (
-        isLegacyOnlyMode ||
-        !global.aiSolver ||
-        typeof global.aiSolver.hasProviderKey !== 'function'
-      ) {
-        if (!cancelled) {
-          setAiProviderKeyStatus({
-            checked: true,
-            hasKey: true,
-            provider: String(aiSolverSettings.provider || ''),
-          })
-        }
-        return
-      }
-
       try {
-        const state = await global.aiSolver.hasProviderKey({
-          provider: aiSolverSettings.provider,
-        })
+        const state = await refreshAiProviderKeyStatus()
         if (!cancelled) {
-          setAiProviderKeyStatus({
-            checked: true,
-            hasKey: Boolean(state && state.hasKey),
-            provider: String(
-              (state && state.provider) || aiSolverSettings.provider || ''
-            ),
-          })
+          setAiProviderKeyStatus(state)
         }
       } catch (error) {
         if (!cancelled) {
-          setAiProviderKeyStatus({
+          setAiProviderKeyStatus((prev) => ({
+            ...prev,
             checked: true,
+            checking: false,
             hasKey: false,
-            provider: String(aiSolverSettings.provider || ''),
-          })
+            primaryReady: false,
+            allReady: false,
+            error: String((error && error.message) || error || '').trim(),
+          }))
         }
       }
     }
@@ -1795,7 +1867,25 @@ export default function NewFlipPage() {
     return () => {
       cancelled = true
     }
-  }, [aiSolverSettings.provider, isLegacyOnlyMode])
+  }, [refreshAiProviderKeyStatus])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    const refreshOnFocus = () => {
+      refreshAiProviderKeyStatus()
+    }
+
+    window.addEventListener('focus', refreshOnFocus)
+    document.addEventListener('visibilitychange', refreshOnFocus)
+
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus)
+      document.removeEventListener('visibilitychange', refreshOnFocus)
+    }
+  }, [refreshAiProviderKeyStatus])
 
   useEffect(() => {
     if (didAutoOpenAiGuideRef.current) return
@@ -2480,18 +2570,15 @@ export default function NewFlipPage() {
         throw new Error('AI helper is disabled')
       }
 
-      if (
-        !isLegacyOnlyMode &&
-        global.aiSolver &&
-        typeof global.aiSolver.hasProviderKey === 'function'
-      ) {
-        const state = await global.aiSolver.hasProviderKey({
-          provider: aiSolverSettings.provider,
-        })
-        if (!state || !state.hasKey) {
+      if (!isLegacyOnlyMode) {
+        const readiness = await refreshAiProviderKeyStatus()
+        if (!readiness || !readiness.allReady) {
+          const missingProviders = formatMissingAiProviders(
+            readiness && readiness.missingProviders
+          )
           throw new Error(
-            `API key is not set for provider: ${
-              (state && state.provider) || aiSolverSettings.provider
+            `Session API key missing for providers: ${
+              missingProviders || aiSolverSettings.provider
             }`
           )
         }
@@ -2502,6 +2589,7 @@ export default function NewFlipPage() {
       aiSolverSettings.provider,
       ensureAiSolverBridge,
       isLegacyOnlyMode,
+      refreshAiProviderKeyStatus,
     ]
   )
 
@@ -4009,21 +4097,52 @@ export default function NewFlipPage() {
       return {
         label: t('Not required in legacy-only mode'),
         color: 'muted',
+        detail: '',
       }
     }
-    if (!aiProviderKeyStatus.checked) {
+    if (!aiProviderKeyStatus.checked || aiProviderKeyStatus.checking) {
       return {label: t('Checking...'), color: 'muted'}
     }
-    if (aiProviderKeyStatus.hasKey) {
-      return {label: t('Ready'), color: 'green.500'}
+    if (aiProviderKeyStatus.allReady) {
+      const providerCount = Array.isArray(aiProviderKeyStatus.requiredProviders)
+        ? aiProviderKeyStatus.requiredProviders.length
+        : 0
+      return {
+        label:
+          providerCount > 1
+            ? t('Ready ({{count}}/{{count}})', {count: providerCount})
+            : t('Ready'),
+        color: 'green.500',
+        detail:
+          providerCount > 1
+            ? t('All required provider keys are loaded.')
+            : t('Active provider key is loaded.'),
+      }
     }
-    return {label: t('Missing'), color: 'orange.500'}
+    const missingProviders = formatMissingAiProviders(
+      aiProviderKeyStatus.missingProviders
+    )
+    return {
+      label: t('Missing'),
+      color: 'orange.500',
+      detail: missingProviders
+        ? t('Missing for: {{providers}}', {providers: missingProviders})
+        : t('Open AI settings and load the required provider key.'),
+    }
   }, [
     aiProviderKeyStatus.checked,
-    aiProviderKeyStatus.hasKey,
+    aiProviderKeyStatus.checking,
+    aiProviderKeyStatus.allReady,
+    aiProviderKeyStatus.missingProviders,
+    aiProviderKeyStatus.requiredProviders,
     isLegacyOnlyMode,
     t,
   ])
+  const isAiRunBlockedByProviderKeys =
+    !isLegacyOnlyMode &&
+    (!aiProviderKeyStatus.checked ||
+      aiProviderKeyStatus.checking ||
+      !aiProviderKeyStatus.allReady)
   const flipBuildStatusBorderColorByKind = {
     idle: 'gray.100',
     running: 'gray.100',
@@ -5254,6 +5373,11 @@ export default function NewFlipPage() {
                               >
                                 {aiProviderKeyStatusUi.label}
                               </Text>
+                              {aiProviderKeyStatusUi.detail ? (
+                                <Text fontSize="xs" color="muted" mt={1}>
+                                  {aiProviderKeyStatusUi.detail}
+                                </Text>
+                              ) : null}
                             </Box>
                             <Box
                               borderWidth="1px"
@@ -5275,6 +5399,44 @@ export default function NewFlipPage() {
                               'Beginner flow: first decide whether you want to create a flip or solve queued flips. You can still open advanced options later.'
                             )}
                           </Text>
+                          {isAiRunBlockedByProviderKeys ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="orange.200"
+                              borderRadius="md"
+                              p={3}
+                              bg="orange.012"
+                            >
+                              <Stack spacing={2}>
+                                <Text
+                                  fontSize="sm"
+                                  fontWeight={500}
+                                  color="orange.700"
+                                >
+                                  {t('AI provider setup needed')}
+                                </Text>
+                                <Text fontSize="xs" color="muted">
+                                  {aiProviderKeyStatusUi.detail ||
+                                    t(
+                                      'Load the required session API key before starting AI generation or solver runs.'
+                                    )}
+                                </Text>
+                                <Stack isInline justify="flex-end" spacing={2}>
+                                  <SecondaryButton
+                                    isLoading={aiProviderKeyStatus.checking}
+                                    onClick={refreshAiProviderKeyStatus}
+                                  >
+                                    {t('Refresh key status')}
+                                  </SecondaryButton>
+                                  <PrimaryButton
+                                    onClick={() => router.push('/settings/ai')}
+                                  >
+                                    {t('Open AI settings')}
+                                  </PrimaryButton>
+                                </Stack>
+                              </Stack>
+                            </Box>
+                          ) : null}
                           <SimpleGrid columns={[1, 2]} spacing={3}>
                             <Box
                               borderWidth="1px"
@@ -5675,6 +5837,7 @@ export default function NewFlipPage() {
                                         !allowFullyAutomatedNodePublish ||
                                         keywordSource !== 'node' ||
                                         !keywordPairId ||
+                                        isAiRunBlockedByProviderKeys ||
                                         syncing ||
                                         offline ||
                                         isGeneratingStoryOptions ||
@@ -5719,6 +5882,7 @@ export default function NewFlipPage() {
                           ) : null}
                           <Stack isInline justify="flex-end" spacing={2}>
                             <SecondaryButton
+                              isDisabled={isAiRunBlockedByProviderKeys}
                               isLoading={isGeneratingStoryOptions}
                               onClick={() =>
                                 generateStoryAlternatives({optimize: false})
@@ -5729,6 +5893,7 @@ export default function NewFlipPage() {
                                 : t('Generate 2 story options')}
                             </SecondaryButton>
                             <SecondaryButton
+                              isDisabled={isAiRunBlockedByProviderKeys}
                               isLoading={isGeneratingStoryOptions}
                               onClick={() =>
                                 generateStoryAlternatives({optimize: true})
@@ -5769,6 +5934,7 @@ export default function NewFlipPage() {
 
                           <Stack isInline justify="flex-end" spacing={2}>
                             <PrimaryButton
+                              isDisabled={isAiRunBlockedByProviderKeys}
                               isLoading={isGeneratingFlipPanels}
                               onClick={() =>
                                 buildFlipWithAi({
@@ -5962,30 +6128,35 @@ export default function NewFlipPage() {
                           </Text>
                           <Stack isInline justify="flex-end" spacing={2}>
                             <SecondaryButton
+                              isDisabled={isAiRunBlockedByProviderKeys}
                               isLoading={isBuilderQueueLoading}
                               onClick={reloadBuilderQueue}
                             >
                               {t('Reload queue')}
                             </SecondaryButton>
                             <SecondaryButton
+                              isDisabled={isAiRunBlockedByProviderKeys}
                               isLoading={isAddingToTestUnit}
                               onClick={addDraftToTestUnit}
                             >
                               {t('Add current draft flip to queue')}
                             </SecondaryButton>
                             <SecondaryButton
+                              isDisabled={isAiRunBlockedByProviderKeys}
                               isLoading={isAiDraftTesting}
                               onClick={runAiTestBeforeSubmit}
                             >
                               {t('Run current draft now')}
                             </SecondaryButton>
                             <PrimaryButton
+                              isDisabled={isAiRunBlockedByProviderKeys}
                               isLoading={isBuilderQueueRunning}
                               onClick={() => runBuilderQueue({preset: 'short'})}
                             >
                               {t('Run short (6)')}
                             </PrimaryButton>
                             <PrimaryButton
+                              isDisabled={isAiRunBlockedByProviderKeys}
                               isLoading={isBuilderQueueRunning}
                               onClick={() => runBuilderQueue({preset: 'long'})}
                             >

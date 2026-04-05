@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, {useMemo, useState} from 'react'
+import React, {useCallback, useEffect, useMemo, useState} from 'react'
 import {
   Box,
   Flex,
@@ -31,6 +31,10 @@ import {
   useSettingsState,
 } from '../../shared/providers/settings-context'
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
+import {
+  checkAiProviderReadiness,
+  formatMissingAiProviders,
+} from '../../shared/utils/ai-provider-readiness'
 
 const DEFAULT_MODELS = {
   openai: 'gpt-4o-mini',
@@ -209,6 +213,17 @@ export default function AiSettingsPage() {
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
   const [latestModelsByProvider, setLatestModelsByProvider] = useState({})
   const [showAdvancedAiSettings, setShowAdvancedAiSettings] = useState(false)
+  const [providerKeyStatus, setProviderKeyStatus] = useState({
+    checked: false,
+    checking: true,
+    hasKey: false,
+    allReady: false,
+    primaryReady: false,
+    activeProvider: 'openai',
+    requiredProviders: [],
+    missingProviders: [],
+    error: '',
+  })
 
   const notify = (title, description, status = 'info') => {
     toast({
@@ -325,6 +340,106 @@ export default function AiSettingsPage() {
     )
   )
   const providerConfig = buildProviderConfigForBridge(aiSolver, activeProvider)
+  const trimmedApiKey = String(apiKey || '').trim()
+  const refreshProviderKeyStatus = useCallback(async () => {
+    const bridge = ensureBridge()
+    setProviderKeyStatus((prev) => ({
+      ...prev,
+      checking: true,
+      error: '',
+    }))
+
+    try {
+      const nextState = await checkAiProviderReadiness({
+        bridge,
+        aiSolver,
+      })
+      setProviderKeyStatus(nextState)
+      return nextState
+    } catch (error) {
+      const fallbackState = {
+        checked: true,
+        checking: false,
+        hasKey: false,
+        allReady: false,
+        primaryReady: false,
+        activeProvider,
+        requiredProviders: [activeProvider],
+        missingProviders: [activeProvider],
+        error: String((error && error.message) || error || '').trim(),
+      }
+      setProviderKeyStatus(fallbackState)
+      return fallbackState
+    }
+  }, [activeProvider, aiSolver])
+
+  useEffect(() => {
+    refreshProviderKeyStatus()
+  }, [refreshProviderKeyStatus])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    const refreshOnFocus = () => {
+      refreshProviderKeyStatus()
+    }
+
+    window.addEventListener('focus', refreshOnFocus)
+    document.addEventListener('visibilitychange', refreshOnFocus)
+
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus)
+      document.removeEventListener('visibilitychange', refreshOnFocus)
+    }
+  }, [refreshProviderKeyStatus])
+
+  const providerKeyStatusUi = useMemo(() => {
+    if (!providerKeyStatus.checked || providerKeyStatus.checking) {
+      return {
+        label: t('Checking...'),
+        color: 'muted',
+        detail: '',
+      }
+    }
+
+    if (providerKeyStatus.allReady) {
+      const requiredCount = Array.isArray(providerKeyStatus.requiredProviders)
+        ? providerKeyStatus.requiredProviders.length
+        : 0
+      return {
+        label:
+          requiredCount > 1
+            ? t('Ready ({{count}}/{{count}})', {count: requiredCount})
+            : t('Ready'),
+        color: 'green.500',
+        detail:
+          requiredCount > 1
+            ? t('All required provider keys are loaded.')
+            : t('Active provider key is loaded.'),
+      }
+    }
+
+    const missingProviders = formatMissingAiProviders(
+      providerKeyStatus.missingProviders
+    )
+
+    return {
+      label: t('Missing'),
+      color: 'orange.500',
+      detail: missingProviders
+        ? t('Missing for: {{providers}}', {providers: missingProviders})
+        : t('Load the required provider key below.'),
+    }
+  }, [
+    providerKeyStatus.allReady,
+    providerKeyStatus.checked,
+    providerKeyStatus.checking,
+    providerKeyStatus.missingProviders,
+    providerKeyStatus.requiredProviders,
+    t,
+  ])
 
   return (
     <SettingsLayout>
@@ -1259,6 +1374,30 @@ export default function AiSettingsPage() {
                 'Keys are stored separately per provider. Setting an OpenAI key does not automatically enable Gemini, Anthropic, xAI, Groq, OpenRouter, or other providers.'
               )}
             </Text>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              p={3}
+            >
+              <Stack spacing={1}>
+                <Text color="muted" fontSize="xs">
+                  {t('Current key status')}
+                </Text>
+                <Text
+                  fontSize="sm"
+                  fontWeight={500}
+                  color={providerKeyStatusUi.color}
+                >
+                  {providerKeyStatusUi.label}
+                </Text>
+                {providerKeyStatusUi.detail ? (
+                  <Text color="muted" fontSize="xs">
+                    {providerKeyStatusUi.detail}
+                  </Text>
+                ) : null}
+              </Stack>
+            </Box>
 
             <SettingsFormControl>
               <SettingsFormLabel>{t('API key')}</SettingsFormLabel>
@@ -1293,6 +1432,7 @@ export default function AiSettingsPage() {
                     const bridge = ensureBridge()
                     await bridge.clearProviderKey({provider: activeProvider})
                     setApiKey('')
+                    await refreshProviderKeyStatus()
                     notify(
                       t('Provider key cleared'),
                       t('The session key has been removed from memory.')
@@ -1312,7 +1452,7 @@ export default function AiSettingsPage() {
               </SecondaryButton>
 
               <SecondaryButton
-                isDisabled={!apiKey}
+                isDisabled={!trimmedApiKey}
                 isLoading={isUpdatingKey}
                 onClick={async () => {
                   setIsUpdatingKey(true)
@@ -1320,9 +1460,11 @@ export default function AiSettingsPage() {
                     const bridge = ensureBridge()
                     await bridge.setProviderKey({
                       provider: activeProvider,
-                      apiKey,
+                      apiKey: trimmedApiKey,
                     })
                     setApiKey('')
+                    setIsApiKeyVisible(false)
+                    await refreshProviderKeyStatus()
                     notify(
                       t('Provider key set'),
                       t('The session key was loaded and is ready for requests.')
@@ -1342,6 +1484,7 @@ export default function AiSettingsPage() {
               </SecondaryButton>
 
               <PrimaryButton
+                isDisabled={!providerKeyStatus.primaryReady}
                 isLoading={isTesting}
                 onClick={async () => {
                   setIsTesting(true)
@@ -1360,6 +1503,7 @@ export default function AiSettingsPage() {
                         latency: result.latencyMs,
                       })
                     )
+                    await refreshProviderKeyStatus()
                   } catch (error) {
                     notify(
                       t('Provider test failed'),
