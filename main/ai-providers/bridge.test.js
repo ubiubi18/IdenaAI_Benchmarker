@@ -1264,6 +1264,9 @@ describe('createAiProviderBridge', () => {
     expect(callPayload.promptText).toContain(
       'do not default the peak or ending to toppled props, overturned furniture, or scattered contents unless that is truly the clearest story beat'
     )
+    expect(callPayload.promptText).toContain(
+      'Prefer final frames defined by a reveal, blocked route, trapped pose, bright exposure, repaired arrangement, clear escape gap, or newly stable layout instead of generic wreckage.'
+    )
     expect(
       callPayload.promptOptions.structuredOutput.responseFormat.json_schema
         .schema.properties.stories.maxItems
@@ -2886,7 +2889,9 @@ describe('createAiProviderBridge', () => {
     expect(joinedPanels).not.toMatch(/\bspill|spills|spilled\b/)
     expect(joinedPanels).not.toContain('a sudden bump sends')
     expect(joinedPanels).not.toContain('a person places the magazine beside')
-    expect(joinedPanels).toMatch(/rolls away|snaps open|unfurls|tangles|blocks/)
+    expect(joinedPanels).toMatch(
+      /rolls away|snaps open|unfurls|tangles|blocks|bright light|re-hooked|steadied/
+    )
     expect(joinedPanels).toMatch(
       /shopper|stagehand|traveler|teacher|vendor|gardener/
     )

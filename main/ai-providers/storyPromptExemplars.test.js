@@ -37,6 +37,7 @@ describe('story prompt exemplars', () => {
     expect(result.lines.join('\n')).toContain(
       'instead of defaulting to spills or overturned props'
     )
+    expect(result.lines.join('\n')).toContain('reveals, blocked routes')
     expect(result.lines.join('\n')).not.toContain(
       'Do not include inappropriate, sexual, violent, or shocking content.'
     )

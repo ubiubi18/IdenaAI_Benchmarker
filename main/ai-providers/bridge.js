@@ -739,6 +739,21 @@ function chooseDeterministicAftermathPattern({
       panel3: `The ${supportProp} pops open and a folded cloth unfurls behind the ${secondaryLabel} while ${reactionBeat}.`,
       panel4: `The unfurled cloth, open ${supportProp}, and ${aftermathBeat} remain obvious in the final image.`,
     },
+    {
+      id: 'block',
+      panel3: `The ${supportProp} swings across the route and blocks the ${secondaryLabel} in place while ${reactionBeat}.`,
+      panel4: `The blocked path, caught ${secondaryLabel}, and ${aftermathBeat} stay easy to read in the final panel.`,
+    },
+    {
+      id: 'light',
+      panel3: `The ${supportProp} swings wide and throws a bright strip of light across the ${secondaryLabel} while ${reactionBeat}.`,
+      panel4: `The bright light, exposed ${secondaryLabel}, and ${aftermathBeat} define the final panel at a glance.`,
+    },
+    {
+      id: 'recovery',
+      panel3: `The ${primaryLabel} catches the ${secondaryLabel} against the ${supportProp} and steadies it while ${reactionBeat}.`,
+      panel4: `The re-hooked ${secondaryLabel}, steadied ${supportProp}, and ${aftermathBeat} make the new situation obvious in the final panel.`,
+    },
   ]
 
   const preferred = patterns.find(
@@ -799,7 +814,21 @@ function chooseDeterministicFallbackArchetype({
       trigger: `The ${secondaryLabel} swings across the ${supportProp} and blocks the ${primaryLabel} in one sudden beat.`,
       reactionBeat: `the ${primaryLabel} stops short against the blocked path`,
       aftermathBeat: `the ${secondaryLabel} now blocking the ${primaryLabel}`,
-      preferredAftermath: 'unfurl',
+      preferredAftermath: 'block',
+    },
+    {
+      id: 'light',
+      trigger: `The ${supportProp} swings aside and exposes the ${secondaryLabel} in a hard beam beside the ${primaryLabel}.`,
+      reactionBeat: `the ${primaryLabel} recoils from the sudden bright reveal`,
+      aftermathBeat: `the newly lit ${secondaryLabel} beside the shifted ${primaryLabel}`,
+      preferredAftermath: 'light',
+    },
+    {
+      id: 'recovery',
+      trigger: `The ${secondaryLabel} slips loose from the ${supportProp}, and the ${primaryLabel} lunges to catch it before it drops.`,
+      reactionBeat: `the ${primaryLabel} braces the ${secondaryLabel} against the ${supportProp}`,
+      aftermathBeat: `the ${secondaryLabel} now caught and steadied beside the ${primaryLabel}`,
+      preferredAftermath: 'recovery',
     },
   ]
 
@@ -1985,7 +2014,7 @@ function buildSingleStoryLastChanceRescuePrompt({
     'Line 2: the exact trigger that visibly changes the scene.',
     'Line 3: the strongest visible consequence.',
     'Line 4: a stable final aftermath that is obvious at a glance.',
-    'Use varied visible consequence types: crooked objects, snapped straps, doors swinging open, rolling objects, bent props, light changes, tangles, reveals, or occasional spills.',
+    'Use varied visible consequence types: blocked routes, bright exposure, snapped straps, doors swinging open, rolling objects, bent props, tangles, reveals, recovery beats, or occasional spills.',
     ...buildSingleStoryPairFitLines(senseSelection, safeKeywordA, safeKeywordB),
     'Forbidden filler: "choose a room", "bring X into the scene", "show the consequence", "interacts with both", "uses X as a tool", "observes the final result".',
     'No numbering, no labels, no markdown, no JSON, no commentary.',
@@ -2021,7 +2050,7 @@ function buildSingleStoryScaffoldRewritePrompt({
     'Each line must describe what is visibly happening in that panel, not give instructions to the user.',
     `Keep "${safeKeywordA}" and "${safeKeywordB}" visibly important in the scene.`,
     'Use one specific place, one visible trigger, one concrete physical consequence, and one stable final aftermath.',
-    'Do not default every rewrite to an object spilling. Other good outcomes are doors swinging open, props hanging crooked, straps tangling, lights turning, curtains falling, or objects rolling away.',
+    'Do not default every rewrite to an object spilling. Other good outcomes are blocked routes, doors swinging open, props hanging crooked, straps tangling, lights turning, repaired arrangements, curtains falling, or objects rolling away.',
     'Bad: "Pick one specific actor or object and one specific place..."',
     'Bad: "Use X as the trigger that makes the scene change..."',
     'Good: "At an airport gate, a disappointed pilot sets a milk carton on a rolling suitcase."',
@@ -2063,7 +2092,7 @@ function buildSingleStorySpecificityRewritePrompt({
     `Keep "${safeKeywordA}" and "${safeKeywordB}" visibly important in the actual scene.`,
     'Add a real place, a clearer actor or prop anchor, a crisper trigger, and a more specific final aftermath.',
     'Replace generic phrases like "interacts with", "uses as a tool", or "observes the result" with concrete visible actions.',
-    'Do not default to overturned furniture, toppled props, or spills when a more specific visible aftermath would read better.',
+    'Do not default to overturned furniture, toppled props, or spills when a blocked route, bright reveal, repaired setup, stable separation, or clearer visible aftermath would read better.',
     ...buildSingleStoryPairFitLines(senseSelection, safeKeywordA, safeKeywordB),
     'No numbering, no labels, no markdown, no JSON, and no commentary.',
     ...lockedSenseLines,
@@ -3443,6 +3472,7 @@ function buildStoryCreativityLines({fastMode = false}) {
       '- Allow suspense, humor, eerie tone, awkwardness, and small surprises if the panel order stays obvious.',
       '- Do not default to bump-and-spill stories unless that is clearly the strongest fit.',
       '- Do not default to toppled racks, overturned trunks, dropped bags, or spilled contents as the ending shape.',
+      '- Prefer final frames defined by a reveal, blocked route, trapped pose, bright exposure, repaired arrangement, clear escape gap, or newly stable layout instead of generic wreckage.',
       '- Never write filler like "one concrete move", "visible external change", or "stable aftermath".',
     ]
   }
@@ -3457,6 +3487,7 @@ function buildStoryCreativityLines({fastMode = false}) {
     '- If the keywords feel awkward together, invent a human situation that makes them feel natural.',
     '- Do not default to drops, spills, and broken objects unless they are truly the clearest version.',
     '- Do not keep ending on overturned props or toppled furniture when a more specific aftermath would read better.',
+    '- Prefer end states defined by reveals, blocked routes, exposure to light, trapped or tangled poses, repaired setups, clear escape paths, or newly stable arrangements.',
     '- Never write filler like "one concrete move", "visible external change", or "stable aftermath".',
   ]
 }
