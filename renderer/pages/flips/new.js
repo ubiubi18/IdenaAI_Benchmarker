@@ -2064,12 +2064,30 @@ export default function NewFlipPage() {
       }
 
       notify(t('Story options generated'), storyOptionsMessage)
+      return {
+        options,
+        selectedStoryId: defaultSelected
+          ? String(defaultSelected.id || '')
+          : '',
+        storyPanels: defaultSelected
+          ? normalizeStoryPanelsInput(defaultSelected.panels)
+          : seededPanels,
+        includeNoise: Boolean(
+          defaultSelected ? defaultSelected.includeNoise : storyIncludeNoise
+        ),
+        noisePanelIndex:
+          defaultSelected &&
+          Number.isFinite(Number(defaultSelected.noisePanelIndex))
+            ? Number(defaultSelected.noisePanelIndex)
+            : storyNoisePanelIndex,
+      }
     } catch (error) {
       const message = formatAiRunError(error)
       notify(t('Unable to generate story options'), message, 'error')
       if (/API key missing|AI helper is disabled/i.test(message)) {
         router.push('/settings/ai')
       }
+      return null
     } finally {
       setIsGeneratingStoryOptions(false)
     }
@@ -2108,7 +2126,14 @@ export default function NewFlipPage() {
     }
   }
 
-  const buildFlipWithAi = async ({regenerateIndices = [0, 1, 2, 3]} = {}) => {
+  const buildFlipWithAi = async ({
+    regenerateIndices = [0, 1, 2, 3],
+    storyOptionsOverride = null,
+    selectedStoryIdOverride = '',
+    storyPanelsOverride = null,
+    includeNoiseOverride = null,
+    noisePanelIndexOverride = null,
+  } = {}) => {
     setIsGeneratingFlipPanels(true)
     setFlipBuildStatus({
       kind: 'running',
@@ -2122,13 +2147,31 @@ export default function NewFlipPage() {
         aiReasoningModel || aiSolverSettings.model
       ).trim()
       const isFastMode = aiGenerationMode !== 'strict'
-      const selectedStoryOption = storyOptions.find(
-        (item) => String(item.id) === String(selectedStoryId)
+      const effectiveStoryOptions = Array.isArray(storyOptionsOverride)
+        ? storyOptionsOverride
+        : storyOptions
+      const effectiveSelectedStoryId = String(
+        selectedStoryIdOverride || selectedStoryId
+      )
+      const effectiveStoryPanels = Array.isArray(storyPanelsOverride)
+        ? normalizeStoryPanelsInput(storyPanelsOverride)
+        : storyPanelsDraft
+      const effectiveIncludeNoise =
+        includeNoiseOverride == null
+          ? storyIncludeNoise
+          : Boolean(includeNoiseOverride)
+      const effectiveNoisePanelIndex =
+        noisePanelIndexOverride == null
+          ? storyNoisePanelIndex
+          : Math.max(0, Math.min(3, toInt(noisePanelIndexOverride, 0)))
+      const selectedStoryOption = effectiveStoryOptions.find(
+        (item) => String(item.id) === effectiveSelectedStoryId
       )
 
       const response = await global.aiSolver.generateFlipPanels({
         ...baseRunPayload,
         fastBuild: isFastMode,
+        panelRenderMode: isFastMode ? 'sheet_fast' : 'panels',
         provider: aiSolverSettings.provider,
         model: reasoningModel,
         textAuditModel: reasoningModel,
@@ -2139,15 +2182,15 @@ export default function NewFlipPage() {
         imageStyle: '',
         visualStyle: aiImageStyle,
         keywords: [keywordA, keywordB],
-        storyPanels: storyPanelsDraft,
-        storyOptions,
-        selectedStoryId,
+        storyPanels: effectiveStoryPanels,
+        storyOptions: effectiveStoryOptions,
+        selectedStoryId: effectiveSelectedStoryId,
         senseSelection:
           selectedStoryOption && selectedStoryOption.senseSelection
             ? selectedStoryOption.senseSelection
             : null,
-        includeNoise: storyIncludeNoise,
-        noisePanelIndex: storyNoisePanelIndex,
+        includeNoise: effectiveIncludeNoise,
+        noisePanelIndex: effectiveNoisePanelIndex,
         regenerateIndices,
         existingPanels: generatedFlipPanels.map((item) => item.imageDataUrl),
       })
@@ -2155,8 +2198,8 @@ export default function NewFlipPage() {
       const nextPanels = Array.isArray(response && response.panels)
         ? response.panels.slice(0, 4)
         : []
-      if (nextPanels.length < 4) {
-        throw new Error('Panel generation returned less than 4 panels')
+      if (nextPanels.length < 1) {
+        throw new Error('Panel generation returned no panels')
       }
       if (
         response &&
@@ -2177,13 +2220,21 @@ export default function NewFlipPage() {
       const normalizedPanelDataUrls = await normalizeGeneratedPanelsForBuilder(
         nextPanels
       )
+      if (normalizedPanelDataUrls.length < 4) {
+        throw new Error('Panel generation returned less than 4 panels')
+      }
       let finalPanelDataUrls = normalizedPanelDataUrls.slice(0, 4)
+      const panelMetadataByIndex =
+        response && Array.isArray(response.panelMetadataByIndex)
+          ? response.panelMetadataByIndex.slice(0, 4)
+          : []
       const normalizedNoiseIndex = Math.max(
         0,
-        Math.min(3, toInt(storyNoisePanelIndex, 0))
+        Math.min(3, toInt(effectiveNoisePanelIndex, 0))
       )
       const shouldApplyLegacyNoise =
-        storyIncludeNoise && regenerateIndices.includes(normalizedNoiseIndex)
+        effectiveIncludeNoise &&
+        regenerateIndices.includes(normalizedNoiseIndex)
       let noiseApplyResult = {
         applied: false,
         noisePanelIndex: normalizedNoiseIndex,
@@ -2206,14 +2257,23 @@ export default function NewFlipPage() {
       }
 
       setGeneratedFlipPanels(
-        finalPanelDataUrls.map((imageDataUrl, index) => ({
-          ...(typeof nextPanels[index] === 'object' ? nextPanels[index] : {}),
-          index,
-          imageDataUrl,
-          legacyNoiseApplied:
-            Boolean(noiseApplyResult.applied) &&
-            index === Number(noiseApplyResult.noisePanelIndex),
-        }))
+        finalPanelDataUrls.map((imageDataUrl, index) => {
+          let panelMetadata = {}
+          if (typeof panelMetadataByIndex[index] === 'object') {
+            panelMetadata = panelMetadataByIndex[index]
+          } else if (typeof nextPanels[index] === 'object') {
+            panelMetadata = nextPanels[index]
+          }
+
+          return {
+            ...panelMetadata,
+            index,
+            imageDataUrl,
+            legacyNoiseApplied:
+              Boolean(noiseApplyResult.applied) &&
+              index === Number(noiseApplyResult.noisePanelIndex),
+          }
+        })
       )
 
       // Make generated result immediately visible in the regular builder draft.
@@ -2264,17 +2324,21 @@ export default function NewFlipPage() {
         Number(response.textOverlayRetryCount) || 0
       )
 
-      notify(
-        t('Flip panels generated'),
-        noiseApplyResult.applied
-          ? t(
-              'Panels were applied and shuffled for submit. Legacy adversarial image noise was applied to panel {{panel}}. You can still reshuffle or regenerate panels.',
-              {panel: Number(noiseApplyResult.noisePanelIndex) + 1}
-            )
-          : t(
-              'Panels were applied and shuffled for submit. You can still reshuffle or regenerate panels.'
-            )
+      let buildSuccessDescription = t(
+        'Panels were applied and shuffled for submit. You can still reshuffle or regenerate panels.'
       )
+      if (response && response.panelRenderModeUsed === 'sheet_fast') {
+        buildSuccessDescription = t(
+          'Panels were generated as one fast 2x2 storyboard sheet, split into 4 panels, and shuffled for submit. You can still reshuffle or regenerate panels.'
+        )
+      } else if (noiseApplyResult.applied) {
+        buildSuccessDescription = t(
+          'Panels were applied and shuffled for submit. Legacy adversarial image noise was applied to panel {{panel}}. You can still reshuffle or regenerate panels.',
+          {panel: Number(noiseApplyResult.noisePanelIndex) + 1}
+        )
+      }
+
+      notify(t('Flip panels generated'), buildSuccessDescription)
       if (
         response &&
         response.renderFeedback &&
@@ -2346,6 +2410,49 @@ export default function NewFlipPage() {
       setIsGeneratingFlipPanels(false)
     }
   }
+
+  const runAiAutoFlipBuilder = useCallback(async () => {
+    const currentDraft =
+      storyOptions.find(
+        (item) => String(item.id) === String(selectedStoryId)
+      ) ||
+      storyOptions[0] ||
+      null
+
+    let draftResult = null
+    if (currentDraft && Array.isArray(currentDraft.panels)) {
+      draftResult = {
+        options: storyOptions,
+        selectedStoryId: String(currentDraft.id || ''),
+        storyPanels: normalizeStoryPanelsInput(currentDraft.panels),
+        includeNoise: Boolean(currentDraft.includeNoise),
+        noisePanelIndex: Number.isFinite(Number(currentDraft.noisePanelIndex))
+          ? Number(currentDraft.noisePanelIndex)
+          : storyNoisePanelIndex,
+      }
+    } else {
+      draftResult = await generateStoryAlternatives({optimize: false})
+    }
+
+    if (!draftResult || !Array.isArray(draftResult.storyPanels)) {
+      return
+    }
+
+    await buildFlipWithAi({
+      regenerateIndices: [0, 1, 2, 3],
+      storyOptionsOverride: draftResult.options,
+      selectedStoryIdOverride: draftResult.selectedStoryId,
+      storyPanelsOverride: draftResult.storyPanels,
+      includeNoiseOverride: draftResult.includeNoise,
+      noisePanelIndexOverride: draftResult.noisePanelIndex,
+    })
+  }, [
+    buildFlipWithAi,
+    generateStoryAlternatives,
+    selectedStoryId,
+    storyNoisePanelIndex,
+    storyOptions,
+  ])
 
   const ensureAiTestUnitBridge = () => {
     if (!global.aiTestUnit) {
@@ -3539,9 +3646,7 @@ export default function NewFlipPage() {
                     onChangeAdversarialId={(newIndex) => {
                       send('CHANGE_ADVERSARIAL_ID', {newIndex})
                     }}
-                    onUseAiFlipFlow={() => {
-                      scrollToBuilderAnchor('ai-image-step-bridge')
-                    }}
+                    onUseAiFlipFlow={runAiAutoFlipBuilder}
                   />
                 </>
               )}

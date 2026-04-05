@@ -3440,6 +3440,58 @@ function buildPanelPrompt({
   ].join('\n')
 }
 
+function buildStoryboardSheetPrompt({
+  storyPanels = [],
+  keywordA,
+  keywordB,
+  visualStyle,
+  includeNoise = false,
+  noisePanelIndex = null,
+  senseSelection = null,
+}) {
+  const lockedSenseLines = formatSensePromptLines(
+    senseSelection,
+    keywordA,
+    keywordB
+  )
+  const continuityLines = buildPanelContinuityLines({
+    storyPanels,
+    keywordA,
+    keywordB,
+    senseSelection,
+  })
+  const normalizedPanels = normalizeStoryPanels(storyPanels)
+  const panelLines = normalizedPanels.map((panelText, index) => {
+    const role = STORY_PANEL_ROLES[index] || 'progression'
+    return `- Panel ${index + 1} (${role}): ${panelText}`
+  })
+
+  return [
+    'Create one single 2x2 storyboard sheet image with four silent comic panels in reading order.',
+    `Keywords that must remain visually present across the story: ${keywordA} and ${keywordB}.`,
+    ...lockedSenseLines,
+    ...continuityLines,
+    'Layout requirements:',
+    '- Show exactly four panels arranged as a 2x2 grid with clear visual separation.',
+    '- Reading order must be top-left panel 1, top-right panel 2, bottom-left panel 3, bottom-right panel 4.',
+    '- Keep each panel large and readable. Do not add panel numbers, speech bubbles, captions, letters, logos, watermarks, or UI text.',
+    '- Keep one coherent environment and recurring subject across the whole sheet.',
+    '- Make each quadrant visibly distinct in action, pose, camera framing, and state progression.',
+    includeNoise
+      ? `- Panel ${
+          Number(noisePanelIndex) + 1
+        } may receive adversarial noise later, so keep its main objects large and centered.`
+      : '',
+    'Storyboard content:',
+    ...panelLines,
+    'Style requirements:',
+    visualStyle,
+    'Output image only.',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 function buildPanelNoTextAuditPrompt({
   panelIndex,
   panelStory,
@@ -3765,6 +3817,14 @@ function buildImageProfileCandidates({provider, imageModel, imageSize}) {
       }) === index
     )
   })
+}
+
+function resolveSheetImageSize(requestedImageSize) {
+  const normalized = normalizeProviderImageSize(requestedImageSize)
+  if (normalized === '1536x1024') {
+    return normalized
+  }
+  return '1536x1024'
 }
 
 function hashScore(value) {
@@ -6221,6 +6281,12 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const regenerateIndices = requestedRegenerateIndices.length
       ? Array.from(new Set(requestedRegenerateIndices))
       : [0, 1, 2, 3]
+    const requestedPanelRenderMode = String(
+      payload.panelRenderMode || ''
+    ).trim()
+    const panelRenderMode = (
+      requestedPanelRenderMode || (fastBuild ? 'sheet_fast' : 'panels')
+    ).toLowerCase()
 
     const imageRequestTimeoutMs = Math.max(
       Number(payload.requestTimeoutMs) || 0,
@@ -6349,6 +6415,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
       model,
       imageModel,
       imageSize,
+      panelRenderModeRequested: requestedPanelRenderMode || null,
+      panelRenderMode,
       requestedImageSize,
       requestTimeoutMs: profile.requestTimeoutMs,
       maxRetries: profile.maxRetries,
@@ -6370,6 +6438,232 @@ function createAiProviderBridge(logger, dependencies = {}) {
         normalizedImageSize: imageSize,
       })
     }
+    const canUseSheetFastMode =
+      panelRenderMode === 'sheet_fast' &&
+      regenerateIndices.length === 4 &&
+      renderFeedbackIteration === 0
+    const sheetPanelMetadata = storyPanels
+      .slice(0, 4)
+      .map((panelStory, index) => ({
+        index,
+        panelStory: panelStory || '',
+        generated: true,
+      }))
+
+    if (canUseSheetFastMode) {
+      const sheetPrompt = buildStoryboardSheetPrompt({
+        storyPanels,
+        keywordA,
+        keywordB,
+        visualStyle,
+        includeNoise,
+        noisePanelIndex,
+        senseSelection,
+      })
+      const sheetImageSize = resolveSheetImageSize(imageSize)
+      const timeoutCandidates = buildImageTimeoutCandidates(
+        fastBuild
+          ? Math.min(profile.requestTimeoutMs, 75 * 1000)
+          : profile.requestTimeoutMs
+      )
+      const imageProfileCandidates = buildImageProfileCandidates({
+        provider,
+        imageModel,
+        imageSize: sheetImageSize,
+      })
+      let sheetResponse = null
+      let sheetImageModel = imageModel
+      let sheetImageSizeUsed = sheetImageSize
+      let timeoutFailure = null
+
+      try {
+        for (
+          let profileIndex = 0;
+          profileIndex < imageProfileCandidates.length && !sheetResponse;
+          profileIndex += 1
+        ) {
+          const profileCandidate = imageProfileCandidates[profileIndex]
+          for (
+            let timeoutIndex = 0;
+            timeoutIndex < timeoutCandidates.length && !sheetResponse;
+            timeoutIndex += 1
+          ) {
+            const timeoutMs = timeoutCandidates[timeoutIndex]
+            const imageProfile = {
+              ...profile,
+              requestTimeoutMs: timeoutMs,
+            }
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              sheetResponse = await withRetries(profile.maxRetries, () =>
+                runImageProvider({
+                  provider,
+                  imageModel: profileCandidate.imageModel,
+                  prompt: sheetPrompt,
+                  profile: imageProfile,
+                  apiKey,
+                  providerConfig: resolveProviderConfig(
+                    provider,
+                    providerConfig
+                  ),
+                  size: profileCandidate.imageSize,
+                  quality: imageQuality,
+                  style: imageStyle,
+                })
+              )
+              if (sheetResponse) {
+                sheetImageModel = profileCandidate.imageModel
+                sheetImageSizeUsed = profileCandidate.imageSize
+                if (profileIndex > 0) {
+                  logger.info('AI image generation fallback profile used', {
+                    provider,
+                    panel: 'sheet',
+                    imageModel: profileCandidate.imageModel,
+                    imageSize: profileCandidate.imageSize,
+                    reason: profileCandidate.reason,
+                  })
+                }
+              }
+            } catch (error) {
+              if (isTimeoutError(error)) {
+                timeoutFailure = error
+                logger.info('AI storyboard sheet timeout, escalating timeout', {
+                  provider,
+                  imageModel: profileCandidate.imageModel,
+                  imageSize: profileCandidate.imageSize,
+                  timeoutMs,
+                  nextTimeoutMs:
+                    timeoutCandidates[timeoutIndex + 1] || timeoutMs,
+                })
+              } else {
+                throw error
+              }
+            }
+          }
+        }
+
+        if (!sheetResponse && timeoutFailure) {
+          throw new Error(
+            `Storyboard sheet generation timed out (model ${imageModel}, size ${sheetImageSize}, tried timeouts: ${timeoutCandidates.join(
+              'ms, '
+            )}ms, fallback profiles: ${imageProfileCandidates
+              .map((item) => `${item.imageModel}@${item.imageSize}`)
+              .join(', ')}).`
+          )
+        }
+
+        if (sheetResponse && String(sheetResponse.imageDataUrl || '').trim()) {
+          const sheetUsage = addTokenUsage(
+            createEmptyTokenUsage(),
+            sheetResponse.usage || createEmptyTokenUsage()
+          )
+          const sheetEstimatedTextCostUsd = estimateTextCostUsd(
+            sheetUsage,
+            model
+          )
+          const imageUnitPrice = isOpenAiCompatibleProvider(provider)
+            ? resolveOpenAiImageUnitPrice(sheetImageModel, sheetImageSizeUsed)
+            : null
+          const sheetEstimatedImageCostUsd = Number.isFinite(imageUnitPrice)
+            ? imageUnitPrice
+            : 0
+          const sheetEstimatedUsd =
+            (sheetEstimatedTextCostUsd || 0) + sheetEstimatedImageCostUsd
+
+          logger.info('AI storyboard sheet mode used', {
+            provider,
+            model,
+            imageModel: sheetImageModel,
+            imageSize: sheetImageSizeUsed,
+          })
+
+          return {
+            ok: true,
+            provider,
+            model,
+            imageModel,
+            imageSize: sheetImageSizeUsed,
+            latencyMs: now() - startedAt,
+            includeNoise,
+            noisePanelIndex: includeNoise ? noisePanelIndex : null,
+            generatedPanelCount: 1,
+            textAuditEnabled: false,
+            textAuditModel: '',
+            textAuditMaxRetries: 0,
+            validatorEnabled: false,
+            validatorModel: '',
+            validatorMaxRetries: 0,
+            panelRenderModeUsed: 'sheet_fast',
+            selectedStory: {
+              id: activeStory.id,
+              title: activeStory.title,
+              panels: storyPanels.slice(0, 4),
+              senseSelection,
+            },
+            textOverlayRetryCount: 0,
+            senseSelection,
+            textAuditByPanel: Array.from({length: 4}, () =>
+              createEmptyPanelTextAuditResult()
+            ),
+            validatorAuditByPanel: Array.from({length: 4}, () =>
+              createEmptyRenderedPanelAuditResult()
+            ),
+            validatorMetrics: {
+              validator_invoked: 0,
+              ocr_fail: 0,
+              visibility_fail: 0,
+              alignment_fail: 0,
+              policy_fail: 0,
+              validator_retry_count: 0,
+              panel_repair_reason: [],
+            },
+            panels: [
+              {
+                index: 0,
+                imageDataUrl: String(sheetResponse.imageDataUrl || '').trim(),
+                imageModelUsed: sheetImageModel,
+                imageSizeUsed: sheetImageSizeUsed,
+                panelPrompt: sheetPrompt,
+                panelStory: storyPanels.join(' | '),
+                generated: true,
+                isCompositeSheet: true,
+              },
+            ],
+            panelMetadataByIndex: sheetPanelMetadata.map((item, index) => ({
+              ...item,
+              panelPrompt: sheetPrompt,
+              imageModelUsed: sheetImageModel,
+              imageSizeUsed: sheetImageSizeUsed,
+              generated: true,
+              index,
+            })),
+            imageFallbackUsed:
+              String(sheetImageModel || '').trim() !==
+                String(imageModel || '').trim() ||
+              String(sheetImageSizeUsed || '').trim() !==
+                String(sheetImageSize || '').trim(),
+            tokenUsage: normalizeTokenUsage(sheetUsage),
+            costs: {
+              estimatedUsd: sheetEstimatedUsd,
+              actualUsd: sheetEstimatedUsd,
+              estimatedTextUsd: sheetEstimatedTextCostUsd,
+              estimatedImageUsd: Number.isFinite(sheetEstimatedImageCostUsd)
+                ? sheetEstimatedImageCostUsd
+                : null,
+            },
+          }
+        }
+      } catch (error) {
+        logger.info('AI storyboard sheet mode fallback', {
+          provider,
+          model,
+          error: String((error && error.message) || error || '')
+            .trim()
+            .slice(0, 240),
+        })
+      }
+    }
+
     const nextPanels = existingPanels.slice(0, 4)
     const promptByPanel = Array.from({length: 4}, () => '')
     const panelImageModelUsed = Array.from({length: 4}, () => imageModel)

@@ -3304,6 +3304,7 @@ describe('createAiProviderBridge', () => {
       model: 'gemini-2.0-flash',
       imageModel: 'gemini-2.5-flash-image',
       imageSize: '1024x1024',
+      panelRenderMode: 'panels',
       requestTimeoutMs: 15000,
       textAuditEnabled: false,
       maxRetries: 0,
@@ -3465,6 +3466,7 @@ describe('createAiProviderBridge', () => {
       imageModel: 'gemini-2.5-flash-image',
       imageSize: '1024x1024',
       requestTimeoutMs: 15000,
+      panelRenderMode: 'panels',
       textAuditEnabled: false,
       maxRetries: 0,
       keywords: ['cat', 'lamp'],
@@ -3498,6 +3500,63 @@ describe('createAiProviderBridge', () => {
       'Keep the same background location, lighting family, and cartoon rendering style across all 4 panels'
     )
     expect(httpClient.post).toHaveBeenCalledTimes(4)
+  })
+
+  it('uses one fast storyboard sheet request before splitting into four panels', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: {
+          data: [
+            {
+              b64_json: 'AAA=',
+              mime_type: 'image/png',
+            },
+          ],
+          usage: {
+            prompt_tokens: 12,
+            completion_tokens: 0,
+            total_tokens: 12,
+          },
+        },
+      }),
+      get: jest.fn(),
+    }
+
+    const bridge = createAiProviderBridge(mockLogger(), {httpClient})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.generateFlipPanels({
+      provider: 'openai',
+      model: 'gpt-4.1-mini',
+      imageModel: 'gpt-image-1-mini',
+      imageSize: '1024x1024',
+      requestTimeoutMs: 15000,
+      fastBuild: true,
+      textAuditEnabled: false,
+      maxRetries: 0,
+      panelRenderMode: 'sheet_fast',
+      keywords: ['shock', 'ghost'],
+      storyPanels: [
+        'A calm person enters a hallway with a cup.',
+        'A ghost appears and the person jolts in shock.',
+        'The cup drops and water spreads across the floor.',
+        'The person backs away from the puddle while the ghost remains visible.',
+      ],
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.panelRenderModeUsed).toBe('sheet_fast')
+    expect(result.generatedPanelCount).toBe(1)
+    expect(result.panels).toHaveLength(1)
+    expect(result.panels[0]).toMatchObject({
+      isCompositeSheet: true,
+      imageDataUrl: 'data:image/png;base64,AAA=',
+    })
+    expect(result.panels[0].panelPrompt).toContain(
+      'Create one single 2x2 storyboard sheet image with four silent comic panels in reading order.'
+    )
+    expect(result.panelMetadataByIndex).toHaveLength(4)
+    expect(httpClient.post).toHaveBeenCalledTimes(1)
   })
 
   it('adds a stable human character continuity anchor to every panel prompt', async () => {
@@ -3745,6 +3804,7 @@ describe('createAiProviderBridge', () => {
       model: 'gpt-4.1-mini',
       imageModel: 'gpt-image-1-mini',
       imageSize: '1024x1024',
+      panelRenderMode: 'panels',
       requestTimeoutMs: 15000,
       textAuditEnabled: false,
       validatorEnabled: false,
@@ -3873,6 +3933,7 @@ describe('createAiProviderBridge', () => {
       model: 'gpt-4.1-mini',
       imageModel: 'gpt-image-1-mini',
       imageSize: '1024x1024',
+      panelRenderMode: 'panels',
       requestTimeoutMs: 15000,
       textAuditEnabled: false,
       validatorEnabled: false,
