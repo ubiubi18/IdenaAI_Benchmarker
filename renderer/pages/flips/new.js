@@ -1308,6 +1308,12 @@ export default function NewFlipPage() {
   const [storyNoisePanelIndex, setStoryNoisePanelIndex] = useState(0)
   const [isGeneratingFlipPanels, setIsGeneratingFlipPanels] = useState(false)
   const [generatedFlipPanels, setGeneratedFlipPanels] = useState([])
+  const [allowFullyAutomatedNodePublish, setAllowFullyAutomatedNodePublish] =
+    useState(false)
+  const [
+    isRunningFullyAutomatedNodePublish,
+    setIsRunningFullyAutomatedNodePublish,
+  ] = useState(false)
   const [flipBuildStatus, setFlipBuildStatus] = useState({
     kind: 'idle',
     message: '',
@@ -2580,6 +2586,14 @@ export default function NewFlipPage() {
                   elapsed: elapsedMs,
                 }),
         })
+        return {
+          ok: true,
+          panelCount: finalPanelDataUrls.length,
+          panelRenderModeUsed:
+            response && response.panelRenderModeUsed
+              ? response.panelRenderModeUsed
+              : '',
+        }
       } catch (error) {
         const message = formatAiRunError(error)
         notify(t('Flip generation failed'), message, 'error')
@@ -2590,6 +2604,7 @@ export default function NewFlipPage() {
         if (/API key missing|AI helper is disabled/i.test(message)) {
           router.push('/settings/ai')
         }
+        return null
       } finally {
         setIsGeneratingFlipPanels(false)
       }
@@ -2622,56 +2637,79 @@ export default function NewFlipPage() {
     ]
   )
 
-  const runAiAutoFlipBuilder = useCallback(async () => {
-    if (!(await ensureKeywordsReady())) {
-      return
-    }
-
-    const currentDraft =
-      storyOptions.find(
-        (item) => String(item.id) === String(selectedStoryId)
-      ) ||
-      storyOptions[0] ||
-      null
-
-    let draftResult = null
-    if (currentDraft && Array.isArray(currentDraft.panels)) {
-      draftResult = {
-        options: storyOptions,
-        selectedStoryId: String(currentDraft.id || ''),
-        storyPanels: normalizeStoryPanelsInput(currentDraft.panels),
-        includeNoise: Boolean(currentDraft.includeNoise),
-        noisePanelIndex: Number.isFinite(Number(currentDraft.noisePanelIndex))
-          ? Number(currentDraft.noisePanelIndex)
-          : storyNoisePanelIndex,
+  const resolveAutoFlipDraftResult = useCallback(
+    async ({forceFreshDraft = false} = {}) => {
+      if (!(await ensureKeywordsReady())) {
+        return null
       }
-    } else {
-      draftResult = await generateStoryAlternatives({optimize: false})
-    }
+
+      const currentDraft =
+        !forceFreshDraft &&
+        (storyOptions.find(
+          (item) => String(item.id) === String(selectedStoryId)
+        ) ||
+          storyOptions[0] ||
+          null)
+
+      let draftResult = null
+      if (currentDraft && Array.isArray(currentDraft.panels)) {
+        draftResult = {
+          options: storyOptions,
+          selectedStoryId: String(currentDraft.id || ''),
+          storyPanels: normalizeStoryPanelsInput(currentDraft.panels),
+          includeNoise: Boolean(currentDraft.includeNoise),
+          noisePanelIndex: Number.isFinite(Number(currentDraft.noisePanelIndex))
+            ? Number(currentDraft.noisePanelIndex)
+            : storyNoisePanelIndex,
+        }
+      } else {
+        draftResult = await generateStoryAlternatives({optimize: false})
+      }
+
+      if (!draftResult || !Array.isArray(draftResult.storyPanels)) {
+        return null
+      }
+
+      const canSpecificityOptimize =
+        storyOptionCount === 1 &&
+        hasMeaningfulDraftPanelsForSpecificity(draftResult.storyPanels)
+
+      if (canSpecificityOptimize) {
+        const optimizedDraftResult = await generateStoryAlternatives({
+          optimize: true,
+          basePanels: draftResult.storyPanels,
+        })
+
+        if (
+          optimizedDraftResult &&
+          Array.isArray(optimizedDraftResult.storyPanels)
+        ) {
+          draftResult = optimizedDraftResult
+        }
+      }
+
+      return draftResult
+    },
+    [
+      ensureKeywordsReady,
+      generateStoryAlternatives,
+      selectedStoryId,
+      storyNoisePanelIndex,
+      storyOptionCount,
+      storyOptions,
+    ]
+  )
+
+  const runAiAutoFlipBuilder = useCallback(async () => {
+    const draftResult = await resolveAutoFlipDraftResult({
+      forceFreshDraft: false,
+    })
 
     if (!draftResult || !Array.isArray(draftResult.storyPanels)) {
-      return
+      return null
     }
 
-    const canSpecificityOptimize =
-      storyOptionCount === 1 &&
-      hasMeaningfulDraftPanelsForSpecificity(draftResult.storyPanels)
-
-    if (canSpecificityOptimize) {
-      const optimizedDraftResult = await generateStoryAlternatives({
-        optimize: true,
-        basePanels: draftResult.storyPanels,
-      })
-
-      if (
-        optimizedDraftResult &&
-        Array.isArray(optimizedDraftResult.storyPanels)
-      ) {
-        draftResult = optimizedDraftResult
-      }
-    }
-
-    await buildFlipWithAi({
+    return buildFlipWithAi({
       regenerateIndices: [0, 1, 2, 3],
       storyOptionsOverride: draftResult.options,
       selectedStoryIdOverride: draftResult.selectedStoryId,
@@ -2679,14 +2717,101 @@ export default function NewFlipPage() {
       includeNoiseOverride: draftResult.includeNoise,
       noisePanelIndexOverride: draftResult.noisePanelIndex,
     })
+  }, [buildFlipWithAi, resolveAutoFlipDraftResult])
+
+  const runFullyAutomatedNodeFlipPublish = useCallback(async () => {
+    if (!allowFullyAutomatedNodePublish) {
+      notify(
+        t('Full auto publish is disabled'),
+        t(
+          'This risky mode stays off by default. Turn on the explicit warning switch first if you still want to use it on your own risk.'
+        ),
+        'warning'
+      )
+      return
+    }
+
+    if (keywordSource !== 'node' || !keywordPairId) {
+      notify(
+        t('Node keyword pair required'),
+        t(
+          'Fully automated publish is only available for real node keyword pairs. Random local test pairs are intentionally excluded.'
+        ),
+        'warning'
+      )
+      return
+    }
+
+    if (syncing) {
+      failToast('Can not submit flip while node is synchronizing')
+      return
+    }
+
+    if (offline) {
+      failToast('Can not submit flip. Node is offline')
+      return
+    }
+
+    setIsRunningFullyAutomatedNodePublish(true)
+    try {
+      await ensureAiRunReady()
+      const draftResult = await resolveAutoFlipDraftResult({
+        forceFreshDraft: true,
+      })
+
+      if (!draftResult || !Array.isArray(draftResult.storyPanels)) {
+        throw new Error(
+          'Could not generate a storyboard draft for the current node keyword pair.'
+        )
+      }
+
+      const buildResult = await buildFlipWithAi({
+        regenerateIndices: [0, 1, 2, 3],
+        storyOptionsOverride: draftResult.options,
+        selectedStoryIdOverride: draftResult.selectedStoryId,
+        storyPanelsOverride: draftResult.storyPanels,
+        includeNoiseOverride: draftResult.includeNoise,
+        noisePanelIndexOverride: draftResult.noisePanelIndex,
+      })
+
+      if (!buildResult || buildResult.ok !== true) {
+        return
+      }
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 80)
+      })
+      send('SUBMIT')
+      notify(
+        t('Fully automated submit started'),
+        t(
+          'AI generated a draft, built the flip, shuffled it, and started publishing it for the current node keyword pair. Monitor the result carefully.'
+        ),
+        'warning'
+      )
+    } catch (error) {
+      const message = formatAiRunError(error)
+      notify(t('Fully automated publish failed'), message, 'error')
+      if (/API key missing|AI helper is disabled/i.test(message)) {
+        router.push('/settings/ai')
+      }
+    } finally {
+      setIsRunningFullyAutomatedNodePublish(false)
+    }
   }, [
+    allowFullyAutomatedNodePublish,
     buildFlipWithAi,
-    ensureKeywordsReady,
-    generateStoryAlternatives,
-    selectedStoryId,
-    storyNoisePanelIndex,
-    storyOptionCount,
-    storyOptions,
+    ensureAiRunReady,
+    failToast,
+    keywordPairId,
+    keywordSource,
+    notify,
+    offline,
+    resolveAutoFlipDraftResult,
+    router,
+    send,
+    syncing,
+    t,
   ])
 
   const ensureAiTestUnitBridge = () => {
@@ -4360,6 +4485,89 @@ export default function NewFlipPage() {
                               'Reasoning model handles storyline generation and text-audit; image model handles panel rendering. Use cheaper image models to reduce cost.'
                             )}
                           </Text>
+                          <Box
+                            borderWidth="1px"
+                            borderColor="orange.200"
+                            borderRadius="md"
+                            p={3}
+                            bg="orange.012"
+                          >
+                            <Stack spacing={3}>
+                              <Flex
+                                align={['flex-start', 'center']}
+                                justify="space-between"
+                                direction={['column', 'row']}
+                              >
+                                <Box pr={[0, 3]}>
+                                  <Text
+                                    fontSize="sm"
+                                    fontWeight={500}
+                                    color="orange.700"
+                                  >
+                                    {t(
+                                      'Experimental: fully automated real-node flip publishing'
+                                    )}
+                                  </Text>
+                                  <Text fontSize="xs" color="orange.700" mt={1}>
+                                    {t(
+                                      'Disabled by default. In testing so far, the full pipeline from story to publish has not been reliable enough for consistently good results.'
+                                    )}
+                                  </Text>
+                                </Box>
+                                <Switch
+                                  isChecked={allowFullyAutomatedNodePublish}
+                                  onChange={() =>
+                                    setAllowFullyAutomatedNodePublish(
+                                      !allowFullyAutomatedNodePublish
+                                    )
+                                  }
+                                />
+                              </Flex>
+                              <Text fontSize="xs" color="muted">
+                                {t(
+                                  'Use this on your own risk. Manual flip builder flow is still the recommended path: adjust the story text yourself, rebuild weak panels, and work over the final images before publishing.'
+                                )}
+                              </Text>
+                              <Text fontSize="xs" color="muted">
+                                {t(
+                                  'Cheapest models failed most often in early testing. If you still use full auto, expect to tune advanced settings yourself.'
+                                )}
+                              </Text>
+                              <Text fontSize="xs" color="muted">
+                                {t(
+                                  'Costs can explode if retries or image generation spiral. Use only API budgets you can afford, ideally prepaid budgets with a hard upper limit.'
+                                )}
+                              </Text>
+                              <Text fontSize="xs" color="muted">
+                                {keywordSource === 'node'
+                                  ? t(
+                                      'This mode is only intended for real blockchain-provided node keyword pairs tied to your identity.'
+                                    )
+                                  : t(
+                                      'This mode stays disabled for local random test pairs. Switch back to node keywords if you really want to use it.'
+                                    )}
+                              </Text>
+                              <Stack isInline justify="flex-end">
+                                <SecondaryButton
+                                  isDisabled={
+                                    !allowFullyAutomatedNodePublish ||
+                                    keywordSource !== 'node' ||
+                                    !keywordPairId ||
+                                    syncing ||
+                                    offline ||
+                                    isGeneratingStoryOptions ||
+                                    isGeneratingFlipPanels ||
+                                    isRunningFullyAutomatedNodePublish ||
+                                    is('submit.submitting')
+                                  }
+                                  isLoading={isRunningFullyAutomatedNodePublish}
+                                  onClick={runFullyAutomatedNodeFlipPublish}
+                                >
+                                  {t('Run full auto on current node pair')}
+                                </SecondaryButton>
+                              </Stack>
+                            </Stack>
+                          </Box>
                           <Flex align="center" justify="space-between">
                             <Text fontSize="sm" color="muted">
                               {t(
@@ -5513,6 +5721,21 @@ export default function NewFlipPage() {
                     <Text fontSize="xs" color="muted">
                       {t(
                         'When should I open AI settings? On first setup, when you change provider/model, or when a session key is missing.'
+                      )}
+                    </Text>
+                    <Text fontSize="xs" color="muted">
+                      {t(
+                        'Should I use full auto publish? Only with caution. It is disabled by default because testing so far showed the fully automated story -> flip -> publish pipeline is still not reliable enough for consistently good results.'
+                      )}
+                    </Text>
+                    <Text fontSize="xs" color="muted">
+                      {t(
+                        'What is the safer path? Use the builder as a manual helper: inspect the draft, rewrite the text beats, rebuild weak panels, and publish only after your own review.'
+                      )}
+                    </Text>
+                    <Text fontSize="xs" color="muted">
+                      {t(
+                        'What about cost? Cheap models failed most often in early testing, retries can snowball, and you are responsible for your own spending. Prefer prepaid API budgets with a hard upper limit.'
                       )}
                     </Text>
                   </Stack>
