@@ -1306,7 +1306,6 @@ export default function NewFlipPage() {
     hasKey: false,
     provider: '',
   })
-  const [showAiGuideDetails, setShowAiGuideDetails] = useState(false)
   const [storyPanelsDraft, setStoryPanelsDraft] = useState(
     coerceStoryPanelsDraft([])
   )
@@ -4233,11 +4232,11 @@ export default function NewFlipPage() {
                   >
                     <Stack spacing={4}>
                       <Text fontWeight={500}>
-                        {t('AI benchmark helper (regular builder flow)')}
+                        {t('AI assistant for this flip')}
                       </Text>
                       <Text color="muted" fontSize="sm">
                         {t(
-                          'Use queue and JSON tools directly in the normal flip submit step. This keeps testing in the same workflow regular users already know.'
+                          'Choose one simple path: create a flip with AI or solve queued flips with AI. Open advanced settings only when the default path is not enough.'
                         )}
                       </Text>
                       <Box
@@ -4255,11 +4254,11 @@ export default function NewFlipPage() {
                           >
                             <Box>
                               <Text fontSize="sm" fontWeight={500}>
-                                {t('Quick start')}
+                                {t('Start here')}
                               </Text>
                               <Text fontSize="xs" color="muted">
                                 {t(
-                                  '1. Choose provider and set a session API key. 2. Generate one draft and edit weak panels. 3. Build images or add the draft to the benchmark queue.'
+                                  '1. Choose provider and set a session API key. 2. Pick Create or Solve below. 3. Keep advanced controls hidden unless you really need them.'
                                 )}
                               </Text>
                             </Box>
@@ -4267,7 +4266,7 @@ export default function NewFlipPage() {
                               <SecondaryButton
                                 onClick={aiGuideDisclosure.onOpen}
                               >
-                                {t('Setup & FAQ')}
+                                {t('Open setup guide')}
                               </SecondaryButton>
                               <SecondaryButton
                                 onClick={() => router.push('/settings/ai')}
@@ -4324,82 +4323,6 @@ export default function NewFlipPage() {
                               </Text>
                             </Box>
                           </SimpleGrid>
-                          <Stack isInline justify="flex-end" spacing={2}>
-                            <SecondaryButton
-                              onClick={() =>
-                                setShowAiGuideDetails((value) => !value)
-                              }
-                            >
-                              {showAiGuideDetails
-                                ? t('Hide inline FAQ')
-                                : t('Show inline FAQ')}
-                            </SecondaryButton>
-                          </Stack>
-                          {showAiGuideDetails ? (
-                            <Stack spacing={2}>
-                              <Box
-                                borderWidth="1px"
-                                borderColor="gray.100"
-                                borderRadius="md"
-                                p={2}
-                                bg="white"
-                              >
-                                <Text fontSize="sm" fontWeight={500}>
-                                  {t('What is flip generation?')}
-                                </Text>
-                                <Text fontSize="xs" color="muted">
-                                  {t(
-                                    'Generate a story draft from the current keyword pair, rewrite any weak panel text, then build four images from the edited draft.'
-                                  )}
-                                </Text>
-                              </Box>
-                              <Box
-                                borderWidth="1px"
-                                borderColor="gray.100"
-                                borderRadius="md"
-                                p={2}
-                                bg="white"
-                              >
-                                <Text fontSize="sm" fontWeight={500}>
-                                  {t('What is flip solving / benchmark mode?')}
-                                </Text>
-                                <Text fontSize="xs" color="muted">
-                                  {t(
-                                    'Use the queue below to run short or long benchmark sessions on saved draft flips. Solving happens on those queued flips, not only on the story generator.'
-                                  )}
-                                </Text>
-                              </Box>
-                              <Box
-                                borderWidth="1px"
-                                borderColor="gray.100"
-                                borderRadius="md"
-                                p={2}
-                                bg="white"
-                              >
-                                <Text fontSize="sm" fontWeight={500}>
-                                  {t('When should I use advanced settings?')}
-                                </Text>
-                                <Text fontSize="xs" color="muted">
-                                  {t(
-                                    'Only when you want to tune retries, timeouts, custom models, or benchmark queue behavior. The default path should work with fewer clicks.'
-                                  )}
-                                </Text>
-                              </Box>
-                            </Stack>
-                          ) : null}
-                        </Stack>
-                      </Box>
-                      <Box
-                        borderWidth="1px"
-                        borderColor="gray.100"
-                        borderRadius="md"
-                        p={3}
-                        bg="white"
-                      >
-                        <Stack spacing={3}>
-                          <Text fontSize="sm" fontWeight={500}>
-                            {t('Choose your AI path')}
-                          </Text>
                           <Text fontSize="xs" color="muted">
                             {t(
                               'Beginner flow: first decide whether you want to create a flip or solve queued flips. You can still open advanced options later.'
@@ -4476,7 +4399,7 @@ export default function NewFlipPage() {
                           </Text>
                           <Text fontSize="xs" color="muted">
                             {t(
-                              'Keyword source: {{source}}. Keywords: {{a}} / {{b}}. Generate one or two story drafts, customize panel text, then build flip panels.',
+                              'Keywords: {{a}} / {{b}}. Source: {{source}}. Basic flow: generate one draft, make it more specific if needed, edit panel text, then build flip panels.',
                               {
                                 source: isRandomKeywordSource
                                   ? 'local random test (off-chain)'
@@ -4484,11 +4407,6 @@ export default function NewFlipPage() {
                                 a: keywordA || '-',
                                 b: keywordB || '-',
                               }
-                            )}
-                          </Text>
-                          <Text fontSize="xs" color="muted">
-                            {t(
-                              'Simple generator flow: 1. Generate 1 story draft. 2. Make the draft more specific if needed. 3. Edit any weak panel text. 4. Build flips.'
                             )}
                           </Text>
                           <Stack isInline spacing={2}>
@@ -5305,7 +5223,7 @@ export default function NewFlipPage() {
                           </Text>
                           <Text fontSize="xs" color="muted">
                             {t(
-                              'Simple solver flow: 1. Add the current draft flip to the queue. 2. Run short (6) or long (14). 3. Review the AI session result.'
+                              'Basic flow: add the current draft flip to the queue, then run short (6) or long (14). Use advanced settings only for queue tuning.'
                             )}
                           </Text>
                           <Text fontSize="xs" color="muted">
@@ -5321,15 +5239,16 @@ export default function NewFlipPage() {
                               {t('Reload queue')}
                             </SecondaryButton>
                             <SecondaryButton
-                              onClick={() => router.push('/settings/ai')}
-                            >
-                              {t('AI settings')}
-                            </SecondaryButton>
-                            <SecondaryButton
                               isLoading={isAddingToTestUnit}
                               onClick={addDraftToTestUnit}
                             >
                               {t('Add current draft flip to queue')}
+                            </SecondaryButton>
+                            <SecondaryButton
+                              isLoading={isAiDraftTesting}
+                              onClick={runAiTestBeforeSubmit}
+                            >
+                              {t('Run current draft now')}
                             </SecondaryButton>
                             <PrimaryButton
                               isLoading={isBuilderQueueRunning}
@@ -5359,26 +5278,6 @@ export default function NewFlipPage() {
                       </Box>
                       {showBenchmarkAdvanced ? (
                         <>
-                          <Stack isInline justify="flex-end" spacing={2}>
-                            <SecondaryButton
-                              onClick={() => router.push('/settings/ai')}
-                            >
-                              {t('AI settings')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isLoading={isAddingToTestUnit}
-                              onClick={addDraftToTestUnit}
-                            >
-                              {t('Add current draft flip to queue')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isLoading={isAiDraftTesting}
-                              onClick={runAiTestBeforeSubmit}
-                            >
-                              {t('Run current draft now')}
-                            </SecondaryButton>
-                          </Stack>
-
                           <SimpleGrid columns={[1, 2]} spacing={3}>
                             <Box>
                               <Text fontSize="xs" color="muted" mb={1}>
