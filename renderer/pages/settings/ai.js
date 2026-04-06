@@ -3,6 +3,8 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react'
 import {
   Box,
   Flex,
+  ListItem,
+  UnorderedList,
   Stack,
   Text,
   Switch,
@@ -35,6 +37,7 @@ import {
   checkAiProviderReadiness,
   formatMissingAiProviders,
 } from '../../shared/utils/ai-provider-readiness'
+import {AiEnableDialog} from '../../shared/components/ai-enable-dialog'
 
 const DEFAULT_MODELS = {
   openai: 'gpt-4o-mini',
@@ -213,6 +216,8 @@ export default function AiSettingsPage() {
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
   const [latestModelsByProvider, setLatestModelsByProvider] = useState({})
   const [showAdvancedAiSettings, setShowAdvancedAiSettings] = useState(false)
+  const setupSectionRef = React.useRef(null)
+  const [isEnableDialogOpen, setIsEnableDialogOpen] = useState(false)
   const [providerKeyStatus, setProviderKeyStatus] = useState({
     checked: false,
     checking: true,
@@ -379,6 +384,23 @@ export default function AiSettingsPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') {
+      return
+    }
+
+    if (
+      router.query?.setup === '1' &&
+      setupSectionRef.current &&
+      typeof setupSectionRef.current.scrollIntoView === 'function'
+    ) {
+      setupSectionRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }
+  }, [router.query])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
       return undefined
     }
 
@@ -444,7 +466,7 @@ export default function AiSettingsPage() {
   return (
     <SettingsLayout>
       <Stack spacing={8} mt={8} maxW="2xl">
-        <SettingsSection title={t('Optional AI features')}>
+        <SettingsSection title={t('AI')}>
           <Stack spacing={4}>
             <Box
               bg="blue.012"
@@ -453,35 +475,69 @@ export default function AiSettingsPage() {
               p={4}
               borderRadius="md"
             >
-              <Text fontWeight={500} color="blue.500">
-                {t('Classic app first, AI optional')}
-              </Text>
-              <Text color="muted" mt={1}>
+              <Text color="muted">
                 {t(
-                  'The app works without AI just like the normal desktop flow. Turn AI on only if you want AI-assisted flip generation or AI solving, and only after you configure your own provider key.'
+                  'Enable experimental AI features if you want AI solving or AI-assisted flip generation.'
                 )}
               </Text>
             </Box>
 
-            <Flex align="center" justify="space-between">
-              <Box>
-                <Text fontWeight={500}>{t('Enable optional AI features')}</Text>
-                <Text color="muted">
+            <Box
+              ref={setupSectionRef}
+              borderWidth="1px"
+              borderColor="blue.100"
+              borderRadius="md"
+              p={4}
+              bg="blue.012"
+            >
+              <Stack spacing={3}>
+                <Text fontWeight={600}>{t('Step 1: Set up AI access')}</Text>
+                <Text color="muted" fontSize="sm">
                   {t(
-                    'Off by default. When enabled, the app can use external AI providers for flip generation, image generation, and benchmark solving.'
+                    'First choose one main provider and load its API key. If you want multi-provider runs later, enable more providers in Advanced settings.'
                   )}
                 </Text>
-              </Box>
-              <Switch
-                isChecked={!!aiSolver.enabled}
-                onChange={() => {
-                  updateAiSolverSettings({enabled: !aiSolver.enabled})
-                }}
-              />
-            </Flex>
+                <UnorderedList spacing={1} color="muted" fontSize="sm">
+                  <ListItem>{t('First: turn AI on.')}</ListItem>
+                  <ListItem>{t('Second: choose one main provider.')}</ListItem>
+                  <ListItem>
+                    {t(
+                      'Third: paste a session API key and test the connection.'
+                    )}
+                  </ListItem>
+                  <ListItem>
+                    {t(
+                      'Optional later: add more providers in Advanced settings.'
+                    )}
+                  </ListItem>
+                </UnorderedList>
+                <Flex align="center" justify="space-between">
+                  <Box>
+                    <Text fontWeight={500}>
+                      {t('Enable optional AI features')}
+                    </Text>
+                    <Text color="muted">
+                      {t(
+                        'When enabled, a setup popup asks for provider and API key.'
+                      )}
+                    </Text>
+                  </Box>
+                  <Switch
+                    isChecked={!!aiSolver.enabled}
+                    onChange={() => {
+                      if (aiSolver.enabled) {
+                        updateAiSolverSettings({enabled: false})
+                        return
+                      }
+                      setIsEnableDialogOpen(true)
+                    }}
+                  />
+                </Flex>
+              </Stack>
+            </Box>
 
             <SettingsFormControl>
-              <SettingsFormLabel>{t('Provider')}</SettingsFormLabel>
+              <SettingsFormLabel>{t('Main AI provider')}</SettingsFormLabel>
               <Select
                 value={activeProvider}
                 onChange={(e) => updateProvider(e.target.value)}
@@ -494,6 +550,19 @@ export default function AiSettingsPage() {
                 ))}
               </Select>
             </SettingsFormControl>
+
+            <Flex align="center" justify="space-between">
+              <Box>
+                <Text fontWeight={500}>{t('Current setup state')}</Text>
+                <Text color="muted">
+                  {providerKeyStatusUi.detail ||
+                    t('Choose a provider and load a session API key.')}
+                </Text>
+              </Box>
+              <Text fontWeight={600} color={providerKeyStatusUi.color}>
+                {providerKeyStatusUi.label}
+              </Text>
+            </Flex>
 
             {isCustomConfigProvider(activeProvider) && (
               <Stack spacing={3}>
@@ -580,26 +649,68 @@ export default function AiSettingsPage() {
               p={3}
             >
               <Stack spacing={2}>
-                <Text fontWeight={500}>{t('Simple setup')}</Text>
+                <Text fontWeight={500}>
+                  {t('Step 2: Choose what you want')}
+                </Text>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'For most users: enable AI helper, choose provider/model, set key below, then start benchmark.'
+                    'After the key works, you can use one AI page for all flows: AI Flip Builder, AI Solver, off-chain benchmark, and on-chain automatic flow.'
                   )}
                 </Text>
+                <UnorderedList spacing={1} color="muted" fontSize="sm">
+                  <ListItem>
+                    {t(
+                      'AI Flip Builder: generate a story draft and build flip images.'
+                    )}
+                  </ListItem>
+                  <ListItem>
+                    {t('AI Solver: help solve validation flips.')}
+                  </ListItem>
+                  <ListItem>
+                    {t(
+                      'Off-chain benchmark: test queue runs locally without publishing.'
+                    )}
+                  </ListItem>
+                  <ListItem>
+                    {t(
+                      'On-chain automatic flow: generate, build, and publish with extra caution.'
+                    )}
+                  </ListItem>
+                </UnorderedList>
                 <Stack isInline spacing={2}>
                   <PrimaryButton
+                    isDisabled={!providerKeyStatus.primaryReady}
+                    onClick={() => router.push('/flips/new?autostep=submit')}
+                  >
+                    {t('Open AI Flip Builder')}
+                  </PrimaryButton>
+                  <PrimaryButton
+                    isDisabled={!providerKeyStatus.primaryReady}
+                    onClick={() => router.push('/validation?previewAi=1')}
+                  >
+                    {t('Open AI Solver')}
+                  </PrimaryButton>
+                </Stack>
+                <Stack isInline spacing={2}>
+                  <SecondaryButton
+                    isDisabled={!providerKeyStatus.primaryReady}
                     onClick={() =>
                       router.push(
                         '/flips/new?focus=ai-benchmark&autostep=submit'
                       )
                     }
                   >
-                    {t('Start benchmark now')}
-                  </PrimaryButton>
+                    {t('Open off-chain benchmark')}
+                  </SecondaryButton>
                   <SecondaryButton
-                    onClick={() => router.push('/settings/ai-test-unit')}
+                    isDisabled={!providerKeyStatus.primaryReady}
+                    onClick={() =>
+                      router.push(
+                        '/flips/new?focus=ai-benchmark&autostep=submit'
+                      )
+                    }
                   >
-                    {t('Open quick-start page')}
+                    {t('Open on-chain automatic flow')}
                   </SecondaryButton>
                 </Stack>
               </Stack>
@@ -1521,6 +1632,21 @@ export default function AiSettingsPage() {
           </Stack>
         </SettingsSection>
       </Stack>
+      <AiEnableDialog
+        isOpen={isEnableDialogOpen}
+        onClose={() => setIsEnableDialogOpen(false)}
+        defaultProvider={activeProvider}
+        providerOptions={PROVIDER_OPTIONS}
+        onComplete={async ({provider}) => {
+          updateAiSolverSettings({
+            enabled: true,
+            provider,
+            model: DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai,
+          })
+          setIsEnableDialogOpen(false)
+          await refreshProviderKeyStatus()
+        }}
+      />
     </SettingsLayout>
   )
 }

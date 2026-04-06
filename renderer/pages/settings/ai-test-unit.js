@@ -14,7 +14,7 @@ export default function AiTestUnitPage() {
   return (
     <SettingsLayout>
       <Stack spacing={8} mt={8} maxW="2xl">
-        <SettingsSection title={t('Local AI test unit')}>
+        <SettingsSection title={t('AI moved here')}>
           <Stack spacing={4}>
             <Box
               borderWidth="1px"
@@ -23,45 +23,27 @@ export default function AiTestUnitPage() {
               p={4}
             >
               <Stack spacing={2}>
-                <Text fontWeight={500}>{t('Simple flow (few clicks)')}</Text>
+                <Text fontWeight={500}>{t('Use the central AI page')}</Text>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    '1) Set AI key in AI Solver settings. 2) Open Flip Builder directly in submit step. 3) Add flip to queue. 4) Run short or long.'
+                    'AI Solver, AI Flip Builder, off-chain benchmark, and on-chain automatic flow are now grouped under one AI page.'
                   )}
                 </Text>
                 <Stack isInline spacing={2}>
                   <PrimaryButton onClick={() => router.push('/settings/ai')}>
-                    {t('Open AI Solver settings')}
-                  </PrimaryButton>
-                  <PrimaryButton
-                    onClick={() =>
-                      router.push(
-                        '/flips/new?focus=ai-benchmark&autostep=submit'
-                      )
-                    }
-                  >
-                    {t('Start simple benchmark')}
+                    {t('Open AI')}
                   </PrimaryButton>
                 </Stack>
               </Stack>
             </Box>
             <Text color="muted">
               {t(
-                'Benchmark tools run in the regular flip builder flow and validation preview.'
-              )}
-            </Text>
-            <Text color="muted">
-              {t(
-                'Use Flips -> New -> Submit to add/import flips and start queue/json runs.'
+                'Start with provider selection and API key setup on the AI page first.'
               )}
             </Text>
             <Stack isInline spacing={2}>
-              <PrimaryButton
-                onClick={() =>
-                  router.push('/flips/new?focus=ai-benchmark&autostep=submit')
-                }
-              >
-                {t('Open flip builder benchmark')}
+              <PrimaryButton onClick={() => router.push('/settings/ai')}>
+                {t('Open AI')}
               </PrimaryButton>
               <SecondaryButton
                 onClick={() => router.push('/validation?previewAi=1')}

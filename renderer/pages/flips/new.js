@@ -5318,12 +5318,7 @@ export default function NewFlipPage() {
                             </Text>
                             <Text color="muted" fontSize="sm">
                               {t(
-                                'The normal idena-desktop flow keeps working without AI. Turn AI on only if you want AI-assisted flip generation, image generation, or benchmark solving.'
-                              )}
-                            </Text>
-                            <Text color="muted" fontSize="sm">
-                              {t(
-                                'Recommended default: keep AI off for regular wallet, node, and flip work. Enable it only for deliberate benchmark or helper sessions.'
+                                'AI is off. Classic flip builder flow is active.'
                               )}
                             </Text>
                             <Stack isInline justify="flex-end" spacing={2}>

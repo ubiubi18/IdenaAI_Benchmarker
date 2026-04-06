@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import React from 'react'
 import {Trans, useTranslation} from 'react-i18next'
+import {useRouter} from 'next/router'
 import {
   Flex,
   Text,
@@ -76,6 +77,7 @@ import {
 import {viewVotingHref} from '../../screens/oracles/utils'
 import {useHardFork} from '../../screens/hardfork/hooks'
 import {ChevronRightIcon, GithubIcon} from './icons'
+import {AiEnableDialog} from './ai-enable-dialog'
 import {
   useAutoStartLottery,
   useAutoStartValidation,
@@ -411,77 +413,91 @@ function NormalApp({children}) {
 
 function BenchmarkResearchBanner() {
   const {t} = useTranslation()
+  const router = useRouter()
   const settings = useSettingsState()
   const [, {updateAiSolverSettings}] = useSettings()
   const aiEnabled = Boolean(settings?.aiSolver?.enabled)
+  const aiSetupDisclosure = useDisclosure()
 
   return (
-    <Alert
-      status={aiEnabled ? 'warning' : 'info'}
-      borderRadius={0}
-      bg={aiEnabled ? 'orange.50' : 'blue.50'}
-      borderBottomWidth={1}
-      borderBottomColor={aiEnabled ? 'orange.100' : 'blue.100'}
-      alignItems="center"
-      py={2}
-    >
-      <Flex
-        w="full"
-        px={4}
-        justify="space-between"
-        align="center"
-        flexWrap="wrap"
-        gap={2}
+    <>
+      <Alert
+        status={aiEnabled ? 'warning' : 'info'}
+        borderRadius={0}
+        bg={aiEnabled ? 'orange.50' : 'blue.50'}
+        borderBottomWidth={1}
+        borderBottomColor={aiEnabled ? 'orange.100' : 'blue.100'}
+        alignItems="center"
+        py={2}
       >
-        <Text fontSize="sm" color={aiEnabled ? 'orange.700' : 'blue.700'}>
-          {aiEnabled
-            ? t(
-                'Optional AI features are enabled. Flip text and images can be sent to your selected AI provider. Use this mode only when you want AI-assisted generation or solving.'
-              )
-            : t(
-                'This build can run like regular idena-desktop. Optional AI features are currently off and stay inactive until you enable them.'
-              )}
-        </Text>
-        <Stack isInline spacing={3} align="center">
-          <Stack isInline spacing={2} align="center">
-            <Text
-              fontSize="xs"
-              color={aiEnabled ? 'orange.700' : 'blue.700'}
-              fontWeight={600}
-            >
-              {aiEnabled
-                ? t('Optional AI features: on')
-                : t('Optional AI features: off')}
-            </Text>
-            <Switch
-              size="sm"
-              isChecked={aiEnabled}
-              onChange={() =>
-                updateAiSolverSettings({
-                  enabled: !aiEnabled,
-                })
-              }
-            />
-          </Stack>
-          <Text
-            fontSize="xs"
-            color={aiEnabled ? 'orange.700' : 'blue.700'}
-            fontWeight={500}
-          >
-            {aiEnabled
-              ? t('Classic flow still works.')
-              : t('Classic flow is active.')}
+        <Flex
+          w="full"
+          px={4}
+          justify="space-between"
+          align="center"
+          flexWrap="wrap"
+          gap={2}
+        >
+          <Text fontSize="sm" color={aiEnabled ? 'orange.700' : 'blue.700'}>
+            {t(
+              'Enable experimental AI features if you want AI solving or AI-assisted flip generation.'
+            )}
           </Text>
-          <Link
-            as={NextLink}
-            href="/settings/ai"
-            color={aiEnabled ? 'orange.800' : 'blue.800'}
-          >
-            {t('AI settings')}
-          </Link>
-        </Stack>
-      </Flex>
-    </Alert>
+          <Stack isInline spacing={3} align="center">
+            <Stack isInline spacing={2} align="center">
+              <Text
+                fontSize="xs"
+                color={aiEnabled ? 'orange.700' : 'blue.700'}
+                fontWeight={600}
+              >
+                {aiEnabled ? t('on') : t('off')}
+              </Text>
+              <Switch
+                size="sm"
+                isChecked={aiEnabled}
+                onChange={() => {
+                  if (aiEnabled) {
+                    updateAiSolverSettings({enabled: false})
+                    return
+                  }
+                  aiSetupDisclosure.onOpen()
+                }}
+              />
+            </Stack>
+            <Link
+              as={NextLink}
+              href="/settings/ai"
+              color={aiEnabled ? 'orange.800' : 'blue.800'}
+            >
+              {t('AI settings')}
+            </Link>
+          </Stack>
+        </Flex>
+      </Alert>
+      <AiEnableDialog
+        isOpen={aiSetupDisclosure.isOpen}
+        onClose={aiSetupDisclosure.onClose}
+        defaultProvider={String(settings?.aiSolver?.provider || 'openai')}
+        providerOptions={[
+          {value: 'openai', label: 'OpenAI'},
+          {value: 'anthropic', label: 'Anthropic Claude'},
+          {value: 'gemini', label: 'Google Gemini'},
+          {value: 'xai', label: 'xAI (Grok)'},
+          {value: 'mistral', label: 'Mistral'},
+          {value: 'groq', label: 'Groq'},
+          {value: 'deepseek', label: 'DeepSeek'},
+          {value: 'openrouter', label: 'OpenRouter'},
+          {value: 'openai-compatible', label: 'OpenAI-compatible (custom)'},
+        ]}
+        onComplete={async ({provider}) => {
+          updateAiSolverSettings({
+            enabled: true,
+            provider,
+          })
+          router.push('/settings/ai?setup=1')
+        }}
+      />
+    </>
   )
 }
 
