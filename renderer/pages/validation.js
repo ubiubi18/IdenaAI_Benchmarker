@@ -578,13 +578,15 @@ function ValidationSession({
       <Flex
         align="center"
         justify="center"
-        bg="orange.500"
+        bg={aiSolverSettings.enabled ? 'orange.500' : 'blue.500'}
         color="white"
         py={1}
         fontSize="xs"
         fontWeight={600}
       >
-        {t('Research benchmark fork. Not Idena mainnet.')}
+        {aiSolverSettings.enabled
+          ? t('Optional AI solver mode is enabled.')
+          : t('Classic validation flow active. Optional AI solver is off.')}
       </Flex>
 
       {syncing && (

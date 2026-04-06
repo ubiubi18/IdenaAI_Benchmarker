@@ -16,6 +16,7 @@ import {
   useToast,
   Alert,
   Link,
+  Switch,
   AlertDialog,
   AlertDialogOverlay,
   AlertDialogContent,
@@ -411,15 +412,16 @@ function NormalApp({children}) {
 function BenchmarkResearchBanner() {
   const {t} = useTranslation()
   const settings = useSettingsState()
+  const [, {updateAiSolverSettings}] = useSettings()
   const aiEnabled = Boolean(settings?.aiSolver?.enabled)
 
   return (
     <Alert
-      status="warning"
+      status={aiEnabled ? 'warning' : 'info'}
       borderRadius={0}
-      bg="orange.50"
+      bg={aiEnabled ? 'orange.50' : 'blue.50'}
       borderBottomWidth={1}
-      borderBottomColor="orange.100"
+      borderBottomColor={aiEnabled ? 'orange.100' : 'blue.100'}
       alignItems="center"
       py={2}
     >
@@ -431,16 +433,50 @@ function BenchmarkResearchBanner() {
         flexWrap="wrap"
         gap={2}
       >
-        <Text fontSize="sm" color="orange.700">
-          {t(
-            'Research benchmark fork. This app is not Idena mainnet. AI helper uploads flip images to your selected AI provider.'
-          )}
+        <Text fontSize="sm" color={aiEnabled ? 'orange.700' : 'blue.700'}>
+          {aiEnabled
+            ? t(
+                'Optional AI features are enabled. Flip text and images can be sent to your selected AI provider. Use this mode only when you want AI-assisted generation or solving.'
+              )
+            : t(
+                'This build can run like regular idena-desktop. Optional AI features are currently off and stay inactive until you enable them.'
+              )}
         </Text>
         <Stack isInline spacing={3} align="center">
-          <Text fontSize="xs" color="orange.700" fontWeight={600}>
-            {aiEnabled ? t('AI helper: enabled') : t('AI helper: disabled')}
+          <Stack isInline spacing={2} align="center">
+            <Text
+              fontSize="xs"
+              color={aiEnabled ? 'orange.700' : 'blue.700'}
+              fontWeight={600}
+            >
+              {aiEnabled
+                ? t('Optional AI features: on')
+                : t('Optional AI features: off')}
+            </Text>
+            <Switch
+              size="sm"
+              isChecked={aiEnabled}
+              onChange={() =>
+                updateAiSolverSettings({
+                  enabled: !aiEnabled,
+                })
+              }
+            />
+          </Stack>
+          <Text
+            fontSize="xs"
+            color={aiEnabled ? 'orange.700' : 'blue.700'}
+            fontWeight={500}
+          >
+            {aiEnabled
+              ? t('Classic flow still works.')
+              : t('Classic flow is active.')}
           </Text>
-          <Link as={NextLink} href="/settings/ai" color="orange.800">
+          <Link
+            as={NextLink}
+            href="/settings/ai"
+            color={aiEnabled ? 'orange.800' : 'blue.800'}
+          >
             {t('AI settings')}
           </Link>
         </Stack>

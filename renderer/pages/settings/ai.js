@@ -444,31 +444,31 @@ export default function AiSettingsPage() {
   return (
     <SettingsLayout>
       <Stack spacing={8} mt={8} maxW="2xl">
-        <SettingsSection title={t('AI benchmark helper')}>
+        <SettingsSection title={t('Optional AI features')}>
           <Stack spacing={4}>
             <Box
-              bg="orange.012"
+              bg="blue.012"
               borderWidth="1px"
-              borderColor="orange.050"
+              borderColor="blue.050"
               p={4}
               borderRadius="md"
             >
-              <Text fontWeight={500} color="orange.500">
-                {t('Research mode only')}
+              <Text fontWeight={500} color="blue.500">
+                {t('Classic app first, AI optional')}
               </Text>
               <Text color="muted" mt={1}>
                 {t(
-                  'This helper is for benchmark research and sends flip images to selected AI cloud providers. Do not use it on Idena mainnet.'
+                  'The app works without AI just like the normal desktop flow. Turn AI on only if you want AI-assisted flip generation or AI solving, and only after you configure your own provider key.'
                 )}
               </Text>
             </Box>
 
             <Flex align="center" justify="space-between">
               <Box>
-                <Text fontWeight={500}>{t('Enable AI helper')}</Text>
+                <Text fontWeight={500}>{t('Enable optional AI features')}</Text>
                 <Text color="muted">
                   {t(
-                    'Allows one-click or auto-run solving during short and long validation sessions.'
+                    'Off by default. When enabled, the app can use external AI providers for flip generation, image generation, and benchmark solving.'
                   )}
                 </Text>
               </Box>

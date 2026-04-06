@@ -339,10 +339,10 @@ function handleDnaLink(url) {
 
 const createMenu = () => {
   const application = {
-    label: 'idenaAI-desktop',
+    label: 'idena-desktop',
     submenu: [
       {
-        label: i18next.t('About idenaAI-desktop'),
+        label: i18next.t('About idena-desktop'),
         role: 'about',
       },
       {
@@ -487,7 +487,7 @@ const createTray = () => {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: i18next.t('Open idenaAI-desktop'),
+      label: i18next.t('Open idena-desktop'),
       click: showMainWindow,
     },
     {

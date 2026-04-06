@@ -63,7 +63,10 @@ import {
 } from '../../shared/components/components'
 import Layout from '../../shared/components/layout'
 import {useChainState} from '../../shared/providers/chain-context'
-import {useSettingsState} from '../../shared/providers/settings-context'
+import {
+  useSettingsDispatch,
+  useSettingsState,
+} from '../../shared/providers/settings-context'
 import {BadFlipDialog} from '../../screens/validation/components'
 import {requestDb} from '../../shared/utils/db'
 import {useFailToast} from '../../shared/hooks/use-toast'
@@ -1663,6 +1666,7 @@ export default function NewFlipPage() {
 
   const {syncing, offline} = useChainState()
   const settings = useSettingsState()
+  const {updateAiSolverSettings} = useSettingsDispatch()
 
   const {flipKeyWordPairs} = useIdentityState()
 
@@ -1759,6 +1763,9 @@ export default function NewFlipPage() {
     () => ({...DEFAULT_AI_SOLVER_SETTINGS, ...(settings.aiSolver || {})}),
     [settings.aiSolver]
   )
+  const enableOptionalAiFeatures = useCallback(() => {
+    updateAiSolverSettings({enabled: true})
+  }, [updateAiSolverSettings])
   const isLegacyOnlyMode =
     aiSolverSettings.legacyHeuristicEnabled &&
     aiSolverSettings.legacyHeuristicOnly
@@ -5297,741 +5304,719 @@ export default function NewFlipPage() {
                     p={4}
                   >
                     <Stack spacing={4}>
-                      <Text fontWeight={500}>
-                        {t('AI assistant for this flip')}
-                      </Text>
-                      <Text color="muted" fontSize="sm">
-                        {t(
-                          'Choose one simple path: create a flip with AI or solve queued flips with AI. Open advanced settings only when the default path is not enough.'
-                        )}
-                      </Text>
-                      <Box
-                        borderWidth="1px"
-                        borderColor="blue.050"
-                        borderRadius="md"
-                        p={3}
-                        bg="blue.012"
-                      >
-                        <Stack spacing={3}>
-                          <Flex
-                            align={['flex-start', 'center']}
-                            justify="space-between"
-                            direction={['column', 'row']}
-                          >
-                            <Box>
-                              <Text fontSize="sm" fontWeight={500}>
-                                {t('Start here')}
-                              </Text>
-                              <Text fontSize="xs" color="muted">
-                                {t(
-                                  '1. Choose provider and set a session API key. 2. Pick Create or Solve below. 3. Keep advanced controls hidden unless you really need them.'
-                                )}
-                              </Text>
-                            </Box>
-                            <Stack isInline spacing={2}>
-                              <SecondaryButton
-                                onClick={aiGuideDisclosure.onOpen}
-                              >
-                                {t('Open setup guide')}
-                              </SecondaryButton>
+                      {!aiSolverSettings.enabled ? (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="blue.100"
+                          borderRadius="md"
+                          p={4}
+                          bg="blue.012"
+                        >
+                          <Stack spacing={3}>
+                            <Text fontWeight={500}>
+                              {t('Optional AI features are currently off')}
+                            </Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'The normal idena-desktop flow keeps working without AI. Turn AI on only if you want AI-assisted flip generation, image generation, or benchmark solving.'
+                              )}
+                            </Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'Recommended default: keep AI off for regular wallet, node, and flip work. Enable it only for deliberate benchmark or helper sessions.'
+                              )}
+                            </Text>
+                            <Stack isInline justify="flex-end" spacing={2}>
                               <SecondaryButton
                                 onClick={() => router.push('/settings/ai')}
                               >
-                                {t('AI settings')}
+                                {t('Open AI settings')}
                               </SecondaryButton>
+                              <PrimaryButton onClick={enableOptionalAiFeatures}>
+                                {t('Enable optional AI features')}
+                              </PrimaryButton>
                             </Stack>
-                          </Flex>
-                          <SimpleGrid columns={[1, 3]} spacing={2}>
-                            <Box
-                              borderWidth="1px"
-                              borderColor="gray.100"
-                              borderRadius="md"
-                              p={2}
-                              bg="white"
-                            >
-                              <Text fontSize="xs" color="muted">
-                                {t('Provider')}
-                              </Text>
-                              <Text fontSize="sm" fontWeight={500}>
-                                {String(aiSolverSettings.provider || 'openai')}
-                              </Text>
-                            </Box>
-                            <Box
-                              borderWidth="1px"
-                              borderColor="gray.100"
-                              borderRadius="md"
-                              p={2}
-                              bg="white"
-                            >
-                              <Text fontSize="xs" color="muted">
-                                {t('Session API key')}
-                              </Text>
-                              <Text
-                                fontSize="sm"
-                                fontWeight={500}
-                                color={aiProviderKeyStatusUi.color}
-                              >
-                                {aiProviderKeyStatusUi.label}
-                              </Text>
-                              {aiProviderKeyStatusUi.detail ? (
-                                <Text fontSize="xs" color="muted" mt={1}>
-                                  {aiProviderKeyStatusUi.detail}
-                                </Text>
-                              ) : null}
-                            </Box>
-                            <Box
-                              borderWidth="1px"
-                              borderColor="gray.100"
-                              borderRadius="md"
-                              p={2}
-                              bg="white"
-                            >
-                              <Text fontSize="xs" color="muted">
-                                {t('Advanced options')}
-                              </Text>
-                              <Text fontSize="sm" fontWeight={500}>
-                                {t('Hidden unless you need them')}
-                              </Text>
-                            </Box>
-                          </SimpleGrid>
-                          <Text fontSize="xs" color="muted">
+                          </Stack>
+                        </Box>
+                      ) : (
+                        <>
+                          <Text fontWeight={500}>
+                            {t('AI assistant for this flip')}
+                          </Text>
+                          <Text color="muted" fontSize="sm">
                             {t(
-                              'Beginner flow: first decide whether you want to create a flip or solve queued flips. You can still open advanced options later.'
+                              'Choose one simple path: create a flip with AI or solve queued flips with AI. Open advanced settings only when the default path is not enough.'
                             )}
                           </Text>
-                          {isAiRunBlockedByProviderKeys ? (
-                            <Box
-                              borderWidth="1px"
-                              borderColor="orange.200"
-                              borderRadius="md"
-                              p={3}
-                              bg="orange.012"
-                            >
-                              <Stack spacing={2}>
-                                <Text
-                                  fontSize="sm"
-                                  fontWeight={500}
-                                  color="orange.700"
-                                >
-                                  {t('AI provider setup needed')}
-                                </Text>
-                                <Text fontSize="xs" color="muted">
-                                  {aiProviderKeyStatusUi.detail ||
-                                    t(
-                                      'Load the required session API key before starting AI generation or solver runs.'
+                          <Box
+                            borderWidth="1px"
+                            borderColor="blue.050"
+                            borderRadius="md"
+                            p={3}
+                            bg="blue.012"
+                          >
+                            <Stack spacing={3}>
+                              <Flex
+                                align={['flex-start', 'center']}
+                                justify="space-between"
+                                direction={['column', 'row']}
+                              >
+                                <Box>
+                                  <Text fontSize="sm" fontWeight={500}>
+                                    {t('Start here')}
+                                  </Text>
+                                  <Text fontSize="xs" color="muted">
+                                    {t(
+                                      '1. Choose provider and set a session API key. 2. Pick Create or Solve below. 3. Keep advanced controls hidden unless you really need them.'
                                     )}
-                                </Text>
-                                <Stack isInline justify="flex-end" spacing={2}>
+                                  </Text>
+                                </Box>
+                                <Stack isInline spacing={2}>
                                   <SecondaryButton
-                                    isLoading={aiProviderKeyStatus.checking}
-                                    onClick={refreshAiProviderKeyStatus}
+                                    onClick={aiGuideDisclosure.onOpen}
                                   >
-                                    {t('Refresh key status')}
+                                    {t('Open setup guide')}
                                   </SecondaryButton>
-                                  <PrimaryButton
+                                  <SecondaryButton
                                     onClick={() => router.push('/settings/ai')}
                                   >
-                                    {t('Open AI settings')}
-                                  </PrimaryButton>
+                                    {t('AI settings')}
+                                  </SecondaryButton>
                                 </Stack>
-                              </Stack>
-                            </Box>
-                          ) : null}
-                          <SimpleGrid columns={[1, 2]} spacing={3}>
-                            <Box
-                              borderWidth="1px"
-                              borderColor="green.100"
-                              borderRadius="md"
-                              p={3}
-                              bg="green.012"
-                            >
-                              <Stack spacing={2}>
-                                <Text
-                                  fontSize="sm"
-                                  fontWeight={500}
-                                  color="green.600"
+                              </Flex>
+                              <SimpleGrid columns={[1, 3]} spacing={2}>
+                                <Box
+                                  borderWidth="1px"
+                                  borderColor="gray.100"
+                                  borderRadius="md"
+                                  p={2}
+                                  bg="white"
                                 >
-                                  {t('Path 1: Create a flip with AI')}
-                                </Text>
-                                <Text fontSize="xs" color="muted">
-                                  {t(
-                                    'Generate one draft, make it more specific if needed, edit the 4 text panels, then build the 4 images.'
-                                  )}
-                                </Text>
-                                <Stack isInline justify="flex-end">
-                                  <PrimaryButton onClick={openAiGeneratorPath}>
-                                    {t('Open flip generator')}
-                                  </PrimaryButton>
-                                </Stack>
-                              </Stack>
-                            </Box>
-                            <Box
-                              borderWidth="1px"
-                              borderColor="purple.100"
-                              borderRadius="md"
-                              p={3}
-                              bg="purple.012"
-                            >
-                              <Stack spacing={2}>
-                                <Text
-                                  fontSize="sm"
-                                  fontWeight={500}
-                                  color="purple.600"
+                                  <Text fontSize="xs" color="muted">
+                                    {t('Provider')}
+                                  </Text>
+                                  <Text fontSize="sm" fontWeight={500}>
+                                    {String(
+                                      aiSolverSettings.provider || 'openai'
+                                    )}
+                                  </Text>
+                                </Box>
+                                <Box
+                                  borderWidth="1px"
+                                  borderColor="gray.100"
+                                  borderRadius="md"
+                                  p={2}
+                                  bg="white"
                                 >
-                                  {t('Path 2: Solve queued flips with AI')}
-                                </Text>
-                                <Text fontSize="xs" color="muted">
-                                  {t(
-                                    'Add the current draft flip to the queue, then run a short or long AI session to benchmark solving performance.'
-                                  )}
-                                </Text>
-                                <Stack isInline justify="flex-end">
-                                  <PrimaryButton onClick={openAiSolverPath}>
-                                    {t('Open solver queue')}
-                                  </PrimaryButton>
-                                </Stack>
-                              </Stack>
-                            </Box>
-                          </SimpleGrid>
-                        </Stack>
-                      </Box>
-                      <Box
-                        id="ai-generator-path"
-                        borderWidth="1px"
-                        borderColor="gray.100"
-                        borderRadius="md"
-                        p={3}
-                      >
-                        <Stack spacing={3}>
-                          <Text fontSize="sm" fontWeight={500}>
-                            {t('Path 1: Create a flip with AI')}
-                          </Text>
-                          <Text fontSize="xs" color="muted">
-                            {t(
-                              'Keywords: {{a}} / {{b}}. Source: {{source}}. Basic flow: generate one draft, make it more specific if needed, edit panel text, then build flip panels.',
-                              {
-                                source: isRandomKeywordSource
-                                  ? 'local random test (off-chain)'
-                                  : 'node (preferred)',
-                                a: keywordA || '-',
-                                b: keywordB || '-',
-                              }
-                            )}
-                          </Text>
-                          <Stack isInline spacing={2}>
-                            <SecondaryButton
-                              isDisabled={
-                                availableKeywords.length < 2 ||
-                                is('keywords.loading')
-                              }
-                              onClick={advanceKeywordPairForSubmit}
-                            >
-                              {isRandomKeywordSource
-                                ? t('Next random pair')
-                                : t('Change keyword pair')}{' '}
-                              {availableKeywords.length > 1
-                                ? `(#${keywordPairPosition}/${availableKeywords.length})`
-                                : null}
-                            </SecondaryButton>
-                            {!isRandomKeywordSource ? (
-                              <SecondaryButton
-                                isDisabled={is('keywords.loading')}
-                                onClick={approveRandomKeywordsForSubmit}
-                              >
-                                {t('Switch to 9 random test pairs')}
-                              </SecondaryButton>
-                            ) : null}
-                            <SecondaryButton
-                              onClick={() =>
-                                setShowAiGeneratorAdvanced((value) => !value)
-                              }
-                            >
-                              {showAiGeneratorAdvanced
-                                ? t('Hide advanced generator settings')
-                                : t('Advanced generator settings')}
-                            </SecondaryButton>
-                          </Stack>
-                          {showAiGeneratorAdvanced ? (
-                            <>
-                              <SimpleGrid columns={[1, 6]} spacing={2}>
-                                <Box>
-                                  <Text fontSize="xs" color="muted" mb={1}>
-                                    {t('Generation mode')}
+                                  <Text fontSize="xs" color="muted">
+                                    {t('Session API key')}
                                   </Text>
-                                  <Select
-                                    value={aiGenerationMode}
-                                    onChange={(e) =>
-                                      setAiGenerationMode(
-                                        String(
-                                          e && e.target
-                                            ? e.target.value
-                                            : 'fast'
-                                        )
-                                      )
-                                    }
+                                  <Text
+                                    fontSize="sm"
+                                    fontWeight={500}
+                                    color={aiProviderKeyStatusUi.color}
                                   >
-                                    <option value="fast">{t('Fast')}</option>
-                                    <option value="strict">
-                                      {t('Strict')}
-                                    </option>
-                                  </Select>
-                                  <Text fontSize="xs" color="muted" mt={1}>
-                                    {aiGenerationMode === 'strict'
-                                      ? t(
-                                          'Strict mode runs deeper story checks and can take longer.'
-                                        )
-                                      : t(
-                                          'Fast mode prioritizes speed with lighter checks.'
-                                        )}
+                                    {aiProviderKeyStatusUi.label}
                                   </Text>
-                                </Box>
-                                <Box>
-                                  <Text fontSize="xs" color="muted" mb={1}>
-                                    {t('Reasoning model (story + audit)')}
-                                  </Text>
-                                  <Select
-                                    value={reasoningSelectValue}
-                                    onChange={(e) => {
-                                      const next = String(
-                                        e && e.target ? e.target.value : ''
-                                      ).trim()
-                                      if (
-                                        next &&
-                                        next !== CUSTOM_MODEL_OPTION
-                                      ) {
-                                        setAiReasoningModel(next)
-                                      }
-                                    }}
-                                  >
-                                    {reasoningModelOptions.map((modelId) => (
-                                      <option key={modelId} value={modelId}>
-                                        {modelId}
-                                      </option>
-                                    ))}
-                                    <option value={CUSTOM_MODEL_OPTION}>
-                                      {t('Custom model ID...')}
-                                    </option>
-                                  </Select>
-                                  {reasoningSelectValue ===
-                                  CUSTOM_MODEL_OPTION ? (
-                                    <Input
-                                      mt={1}
-                                      value={aiReasoningModel}
-                                      onChange={(e) =>
-                                        setAiReasoningModel(e.target.value)
-                                      }
-                                      placeholder={
-                                        aiSolverSettings.model || 'gpt-4.1-mini'
-                                      }
-                                    />
-                                  ) : null}
-                                </Box>
-                                <Box>
-                                  <Text fontSize="xs" color="muted" mb={1}>
-                                    {t('Image model')}
-                                  </Text>
-                                  <Select
-                                    value={imageSelectValue}
-                                    onChange={(e) => {
-                                      const next = String(
-                                        e && e.target ? e.target.value : ''
-                                      ).trim()
-                                      if (
-                                        next &&
-                                        next !== CUSTOM_MODEL_OPTION
-                                      ) {
-                                        setAiImageModel(next)
-                                      }
-                                    }}
-                                  >
-                                    {imageModelOptions.map((modelId) => (
-                                      <option key={modelId} value={modelId}>
-                                        {modelId}
-                                      </option>
-                                    ))}
-                                    <option value={CUSTOM_MODEL_OPTION}>
-                                      {t('Custom model ID...')}
-                                    </option>
-                                  </Select>
-                                  {imageSelectValue === CUSTOM_MODEL_OPTION ? (
-                                    <Input
-                                      mt={1}
-                                      value={aiImageModel}
-                                      onChange={(e) =>
-                                        setAiImageModel(e.target.value)
-                                      }
-                                      placeholder="gpt-image-1-mini"
-                                    />
-                                  ) : null}
-                                  <Text fontSize="xs" color="muted" mt={1}>
-                                    {t(
-                                      'Custom model IDs are allowed (for example: nano-banana or provider-specific variants).'
-                                    )}
-                                  </Text>
-                                </Box>
-                                <Box>
-                                  <Text fontSize="xs" color="muted" mb={1}>
-                                    {t('Image size')}
-                                  </Text>
-                                  <Input
-                                    value={aiImageSize}
-                                    onChange={(e) =>
-                                      setAiImageSize(e.target.value)
-                                    }
-                                    placeholder={DEFAULT_AI_IMAGE_SIZE}
-                                  />
-                                  <Text fontSize="xs" color="muted" mt={1}>
-                                    {t(
-                                      'Provider-native image sizes are limited (for example 1024x1024, 1536x1024, 1024x1536). Generated images are normalized to Idena panel size 440x330 and to the 2x2 composite 880x660 before submit.'
-                                    )}
-                                  </Text>
-                                  <Text fontSize="xs" color="muted" mt={1}>
-                                    {t(
-                                      'If you type an unsupported size such as 880x660, the app now auto-maps it to the closest provider-supported size.'
-                                    )}
-                                  </Text>
-                                  {aiImageGenerationCostHint ? (
+                                  {aiProviderKeyStatusUi.detail ? (
                                     <Text fontSize="xs" color="muted" mt={1}>
-                                      {`Estimated image cost (${
-                                        aiImageGenerationCostHint.model
-                                      }): ~$${aiImageGenerationCostHint.unitUsd.toFixed(
-                                        3
-                                      )} per image, ~$${aiImageGenerationCostHint.fourPanelsUsd.toFixed(
-                                        3
-                                      )} for 4 panels.`}
+                                      {aiProviderKeyStatusUi.detail}
                                     </Text>
                                   ) : null}
-                                  <Text fontSize="xs" color="muted" mt={1}>
-                                    {aiImageGenerationCostHint
-                                      ? `Cheapest known ${
-                                          aiImageGenerationCostHint.model
-                                        } size is ${
-                                          aiImageGenerationCostHint.cheapestSize
-                                        } (~$${aiImageGenerationCostHint.cheapestUnitUsd.toFixed(
-                                          3
-                                        )}/image, ~$${(
-                                          aiImageGenerationCostHint.cheapestUnitUsd *
-                                          4
-                                        ).toFixed(3)} per 4-panel flip).`
-                                      : t(
-                                          'Known price hints are available for gpt-image-1, gpt-image-1.5, and gpt-image-1-mini.'
-                                        )}
-                                  </Text>
                                 </Box>
-                                <Box>
-                                  <Text fontSize="xs" color="muted" mb={1}>
-                                    {t('Story draft mode')}
+                                <Box
+                                  borderWidth="1px"
+                                  borderColor="gray.100"
+                                  borderRadius="md"
+                                  p={2}
+                                  bg="white"
+                                >
+                                  <Text fontSize="xs" color="muted">
+                                    {t('Advanced options')}
                                   </Text>
-                                  <Box
-                                    borderWidth="1px"
-                                    borderColor="gray.100"
-                                    borderRadius="md"
-                                    px={3}
-                                    py={2}
-                                    bg="white"
-                                  >
-                                    <Text fontSize="sm" fontWeight={500}>
-                                      {t('1 strong editable draft')}
-                                    </Text>
-                                  </Box>
-                                  <Text fontSize="xs" color="muted" mt={1}>
-                                    {t(
-                                      'Live builder uses one stronger editable draft to reduce fallback pressure and keep the flow simpler.'
-                                    )}
+                                  <Text fontSize="sm" fontWeight={500}>
+                                    {t('Hidden unless you need them')}
                                   </Text>
-                                </Box>
-                                <Box>
-                                  <Text fontSize="xs" color="muted" mb={1}>
-                                    {t('Noise panel index (0-3)')}
-                                  </Text>
-                                  <Input
-                                    type="number"
-                                    min={0}
-                                    max={3}
-                                    value={storyNoisePanelIndex}
-                                    onChange={(e) =>
-                                      setStoryNoisePanelIndex(
-                                        Math.max(
-                                          0,
-                                          Math.min(3, toInt(e.target.value, 0))
-                                        )
-                                      )
-                                    }
-                                  />
                                 </Box>
                               </SimpleGrid>
                               <Text fontSize="xs" color="muted">
                                 {t(
-                                  'Reasoning model handles storyline generation and text-audit; image model handles panel rendering. Use cheaper image models to reduce cost.'
+                                  'Beginner flow: first decide whether you want to create a flip or solve queued flips. You can still open advanced options later.'
                                 )}
                               </Text>
-                              <Box
-                                borderWidth="1px"
-                                borderColor="orange.200"
-                                borderRadius="md"
-                                p={3}
-                                bg="orange.012"
-                              >
-                                <Stack spacing={3}>
-                                  <Flex
-                                    align={['flex-start', 'center']}
-                                    justify="space-between"
-                                    direction={['column', 'row']}
-                                  >
-                                    <Box pr={[0, 3]}>
-                                      <Text
-                                        fontSize="sm"
-                                        fontWeight={500}
-                                        color="orange.700"
-                                      >
-                                        {t(
-                                          'Experimental: fully automated real-node flip publishing'
+                              {isAiRunBlockedByProviderKeys ? (
+                                <Box
+                                  borderWidth="1px"
+                                  borderColor="orange.200"
+                                  borderRadius="md"
+                                  p={3}
+                                  bg="orange.012"
+                                >
+                                  <Stack spacing={2}>
+                                    <Text
+                                      fontSize="sm"
+                                      fontWeight={500}
+                                      color="orange.700"
+                                    >
+                                      {t('AI provider setup needed')}
+                                    </Text>
+                                    <Text fontSize="xs" color="muted">
+                                      {aiProviderKeyStatusUi.detail ||
+                                        t(
+                                          'Load the required session API key before starting AI generation or solver runs.'
                                         )}
-                                      </Text>
-                                      <Text
-                                        fontSize="xs"
-                                        color="orange.700"
-                                        mt={1}
+                                    </Text>
+                                    <Stack
+                                      isInline
+                                      justify="flex-end"
+                                      spacing={2}
+                                    >
+                                      <SecondaryButton
+                                        isLoading={aiProviderKeyStatus.checking}
+                                        onClick={refreshAiProviderKeyStatus}
                                       >
+                                        {t('Refresh key status')}
+                                      </SecondaryButton>
+                                      <PrimaryButton
+                                        onClick={() =>
+                                          router.push('/settings/ai')
+                                        }
+                                      >
+                                        {t('Open AI settings')}
+                                      </PrimaryButton>
+                                    </Stack>
+                                  </Stack>
+                                </Box>
+                              ) : null}
+                              <SimpleGrid columns={[1, 2]} spacing={3}>
+                                <Box
+                                  borderWidth="1px"
+                                  borderColor="green.100"
+                                  borderRadius="md"
+                                  p={3}
+                                  bg="green.012"
+                                >
+                                  <Stack spacing={2}>
+                                    <Text
+                                      fontSize="sm"
+                                      fontWeight={500}
+                                      color="green.600"
+                                    >
+                                      {t('Path 1: Create a flip with AI')}
+                                    </Text>
+                                    <Text fontSize="xs" color="muted">
+                                      {t(
+                                        'Generate one draft, make it more specific if needed, edit the 4 text panels, then build the 4 images.'
+                                      )}
+                                    </Text>
+                                    <Stack isInline justify="flex-end">
+                                      <PrimaryButton
+                                        onClick={openAiGeneratorPath}
+                                      >
+                                        {t('Open flip generator')}
+                                      </PrimaryButton>
+                                    </Stack>
+                                  </Stack>
+                                </Box>
+                                <Box
+                                  borderWidth="1px"
+                                  borderColor="purple.100"
+                                  borderRadius="md"
+                                  p={3}
+                                  bg="purple.012"
+                                >
+                                  <Stack spacing={2}>
+                                    <Text
+                                      fontSize="sm"
+                                      fontWeight={500}
+                                      color="purple.600"
+                                    >
+                                      {t('Path 2: Solve queued flips with AI')}
+                                    </Text>
+                                    <Text fontSize="xs" color="muted">
+                                      {t(
+                                        'Add the current draft flip to the queue, then run a short or long AI session to benchmark solving performance.'
+                                      )}
+                                    </Text>
+                                    <Stack isInline justify="flex-end">
+                                      <PrimaryButton onClick={openAiSolverPath}>
+                                        {t('Open solver queue')}
+                                      </PrimaryButton>
+                                    </Stack>
+                                  </Stack>
+                                </Box>
+                              </SimpleGrid>
+                            </Stack>
+                          </Box>
+                          <Box
+                            id="ai-generator-path"
+                            borderWidth="1px"
+                            borderColor="gray.100"
+                            borderRadius="md"
+                            p={3}
+                          >
+                            <Stack spacing={3}>
+                              <Text fontSize="sm" fontWeight={500}>
+                                {t('Path 1: Create a flip with AI')}
+                              </Text>
+                              <Text fontSize="xs" color="muted">
+                                {t(
+                                  'Keywords: {{a}} / {{b}}. Source: {{source}}. Basic flow: generate one draft, make it more specific if needed, edit panel text, then build flip panels.',
+                                  {
+                                    source: isRandomKeywordSource
+                                      ? 'local random test (off-chain)'
+                                      : 'node (preferred)',
+                                    a: keywordA || '-',
+                                    b: keywordB || '-',
+                                  }
+                                )}
+                              </Text>
+                              <Stack isInline spacing={2}>
+                                <SecondaryButton
+                                  isDisabled={
+                                    availableKeywords.length < 2 ||
+                                    is('keywords.loading')
+                                  }
+                                  onClick={advanceKeywordPairForSubmit}
+                                >
+                                  {isRandomKeywordSource
+                                    ? t('Next random pair')
+                                    : t('Change keyword pair')}{' '}
+                                  {availableKeywords.length > 1
+                                    ? `(#${keywordPairPosition}/${availableKeywords.length})`
+                                    : null}
+                                </SecondaryButton>
+                                {!isRandomKeywordSource ? (
+                                  <SecondaryButton
+                                    isDisabled={is('keywords.loading')}
+                                    onClick={approveRandomKeywordsForSubmit}
+                                  >
+                                    {t('Switch to 9 random test pairs')}
+                                  </SecondaryButton>
+                                ) : null}
+                                <SecondaryButton
+                                  onClick={() =>
+                                    setShowAiGeneratorAdvanced(
+                                      (value) => !value
+                                    )
+                                  }
+                                >
+                                  {showAiGeneratorAdvanced
+                                    ? t('Hide advanced generator settings')
+                                    : t('Advanced generator settings')}
+                                </SecondaryButton>
+                              </Stack>
+                              {showAiGeneratorAdvanced ? (
+                                <>
+                                  <SimpleGrid columns={[1, 6]} spacing={2}>
+                                    <Box>
+                                      <Text fontSize="xs" color="muted" mb={1}>
+                                        {t('Generation mode')}
+                                      </Text>
+                                      <Select
+                                        value={aiGenerationMode}
+                                        onChange={(e) =>
+                                          setAiGenerationMode(
+                                            String(
+                                              e && e.target
+                                                ? e.target.value
+                                                : 'fast'
+                                            )
+                                          )
+                                        }
+                                      >
+                                        <option value="fast">
+                                          {t('Fast')}
+                                        </option>
+                                        <option value="strict">
+                                          {t('Strict')}
+                                        </option>
+                                      </Select>
+                                      <Text fontSize="xs" color="muted" mt={1}>
+                                        {aiGenerationMode === 'strict'
+                                          ? t(
+                                              'Strict mode runs deeper story checks and can take longer.'
+                                            )
+                                          : t(
+                                              'Fast mode prioritizes speed with lighter checks.'
+                                            )}
+                                      </Text>
+                                    </Box>
+                                    <Box>
+                                      <Text fontSize="xs" color="muted" mb={1}>
+                                        {t('Reasoning model (story + audit)')}
+                                      </Text>
+                                      <Select
+                                        value={reasoningSelectValue}
+                                        onChange={(e) => {
+                                          const next = String(
+                                            e && e.target ? e.target.value : ''
+                                          ).trim()
+                                          if (
+                                            next &&
+                                            next !== CUSTOM_MODEL_OPTION
+                                          ) {
+                                            setAiReasoningModel(next)
+                                          }
+                                        }}
+                                      >
+                                        {reasoningModelOptions.map(
+                                          (modelId) => (
+                                            <option
+                                              key={modelId}
+                                              value={modelId}
+                                            >
+                                              {modelId}
+                                            </option>
+                                          )
+                                        )}
+                                        <option value={CUSTOM_MODEL_OPTION}>
+                                          {t('Custom model ID...')}
+                                        </option>
+                                      </Select>
+                                      {reasoningSelectValue ===
+                                      CUSTOM_MODEL_OPTION ? (
+                                        <Input
+                                          mt={1}
+                                          value={aiReasoningModel}
+                                          onChange={(e) =>
+                                            setAiReasoningModel(e.target.value)
+                                          }
+                                          placeholder={
+                                            aiSolverSettings.model ||
+                                            'gpt-4.1-mini'
+                                          }
+                                        />
+                                      ) : null}
+                                    </Box>
+                                    <Box>
+                                      <Text fontSize="xs" color="muted" mb={1}>
+                                        {t('Image model')}
+                                      </Text>
+                                      <Select
+                                        value={imageSelectValue}
+                                        onChange={(e) => {
+                                          const next = String(
+                                            e && e.target ? e.target.value : ''
+                                          ).trim()
+                                          if (
+                                            next &&
+                                            next !== CUSTOM_MODEL_OPTION
+                                          ) {
+                                            setAiImageModel(next)
+                                          }
+                                        }}
+                                      >
+                                        {imageModelOptions.map((modelId) => (
+                                          <option key={modelId} value={modelId}>
+                                            {modelId}
+                                          </option>
+                                        ))}
+                                        <option value={CUSTOM_MODEL_OPTION}>
+                                          {t('Custom model ID...')}
+                                        </option>
+                                      </Select>
+                                      {imageSelectValue ===
+                                      CUSTOM_MODEL_OPTION ? (
+                                        <Input
+                                          mt={1}
+                                          value={aiImageModel}
+                                          onChange={(e) =>
+                                            setAiImageModel(e.target.value)
+                                          }
+                                          placeholder="gpt-image-1-mini"
+                                        />
+                                      ) : null}
+                                      <Text fontSize="xs" color="muted" mt={1}>
                                         {t(
-                                          'Disabled by default. In testing so far, the full pipeline from story to publish has not been reliable enough for consistently good results.'
+                                          'Custom model IDs are allowed (for example: nano-banana or provider-specific variants).'
                                         )}
                                       </Text>
                                     </Box>
+                                    <Box>
+                                      <Text fontSize="xs" color="muted" mb={1}>
+                                        {t('Image size')}
+                                      </Text>
+                                      <Input
+                                        value={aiImageSize}
+                                        onChange={(e) =>
+                                          setAiImageSize(e.target.value)
+                                        }
+                                        placeholder={DEFAULT_AI_IMAGE_SIZE}
+                                      />
+                                      <Text fontSize="xs" color="muted" mt={1}>
+                                        {t(
+                                          'Provider-native image sizes are limited (for example 1024x1024, 1536x1024, 1024x1536). Generated images are normalized to Idena panel size 440x330 and to the 2x2 composite 880x660 before submit.'
+                                        )}
+                                      </Text>
+                                      <Text fontSize="xs" color="muted" mt={1}>
+                                        {t(
+                                          'If you type an unsupported size such as 880x660, the app now auto-maps it to the closest provider-supported size.'
+                                        )}
+                                      </Text>
+                                      {aiImageGenerationCostHint ? (
+                                        <Text
+                                          fontSize="xs"
+                                          color="muted"
+                                          mt={1}
+                                        >
+                                          {`Estimated image cost (${
+                                            aiImageGenerationCostHint.model
+                                          }): ~$${aiImageGenerationCostHint.unitUsd.toFixed(
+                                            3
+                                          )} per image, ~$${aiImageGenerationCostHint.fourPanelsUsd.toFixed(
+                                            3
+                                          )} for 4 panels.`}
+                                        </Text>
+                                      ) : null}
+                                      <Text fontSize="xs" color="muted" mt={1}>
+                                        {aiImageGenerationCostHint
+                                          ? `Cheapest known ${
+                                              aiImageGenerationCostHint.model
+                                            } size is ${
+                                              aiImageGenerationCostHint.cheapestSize
+                                            } (~$${aiImageGenerationCostHint.cheapestUnitUsd.toFixed(
+                                              3
+                                            )}/image, ~$${(
+                                              aiImageGenerationCostHint.cheapestUnitUsd *
+                                              4
+                                            ).toFixed(3)} per 4-panel flip).`
+                                          : t(
+                                              'Known price hints are available for gpt-image-1, gpt-image-1.5, and gpt-image-1-mini.'
+                                            )}
+                                      </Text>
+                                    </Box>
+                                    <Box>
+                                      <Text fontSize="xs" color="muted" mb={1}>
+                                        {t('Story draft mode')}
+                                      </Text>
+                                      <Box
+                                        borderWidth="1px"
+                                        borderColor="gray.100"
+                                        borderRadius="md"
+                                        px={3}
+                                        py={2}
+                                        bg="white"
+                                      >
+                                        <Text fontSize="sm" fontWeight={500}>
+                                          {t('1 strong editable draft')}
+                                        </Text>
+                                      </Box>
+                                      <Text fontSize="xs" color="muted" mt={1}>
+                                        {t(
+                                          'Live builder uses one stronger editable draft to reduce fallback pressure and keep the flow simpler.'
+                                        )}
+                                      </Text>
+                                    </Box>
+                                    <Box>
+                                      <Text fontSize="xs" color="muted" mb={1}>
+                                        {t('Noise panel index (0-3)')}
+                                      </Text>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        max={3}
+                                        value={storyNoisePanelIndex}
+                                        onChange={(e) =>
+                                          setStoryNoisePanelIndex(
+                                            Math.max(
+                                              0,
+                                              Math.min(
+                                                3,
+                                                toInt(e.target.value, 0)
+                                              )
+                                            )
+                                          )
+                                        }
+                                      />
+                                    </Box>
+                                  </SimpleGrid>
+                                  <Text fontSize="xs" color="muted">
+                                    {t(
+                                      'Reasoning model handles storyline generation and text-audit; image model handles panel rendering. Use cheaper image models to reduce cost.'
+                                    )}
+                                  </Text>
+                                  <Box
+                                    borderWidth="1px"
+                                    borderColor="orange.200"
+                                    borderRadius="md"
+                                    p={3}
+                                    bg="orange.012"
+                                  >
+                                    <Stack spacing={3}>
+                                      <Flex
+                                        align={['flex-start', 'center']}
+                                        justify="space-between"
+                                        direction={['column', 'row']}
+                                      >
+                                        <Box pr={[0, 3]}>
+                                          <Text
+                                            fontSize="sm"
+                                            fontWeight={500}
+                                            color="orange.700"
+                                          >
+                                            {t(
+                                              'Experimental: fully automated real-node flip publishing'
+                                            )}
+                                          </Text>
+                                          <Text
+                                            fontSize="xs"
+                                            color="orange.700"
+                                            mt={1}
+                                          >
+                                            {t(
+                                              'Disabled by default. In testing so far, the full pipeline from story to publish has not been reliable enough for consistently good results.'
+                                            )}
+                                          </Text>
+                                        </Box>
+                                        <Switch
+                                          isChecked={
+                                            allowFullyAutomatedNodePublish
+                                          }
+                                          onChange={() =>
+                                            setAllowFullyAutomatedNodePublish(
+                                              !allowFullyAutomatedNodePublish
+                                            )
+                                          }
+                                        />
+                                      </Flex>
+                                      <Text fontSize="xs" color="muted">
+                                        {t(
+                                          'Use this on your own risk. Manual flip builder flow is still the recommended path: adjust the story text yourself, rebuild weak panels, and work over the final images before publishing.'
+                                        )}
+                                      </Text>
+                                      <Text fontSize="xs" color="muted">
+                                        {t(
+                                          'Cheapest models failed most often in early testing. If you still use full auto, expect to tune advanced settings yourself.'
+                                        )}
+                                      </Text>
+                                      <Text fontSize="xs" color="muted">
+                                        {t(
+                                          'Costs can explode if retries or image generation spiral. Use only API budgets you can afford, ideally prepaid budgets with a hard upper limit.'
+                                        )}
+                                      </Text>
+                                      <Text fontSize="xs" color="muted">
+                                        {keywordSource === 'node'
+                                          ? t(
+                                              'This mode is only intended for real blockchain-provided node keyword pairs tied to your identity.'
+                                            )
+                                          : t(
+                                              'This mode stays disabled for local random test pairs. Switch back to node keywords if you really want to use it.'
+                                            )}
+                                      </Text>
+                                      <Stack isInline justify="flex-end">
+                                        <SecondaryButton
+                                          isDisabled={
+                                            !allowFullyAutomatedNodePublish ||
+                                            keywordSource !== 'node' ||
+                                            !keywordPairId ||
+                                            isAiRunBlockedByProviderKeys ||
+                                            syncing ||
+                                            offline ||
+                                            isGeneratingStoryOptions ||
+                                            isGeneratingFlipPanels ||
+                                            isRunningFullyAutomatedNodePublish ||
+                                            is('submit.submitting')
+                                          }
+                                          isLoading={
+                                            isRunningFullyAutomatedNodePublish
+                                          }
+                                          onClick={
+                                            runFullyAutomatedNodeFlipPublish
+                                          }
+                                        >
+                                          {t(
+                                            'Run full auto on current node pair'
+                                          )}
+                                        </SecondaryButton>
+                                      </Stack>
+                                    </Stack>
+                                  </Box>
+                                  <Flex align="center" justify="space-between">
+                                    <Text fontSize="sm" color="muted">
+                                      {t(
+                                        'Apply legacy adversarial image noise to one panel (human chooses index, AI helper executes).'
+                                      )}
+                                    </Text>
                                     <Switch
-                                      isChecked={allowFullyAutomatedNodePublish}
+                                      isChecked={storyIncludeNoise}
                                       onChange={() =>
-                                        setAllowFullyAutomatedNodePublish(
-                                          !allowFullyAutomatedNodePublish
-                                        )
+                                        setStoryIncludeNoise(!storyIncludeNoise)
                                       }
                                     />
                                   </Flex>
-                                  <Text fontSize="xs" color="muted">
-                                    {t(
-                                      'Use this on your own risk. Manual flip builder flow is still the recommended path: adjust the story text yourself, rebuild weak panels, and work over the final images before publishing.'
-                                    )}
-                                  </Text>
-                                  <Text fontSize="xs" color="muted">
-                                    {t(
-                                      'Cheapest models failed most often in early testing. If you still use full auto, expect to tune advanced settings yourself.'
-                                    )}
-                                  </Text>
-                                  <Text fontSize="xs" color="muted">
-                                    {t(
-                                      'Costs can explode if retries or image generation spiral. Use only API budgets you can afford, ideally prepaid budgets with a hard upper limit.'
-                                    )}
-                                  </Text>
-                                  <Text fontSize="xs" color="muted">
-                                    {keywordSource === 'node'
-                                      ? t(
-                                          'This mode is only intended for real blockchain-provided node keyword pairs tied to your identity.'
-                                        )
-                                      : t(
-                                          'This mode stays disabled for local random test pairs. Switch back to node keywords if you really want to use it.'
-                                        )}
-                                  </Text>
-                                  <Stack isInline justify="flex-end">
-                                    <SecondaryButton
-                                      isDisabled={
-                                        !allowFullyAutomatedNodePublish ||
-                                        keywordSource !== 'node' ||
-                                        !keywordPairId ||
-                                        isAiRunBlockedByProviderKeys ||
-                                        syncing ||
-                                        offline ||
-                                        isGeneratingStoryOptions ||
-                                        isGeneratingFlipPanels ||
-                                        isRunningFullyAutomatedNodePublish ||
-                                        is('submit.submitting')
-                                      }
-                                      isLoading={
-                                        isRunningFullyAutomatedNodePublish
-                                      }
-                                      onClick={runFullyAutomatedNodeFlipPublish}
-                                    >
-                                      {t('Run full auto on current node pair')}
-                                    </SecondaryButton>
-                                  </Stack>
-                                </Stack>
-                              </Box>
-                              <Flex align="center" justify="space-between">
-                                <Text fontSize="sm" color="muted">
-                                  {t(
-                                    'Apply legacy adversarial image noise to one panel (human chooses index, AI helper executes).'
-                                  )}
-                                </Text>
-                                <Switch
-                                  isChecked={storyIncludeNoise}
-                                  onChange={() =>
-                                    setStoryIncludeNoise(!storyIncludeNoise)
-                                  }
-                                />
-                              </Flex>
-                              <Textarea
-                                value={aiImageStyle}
-                                onChange={(e) =>
-                                  setAiImageStyle(e.target.value)
-                                }
-                                minH="76px"
-                                placeholder={t(
-                                  'Visual style instructions (applies to all panels)'
-                                )}
-                              />
-                            </>
-                          ) : null}
-                          <Stack isInline justify="flex-end" spacing={2}>
-                            <SecondaryButton
-                              isDisabled={isAiRunBlockedByProviderKeys}
-                              isLoading={isGeneratingStoryOptions}
-                              onClick={() =>
-                                generateStoryAlternatives({optimize: false})
-                              }
-                            >
-                              {storyOptionCount === 1
-                                ? t('Generate 1 story draft')
-                                : t('Generate 2 story options')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isDisabled={isAiRunBlockedByProviderKeys}
-                              isLoading={isGeneratingStoryOptions}
-                              onClick={() =>
-                                generateStoryAlternatives({optimize: true})
-                              }
-                            >
-                              {storyOptionCount === 1
-                                ? t('Make draft more specific')
-                                : t('Optimize story further')}
-                            </SecondaryButton>
-                          </Stack>
-
-                          {storyOptionsGrid}
-
-                          {activeStoryDraftSummaryCard}
-
-                          <SimpleGrid columns={[1, 2]} spacing={2}>
-                            {storyPanelsDraft.map((panelText, panelIndex) => (
-                              <Box key={`story-panel-draft-${panelIndex}`}>
-                                <Text fontSize="xs" color="muted" mb={1}>
-                                  {t('Panel {{idx}} text', {
-                                    idx: panelIndex + 1,
-                                  })}
-                                </Text>
-                                <Textarea
-                                  value={panelText}
-                                  onChange={(e) =>
-                                    setStoryPanelsDraft((prev) => {
-                                      const next = coerceStoryPanelsDraft(prev)
-                                      next[panelIndex] = e.target.value
-                                      return next
-                                    })
-                                  }
-                                  minH="62px"
-                                />
-                              </Box>
-                            ))}
-                          </SimpleGrid>
-
-                          <Stack isInline justify="flex-end" spacing={2}>
-                            <PrimaryButton
-                              isDisabled={isAiRunBlockedByProviderKeys}
-                              isLoading={isGeneratingFlipPanels}
-                              onClick={() =>
-                                buildFlipWithAi({
-                                  regenerateIndices: [0, 1, 2, 3],
-                                })
-                              }
-                            >
-                              {t('Build flips')}
-                            </PrimaryButton>
-                            <SecondaryButton
-                              isDisabled={generatedFlipPanels.length < 4}
-                              onClick={async () => {
-                                try {
-                                  await applyGeneratedPanelsToBuilder(
-                                    generatedFlipPanels,
-                                    {
-                                      returnToSubmit: true,
-                                      autoShuffleSubmit: true,
+                                  <Textarea
+                                    value={aiImageStyle}
+                                    onChange={(e) =>
+                                      setAiImageStyle(e.target.value)
                                     }
-                                  )
-                                  notify(
-                                    t('Generated flip applied'),
-                                    t(
-                                      'Draft updated and shuffled. You can submit now or reshuffle.'
-                                    )
-                                  )
-                                } catch (error) {
-                                  notify(
-                                    t('Unable to apply generated flip'),
-                                    error.toString(),
-                                    'error'
-                                  )
-                                }
-                              }}
-                            >
-                              {t('Accept and use flip')}
-                            </SecondaryButton>
-                          </Stack>
-
-                          <Box
-                            borderWidth="1px"
-                            borderColor={
-                              flipBuildStatusBorderColorByKind[
-                                flipBuildStatus.kind
-                              ] || 'gray.100'
-                            }
-                            borderRadius="md"
-                            p={2}
-                            bg={
-                              flipBuildStatusBgByKind[flipBuildStatus.kind] ||
-                              'gray.50'
-                            }
-                          >
-                            <Text
-                              fontSize="xs"
-                              color={
-                                flipBuildStatusTextColorByKind[
-                                  flipBuildStatus.kind
-                                ] || 'muted'
-                              }
-                            >
-                              {flipBuildStatusText}
-                            </Text>
-                          </Box>
-
-                          {generatedFlipPanels.length > 0 ? (
-                            <>
-                              <SimpleGrid columns={[1, 2, 4]} spacing={2}>
-                                {generatedFlipPanels.map((panel) => (
-                                  <Box
-                                    key={`generated-panel-${panel.index}`}
-                                    borderWidth="1px"
-                                    borderColor="gray.100"
-                                    borderRadius="md"
-                                    p={1}
-                                  >
-                                    <Text fontSize="xs" color="muted" mb={1}>
-                                      {t('Panel {{idx}}', {
-                                        idx: Number(panel.index) + 1,
-                                      })}
-                                    </Text>
-                                    <img
-                                      src={panel.imageDataUrl}
-                                      alt={`generated-panel-${panel.index}`}
-                                      style={{
-                                        width: '100%',
-                                        height: 120,
-                                        objectFit: 'cover',
-                                        borderRadius: 6,
-                                        border: '1px solid rgba(0,0,0,0.08)',
-                                      }}
-                                    />
-                                  </Box>
-                                ))}
-                              </SimpleGrid>
+                                    minH="76px"
+                                    placeholder={t(
+                                      'Visual style instructions (applies to all panels)'
+                                    )}
+                                  />
+                                </>
+                              ) : null}
                               <Stack isInline justify="flex-end" spacing={2}>
                                 <SecondaryButton
+                                  isDisabled={isAiRunBlockedByProviderKeys}
+                                  isLoading={isGeneratingStoryOptions}
+                                  onClick={() =>
+                                    generateStoryAlternatives({optimize: false})
+                                  }
+                                >
+                                  {storyOptionCount === 1
+                                    ? t('Generate 1 story draft')
+                                    : t('Generate 2 story options')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  isDisabled={isAiRunBlockedByProviderKeys}
+                                  isLoading={isGeneratingStoryOptions}
+                                  onClick={() =>
+                                    generateStoryAlternatives({optimize: true})
+                                  }
+                                >
+                                  {storyOptionCount === 1
+                                    ? t('Make draft more specific')
+                                    : t('Optimize story further')}
+                                </SecondaryButton>
+                              </Stack>
+
+                              {storyOptionsGrid}
+
+                              {activeStoryDraftSummaryCard}
+
+                              <SimpleGrid columns={[1, 2]} spacing={2}>
+                                {storyPanelsDraft.map(
+                                  (panelText, panelIndex) => (
+                                    <Box
+                                      key={`story-panel-draft-${panelIndex}`}
+                                    >
+                                      <Text fontSize="xs" color="muted" mb={1}>
+                                        {t('Panel {{idx}} text', {
+                                          idx: panelIndex + 1,
+                                        })}
+                                      </Text>
+                                      <Textarea
+                                        value={panelText}
+                                        onChange={(e) =>
+                                          setStoryPanelsDraft((prev) => {
+                                            const next =
+                                              coerceStoryPanelsDraft(prev)
+                                            next[panelIndex] = e.target.value
+                                            return next
+                                          })
+                                        }
+                                        minH="62px"
+                                      />
+                                    </Box>
+                                  )
+                                )}
+                              </SimpleGrid>
+
+                              <Stack isInline justify="flex-end" spacing={2}>
+                                <PrimaryButton
+                                  isDisabled={isAiRunBlockedByProviderKeys}
                                   isLoading={isGeneratingFlipPanels}
                                   onClick={() =>
                                     buildFlipWithAi({
@@ -6039,272 +6024,403 @@ export default function NewFlipPage() {
                                     })
                                   }
                                 >
-                                  {t('Redo whole flip')}
-                                </SecondaryButton>
-                                {[0, 1, 2, 3].map((index) => (
-                                  <SecondaryButton
-                                    key={`redo-panel-${index}`}
-                                    isLoading={isGeneratingFlipPanels}
-                                    onClick={() =>
-                                      buildFlipWithAi({
-                                        regenerateIndices: [index],
-                                      })
+                                  {t('Build flips')}
+                                </PrimaryButton>
+                                <SecondaryButton
+                                  isDisabled={generatedFlipPanels.length < 4}
+                                  onClick={async () => {
+                                    try {
+                                      await applyGeneratedPanelsToBuilder(
+                                        generatedFlipPanels,
+                                        {
+                                          returnToSubmit: true,
+                                          autoShuffleSubmit: true,
+                                        }
+                                      )
+                                      notify(
+                                        t('Generated flip applied'),
+                                        t(
+                                          'Draft updated and shuffled. You can submit now or reshuffle.'
+                                        )
+                                      )
+                                    } catch (error) {
+                                      notify(
+                                        t('Unable to apply generated flip'),
+                                        error.toString(),
+                                        'error'
+                                      )
                                     }
-                                  >
-                                    {t('Redo panel {{idx}}', {idx: index + 1})}
-                                  </SecondaryButton>
-                                ))}
+                                  }}
+                                >
+                                  {t('Accept and use flip')}
+                                </SecondaryButton>
                               </Stack>
+
+                              <Box
+                                borderWidth="1px"
+                                borderColor={
+                                  flipBuildStatusBorderColorByKind[
+                                    flipBuildStatus.kind
+                                  ] || 'gray.100'
+                                }
+                                borderRadius="md"
+                                p={2}
+                                bg={
+                                  flipBuildStatusBgByKind[
+                                    flipBuildStatus.kind
+                                  ] || 'gray.50'
+                                }
+                              >
+                                <Text
+                                  fontSize="xs"
+                                  color={
+                                    flipBuildStatusTextColorByKind[
+                                      flipBuildStatus.kind
+                                    ] || 'muted'
+                                  }
+                                >
+                                  {flipBuildStatusText}
+                                </Text>
+                              </Box>
+
+                              {generatedFlipPanels.length > 0 ? (
+                                <>
+                                  <SimpleGrid columns={[1, 2, 4]} spacing={2}>
+                                    {generatedFlipPanels.map((panel) => (
+                                      <Box
+                                        key={`generated-panel-${panel.index}`}
+                                        borderWidth="1px"
+                                        borderColor="gray.100"
+                                        borderRadius="md"
+                                        p={1}
+                                      >
+                                        <Text
+                                          fontSize="xs"
+                                          color="muted"
+                                          mb={1}
+                                        >
+                                          {t('Panel {{idx}}', {
+                                            idx: Number(panel.index) + 1,
+                                          })}
+                                        </Text>
+                                        <img
+                                          src={panel.imageDataUrl}
+                                          alt={`generated-panel-${panel.index}`}
+                                          style={{
+                                            width: '100%',
+                                            height: 120,
+                                            objectFit: 'cover',
+                                            borderRadius: 6,
+                                            border:
+                                              '1px solid rgba(0,0,0,0.08)',
+                                          }}
+                                        />
+                                      </Box>
+                                    ))}
+                                  </SimpleGrid>
+                                  <Stack
+                                    isInline
+                                    justify="flex-end"
+                                    spacing={2}
+                                  >
+                                    <SecondaryButton
+                                      isLoading={isGeneratingFlipPanels}
+                                      onClick={() =>
+                                        buildFlipWithAi({
+                                          regenerateIndices: [0, 1, 2, 3],
+                                        })
+                                      }
+                                    >
+                                      {t('Redo whole flip')}
+                                    </SecondaryButton>
+                                    {[0, 1, 2, 3].map((index) => (
+                                      <SecondaryButton
+                                        key={`redo-panel-${index}`}
+                                        isLoading={isGeneratingFlipPanels}
+                                        onClick={() =>
+                                          buildFlipWithAi({
+                                            regenerateIndices: [index],
+                                          })
+                                        }
+                                      >
+                                        {t('Redo panel {{idx}}', {
+                                          idx: index + 1,
+                                        })}
+                                      </SecondaryButton>
+                                    ))}
+                                  </Stack>
+                                </>
+                              ) : null}
+                            </Stack>
+                          </Box>
+
+                          <Box
+                            borderWidth="1px"
+                            borderColor="gray.100"
+                            borderRadius="md"
+                            p={3}
+                          >
+                            <Stack spacing={1}>
+                              <Text fontSize="sm" fontWeight={500}>
+                                {t('Flip generation cost tracker')}
+                              </Text>
+                              <Text fontSize="xs" color="muted">
+                                {`${
+                                  generationTotals.count
+                                } actions | estimated ${formatUsd(
+                                  generationTotals.estimatedUsd
+                                )} | actual ${formatUsd(
+                                  generationTotals.actualUsd
+                                )} | tokens ${generationTotals.totalTokens}`}
+                              </Text>
+                              {generationCostLedger.length > 0 ? (
+                                <Stack
+                                  spacing={1}
+                                  maxH="120px"
+                                  overflowY="auto"
+                                >
+                                  {generationCostLedger.map((item) => (
+                                    <Text
+                                      key={item.id}
+                                      fontSize="xs"
+                                      color="muted"
+                                    >
+                                      {`${item.action} | ${item.provider} ${
+                                        item.model
+                                      } | est ${formatUsd(
+                                        item.estimatedUsd
+                                      )} | actual ${formatUsd(
+                                        item.actualUsd
+                                      )} | tok ${
+                                        (item.tokenUsage &&
+                                          item.tokenUsage.totalTokens) ||
+                                        0
+                                      }`}
+                                    </Text>
+                                  ))}
+                                </Stack>
+                              ) : (
+                                <Text fontSize="xs" color="muted">
+                                  {t('No generation actions yet.')}
+                                </Text>
+                              )}
+                            </Stack>
+                          </Box>
+                          <Box
+                            id="ai-solver-path"
+                            borderWidth="1px"
+                            borderColor="blue.050"
+                            borderRadius="md"
+                            p={3}
+                            bg="blue.012"
+                          >
+                            <Stack spacing={2}>
+                              <Text fontSize="sm" fontWeight={500}>
+                                {t('Path 2: Solve queued flips with AI')}
+                              </Text>
+                              <Text fontSize="xs" color="muted">
+                                {t(
+                                  'Basic flow: add the current draft flip to the queue, then run short (6) or long (14). Use advanced settings only for queue tuning.'
+                                )}
+                              </Text>
+                              <Text fontSize="xs" color="muted">
+                                {t('Queue size: {{count}}', {
+                                  count: builderQueueTotal,
+                                })}
+                              </Text>
+                              <Stack isInline justify="flex-end" spacing={2}>
+                                <SecondaryButton
+                                  isDisabled={isAiRunBlockedByProviderKeys}
+                                  isLoading={isBuilderQueueLoading}
+                                  onClick={reloadBuilderQueue}
+                                >
+                                  {t('Reload queue')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  isDisabled={isAiRunBlockedByProviderKeys}
+                                  isLoading={isAddingToTestUnit}
+                                  onClick={addDraftToTestUnit}
+                                >
+                                  {t('Add current draft flip to queue')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  isDisabled={isAiRunBlockedByProviderKeys}
+                                  isLoading={isAiDraftTesting}
+                                  onClick={runAiTestBeforeSubmit}
+                                >
+                                  {t('Run current draft now')}
+                                </SecondaryButton>
+                                <PrimaryButton
+                                  isDisabled={isAiRunBlockedByProviderKeys}
+                                  isLoading={isBuilderQueueRunning}
+                                  onClick={() =>
+                                    runBuilderQueue({preset: 'short'})
+                                  }
+                                >
+                                  {t('Run short (6)')}
+                                </PrimaryButton>
+                                <PrimaryButton
+                                  isDisabled={isAiRunBlockedByProviderKeys}
+                                  isLoading={isBuilderQueueRunning}
+                                  onClick={() =>
+                                    runBuilderQueue({preset: 'long'})
+                                  }
+                                >
+                                  {t('Run long (14)')}
+                                </PrimaryButton>
+                              </Stack>
+                              <Stack isInline justify="flex-end" spacing={2}>
+                                <SecondaryButton
+                                  onClick={() =>
+                                    setShowBenchmarkAdvanced((v) => !v)
+                                  }
+                                >
+                                  {showBenchmarkAdvanced
+                                    ? t('Hide advanced AI settings')
+                                    : t('Advanced AI settings')}
+                                </SecondaryButton>
+                              </Stack>
+                            </Stack>
+                          </Box>
+                          {showBenchmarkAdvanced ? (
+                            <>
+                              <SimpleGrid columns={[1, 2]} spacing={3}>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Provider')}
+                                  </Text>
+                                  <Input
+                                    value={aiSolverSettings.provider}
+                                    isReadOnly
+                                  />
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Model')}
+                                  </Text>
+                                  <Input
+                                    value={aiSolverSettings.model}
+                                    isReadOnly
+                                  />
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Batch size')}
+                                  </Text>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    value={builderBatchSize}
+                                    onChange={(e) =>
+                                      setBuilderBatchSize(
+                                        toInt(e.target.value, 3)
+                                      )
+                                    }
+                                  />
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="muted" mb={1}>
+                                    {t('Max flips per run')}
+                                  </Text>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={2000}
+                                    value={builderMaxFlips}
+                                    onChange={(e) =>
+                                      setBuilderMaxFlips(
+                                        toInt(e.target.value, 6)
+                                      )
+                                    }
+                                  />
+                                </Box>
+                              </SimpleGrid>
+
+                              <Flex align="center" justify="space-between">
+                                <Text fontSize="sm" color="muted">
+                                  {t('Dequeue after run')}
+                                </Text>
+                                <Switch
+                                  isChecked={builderDequeue}
+                                  onChange={() =>
+                                    setBuilderDequeue(!builderDequeue)
+                                  }
+                                />
+                              </Flex>
+
+                              <Stack isInline justify="flex-end" spacing={2}>
+                                <SecondaryButton
+                                  isLoading={isBuilderQueueLoading}
+                                  onClick={reloadBuilderQueue}
+                                >
+                                  {t('Reload queue')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  isLoading={isBuilderQueueClearing}
+                                  onClick={async () => {
+                                    setIsBuilderQueueClearing(true)
+                                    try {
+                                      const bridge = ensureAiTestUnitBridge()
+                                      await bridge.clearFlips({})
+                                      notify(
+                                        t('Queue cleared'),
+                                        t('Local test unit queue is empty.')
+                                      )
+                                      await reloadBuilderQueue()
+                                    } catch (error) {
+                                      notify(
+                                        t('Unable to clear queue'),
+                                        error.toString(),
+                                        'error'
+                                      )
+                                    } finally {
+                                      setIsBuilderQueueClearing(false)
+                                    }
+                                  }}
+                                >
+                                  {t('Clear queue')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  isLoading={isBuilderQueueRunning}
+                                  onClick={() =>
+                                    runBuilderQueue({preset: 'long'})
+                                  }
+                                >
+                                  {t('Run long (14)')}
+                                </SecondaryButton>
+                                <PrimaryButton
+                                  isLoading={isBuilderQueueRunning}
+                                  onClick={() =>
+                                    runBuilderQueue({preset: 'short'})
+                                  }
+                                >
+                                  {t('Run short (6)')}
+                                </PrimaryButton>
+                                <PrimaryButton
+                                  isLoading={isBuilderQueueRunning}
+                                  onClick={() =>
+                                    runBuilderQueue({preset: 'custom'})
+                                  }
+                                >
+                                  {t('Run queue (custom)')}
+                                </PrimaryButton>
+                              </Stack>
+
+                              <Text color="muted" fontSize="sm">
+                                {t('Queue size: {{count}}', {
+                                  count: builderQueueTotal,
+                                })}
+                              </Text>
+                              {solverCostEstimateCard}
+                              {solverSessionPackPreviewCard}
+                              {solverQueuePreview}
+                              {solverSessionMonitorCard}
+                              {solverLastRunSummary}
                             </>
                           ) : null}
-                        </Stack>
-                      </Box>
-
-                      <Box
-                        borderWidth="1px"
-                        borderColor="gray.100"
-                        borderRadius="md"
-                        p={3}
-                      >
-                        <Stack spacing={1}>
-                          <Text fontSize="sm" fontWeight={500}>
-                            {t('Flip generation cost tracker')}
-                          </Text>
-                          <Text fontSize="xs" color="muted">
-                            {`${
-                              generationTotals.count
-                            } actions | estimated ${formatUsd(
-                              generationTotals.estimatedUsd
-                            )} | actual ${formatUsd(
-                              generationTotals.actualUsd
-                            )} | tokens ${generationTotals.totalTokens}`}
-                          </Text>
-                          {generationCostLedger.length > 0 ? (
-                            <Stack spacing={1} maxH="120px" overflowY="auto">
-                              {generationCostLedger.map((item) => (
-                                <Text key={item.id} fontSize="xs" color="muted">
-                                  {`${item.action} | ${item.provider} ${
-                                    item.model
-                                  } | est ${formatUsd(
-                                    item.estimatedUsd
-                                  )} | actual ${formatUsd(
-                                    item.actualUsd
-                                  )} | tok ${
-                                    (item.tokenUsage &&
-                                      item.tokenUsage.totalTokens) ||
-                                    0
-                                  }`}
-                                </Text>
-                              ))}
-                            </Stack>
-                          ) : (
-                            <Text fontSize="xs" color="muted">
-                              {t('No generation actions yet.')}
-                            </Text>
-                          )}
-                        </Stack>
-                      </Box>
-                      <Box
-                        id="ai-solver-path"
-                        borderWidth="1px"
-                        borderColor="blue.050"
-                        borderRadius="md"
-                        p={3}
-                        bg="blue.012"
-                      >
-                        <Stack spacing={2}>
-                          <Text fontSize="sm" fontWeight={500}>
-                            {t('Path 2: Solve queued flips with AI')}
-                          </Text>
-                          <Text fontSize="xs" color="muted">
-                            {t(
-                              'Basic flow: add the current draft flip to the queue, then run short (6) or long (14). Use advanced settings only for queue tuning.'
-                            )}
-                          </Text>
-                          <Text fontSize="xs" color="muted">
-                            {t('Queue size: {{count}}', {
-                              count: builderQueueTotal,
-                            })}
-                          </Text>
-                          <Stack isInline justify="flex-end" spacing={2}>
-                            <SecondaryButton
-                              isDisabled={isAiRunBlockedByProviderKeys}
-                              isLoading={isBuilderQueueLoading}
-                              onClick={reloadBuilderQueue}
-                            >
-                              {t('Reload queue')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isDisabled={isAiRunBlockedByProviderKeys}
-                              isLoading={isAddingToTestUnit}
-                              onClick={addDraftToTestUnit}
-                            >
-                              {t('Add current draft flip to queue')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isDisabled={isAiRunBlockedByProviderKeys}
-                              isLoading={isAiDraftTesting}
-                              onClick={runAiTestBeforeSubmit}
-                            >
-                              {t('Run current draft now')}
-                            </SecondaryButton>
-                            <PrimaryButton
-                              isDisabled={isAiRunBlockedByProviderKeys}
-                              isLoading={isBuilderQueueRunning}
-                              onClick={() => runBuilderQueue({preset: 'short'})}
-                            >
-                              {t('Run short (6)')}
-                            </PrimaryButton>
-                            <PrimaryButton
-                              isDisabled={isAiRunBlockedByProviderKeys}
-                              isLoading={isBuilderQueueRunning}
-                              onClick={() => runBuilderQueue({preset: 'long'})}
-                            >
-                              {t('Run long (14)')}
-                            </PrimaryButton>
-                          </Stack>
-                          <Stack isInline justify="flex-end" spacing={2}>
-                            <SecondaryButton
-                              onClick={() =>
-                                setShowBenchmarkAdvanced((v) => !v)
-                              }
-                            >
-                              {showBenchmarkAdvanced
-                                ? t('Hide advanced AI settings')
-                                : t('Advanced AI settings')}
-                            </SecondaryButton>
-                          </Stack>
-                        </Stack>
-                      </Box>
-                      {showBenchmarkAdvanced ? (
-                        <>
-                          <SimpleGrid columns={[1, 2]} spacing={3}>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Provider')}
-                              </Text>
-                              <Input
-                                value={aiSolverSettings.provider}
-                                isReadOnly
-                              />
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Model')}
-                              </Text>
-                              <Input
-                                value={aiSolverSettings.model}
-                                isReadOnly
-                              />
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Batch size')}
-                              </Text>
-                              <Input
-                                type="number"
-                                min={1}
-                                max={100}
-                                value={builderBatchSize}
-                                onChange={(e) =>
-                                  setBuilderBatchSize(toInt(e.target.value, 3))
-                                }
-                              />
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color="muted" mb={1}>
-                                {t('Max flips per run')}
-                              </Text>
-                              <Input
-                                type="number"
-                                min={1}
-                                max={2000}
-                                value={builderMaxFlips}
-                                onChange={(e) =>
-                                  setBuilderMaxFlips(toInt(e.target.value, 6))
-                                }
-                              />
-                            </Box>
-                          </SimpleGrid>
-
-                          <Flex align="center" justify="space-between">
-                            <Text fontSize="sm" color="muted">
-                              {t('Dequeue after run')}
-                            </Text>
-                            <Switch
-                              isChecked={builderDequeue}
-                              onChange={() =>
-                                setBuilderDequeue(!builderDequeue)
-                              }
-                            />
-                          </Flex>
-
-                          <Stack isInline justify="flex-end" spacing={2}>
-                            <SecondaryButton
-                              isLoading={isBuilderQueueLoading}
-                              onClick={reloadBuilderQueue}
-                            >
-                              {t('Reload queue')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isLoading={isBuilderQueueClearing}
-                              onClick={async () => {
-                                setIsBuilderQueueClearing(true)
-                                try {
-                                  const bridge = ensureAiTestUnitBridge()
-                                  await bridge.clearFlips({})
-                                  notify(
-                                    t('Queue cleared'),
-                                    t('Local test unit queue is empty.')
-                                  )
-                                  await reloadBuilderQueue()
-                                } catch (error) {
-                                  notify(
-                                    t('Unable to clear queue'),
-                                    error.toString(),
-                                    'error'
-                                  )
-                                } finally {
-                                  setIsBuilderQueueClearing(false)
-                                }
-                              }}
-                            >
-                              {t('Clear queue')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isLoading={isBuilderQueueRunning}
-                              onClick={() => runBuilderQueue({preset: 'long'})}
-                            >
-                              {t('Run long (14)')}
-                            </SecondaryButton>
-                            <PrimaryButton
-                              isLoading={isBuilderQueueRunning}
-                              onClick={() => runBuilderQueue({preset: 'short'})}
-                            >
-                              {t('Run short (6)')}
-                            </PrimaryButton>
-                            <PrimaryButton
-                              isLoading={isBuilderQueueRunning}
-                              onClick={() =>
-                                runBuilderQueue({preset: 'custom'})
-                              }
-                            >
-                              {t('Run queue (custom)')}
-                            </PrimaryButton>
-                          </Stack>
-
-                          <Text color="muted" fontSize="sm">
-                            {t('Queue size: {{count}}', {
-                              count: builderQueueTotal,
-                            })}
-                          </Text>
-                          {solverCostEstimateCard}
-                          {solverSessionPackPreviewCard}
-                          {solverQueuePreview}
-                          {solverSessionMonitorCard}
-                          {solverLastRunSummary}
                         </>
-                      ) : null}
+                      )}
                     </Stack>
                   </Box>
                 </>
