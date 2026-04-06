@@ -230,13 +230,16 @@ export default function AiSettingsPage() {
     error: '',
   })
 
-  const notify = (title, description, status = 'info') => {
-    toast({
-      render: () => (
-        <Toast title={title} description={description} status={status} />
-      ),
-    })
-  }
+  const notify = useCallback(
+    (title, description, status = 'info') => {
+      toast({
+        render: () => (
+          <Toast title={title} description={description} status={status} />
+        ),
+      })
+    },
+    [toast]
+  )
 
   const updateNumberField = (field, value) => {
     updateAiSolverSettings({
@@ -257,6 +260,19 @@ export default function AiSettingsPage() {
       model: fallbackModel,
     })
   }
+
+  const enableAutomaticNextValidationSession = useCallback(() => {
+    updateAiSolverSettings({
+      enabled: true,
+      mode: 'session-auto',
+    })
+    notify(
+      t('Automatic AI solving enabled'),
+      t(
+        'The next real validation session will auto-start AI solving when a solvable session begins.'
+      )
+    )
+  }, [notify, t, updateAiSolverSettings])
 
   const ensureBridge = () => {
     if (!global.aiSolver) {
@@ -686,12 +702,18 @@ export default function AiSettingsPage() {
                   </PrimaryButton>
                   <PrimaryButton
                     isDisabled={!providerKeyStatus.primaryReady}
-                    onClick={() => router.push('/validation?previewAi=1')}
+                    onClick={enableAutomaticNextValidationSession}
                   >
-                    {t('Open AI Solver')}
+                    {t('Enable auto-solve next session')}
                   </PrimaryButton>
                 </Stack>
                 <Stack isInline spacing={2}>
+                  <SecondaryButton
+                    isDisabled={!providerKeyStatus.primaryReady}
+                    onClick={() => router.push('/validation?previewAi=1')}
+                  >
+                    {t('Test flip solver off-chain')}
+                  </SecondaryButton>
                   <SecondaryButton
                     isDisabled={!providerKeyStatus.primaryReady}
                     onClick={() =>
@@ -702,14 +724,7 @@ export default function AiSettingsPage() {
                   >
                     {t('Open off-chain benchmark')}
                   </SecondaryButton>
-                  <SecondaryButton
-                    isDisabled={!providerKeyStatus.primaryReady}
-                    onClick={() =>
-                      router.push(
-                        '/flips/new?focus=ai-benchmark&autostep=submit'
-                      )
-                    }
-                  >
+                  <SecondaryButton isDisabled={!providerKeyStatus.primaryReady}>
                     {t('Open on-chain automatic flow')}
                   </SecondaryButton>
                 </Stack>

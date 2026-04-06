@@ -65,7 +65,10 @@ import {
 } from '../shared/components/button'
 import {FloatDebug, Toast, Tooltip} from '../shared/components/components'
 import {useChainState} from '../shared/providers/chain-context'
-import {useSettingsState} from '../shared/providers/settings-context'
+import {
+  useSettingsDispatch,
+  useSettingsState,
+} from '../shared/providers/settings-context'
 import {
   FullscreenIcon,
   HollowStarIcon,
@@ -158,6 +161,7 @@ function ValidationSession({
   const {t, i18n} = useTranslation()
   const toast = useToast()
   const settings = useSettingsState()
+  const {updateAiSolverSettings} = useSettingsDispatch()
   const aiSolverSettings = useMemo(
     () => ({
       ...DEFAULT_AI_SOLVER_SETTINGS,
@@ -283,6 +287,25 @@ function ValidationSession({
     },
     [toast]
   )
+
+  const enableAutomaticNextValidationSession = useCallback(() => {
+    updateAiSolverSettings({
+      enabled: true,
+      mode: 'session-auto',
+    })
+    toast({
+      render: () => (
+        <Toast
+          title={t('Automatic AI solving enabled')}
+          description={t(
+            'The next real validation session will auto-start AI solving when possible.'
+          )}
+          status="success"
+        />
+      ),
+    })
+    router.push('/settings/ai')
+  }, [router, t, toast, updateAiSolverSettings])
 
   const canRunAiSolveInShort =
     state.matches('shortSession.solve.answer.normal') &&
@@ -588,6 +611,36 @@ function ValidationSession({
           ? t('Optional AI solver mode is enabled.')
           : t('Classic validation flow active. Optional AI solver is off.')}
       </Flex>
+
+      {forceAiPreview ? (
+        <Box bg="blue.012" borderBottomWidth="1px" borderBottomColor="blue.050">
+          <Flex
+            px={4}
+            py={3}
+            align={['flex-start', 'center']}
+            justify="space-between"
+            direction={['column', 'row']}
+            gap={3}
+          >
+            <Box>
+              <Text fontWeight={600}>{t('Off-chain AI solver test')}</Text>
+              <Text color="muted" fontSize="sm">
+                {t(
+                  'This is only a local test screen. It does not start a real validation session and it does not publish anything.'
+                )}
+              </Text>
+            </Box>
+            <Stack isInline spacing={2}>
+              <SecondaryButton onClick={() => router.push('/settings/ai')}>
+                {t('Back to AI')}
+              </SecondaryButton>
+              <PrimaryButton onClick={enableAutomaticNextValidationSession}>
+                {t('Enable auto-solve next session')}
+              </PrimaryButton>
+            </Stack>
+          </Flex>
+        </Box>
+      ) : null}
 
       {syncing && (
         <SynchronizingValidationAlert>
