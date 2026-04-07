@@ -8,6 +8,7 @@ const syntaxCheckedFiles = [
   'scripts/clean-paths.js',
   'scripts/run-python.js',
   'scripts/check-release-privacy.js',
+  'scripts/check-release-metadata.js',
   'scripts/release-check.js',
   'main/channels.js',
   'main/index.js',
@@ -40,6 +41,7 @@ for (const filePath of syntaxCheckedFiles) {
 }
 
 runStep('ESLint', npmCommand, ['run', 'lint', '--', '--format', 'unix'])
+runStep('Release metadata audit', npmCommand, ['run', 'audit:metadata'])
 runStep('Privacy audit', npmCommand, ['run', 'audit:privacy'])
 runStep('AI bridge regression tests', npmCommand, [
   'test',

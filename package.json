@@ -23,6 +23,7 @@
     "pack": "npm run build && electron-builder --dir",
     "clean": "node scripts/clean-paths.js renderer/out renderer/.next dist",
     "audit:privacy": "node scripts/check-release-privacy.js",
+    "audit:metadata": "node scripts/check-release-metadata.js",
     "release:check": "node scripts/release-check.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
