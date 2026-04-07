@@ -175,6 +175,15 @@ Release packaging excludes local `.env*`, logs, `.tmp/`, `tmp/`, `data/`, and
 coverage artifacts. Keep provider keys in the session-only UI or in local
 untracked files, never in release artifacts.
 
+Large bundled artifacts:
+
+- `idena-wasm-binding/lib/*.a` contains prebuilt static libraries from the
+  bundled wasm binding snapshot.
+- The release check allows the current known static libraries but blocks new
+  unreviewed tracked files above the GitHub warning threshold.
+- For a polished public binary release, prefer Git LFS or GitHub release
+  artifacts for large rebuilt libraries instead of committing new large files.
+
 ## Sample benchmark data
 
 Small labeled samples are included under [`samples/flips/`](samples/flips), including:
