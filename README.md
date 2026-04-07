@@ -2,10 +2,14 @@
 
 `idena-desktop` fork with optional experimental AI tools for Idena flips.
 
-Idena is an identity blockchain. During validation, users solve and create
-short visual puzzles called flips. A flip is a 4-image story built from two
-keywords; humans should understand the intended order, while bots should have a
-harder time guessing it.
+Idena is an identity blockchain. The official project website is
+[`idena.io`](https://www.idena.io/) and the original desktop app repository is
+[`idena-network/idena-desktop`](https://github.com/idena-network/idena-desktop)
+(links last checked April 7, 2026).
+
+During validation, users solve and create short visual puzzles called flips. A
+flip is a 4-image story built from two keywords; humans should understand the
+intended order, while bots should have a harder time guessing it.
 
 This repository keeps the normal desktop app flow available and adds optional AI
 features for research:
