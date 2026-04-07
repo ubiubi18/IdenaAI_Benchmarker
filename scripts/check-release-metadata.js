@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('fs')
+const {execFileSync} = require('child_process')
 
 const expectedFiles = [
   'LICENSE',
@@ -41,6 +42,13 @@ const requiredEnvKeys = [
 
 const failures = []
 
+const trackedFiles = new Set(
+  execFileSync('git', ['ls-files'], {encoding: 'utf8'})
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+)
+
 function requireCondition(condition, message) {
   if (!condition) {
     failures.push(message)
@@ -49,6 +57,10 @@ function requireCondition(condition, message) {
 
 for (const filePath of expectedFiles) {
   requireCondition(fs.existsSync(filePath), `Missing release file: ${filePath}`)
+  requireCondition(
+    trackedFiles.has(filePath),
+    `Release file is not tracked by git: ${filePath}`
+  )
 }
 
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'))

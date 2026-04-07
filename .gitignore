@@ -97,6 +97,7 @@ datadir
 main/node/**
 
 .env.*
+!.env.example
 
 # local benchmark artifacts
 .tmp/
