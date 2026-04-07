@@ -60,12 +60,56 @@ Use it at your own responsibility. Do not run it with valuable accounts, large
 API budgets, or unattended publishing enabled unless you have reviewed the code
 and understand the risks.
 
-## Install And Run
+## Install From Source
 
-From the repository root:
+There is no official binary release from this fork. These instructions build and
+run the app from source.
+
+Copy one command block at a time. If one block fails, stop and fix that error
+before continuing.
+
+### macOS
+
+1. Install Apple command line tools:
 
 ```bash
-npm install
+xcode-select --install
+```
+
+If macOS says the tools are already installed, continue.
+
+2. Install Homebrew if you do not already have it:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+3. Install build dependencies:
+
+```bash
+brew install git node@20 python@3 pkg-config cairo pango libpng jpeg giflib librsvg
+brew link --overwrite --force node@20
+```
+
+4. Download and enter the project:
+
+```bash
+git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
+cd IdenaAI_Benchmarker
+```
+
+If you already downloaded the repository, open Terminal in that folder instead.
+
+5. Install JavaScript dependencies and run the release gate:
+
+```bash
+npm ci
+npm run release:check
+```
+
+6. Start the desktop app:
+
+```bash
 npm run clean
 npm start
 ```
@@ -77,6 +121,109 @@ cp .env.example .env.local
 ```
 
 Edit only the values you need. Do not commit `.env.local` or provider keys.
+
+If Electron fails to install correctly, rebuild its downloaded binary:
+
+```bash
+npm rebuild electron
+node node_modules/electron/install.js
+npm start
+```
+
+### Linux Ubuntu/Debian
+
+These commands target Ubuntu/Debian style distributions.
+
+1. Install system dependencies:
+
+```bash
+sudo apt update
+sudo apt install -y git curl ca-certificates build-essential python3 python3-pip pkg-config libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev libgtk-3-0 libnss3 libxss1 libasound2 libxtst6 libx11-xcb1 libxkbfile1 libsecret-1-0 libgbm1
+```
+
+2. Install Node.js 20:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+node --version
+npm --version
+```
+
+`node --version` should print a `v20...` version.
+
+3. Download and enter the project:
+
+```bash
+git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
+cd IdenaAI_Benchmarker
+```
+
+4. Install dependencies, run checks, and start:
+
+```bash
+npm ci
+npm run release:check
+npm run clean
+npm start
+```
+
+If Electron fails to install correctly:
+
+```bash
+npm rebuild electron
+node node_modules/electron/install.js
+npm start
+```
+
+### Windows
+
+Recommended Windows path: use WSL2 with Ubuntu and follow the Linux instructions
+above. That is usually simpler than native Windows builds for older Electron
+projects with native dependencies.
+
+Native Windows source build path:
+
+1. Open PowerShell as Administrator.
+
+2. Install Chocolatey if you do not already have it:
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+```
+
+3. Close and reopen PowerShell as Administrator, then install dependencies:
+
+```powershell
+choco install -y git nodejs-lts python visualstudio2022buildtools visualstudio2022-workload-vctools gtk-runtime libjpeg-turbo 7zip curl
+node --version
+npm --version
+```
+
+If `node --version` is not Node 20, install Node 20 manually from
+[`nodejs.org`](https://nodejs.org/) or use a Node version manager before
+continuing.
+
+4. Download and enter the project:
+
+```powershell
+git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
+cd IdenaAI_Benchmarker
+```
+
+5. Install dependencies, run checks, and start:
+
+```powershell
+npm ci
+npm run release:check
+npm run clean
+npm start
+```
+
+If the native Windows build fails on old Electron/native modules, use the WSL2
+Ubuntu path instead.
 
 ## Optional AI Setup
 
