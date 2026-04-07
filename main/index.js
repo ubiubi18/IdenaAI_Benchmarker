@@ -48,6 +48,7 @@ const {
   AUTO_UPDATE_COMMAND,
   NODE_COMMAND,
   NODE_EVENT,
+  APP_INFO_COMMAND,
   AI_SOLVER_COMMAND,
   AI_TEST_UNIT_COMMAND,
   AI_TEST_UNIT_EVENT,
@@ -873,6 +874,13 @@ ipcMain.on('reload', () => {
 
 ipcMain.on('showMainWindow', () => {
   showMainWindow()
+})
+
+ipcMain.on(APP_INFO_COMMAND, (event) => {
+  event.returnValue = {
+    locale: app.getLocale(),
+    version: app.getVersion(),
+  }
 })
 
 ipcMain.handle(WINDOW_COMMAND, (event, command) => {

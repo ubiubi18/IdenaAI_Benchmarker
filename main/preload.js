@@ -1,15 +1,7 @@
 // eslint-disable-next-line import/no-extraneous-dependencies
 const electron = require('electron')
 
-const {clipboard, nativeImage, ipcRenderer, remote, shell, webFrame} = electron
-
-function getElectronApp() {
-  const whichApp = electron.app || (remote && remote.app)
-  if (!whichApp) {
-    throw new Error('Electron app is unavailable')
-  }
-  return whichApp
-}
+const {clipboard, nativeImage, ipcRenderer, shell, webFrame} = electron
 
 const isDev = require('electron-is-dev')
 
@@ -23,14 +15,23 @@ const contacts = require('./stores/contacts')
 const logger = require('./logger')
 const {prepareDb, dbPath} = require('./stores/setup')
 const {
+  APP_INFO_COMMAND,
   AI_SOLVER_COMMAND,
   AI_TEST_UNIT_COMMAND,
   AI_TEST_UNIT_EVENT,
   WINDOW_COMMAND,
 } = require('./channels')
 
+function getAppInfo() {
+  try {
+    return ipcRenderer.sendSync(APP_INFO_COMMAND) || {}
+  } catch (error) {
+    return {}
+  }
+}
+
 process.once('loaded', () => {
-  const app = getElectronApp()
+  const appInfo = getAppInfo()
   global.ipcRenderer = ipcRenderer
   global.openExternal = shell.openExternal
   global.aiSolver = {
@@ -95,12 +96,12 @@ process.once('loaded', () => {
 
   global.clipboard = clipboard
   global.nativeImage = nativeImage
-  ;[global.locale] = app.getLocale().split('-')
+  ;[global.locale] = String(appInfo.locale || 'en').split('-')
 
   global.getZoomLevel = () => webFrame.getZoomLevel()
   global.setZoomLevel = (level) => webFrame.setZoomLevel(level)
 
-  global.appVersion = app.getVersion()
+  global.appVersion = appInfo.version || '0.0.0'
 
   global.env = {
     NODE_ENV: process.env.NODE_ENV,
