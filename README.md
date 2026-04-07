@@ -162,6 +162,15 @@ Lint:
 npm run lint -- --format unix
 ```
 
+Local release gate:
+
+```bash
+npm run release:check
+```
+
+This runs syntax checks for release helper scripts and critical Electron/AI
+bridge files, full lint, the privacy audit, and the AI bridge regression suite.
+
 ## Sample benchmark data
 
 Small labeled samples are included under [`samples/flips/`](samples/flips), including:
