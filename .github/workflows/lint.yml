@@ -22,5 +22,8 @@ jobs:
       - name: Run linter
         run: npm run lint
 
+      - name: Run release privacy check
+        run: npm run audit:privacy
+
       - name: Run AI bridge tests
         run: npm test -- --runInBand main/ai-providers/bridge.test.js
