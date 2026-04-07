@@ -26,6 +26,7 @@ const {
   AI_SOLVER_COMMAND,
   AI_TEST_UNIT_COMMAND,
   AI_TEST_UNIT_EVENT,
+  WINDOW_COMMAND,
 } = require('./channels')
 
 process.once('loaded', () => {
@@ -110,12 +111,11 @@ process.once('loaded', () => {
   }
 
   global.toggleFullScreen = () => {
-    if (!remote || typeof remote.getCurrentWindow !== 'function') {
-      logger.warn('Electron remote is unavailable; cannot toggle fullscreen')
-      return
-    }
-    const currentWindow = remote.getCurrentWindow()
-    currentWindow.setFullScreen(!currentWindow.isFullScreen())
+    ipcRenderer
+      .invoke(WINDOW_COMMAND, 'toggleFullScreen')
+      .catch((error) =>
+        logger.warn('Cannot toggle fullscreen', error && error.message)
+      )
   }
 
   global.levelup = levelup

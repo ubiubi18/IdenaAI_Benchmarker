@@ -51,6 +51,7 @@ const {
   AI_SOLVER_COMMAND,
   AI_TEST_UNIT_COMMAND,
   AI_TEST_UNIT_EVENT,
+  WINDOW_COMMAND,
 } = require('./channels')
 const {createAiProviderBridge} = require('./ai-providers')
 const {createAiTestUnitBridge} = require('./ai-test-unit')
@@ -872,6 +873,21 @@ ipcMain.on('reload', () => {
 
 ipcMain.on('showMainWindow', () => {
   showMainWindow()
+})
+
+ipcMain.handle(WINDOW_COMMAND, (event, command) => {
+  const targetWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow
+  if (!targetWindow) {
+    throw new Error('No window is available')
+  }
+
+  switch (command) {
+    case 'toggleFullScreen':
+      targetWindow.setFullScreen(!targetWindow.isFullScreen())
+      return {fullScreen: targetWindow.isFullScreen()}
+    default:
+      throw new Error(`Unknown window command: ${command}`)
+  }
 })
 
 function sendMainWindowMsg(channel, message, data) {
