@@ -19,11 +19,5 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Run linter
-        run: npm run lint
-
-      - name: Run release privacy check
-        run: npm run audit:privacy
-
-      - name: Run AI bridge tests
-        run: npm test -- --runInBand main/ai-providers/bridge.test.js
+      - name: Run release check
+        run: npm run release:check

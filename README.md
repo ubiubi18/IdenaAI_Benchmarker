@@ -172,6 +172,9 @@ This runs syntax checks for release helper scripts and critical Electron/AI
 bridge files, full lint, metadata/artifact/privacy audits, an Electron remote
 safety audit, and the AI bridge regression suite.
 
+GitHub Actions uses the same `release:check` command for push CI and before
+tagged release packaging, so local and remote release gates stay aligned.
+
 Release packaging excludes local `.env*`, logs, `.tmp/`, `tmp/`, `data/`, and
 coverage artifacts. Keep provider keys in the session-only UI or in local
 untracked files, never in release artifacts.
