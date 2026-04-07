@@ -1,18 +1,36 @@
 # IdenaAI_Benchmarker
 
-`idena-desktop` fork with optional experimental AI tools for Idena flips.
+This repository is a desktop benchmarking tool that connects AI API providers to the FLIP-Challenge - a human CAPTCHA-like benchmark built from human-generated and human-verified tasks collected from the Idena blockchain. It lets researchers test, compare, and stress-test models on tasks that are still easy for humans but often hard, brittle, and expensive for AI.
 
-Idena is an identity blockchain. The official project website is
-[`idena.io`](https://www.idena.io/) and the original desktop app repository is
-[`idena-network/idena-desktop`](https://github.com/idena-network/idena-desktop)
-(links last checked April 7, 2026).
+Use it to explore model capability, failure modes, prompt strategies, provider differences, and cost. See which models come closest, where they still break down, and what price AI has to pay on tasks where humans still hold the advantage.
 
-During validation, users solve and create short visual puzzles called flips. A
-flip is a 4-image story built from two keywords; humans should understand the
-intended order, while bots should have a harder time guessing it.
+Latest models from leading AI providers can be evaluated offchain against the publicly released FLIP Reasoning Challenge benchmark, built from human-generated and human-verified tasks collected from the Idena blockchain.
 
-This repository keeps the normal desktop app flow available and adds optional AI
-features for research:
+Humans still clearly outperform state-of-the-art AI on this benchmark. The best individual closed-source model reached 77.9% zero-shot accuracy, humans reached 95.3%, and even a 15-model ensemble reached only 85.2%, as of the 2025 FLIP Reasoning Challenge paper, referenced in the
+
+Hugging Face dataset:
+[https://huggingface.co/datasets/aplesner-eth/FLIP-Challenge](https://huggingface.co/datasets/aplesner-eth/FLIP-Challenge)
+
+Andreas Plesner repo:
+[https://github.com/aplesner/flip-reasoning-challenge](https://github.com/aplesner/flip-reasoning-challenge)
+
+Our repository enables also onchain testing, but entirely at the tester’s own responsibility. Onchain outcomes may differ from offchain benchmark results and depend not only on model capability, but also on the willingness and ability of the Idena community to defend the network against bad flips and to report invalid submissions.
+
+This project does not endorse any token or coin. It is a research tool built around one core question: where are humans still meaningfully better than AI? If onchain benchmarking on Idena shows that stronger defenses are needed, an individual fork or a redesigned Idena-like blockchain may be the better path for preserving or improving AI resistance.
+
+Idena is an identity blockchain with a long-running human-verification mechanism. 
+
+Official Idena website:
+https://www.idena.io/
+
+Original desktop app repository:
+https://github.com/idena-network/idena-desktop
+
+During validation, users solve and create short visual puzzles called flips. A flip is a 4-image story built from two keywords. Humans should be able to understand the intended sequence, while bots and weak models should have a much harder time inferring it reliably.
+
+That makes FLIP interesting as a multimodal benchmark for reasoning, sequencing, common sense, and visual storytelling - not just raw image recognition.
+
+This fork keeps the familiar desktop app flow available while adding optional AI research features:
 
 - AI-assisted flip story generation
 - AI-assisted flip image generation
@@ -25,9 +43,10 @@ without enabling AI or adding API keys.
 
 ## Status
 
-This is a research fork, not an official Idena release. Use it carefully:
+This is a research fork, not an official Idena release. It has been tested mainly on macOS. Linux and Windows support are best-effort for now. Use it carefully:
 
-- AI provider calls can cost money.
+- You must use your own API keys.
+- AI provider calls do cost money.
 - API keys should be provided through the session-only UI or local untracked
   config, never committed.
 - Fully automatic flip generation and publishing is experimental and has not
@@ -39,15 +58,9 @@ For cost control, prefer prepaid API budgets or provider-side spending limits.
 
 ## Community Build Warning
 
-The experimental AI work in this fork was built as a community project by
-`ubiubi18`, an Idena community member with practical knowledge of Idena
-consensus and flip flows, but without claiming deep software engineering or
-security-audit expertise.
+Large parts of the experimental AI functionality in this fork were developed as a community project and have not undergone a full professional security audit.
 
-The project was developed through prompt-driven AI coding ("vibe coding") with
-Codex and tested manually on a Mac. The maintainer did not read or audit every
-line of generated code. Treat this as experimental software that may contain the
-kind of weaknesses common in vibe-coded projects:
+The project was developed through prompt-assisted coding with Codex and tested manually on a Mac. Treat this as experimental software that may contain the kinds of weaknesses common in fast-moving AI-assisted community projects:
 
 - security bugs
 - broken or unreliable flows
@@ -182,8 +195,7 @@ Recommended Windows path: use WSL2 with Ubuntu and follow the Linux instructions
 above. That is usually simpler than native Windows builds for older Electron
 projects with native dependencies.
 
-Native Windows source build path:
-
+Native Windows source build path is experimental and may require extra debugging:
 1. Open PowerShell as Administrator.
 
 2. Install Chocolatey if you do not already have it:
@@ -230,16 +242,14 @@ Ubuntu path instead.
 AI features are off by default. If you enable them in the app, the UI asks you to
 choose one or more AI providers and enter session API keys.
 
-The main areas under AI are:
+Typical research workflows include:
 
 - AI Flip Builder: helps create a story and images for the current keyword pair
 - AI Solver: helps solve flips during validation or test runs
 - Off-chain Benchmark: tests solver behavior on local/sample flips
 - On-chain Automatic Flow: experimental automation for real validation flows
 
-Cheap or very small models failed most often in early testing. If results are
-poor, try different providers/models and advanced settings, but watch cost and
-latency.
+Cheap or very small models failed most often in early testing. If results are poor, try different providers, models, and advanced settings, but watch cost and latency.
 
 ## Repository Layout
 
@@ -358,7 +368,4 @@ This repository has multiple license scopes:
 - Bundled `idena-wasm-binding/` snapshot: LGPL-3.0. See
   [`idena-wasm-binding/LICENSE`](idena-wasm-binding/LICENSE).
 
-This is not legal advice. Do not describe the entire bundled repository as
-MIT-only. See [`LICENSE`](LICENSE), [`LICENSES/MIT.txt`](LICENSES/MIT.txt), and
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) before preparing a public
-release or binary distribution.
+This is not legal advice. Do not describe the entire bundled repository as MIT-only. Review `LICENSE`, `LICENSES/MIT.txt`, and `THIRD_PARTY_NOTICES.md` before preparing a public release or binary distribution. 
