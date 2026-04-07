@@ -30,6 +30,10 @@ The current repository keeps the desktop app fork flattened at the repo root ins
 - [`docs/`](docs)
 - [`package.json`](package.json)
 
+The installable application still presents itself as `idena-desktop`; the
+GitHub repository metadata points to this benchmark fork so releases and issue
+links do not accidentally target upstream `idena-network/idena-desktop`.
+
 The missing bundled source components have been restored as top-level directories:
 
 - [`idena-go/`](idena-go)

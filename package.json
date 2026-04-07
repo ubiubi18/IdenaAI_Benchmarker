@@ -2,8 +2,16 @@
   "name": "idena-desktop",
   "productName": "idena-desktop",
   "version": "0.0.1",
+  "description": "Idena desktop fork with optional experimental AI flip tooling and benchmark helpers.",
   "main": "main/index.js",
-  "repository": "idena-network/idena-desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ubiubi18/IdenaAI_Benchmarker.git"
+  },
+  "homepage": "https://github.com/ubiubi18/IdenaAI_Benchmarker#readme",
+  "bugs": {
+    "url": "https://github.com/ubiubi18/IdenaAI_Benchmarker/issues"
+  },
   "license": "MIT",
   "scripts": {
     "start": "dotenv -e .env.local electron .",
