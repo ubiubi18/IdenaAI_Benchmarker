@@ -1,4 +1,4 @@
-# IdenaAI_Benchmarker
+# idena-ai-benchmark
 
 This repository is a desktop benchmarking tool that connects AI API providers to the FLIP-Challenge - a human CAPTCHA-like benchmark built from human-generated and human-verified tasks collected from the Idena blockchain. It lets researchers test, compare, and stress-test models on tasks that are still easy for humans but often hard, brittle, and expensive for AI.
 
