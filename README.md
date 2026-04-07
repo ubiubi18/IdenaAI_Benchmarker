@@ -171,6 +171,10 @@ npm run release:check
 This runs syntax checks for release helper scripts and critical Electron/AI
 bridge files, full lint, the privacy audit, and the AI bridge regression suite.
 
+Release packaging excludes local `.env*`, logs, `.tmp/`, `tmp/`, `data/`, and
+coverage artifacts. Keep provider keys in the session-only UI or in local
+untracked files, never in release artifacts.
+
 ## Sample benchmark data
 
 Small labeled samples are included under [`samples/flips/`](samples/flips), including:
