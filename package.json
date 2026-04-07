@@ -25,6 +25,7 @@
     "audit:privacy": "node scripts/check-release-privacy.js",
     "audit:metadata": "node scripts/check-release-metadata.js",
     "audit:artifacts": "node scripts/check-release-artifacts.js",
+    "audit:electron": "node scripts/check-electron-safety.js",
     "release:check": "node scripts/release-check.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
