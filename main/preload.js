@@ -1,14 +1,15 @@
 // eslint-disable-next-line import/no-extraneous-dependencies
 const electron = require('electron')
 
-const {
-  clipboard,
-  nativeImage,
-  ipcRenderer,
-  remote: {app},
-  shell,
-  webFrame,
-} = electron
+const {clipboard, nativeImage, ipcRenderer, remote, shell, webFrame} = electron
+
+function getElectronApp() {
+  const whichApp = electron.app || (remote && remote.app)
+  if (!whichApp) {
+    throw new Error('Electron app is unavailable')
+  }
+  return whichApp
+}
 
 const isDev = require('electron-is-dev')
 
@@ -28,6 +29,7 @@ const {
 } = require('./channels')
 
 process.once('loaded', () => {
+  const app = getElectronApp()
   global.ipcRenderer = ipcRenderer
   global.openExternal = shell.openExternal
   global.aiSolver = {
@@ -108,7 +110,11 @@ process.once('loaded', () => {
   }
 
   global.toggleFullScreen = () => {
-    const currentWindow = electron.remote.getCurrentWindow()
+    if (!remote || typeof remote.getCurrentWindow !== 'function') {
+      logger.warn('Electron remote is unavailable; cannot toggle fullscreen')
+      return
+    }
+    const currentWindow = remote.getCurrentWindow()
     currentWindow.setFullScreen(!currentWindow.isFullScreen())
   }
 

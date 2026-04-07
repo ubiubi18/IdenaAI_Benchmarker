@@ -5,8 +5,16 @@ const low = require('lowdb')
 const FileSync = require('lowdb/adapters/FileSync')
 const fs = require('fs')
 
+function getElectronApp() {
+  const whichApp = app || (remote && remote.app)
+  if (!whichApp) {
+    throw new Error('Electron app is unavailable')
+  }
+  return whichApp
+}
+
 function dbPath(fileDb) {
-  const whichApp = app || remote.app
+  const whichApp = getElectronApp()
   return path.join(whichApp.getPath('userData'), fileDb)
 }
 

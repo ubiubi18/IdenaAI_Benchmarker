@@ -97,8 +97,52 @@ Run the active desktop app from the repository root:
 
 ```bash
 npm install
+npm run clean
 npm start
 ```
+
+For local environment defaults, copy `.env.example` to `.env.local` and adjust
+only the values you need:
+
+```bash
+cp .env.example .env.local
+```
+
+Provider API keys are not meant to be committed. The app loads them as
+session-only keys through the AI settings UI.
+
+## Optional AI Features
+
+The app can run like regular `idena-desktop`. Experimental AI features stay off
+until you enable them and configure your own provider key.
+
+Use AI features with caution:
+
+- Provider calls may cost money and costs are your responsibility.
+- Prefer prepaid API budgets or provider-side spending limits.
+- Do not attach debug logs with secrets or raw provider payloads to public
+  issues.
+- Fully automatic flip generation and publishing is experimental; the safer
+  path is still the manual flip builder where story text and images can be
+  reviewed and edited before publishing.
+
+## Optional Python Pipeline
+
+The Python story pipeline is optional and disabled by default:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+Then set these values in `.env.local` if you want to test it:
+
+```bash
+IDENAAI_USE_PY_FLIP_PIPELINE=true
+IDENAAI_PYTHON=python3
+```
+
+On Windows, set `IDENAAI_PYTHON=py -3` or the absolute path to your Python
+interpreter.
 
 ## Tests
 
@@ -147,4 +191,14 @@ Use it with caution, especially when:
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+This repository has multiple license scopes:
+
+- Active desktop app fork and AI benchmark helper code: MIT. See
+  [`LICENSE`](LICENSE) and [`LICENSES/MIT.txt`](LICENSES/MIT.txt).
+- Bundled `idena-go/` snapshot: LGPL-3.0. See
+  [`idena-go/LICENSE`](idena-go/LICENSE).
+- Bundled `idena-wasm-binding/` snapshot: LGPL-3.0. See
+  [`idena-wasm-binding/LICENSE`](idena-wasm-binding/LICENSE).
+
+See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) before preparing a public
+release or binary distribution.

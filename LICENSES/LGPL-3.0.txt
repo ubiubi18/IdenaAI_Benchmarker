@@ -1,0 +1,10 @@
+GNU Lesser General Public License v3.0
+
+This repository bundles source snapshots that carry LGPL-3.0 license text in
+their own directories:
+
+- idena-go/LICENSE
+- idena-wasm-binding/LICENSE
+
+Those files contain the full LGPL-3.0 text from the Free Software Foundation.
+Keep them with any source or binary distribution of the bundled components.

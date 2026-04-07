@@ -13,17 +13,18 @@ jobs:
         os: [macos-latest, ubuntu-latest, windows-latest]
     steps:
       - name: Check out
-        uses: actions/checkout@v1
+        uses: actions/checkout@v4
 
       - name: Set tag
         id: refs
-        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
+        run: echo "tag=${GITHUB_REF#refs/*/}" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Setup Node.js
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
-          node-version: 14
+          node-version: 20
+          cache: npm
 
       - name: Install Linux canvas deps
         if: matrix.os == 'ubuntu-latest'
@@ -47,5 +48,5 @@ jobs:
       - name: Build & release
         uses: samuelmeuli/action-electron-builder@v1.6.0
         with:
-          github_token: ${{ secrets.github_token }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           release: true

@@ -8,6 +8,14 @@ const os = require('os')
 
 const homeDir = os.homedir ? os.homedir() : process.env.HOME
 
+function getElectronApp() {
+  const whichApp = app || (remote && remote.app)
+  if (!whichApp) {
+    throw new Error('Electron app is unavailable')
+  }
+  return whichApp
+}
+
 function mkDir(dirPath, root) {
   const dirs = dirPath.split(path.sep)
   const dir = dirs.shift()
@@ -48,7 +56,7 @@ function prepareDir(dirPath) {
 }
 
 function appDataPath(folder) {
-  const whichApp = app || remote.app
+  const whichApp = getElectronApp()
 
   switch (process.platform) {
     case 'darwin':

@@ -1,22 +1,26 @@
-name: Lint
+name: Lint and tests
 
 on: push
 
 jobs:
-  build:
+  lint-test:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out
-        uses: actions/checkout@v1
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
-          node-version: 12
+          node-version: 20
+          cache: npm
 
       - name: Install deps
         run: npm ci
 
       - name: Run linter
         run: npm run lint
+
+      - name: Run AI bridge tests
+        run: npm test -- --runInBand main/ai-providers/bridge.test.js

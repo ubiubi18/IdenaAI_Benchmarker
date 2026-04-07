@@ -5,7 +5,7 @@ This repository includes a reproducible index so ChatGPT Deep Research can inges
 ## 1. Generate/refresh the index
 
 ```bash
-cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop
+cd $WORKSPACE/idena-desktop
 npm run index:deep-research
 ```
 

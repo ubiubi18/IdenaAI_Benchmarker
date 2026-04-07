@@ -216,6 +216,18 @@ const PYTHON_FLIP_PIPELINE_SCRIPT = path.resolve(
 const DEFAULT_PYTHON_FLIP_PIPELINE_TIMEOUT_MS = 20000
 const execFileAsync = promisify(execFile)
 
+function resolvePythonInterpreterCommand() {
+  const configured = String(
+    process.env.IDENAAI_PYTHON ||
+      (process.platform === 'win32' ? 'py -3' : 'python3')
+  ).trim()
+  const parts = configured.split(/\s+/g).filter(Boolean)
+  return {
+    command: parts[0] || 'python3',
+    args: parts.slice(1),
+  }
+}
+
 let appDataPath = null
 
 try {
@@ -1315,14 +1327,19 @@ async function runPythonFlipStoryPipelineDefault({
     provider === PROVIDERS.Gemini ? 'gemini' : 'openai',
   ]
 
-  const {stdout} = await execFileAsync('python3', args, {
-    timeout: Math.max(
-      5000,
-      Number(timeoutMs) || DEFAULT_PYTHON_FLIP_PIPELINE_TIMEOUT_MS
-    ),
-    maxBuffer: 4 * 1024 * 1024,
-    cwd: path.dirname(PYTHON_FLIP_PIPELINE_SCRIPT),
-  })
+  const python = resolvePythonInterpreterCommand()
+  const {stdout} = await execFileAsync(
+    python.command,
+    python.args.concat(args),
+    {
+      timeout: Math.max(
+        5000,
+        Number(timeoutMs) || DEFAULT_PYTHON_FLIP_PIPELINE_TIMEOUT_MS
+      ),
+      maxBuffer: 4 * 1024 * 1024,
+      cwd: path.dirname(PYTHON_FLIP_PIPELINE_SCRIPT),
+    }
+  )
 
   const parsed = extractJsonBlock(stdout)
   if (!parsed || typeof parsed !== 'object') {

@@ -2067,9 +2067,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx prettier --check main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/screens/validation/ai/solver-orchestrator.js renderer/pages/flips/new.js renderer/shared/providers/settings-context.js main/ai-test-unit.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/screens/validation/ai/solver-orchestrator.js renderer/pages/flips/new.js renderer/shared/providers/settings-context.js main/ai-test-unit.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
+- `cd $WORKSPACE/idena-desktop && npx prettier --check main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/screens/validation/ai/solver-orchestrator.js renderer/pages/flips/new.js renderer/shared/providers/settings-context.js main/ai-test-unit.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/screens/validation/ai/solver-orchestrator.js renderer/pages/flips/new.js renderer/shared/providers/settings-context.js main/ai-test-unit.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
 
 ### Result
 
@@ -2081,11 +2081,11 @@
 
 ### Why
 
-- Requested to read `/Users/jz/Downloads/2504.12256v1.pdf` and optimize while staying compatible with newer model generations.
+- Requested to read `$DOWNLOADS/2504.12256v1.pdf` and optimize while staying compatible with newer model generations.
 
 ### Inspected
 
-- Paper: `/Users/jz/Downloads/2504.12256v1.pdf` (FLIP Reasoning Challenge, arXiv:2504.12256v1)
+- Paper: `$DOWNLOADS/2504.12256v1.pdf` (FLIP Reasoning Challenge, arXiv:2504.12256v1)
 - Relevant findings extracted:
   - caption-first reasoning can outperform direct image-only prompting.
   - ensemble methods improve performance over single models.
@@ -2116,9 +2116,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx prettier --write main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/pages/flips/new.js renderer/screens/validation/ai/solver-orchestrator.js renderer/shared/providers/settings-context.js renderer/pages/validation.js main/ai-test-unit.js docs/fork-plan.md docs/flip-reasoning-paper-optimizations.md`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/pages/flips/new.js renderer/screens/validation/ai/solver-orchestrator.js renderer/shared/providers/settings-context.js renderer/pages/validation.js main/ai-test-unit.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
+- `cd $WORKSPACE/idena-desktop && npx prettier --write main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/pages/flips/new.js renderer/screens/validation/ai/solver-orchestrator.js renderer/shared/providers/settings-context.js renderer/pages/validation.js main/ai-test-unit.js docs/fork-plan.md docs/flip-reasoning-paper-optimizations.md`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/pages/flips/new.js renderer/screens/validation/ai/solver-orchestrator.js renderer/shared/providers/settings-context.js renderer/pages/validation.js main/ai-test-unit.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
 
 ### Result
 
@@ -2187,9 +2187,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx prettier --write main/ai-providers/constants.js main/ai-providers/providers/openai.js main/ai-providers/providers/anthropic.js main/ai-providers/providers/gemini.js main/ai-providers/bridge.js main/ai-providers/bridge.test.js main/index.js main/preload.js renderer/pages/_app.js renderer/pages/settings/ai.js renderer/pages/flips/new.js renderer/screens/validation/ai/solver-orchestrator.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet main/ai-providers/constants.js main/ai-providers/providers/openai.js main/ai-providers/providers/anthropic.js main/ai-providers/providers/gemini.js main/ai-providers/bridge.js main/ai-providers/bridge.test.js main/index.js main/preload.js renderer/pages/_app.js renderer/pages/settings/ai.js renderer/pages/flips/new.js renderer/screens/validation/ai/solver-orchestrator.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
+- `cd $WORKSPACE/idena-desktop && npx prettier --write main/ai-providers/constants.js main/ai-providers/providers/openai.js main/ai-providers/providers/anthropic.js main/ai-providers/providers/gemini.js main/ai-providers/bridge.js main/ai-providers/bridge.test.js main/index.js main/preload.js renderer/pages/_app.js renderer/pages/settings/ai.js renderer/pages/flips/new.js renderer/screens/validation/ai/solver-orchestrator.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet main/ai-providers/constants.js main/ai-providers/providers/openai.js main/ai-providers/providers/anthropic.js main/ai-providers/providers/gemini.js main/ai-providers/bridge.js main/ai-providers/bridge.test.js main/index.js main/preload.js renderer/pages/_app.js renderer/pages/settings/ai.js renderer/pages/flips/new.js renderer/screens/validation/ai/solver-orchestrator.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
 
 ### Result
 
@@ -2219,9 +2219,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx prettier --write renderer/pages/settings/ai.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet renderer/pages/settings/ai.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
+- `cd $WORKSPACE/idena-desktop && npx prettier --write renderer/pages/settings/ai.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet renderer/pages/settings/ai.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
 
 ### Result
 
@@ -2270,9 +2270,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx prettier --write main/ai-providers/bridge.js main/ai-providers/providers/legacy-heuristic.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/shared/providers/settings-context.js renderer/screens/validation/ai/solver-orchestrator.js renderer/pages/flips/new.js renderer/pages/validation.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet main/ai-providers/bridge.js main/ai-providers/providers/legacy-heuristic.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/shared/providers/settings-context.js renderer/screens/validation/ai/solver-orchestrator.js renderer/pages/flips/new.js renderer/pages/validation.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
+- `cd $WORKSPACE/idena-desktop && npx prettier --write main/ai-providers/bridge.js main/ai-providers/providers/legacy-heuristic.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/shared/providers/settings-context.js renderer/screens/validation/ai/solver-orchestrator.js renderer/pages/flips/new.js renderer/pages/validation.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet main/ai-providers/bridge.js main/ai-providers/providers/legacy-heuristic.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/shared/providers/settings-context.js renderer/screens/validation/ai/solver-orchestrator.js renderer/pages/flips/new.js renderer/pages/validation.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
 
 ### Result
 
@@ -2316,9 +2316,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx prettier --write main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/shared/providers/settings-context.js renderer/pages/flips/new.js renderer/pages/validation.js renderer/screens/validation/ai/solver-orchestrator.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/shared/providers/settings-context.js renderer/pages/flips/new.js renderer/pages/validation.js renderer/screens/validation/ai/solver-orchestrator.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
+- `cd $WORKSPACE/idena-desktop && npx prettier --write main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/shared/providers/settings-context.js renderer/pages/flips/new.js renderer/pages/validation.js renderer/screens/validation/ai/solver-orchestrator.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/settings/ai.js renderer/shared/providers/settings-context.js renderer/pages/flips/new.js renderer/pages/validation.js renderer/screens/validation/ai/solver-orchestrator.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-test-unit.test.js`
 
 ### Result
 
@@ -2329,9 +2329,9 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/scripts/preload_ai_test_unit_queue.py`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-test-unit.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/.tmp/flip-challenge/flip-challenge-test-200-decoded.json`
+- `$WORKSPACE/idena-desktop/scripts/preload_ai_test_unit_queue.py`
+- `$WORKSPACE/idena-desktop/main/ai-test-unit.js`
+- `$WORKSPACE/idena-desktop/.tmp/flip-challenge/flip-challenge-test-200-decoded.json`
 
 ### Changed
 
@@ -2347,12 +2347,12 @@
 
 ### Commands
 
-- `python3 -m py_compile /Users/jz/Documents/idena-benchmark-workspace/idena-desktop/scripts/preload_ai_test_unit_queue.py`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --input .tmp/flip-challenge/flip-challenge-test-200-decoded.json --replace --max-total 200 --source flip-challenge-import`
+- `python3 -m py_compile $WORKSPACE/idena-desktop/scripts/preload_ai_test_unit_queue.py`
+- `cd $WORKSPACE/idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --input .tmp/flip-challenge/flip-challenge-test-200-decoded.json --replace --max-total 200 --source flip-challenge-import`
 - `python3 - <<'PY'`
 - `import json, collections`
 - `from pathlib import Path`
-- `p=Path('/Users/jz/Library/Application Support/Idena/ai-benchmark/test-unit-flips.json')`
+- `p=Path('$IDENA_APP_DATA/ai-benchmark/test-unit-flips.json')`
 - `q=json.loads(p.read_text())`
 - `answers=collections.Counter((item.get('expectedAnswer') or 'missing') for item in q)`
 - `print('queue_total',len(q),dict(answers))`
@@ -2370,9 +2370,9 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/providers/openai.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/settings/ai.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/providers/openai.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/settings/ai.js`
 
 ### Changed
 
@@ -2385,7 +2385,7 @@
 - Simplified provider connection test payload for OpenAI to minimal, broadly-compatible fields:
   - now sends only `model` + `messages` (no fixed `temperature`/`max_tokens`).
 - Added regression tests:
-  - `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/providers/openai.test.js`
+  - `$WORKSPACE/idena-desktop/main/ai-providers/providers/openai.test.js`
 
 ### Why
 
@@ -2395,9 +2395,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx prettier --write main/ai-providers/providers/openai.js main/ai-providers/providers/openai.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet main/ai-providers/providers/openai.js main/ai-providers/providers/openai.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/providers/openai.test.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx prettier --write main/ai-providers/providers/openai.js main/ai-providers/providers/openai.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet main/ai-providers/providers/openai.js main/ai-providers/providers/openai.test.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/providers/openai.test.js main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -2411,9 +2411,9 @@
 
 ### Inspected
 
-- `/Users/jz/Library/Application Support/Idena/ai-benchmark/test-unit-flips.json`
-- `/Users/jz/Library/Logs/Electron/idena.log`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-test-unit.js`
+- `$IDENA_APP_DATA/ai-benchmark/test-unit-flips.json`
+- `$ELECTRON_LOGS/idena.log`
+- `$WORKSPACE/idena-desktop/main/ai-test-unit.js`
 
 ### Changed
 
@@ -2430,9 +2430,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet main/ai-test-unit.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-test-unit.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --input .tmp/flip-challenge/flip-challenge-test-200-decoded.json --replace --max-total 200 --source flip-challenge-import`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet main/ai-test-unit.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-test-unit.test.js`
+- `cd $WORKSPACE/idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --input .tmp/flip-challenge/flip-challenge-test-200-decoded.json --replace --max-total 200 --source flip-challenge-import`
 
 ### Result
 
@@ -2443,9 +2443,9 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/validation/ai/test-unit-utils.js`
-- `/Users/jz/Library/Logs/Electron/idena.log`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/validation/ai/test-unit-utils.js`
+- `$ELECTRON_LOGS/idena.log`
 
 ### Changed
 
@@ -2465,9 +2465,9 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet renderer/pages/flips/new.js renderer/screens/validation/ai/test-unit-utils.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx prettier --check renderer/pages/flips/new.js renderer/screens/validation/ai/test-unit-utils.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-test-unit.test.js main/ai-providers/providers/openai.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet renderer/pages/flips/new.js renderer/screens/validation/ai/test-unit-utils.js`
+- `cd $WORKSPACE/idena-desktop && npx prettier --check renderer/pages/flips/new.js renderer/screens/validation/ai/test-unit-utils.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-test-unit.test.js main/ai-providers/providers/openai.test.js`
 
 ### Result
 
@@ -2478,8 +2478,8 @@
 
 ### Inspected
 
-- `/Users/jz/Library/Application Support/Idena/ai-benchmark/test-unit-runs.jsonl`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$IDENA_APP_DATA/ai-benchmark/test-unit-runs.jsonl`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 
 ### Result snapshot (latest long run)
 
@@ -2498,9 +2498,9 @@
 
 - Generated non-overlapping pack:
   - `scripts/import_flip_challenge.py --skip-flips 200 --max-flips 200`
-  - output: `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/.tmp/flip-challenge/flip-challenge-test-200-skip200-decoded.json`
+  - output: `$WORKSPACE/idena-desktop/.tmp/flip-challenge/flip-challenge-test-200-skip200-decoded.json`
 - Replaced queue with this fresh pack:
-  - `/Users/jz/Library/Application Support/Idena/ai-benchmark/test-unit-flips.json`
+  - `$IDENA_APP_DATA/ai-benchmark/test-unit-flips.json`
   - queue size: `200`
   - labels: `left=91`, `right=109`
 
@@ -2508,9 +2508,9 @@
 
 ### Inspected
 
-- `/Users/jz/Library/Application Support/Idena/ai-benchmark/test-unit-runs.jsonl`
-- `/Users/jz/Library/Application Support/Idena/ai-benchmark/test-unit-flips.json`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$IDENA_APP_DATA/ai-benchmark/test-unit-runs.jsonl`
+- `$IDENA_APP_DATA/ai-benchmark/test-unit-flips.json`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 
 ### Findings
 
@@ -2520,14 +2520,14 @@
 ### Changed
 
 - UI summary now shows explicit message when audit is unavailable because `expectedAnswer` labels are missing.
-  - file: `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+  - file: `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 - Reloaded queue with known-consensus flips from non-overlapping dataset slice.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --quiet renderer/pages/flips/new.js renderer/screens/validation/ai/test-unit-utils.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-test-unit.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --input .tmp/flip-challenge/flip-challenge-test-200-skip200-decoded.json --replace --max-total 200 --source flip-challenge-import-skip200`
+- `cd $WORKSPACE/idena-desktop && npx eslint --quiet renderer/pages/flips/new.js renderer/screens/validation/ai/test-unit-utils.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-test-unit.test.js`
+- `cd $WORKSPACE/idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --input .tmp/flip-challenge/flip-challenge-test-200-skip200-decoded.json --replace --max-total 200 --source flip-challenge-import-skip200`
 
 ### Result
 
@@ -2538,11 +2538,11 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/providers/openai.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/index.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/preload.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/providers/openai.js`
+- `$WORKSPACE/idena-desktop/main/index.js`
+- `$WORKSPACE/idena-desktop/main/preload.js`
 
 ### Changed
 
@@ -2571,8 +2571,8 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/providers/openai.js main/ai-providers/bridge.js main/index.js main/preload.js renderer/pages/flips/new.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/providers/openai.js main/ai-providers/bridge.js main/index.js main/preload.js renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -2584,11 +2584,11 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/index.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/components/image-search.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/machines.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/preload.js`
+- `$WORKSPACE/idena-desktop/main/index.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/components/image-search.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/machines.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/preload.js`
 
 ### Changed
 
@@ -2614,8 +2614,8 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/index.js main/ai-providers/bridge.js main/preload.js renderer/screens/flips/machines.js renderer/screens/flips/components/image-search.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/index.js main/ai-providers/bridge.js main/preload.js renderer/screens/flips/machines.js renderer/screens/flips/components/image-search.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -2626,9 +2626,9 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/settings/ai.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/settings/ai-test-unit.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/settings/ai.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/settings/ai-test-unit.js`
 
 ### Changed
 
@@ -2648,10 +2648,10 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/pages/settings/ai.js renderer/pages/settings/ai-test-unit.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --fix renderer/pages/flips/new.js renderer/pages/settings/ai.js renderer/pages/settings/ai-test-unit.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/pages/settings/ai.js renderer/pages/settings/ai-test-unit.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && unset NODE_OPTIONS && npm run start`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/pages/settings/ai.js renderer/pages/settings/ai-test-unit.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --fix renderer/pages/flips/new.js renderer/pages/settings/ai.js renderer/pages/settings/ai-test-unit.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/pages/settings/ai.js renderer/pages/settings/ai-test-unit.js`
+- `cd $WORKSPACE/idena-desktop && unset NODE_OPTIONS && npm run start`
 
 ### Result
 
@@ -2664,9 +2664,9 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/package.json`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/index.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/shared/components/sidebar.js`
+- `$WORKSPACE/idena-desktop/package.json`
+- `$WORKSPACE/idena-desktop/main/index.js`
+- `$WORKSPACE/idena-desktop/renderer/shared/components/sidebar.js`
 
 ### Changed
 
@@ -2687,7 +2687,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/index.js renderer/shared/components/sidebar.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/index.js renderer/shared/components/sidebar.js`
 
 ### Result
 
@@ -2698,15 +2698,15 @@
 
 ### Inspected
 
-- `/Users/jz/Library/Logs/Electron/idena.log`
-- `/Users/jz/Library/Application Support/Idena/node`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/idena-node.js`
+- `$ELECTRON_LOGS/idena.log`
+- `$IDENA_APP_DATA/node`
+- `$WORKSPACE/idena-desktop/main/idena-node.js`
 
 ### Error summary
 
 - Desktop showed network errors and node stayed at `0.0.0`.
 - Main-process log showed:
-  - `spawn /Users/jz/Library/Application Support/idenaAI-desktop/node/idena-go ENOENT`
+  - `spawn $IDENAAI_APP_DATA/node/idena-go ENOENT`
   - then fallback download attempted and failed for local arch in that path.
 
 ### Root cause hypothesis
@@ -2725,14 +2725,14 @@
 ### Runtime hotfix applied locally
 
 - Added symlink for immediate compatibility during current run:
-  - `/Users/jz/Library/Application Support/idenaAI-desktop/node -> /Users/jz/Library/Application Support/Idena/node`
+  - `$IDENAAI_APP_DATA/node -> $IDENA_APP_DATA/node`
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/idena-node.js`
-- `mkdir -p "/Users/jz/Library/Application Support/idenaAI-desktop"`
-- `ln -s "/Users/jz/Library/Application Support/Idena/node" "/Users/jz/Library/Application Support/idenaAI-desktop/node"`
-- `"/Users/jz/Library/Application Support/idenaAI-desktop/node/idena-go" --version`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/idena-node.js`
+- `mkdir -p "$IDENAAI_APP_DATA"`
+- `ln -s "$IDENA_APP_DATA/node" "$IDENAAI_APP_DATA/node"`
+- `"$IDENAAI_APP_DATA/node/idena-go" --version`
 
 ### Result
 
@@ -2743,10 +2743,10 @@
 
 ### Inspected
 
-- `/Users/jz/Library/Application Support/Idena/node/datadir/logs/output.log`
-- `/Users/jz/Library/Logs/Electron/idena.log`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/providers/openai.js`
+- `$IDENA_APP_DATA/node/datadir/logs/output.log`
+- `$ELECTRON_LOGS/idena.log`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/providers/openai.js`
 
 ### Error summary
 
@@ -2766,8 +2766,8 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/providers/openai.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/providers/openai.test.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/providers/openai.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/providers/openai.test.js main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -2779,9 +2779,9 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/machines.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/shared/utils/utils.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/machines.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/shared/utils/utils.js`
 
 ### Error summary
 
@@ -2810,8 +2810,8 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/machines.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-providers/providers/openai.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/machines.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-providers/providers/openai.test.js`
 
 ### Result
 
@@ -2823,7 +2823,7 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/machines.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/machines.js`
 
 ### Changed
 
@@ -2834,7 +2834,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/screens/flips/machines.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/screens/flips/machines.js`
 
 ### Result
 
@@ -2844,10 +2844,10 @@
 
 ### Inspected
 
-- `/Users/jz/Library/Logs/Electron/idena.log`
-- `/Users/jz/Library/Application Support/idenaAI-desktop/node/datadir/logs/output.log`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/machines.js`
+- `$ELECTRON_LOGS/idena.log`
+- `$IDENAAI_APP_DATA/node/datadir/logs/output.log`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/machines.js`
 
 ### Error summary
 
@@ -2871,7 +2871,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/machines.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/machines.js`
 
 ### Result
 
@@ -2882,7 +2882,7 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 
 ### Changed
 
@@ -2891,7 +2891,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/machines.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/machines.js`
 
 ### Result
 
@@ -2901,10 +2901,10 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/machines.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Library/Logs/Electron/idena.log`
-- `/Users/jz/Library/Application Support/idenaAI-desktop/node/datadir/logs/output.log`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/machines.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$ELECTRON_LOGS/idena.log`
+- `$IDENAAI_APP_DATA/node/datadir/logs/output.log`
 
 ### Error summary
 
@@ -2937,7 +2937,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/machines.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/machines.js`
 
 ### Result
 
@@ -2949,9 +2949,9 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Library/Logs/Electron/idena.log`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$ELECTRON_LOGS/idena.log`
 
 ### Error summary
 
@@ -2978,7 +2978,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -2989,7 +2989,7 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 
 ### Changed
 
@@ -2998,7 +2998,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -3008,8 +3008,8 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
 
 ### Error summary
 
@@ -3031,7 +3031,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js main/ai-providers/bridge.js`
 
 ### Result
 
@@ -3042,10 +3042,10 @@
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/profile.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/constants.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Library/Logs/Electron/idena.log`
+- `$WORKSPACE/idena-desktop/main/ai-providers/profile.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/constants.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$ELECTRON_LOGS/idena.log`
 
 ### Error summary
 
@@ -3069,7 +3069,7 @@
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/constants.js main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/constants.js main/ai-providers/bridge.js`
 
 ### Result
 
@@ -3078,8 +3078,8 @@
 
 ### Verification
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/profile.test.js main/ai-providers/bridge.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/providers/openai.test.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/profile.test.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/providers/openai.test.js`
 
 Result: passed.
 
@@ -3087,9 +3087,9 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/machines.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/utils.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/machines.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/utils.js`
 
 ### Error summary
 
@@ -3114,7 +3114,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -3126,9 +3126,9 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/shared/utils/arr.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/machines.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/shared/utils/arr.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/machines.js`
 
 ### Error summary
 
@@ -3151,7 +3151,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -3163,7 +3163,7 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 - OpenAI model docs/pricing references for `gpt-image-1`, `gpt-image-1.5`, `gpt-image-1-mini` (checked 2026-03-30).
 
 ### Changed
@@ -3177,8 +3177,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --fix renderer/pages/flips/new.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --fix renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -3188,12 +3188,12 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/shared/components/sidebar.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/shared/components/layout.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/validation/after.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/validation/lottery.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/_app.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/ads/containers.js`
+- `$WORKSPACE/idena-desktop/renderer/shared/components/sidebar.js`
+- `$WORKSPACE/idena-desktop/renderer/shared/components/layout.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/validation/after.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/validation/lottery.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/_app.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/ads/containers.js`
 
 ### Changed
 
@@ -3207,7 +3207,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/shared/components/sidebar.js renderer/shared/components/layout.js renderer/pages/validation/after.js renderer/pages/validation/lottery.js renderer/pages/_app.js renderer/screens/ads/containers.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/shared/components/sidebar.js renderer/shared/components/layout.js renderer/pages/validation/after.js renderer/pages/validation/lottery.js renderer/pages/_app.js renderer/screens/ads/containers.js`
 
 ### Result
 
@@ -3218,9 +3218,9 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.test.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.test.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 
 ### Why this change
 
@@ -3248,9 +3248,9 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --fix main/ai-providers/bridge.js renderer/pages/flips/new.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/flips/new.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --fix main/ai-providers/bridge.js renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3262,8 +3262,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/utils.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/utils.js`
 
 ### Root cause
 
@@ -3285,7 +3285,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -3296,10 +3296,10 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/decision.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/decision.test.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.test.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/decision.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/decision.test.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.test.js`
 
 ### Root cause hypothesis
 
@@ -3321,8 +3321,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/decision.js main/ai-providers/bridge.js main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/decision.js main/ai-providers/bridge.js main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3333,8 +3333,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 
 ### Root cause
 
@@ -3363,9 +3363,9 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --fix main/ai-providers/bridge.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js renderer/pages/flips/new.js main/ai-providers/decision.js main/ai-providers/bridge.test.js main/ai-providers/decision.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --fix main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js renderer/pages/flips/new.js main/ai-providers/decision.js main/ai-providers/bridge.test.js main/ai-providers/decision.test.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3376,8 +3376,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/machines.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/machines.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 
 ### Root cause
 
@@ -3395,7 +3395,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -3406,8 +3406,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.test.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.test.js`
 
 ### Changed
 
@@ -3426,9 +3426,9 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --fix main/ai-providers/bridge.js main/ai-providers/bridge.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js main/ai-providers/decision.js main/ai-providers/decision.test.js renderer/pages/flips/new.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --fix main/ai-providers/bridge.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js main/ai-providers/decision.js main/ai-providers/decision.test.js renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/decision.test.js main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3439,8 +3439,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.test.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.test.js`
 
 ### Root cause
 
@@ -3470,8 +3470,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3483,8 +3483,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.test.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.test.js`
 
 ### Changed
 
@@ -3504,8 +3504,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3516,9 +3516,9 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/utils.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/utils.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
 
 ### Root cause
 
@@ -3550,8 +3550,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js main/ai-providers/bridge.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3563,8 +3563,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
 
 ### Changed
 
@@ -3585,8 +3585,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js main/ai-providers/bridge.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3598,9 +3598,9 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/providers/gemini.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.test.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/providers/gemini.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.test.js`
 
 ### Changed
 
@@ -3633,8 +3633,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js main/ai-providers/providers/gemini.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-providers/providers/openai.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js main/ai-providers/providers/gemini.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js main/ai-providers/providers/openai.test.js`
 
 ### Result
 
@@ -3645,9 +3645,9 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.test.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.test.js`
 
 ### Root cause
 
@@ -3675,8 +3675,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/flips/new.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js main/ai-providers/bridge.test.js renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3688,8 +3688,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/settings/ai.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/settings/ai.js`
 
 ### Changed
 
@@ -3706,7 +3706,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -3717,10 +3717,10 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/list.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/edit.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/view.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/list.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/edit.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/view.js`
 
 ### Root cause
 
@@ -3737,8 +3737,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --fix renderer/pages/flips/list.js renderer/pages/flips/new.js renderer/pages/flips/edit.js renderer/pages/flips/view.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/list.js renderer/pages/flips/new.js renderer/pages/flips/edit.js renderer/pages/flips/view.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --fix renderer/pages/flips/list.js renderer/pages/flips/new.js renderer/pages/flips/edit.js renderer/pages/flips/view.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/list.js renderer/pages/flips/new.js renderer/pages/flips/edit.js renderer/pages/flips/view.js`
 
 ### Result
 
@@ -3748,9 +3748,9 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/components.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/list.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/validation/ai/test-unit-utils.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/components.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/list.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/validation/ai/test-unit-utils.js`
 
 ### Changed
 
@@ -3769,8 +3769,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --fix renderer/pages/flips/list.js renderer/screens/flips/components.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/list.js renderer/screens/flips/components.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --fix renderer/pages/flips/list.js renderer/screens/flips/components.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/list.js renderer/screens/flips/components.js`
 
 ### Result
 
@@ -3780,8 +3780,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/screens/flips/utils.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/renderer/screens/flips/utils.js`
 
 ### Root cause
 
@@ -3807,7 +3807,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/utils.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js renderer/screens/flips/utils.js`
 
 ### Result
 
@@ -3828,7 +3828,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js`
 
 ### Result
 
@@ -3838,7 +3838,7 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
 
 ### Root cause
 
@@ -3863,8 +3863,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3874,7 +3874,7 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
 
 ### Root cause
 
@@ -3900,9 +3900,9 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint --fix main/ai-providers/bridge.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint --fix main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3912,8 +3912,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
 
 ### Root cause
 
@@ -3943,8 +3943,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint main/ai-providers/bridge.js renderer/pages/flips/new.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint main/ai-providers/bridge.js renderer/pages/flips/new.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -3955,8 +3955,8 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/renderer/pages/flips/new.js`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/main/ai-providers/bridge.js`
+- `$WORKSPACE/idena-desktop/renderer/pages/flips/new.js`
+- `$WORKSPACE/idena-desktop/main/ai-providers/bridge.js`
 
 ### Root cause
 
@@ -3967,6 +3967,7 @@ Result: passed.
 ### Changed
 
 - `new.js`:
+
   - Added `Generation mode` selector (`Fast` / `Strict`) in AI-assisted builder section.
   - Added required `Human story seed (1-2 sentences)` textarea and validation.
   - Story generation now blocks until valid human seed is provided.
@@ -3995,8 +3996,8 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npx eslint renderer/pages/flips/new.js main/ai-providers/bridge.js`
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
+- `cd $WORKSPACE/idena-desktop && npx eslint renderer/pages/flips/new.js main/ai-providers/bridge.js`
+- `cd $WORKSPACE/idena-desktop && npm test -- --runInBand main/ai-providers/bridge.test.js`
 
 ### Result
 
@@ -4008,9 +4009,9 @@ Result: passed.
 
 ### Inspected
 
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/package.json`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/docs/context-snapshot.md`
-- `/Users/jz/Documents/idena-benchmark-workspace/idena-desktop/scripts/`
+- `$WORKSPACE/idena-desktop/package.json`
+- `$WORKSPACE/idena-desktop/docs/context-snapshot.md`
+- `$WORKSPACE/idena-desktop/scripts/`
 
 ### Changed
 
@@ -4036,7 +4037,7 @@ Result: passed.
 
 ### Commands
 
-- `cd /Users/jz/Documents/idena-benchmark-workspace/idena-desktop && npm run index:deep-research`
+- `cd $WORKSPACE/idena-desktop && npm run index:deep-research`
 
 ### Result
 

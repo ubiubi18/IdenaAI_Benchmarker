@@ -2,7 +2,7 @@
 
 ## Source
 
-- Paper file reviewed locally: `/Users/jz/Downloads/2504.12256v1.pdf`
+- Paper file reviewed locally: `$DOWNLOADS/2504.12256v1.pdf`
 - Main findings used here:
   - Caption-first pipelines often outperform direct image-only prompting in FLIP-like tasks.
   - Ensemble methods materially improve accuracy over single models.
