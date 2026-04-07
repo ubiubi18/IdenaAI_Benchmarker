@@ -1,4 +1,4 @@
-# IdenaAI_Benchmarker
+# idena-ai-benchmark
 
 This repository is a desktop benchmarking tool that connects AI API providers to the FLIP-Challenge - a human CAPTCHA-like benchmark built from human-generated and human-verified tasks collected from the Idena blockchain. It lets researchers test, compare, and stress-test models on tasks that are still easy for humans but often hard, brittle, and expensive for AI.
 
@@ -107,8 +107,8 @@ brew link --overwrite --force node@20
 4. Download and enter the project:
 
 ```bash
-git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
-cd IdenaAI_Benchmarker
+git clone https://github.com/idena-community/Idena-ai-benchmark.git
+cd Idena-ai-benchmark
 ```
 
 If you already downloaded the repository, open Terminal in that folder instead.
@@ -168,8 +168,8 @@ npm --version
 3. Download and enter the project:
 
 ```bash
-git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
-cd IdenaAI_Benchmarker
+git clone https://github.com/idena-community/Idena-ai-benchmark.git
+cd Idena-ai-benchmark
 ```
 
 4. Install dependencies, run checks, and start:
@@ -221,8 +221,8 @@ continuing.
 4. Download and enter the project:
 
 ```powershell
-git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
-cd IdenaAI_Benchmarker
+git clone https://github.com/idena-community/Idena-ai-benchmark.git
+cd Idena-ai-benchmark
 ```
 
 5. Install dependencies, run checks, and start:
