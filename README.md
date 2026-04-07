@@ -1,103 +1,41 @@
 # IdenaAI_Benchmarker
 
-Research bundle for the Idena desktop fork, AI flip tooling, and reproducible benchmark work.
+`idena-desktop` fork with optional experimental AI tools for Idena flips.
 
-This repository is a bundled workspace. It is not a clean upstream fork of one single project.
+Idena is an identity blockchain. During validation, users solve and create
+short visual puzzles called flips. A flip is a 4-image story built from two
+keywords; humans should understand the intended order, while bots should have a
+harder time guessing it.
 
-It currently contains:
+This repository keeps the normal desktop app flow available and adds optional AI
+features for research:
 
-- the active desktop app fork at the repository root
-- a bundled `idena-go/` source snapshot
-- bundled `idena-wasm/` and `idena-wasm-binding/` sources
-- sample flip data and benchmark helper material
+- AI-assisted flip story generation
+- AI-assisted flip image generation
+- AI flip solving and benchmark runs
+- off-chain benchmark sample data
+- experimental, guarded on-chain automation flows
 
-## Why older screenshots looked different
+AI is optional. The app should still be usable like regular `idena-desktop`
+without enabling AI or adding API keys.
 
-Older GitHub screenshots showed a layout like this:
+## Status
 
-- `idena-desktop/`
-- `idena-go/`
-- `idena-wasm/`
-- `idena-wasm-binding/`
+This is a research fork, not an official Idena release. Use it carefully:
 
-That was an earlier bundle layout.
+- AI provider calls can cost money.
+- API keys should be provided through the session-only UI or local untracked
+  config, never committed.
+- Fully automatic flip generation and publishing is experimental and has not
+  been reliable enough in testing for unattended use.
+- The safer workflow is the manual flip builder, where you review and edit story
+  text and images before publishing.
 
-The current repository keeps the desktop app fork flattened at the repo root instead of nesting it under `idena-desktop/`. So the active app code now lives directly in:
+For cost control, prefer prepaid API budgets or provider-side spending limits.
 
-- [`main/`](main)
-- [`renderer/`](renderer)
-- [`scripts/`](scripts)
-- [`docs/`](docs)
-- [`package.json`](package.json)
+## Install And Run
 
-The installable application still presents itself as `idena-desktop`; the
-GitHub repository metadata points to this benchmark fork so releases and issue
-links do not accidentally target upstream `idena-network/idena-desktop`.
-
-The missing bundled source components have been restored as top-level directories:
-
-- [`idena-go/`](idena-go)
-- [`idena-wasm/`](idena-wasm)
-- [`idena-wasm-binding/`](idena-wasm-binding)
-- [`samples/`](samples)
-
-## Current bundle layout
-
-### Active desktop app fork
-
-These files and directories are the app you currently run and modify:
-
-- [`main/`](main): Electron main process, node launcher, AI bridge, provider integrations
-- [`renderer/`](renderer): UI, flip builder, solver flow, settings, validation views
-- [`scripts/`](scripts): helper scripts, benchmark tooling, imports, audits
-- [`docs/`](docs): fork notes, setup notes, worklog, audit material
-- [`package.json`](package.json): desktop app dependencies and scripts
-
-### Bundled source components
-
-These are included so the benchmark bundle is not limited to the UI layer:
-
-- [`idena-go/`](idena-go): chain/node source snapshot
-- [`idena-wasm/`](idena-wasm): wasm runtime source
-- [`idena-wasm-binding/`](idena-wasm-binding): Go binding layer plus static libraries
-- [`samples/flips/`](samples/flips): small decoded benchmark sample files
-
-## What you need for different kinds of work
-
-### AI desktop helper work
-
-If you only work on the desktop app, AI solver, AI flip builder, or provider integrations, you usually only need the root app:
-
-- [`main/`](main)
-- [`renderer/`](renderer)
-- [`package.json`](package.json)
-
-That is enough for:
-
-- AI story generation
-- AI flip building
-- AI solver and benchmark queue work
-- provider integrations
-- most UI changes
-
-### Full bundle or node/runtime work
-
-If you want to rebuild or inspect the bundled runtime parts, you also need:
-
-- [`idena-go/`](idena-go)
-- [`idena-wasm/`](idena-wasm)
-- [`idena-wasm-binding/`](idena-wasm-binding)
-
-That matters for:
-
-- rebuilding or inspecting the bundled node
-- chain-level fork changes
-- wasm runtime compatibility
-- reproducing the older benchmark bundle more faithfully
-
-## Local run
-
-Run the active desktop app from the repository root:
+From the repository root:
 
 ```bash
 npm install
@@ -105,30 +43,49 @@ npm run clean
 npm start
 ```
 
-For local environment defaults, copy `.env.example` to `.env.local` and adjust
-only the values you need:
+Optional local defaults:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Provider API keys are not meant to be committed. The app loads them as
-session-only keys through the AI settings UI.
+Edit only the values you need. Do not commit `.env.local` or provider keys.
 
-## Optional AI Features
+## Optional AI Setup
 
-The app can run like regular `idena-desktop`. Experimental AI features stay off
-until you enable them and configure your own provider key.
+AI features are off by default. If you enable them in the app, the UI asks you to
+choose one or more AI providers and enter session API keys.
 
-Use AI features with caution:
+The main areas under AI are:
 
-- Provider calls may cost money and costs are your responsibility.
-- Prefer prepaid API budgets or provider-side spending limits.
-- Do not attach debug logs with secrets or raw provider payloads to public
-  issues.
-- Fully automatic flip generation and publishing is experimental; the safer
-  path is still the manual flip builder where story text and images can be
-  reviewed and edited before publishing.
+- AI Flip Builder: helps create a story and images for the current keyword pair
+- AI Solver: helps solve flips during validation or test runs
+- Off-chain Benchmark: tests solver behavior on local/sample flips
+- On-chain Automatic Flow: experimental automation for real validation flows
+
+Cheap or very small models failed most often in early testing. If results are
+poor, try different providers/models and advanced settings, but watch cost and
+latency.
+
+## Repository Layout
+
+The active desktop app lives at the repository root:
+
+- [`main/`](main): Electron main process, node launcher, AI bridge, providers
+- [`renderer/`](renderer): UI, flip builder, solver flow, settings, validation
+- [`scripts/`](scripts): helper scripts, imports, release checks, benchmark tools
+- [`docs/`](docs): notes and audit/worklog material
+- [`package.json`](package.json): app scripts, dependencies, build config
+
+Bundled source snapshots are included for reproducibility and runtime inspection:
+
+- [`idena-go/`](idena-go): Idena node source snapshot
+- [`idena-wasm/`](idena-wasm): wasm runtime source snapshot
+- [`idena-wasm-binding/`](idena-wasm-binding): Go binding layer and static libs
+- [`samples/flips/`](samples/flips): small decoded benchmark sample files
+
+Most AI/UI work only touches `main/`, `renderer/`, and `scripts/`. Node or WASM
+work needs the bundled source directories too.
 
 ## Optional Python Pipeline
 
@@ -138,19 +95,18 @@ The Python story pipeline is optional and disabled by default:
 python3 -m pip install -r requirements.txt
 ```
 
-Then set these values in `.env.local` if you want to test it:
+Enable it in `.env.local` only when testing that path:
 
 ```bash
 IDENAAI_USE_PY_FLIP_PIPELINE=true
 IDENAAI_PYTHON=python3
 ```
 
-On Windows, set `IDENAAI_PYTHON=py -3` or the absolute path to your Python
-interpreter.
+On Windows, use `IDENAAI_PYTHON=py -3` or an absolute Python path.
 
-## Tests
+## Tests And Release Checks
 
-Typical targeted benchmark tests:
+Targeted AI bridge tests:
 
 ```bash
 npm test -- --runInBand main/ai-providers/bridge.test.js
@@ -162,22 +118,20 @@ Lint:
 npm run lint -- --format unix
 ```
 
-Local release gate:
+Full local release gate:
 
 ```bash
 npm run release:check
 ```
 
-This runs syntax checks for release helper scripts and critical Electron/AI
-bridge files, full lint, metadata/artifact/privacy audits, an Electron remote
-safety audit, and the AI bridge regression suite.
-
-GitHub Actions uses the same `release:check` command for push CI and before
-tagged release packaging, so local and remote release gates stay aligned.
+`release:check` runs syntax checks, ESLint, release metadata checks, large
+artifact checks, privacy checks, Electron remote safety checks, and the AI bridge
+regression suite. GitHub Actions uses the same command for push CI and before
+tagged release packaging.
 
 Release packaging excludes local `.env*`, logs, `.tmp/`, `tmp/`, `data/`, and
 coverage artifacts. Keep provider keys in the session-only UI or in local
-untracked files, never in release artifacts.
+untracked files.
 
 Large bundled artifacts:
 
@@ -188,36 +142,12 @@ Large bundled artifacts:
 - For a polished public binary release, prefer Git LFS or GitHub release
   artifacts for large rebuilt libraries instead of committing new large files.
 
-## Sample benchmark data
+## Sample Data
 
-Small labeled samples are included under [`samples/flips/`](samples/flips), including:
+Small labeled samples are included under [`samples/flips/`](samples/flips):
 
 - [`flip-challenge-test-5-decoded-labeled.json`](samples/flips/flip-challenge-test-5-decoded-labeled.json)
 - [`flip-challenge-test-20-decoded-labeled.json`](samples/flips/flip-challenge-test-20-decoded-labeled.json)
-
-## Notes on historical paths
-
-Some old docs, scripts, or notes may still mention paths like:
-
-- `$WORKSPACE/idena-desktop`
-- `$WORKSPACE/idena-go`
-
-Those refer to the earlier multi-folder workspace layout.
-
-For the current repository:
-
-- the active desktop fork is the repo root
-- `idena-go/`, `idena-wasm/`, and `idena-wasm-binding/` are bundled as additional source directories
-
-## Disclaimer
-
-This repository is research code. Large parts were assembled quickly and evolved through iterative experiments. Expect rough edges, missing cleanup, and documentation that may lag behind implementation details.
-
-Use it with caution, especially when:
-
-- spending money on API providers
-- testing automated flip generation or publish flows
-- relying on built-in node or wasm rebuild paths without verifying the bundled sources first
 
 ## License
 
