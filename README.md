@@ -37,6 +37,29 @@ This is a research fork, not an official Idena release. Use it carefully:
 
 For cost control, prefer prepaid API budgets or provider-side spending limits.
 
+## Community Build Warning
+
+The experimental AI work in this fork was built as a community project by
+`ubiubi18`, an Idena community member with practical knowledge of Idena
+consensus and flip flows, but without claiming deep software engineering or
+security-audit expertise.
+
+The project was developed through prompt-driven AI coding ("vibe coding") with
+Codex and tested manually on a Mac. The maintainer did not read or audit every
+line of generated code. Treat this as experimental software that may contain the
+kind of weaknesses common in vibe-coded projects:
+
+- security bugs
+- broken or unreliable flows
+- privacy mistakes
+- accidental secret or metadata leakage
+- bloated repository metadata or bundled artifacts
+- unsafe assumptions around automation, costs, API calls, or publishing
+
+Use it at your own responsibility. Do not run it with valuable accounts, large
+API budgets, or unattended publishing enabled unless you have reviewed the code
+and understand the risks.
+
 ## Install And Run
 
 From the repository root:
@@ -153,16 +176,42 @@ Small labeled samples are included under [`samples/flips/`](samples/flips):
 - [`flip-challenge-test-5-decoded-labeled.json`](samples/flips/flip-challenge-test-5-decoded-labeled.json)
 - [`flip-challenge-test-20-decoded-labeled.json`](samples/flips/flip-challenge-test-20-decoded-labeled.json)
 
+## Cleaner Component Split Option
+
+This repository currently bundles desktop, node, wasm, and sample data snapshots
+for reproducibility. That makes the repo easier to inspect as one workspace, but
+it also makes licensing and release packaging more complex.
+
+For a cleaner app-only public release, use this approach instead:
+
+- keep only the active desktop app fork and AI changes in this repository
+- preserve the original Idena MIT copyright notice for inherited desktop code
+- keep the 2026 `ubiubi18 and contributors` MIT notice for community AI changes
+- remove bundled `idena-go/`, `idena-wasm/`, `idena-wasm-binding/`, static
+  libraries, and sample datasets from the app-only release branch
+- tell users to fetch node/wasm/runtime components from their official upstream
+  sources and verify those licenses separately
+- keep `THIRD_PARTY_NOTICES.md` accurate for whichever components are actually
+  distributed
+
+Do not remove bundled component notices while those components are still shipped
+inside this repository.
+
 ## License
 
 This repository has multiple license scopes:
 
-- Active desktop app fork and AI benchmark helper code: MIT. See
-  [`LICENSE`](LICENSE) and [`LICENSES/MIT.txt`](LICENSES/MIT.txt).
+- Upstream `idena-desktop` code remains MIT with the original 2020 Idena
+  copyright notice.
+- Community AI benchmark/helper modifications are offered under MIT with a 2026
+  `ubiubi18 and contributors` notice, to the extent those contributors own the
+  modifications.
 - Bundled `idena-go/` snapshot: LGPL-3.0. See
   [`idena-go/LICENSE`](idena-go/LICENSE).
 - Bundled `idena-wasm-binding/` snapshot: LGPL-3.0. See
   [`idena-wasm-binding/LICENSE`](idena-wasm-binding/LICENSE).
 
-See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) before preparing a public
+This is not legal advice. Do not describe the entire bundled repository as
+MIT-only. See [`LICENSE`](LICENSE), [`LICENSES/MIT.txt`](LICENSES/MIT.txt), and
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) before preparing a public
 release or binary distribution.

@@ -24,7 +24,9 @@ const requiredPackageExcludes = [
 ]
 
 const requiredNoticeSnippets = [
-  'Active desktop app fork and AI benchmark helper code',
+  'Active desktop app fork from upstream `idena-desktop`',
+  'Community AI benchmark/helper modifications',
+  '2026 ubiubi18',
   'idena-go/',
   'idena-wasm-binding/',
   'LGPL-3.0',
