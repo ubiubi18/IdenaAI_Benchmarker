@@ -1,21 +1,23 @@
 /* eslint-disable import/no-extraneous-dependencies */
 const path = require('path')
-const {app, remote} = require('electron')
+const {app, ipcRenderer} = require('electron')
 const low = require('lowdb')
 const FileSync = require('lowdb/adapters/FileSync')
 const fs = require('fs')
+const {APP_PATH_COMMAND} = require('../channels')
 
-function getElectronApp() {
-  const whichApp = app || (remote && remote.app)
-  if (!whichApp) {
-    throw new Error('Electron app is unavailable')
+function getUserDataPath() {
+  if (app) {
+    return app.getPath('userData')
   }
-  return whichApp
+  if (!ipcRenderer || typeof ipcRenderer.sendSync !== 'function') {
+    throw new Error('Electron app path IPC is unavailable')
+  }
+  return ipcRenderer.sendSync(APP_PATH_COMMAND, 'userData')
 }
 
 function dbPath(fileDb) {
-  const whichApp = getElectronApp()
-  return path.join(whichApp.getPath('userData'), fileDb)
+  return path.join(getUserDataPath(), fileDb)
 }
 
 module.exports = {

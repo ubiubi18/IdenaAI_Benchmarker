@@ -21,6 +21,7 @@ const axios = require('axios')
 const {zoomIn, zoomOut, resetZoom} = require('./utils')
 const loadRoute = require('./utils/routes')
 const {getI18nConfig} = require('./language')
+const appDataPath = require('./app-data-path')
 
 const isWin = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
@@ -49,6 +50,7 @@ const {
   NODE_COMMAND,
   NODE_EVENT,
   APP_INFO_COMMAND,
+  APP_PATH_COMMAND,
   AI_SOLVER_COMMAND,
   AI_TEST_UNIT_COMMAND,
   AI_TEST_UNIT_EVENT,
@@ -881,6 +883,10 @@ ipcMain.on(APP_INFO_COMMAND, (event) => {
     locale: app.getLocale(),
     version: app.getVersion(),
   }
+})
+
+ipcMain.on(APP_PATH_COMMAND, (event, folder) => {
+  event.returnValue = appDataPath(folder)
 })
 
 ipcMain.handle(WINDOW_COMMAND, (event, command) => {

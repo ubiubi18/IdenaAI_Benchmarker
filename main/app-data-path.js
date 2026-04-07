@@ -1,19 +1,19 @@
 /* eslint-disable prefer-rest-params */
 /* eslint-disable no-param-reassign */
 // eslint-disable-next-line import/no-extraneous-dependencies
-const {app, remote} = require('electron')
+const {app, ipcRenderer} = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const {APP_PATH_COMMAND} = require('./channels')
 
 const homeDir = os.homedir ? os.homedir() : process.env.HOME
 
-function getElectronApp() {
-  const whichApp = app || (remote && remote.app)
-  if (!whichApp) {
-    throw new Error('Electron app is unavailable')
+function getPathFromMainProcess(folder) {
+  if (!ipcRenderer || typeof ipcRenderer.sendSync !== 'function') {
+    throw new Error('Electron app path IPC is unavailable')
   }
-  return whichApp
+  return ipcRenderer.sendSync(APP_PATH_COMMAND, folder)
 }
 
 function mkDir(dirPath, root) {
@@ -56,14 +56,16 @@ function prepareDir(dirPath) {
 }
 
 function appDataPath(folder) {
-  const whichApp = getElectronApp()
+  if (!app) {
+    return getPathFromMainProcess(folder)
+  }
 
   switch (process.platform) {
     case 'darwin':
     case 'win32':
-      return whichApp.getPath(folder)
+      return app.getPath(folder)
     default:
-      return prepareDir(whichApp.getPath('userData'))
+      return prepareDir(app.getPath('userData'))
         .or(process.env.XDG_CONFIG_HOME)
         .or(homeDir, '.config')
         .or(process.env.XDG_DATA_HOME)
