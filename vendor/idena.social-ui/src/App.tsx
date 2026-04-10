@@ -41,10 +41,11 @@ const readDesktopBootstrap = (): DesktopBootstrap => {
 const desktopBootstrap = readDesktopBootstrap();
 const isDesktopOnchainMode = desktopBootstrap.embeddedMode === 'desktop-onchain';
 const socialBaseUrl = new URL('./', window.location.href);
+const officialIndexerApiUrl = 'https://api.idena.io';
 
 const defaultNodeUrl = desktopBootstrap.nodeUrl || 'http://localhost:9119';
 const defaultNodeApiKey = desktopBootstrap.nodeApiKey || '';
-const initIndexerApiUrl = desktopBootstrap.indexerApiUrl || '';
+const initIndexerApiUrl = desktopBootstrap.indexerApiUrl || officialIndexerApiUrl;
 const contractAddressCurrent = '0xc0324f3Cf8158D6E27dc0A07c221636056174718';
 const contractAddress2 = '0xC5B35B4Dc4359Cc050D502564E789A374f634fA9';
 const contractAddress1 = '0x8d318630eB62A032d2f8073d74f05cbF7c6C87Ae';
@@ -199,6 +200,10 @@ function App() {
             const adsClient = new IdenaApprovedAds({ idenaNodeUrl: inputNodeUrl, idenaNodeApiKey: inputNodeKey });
 
             try {
+                if (isDesktopOnchainMode) {
+                    setAds([defaultAd as ApprovedAd]);
+                    return;
+                }
                 const ads = await adsClient.getApprovedAds();
                 setAds([defaultAd as ApprovedAd, ...ads]);
             } catch (error) {
@@ -259,6 +264,10 @@ function App() {
         setCurrentAd(ads[0]);
         if (ads.length) {
             setCurrentAd(ads[0]);
+
+            if (isDesktopOnchainMode) {
+                return undefined;
+            }
 
             let rotateAdsIntervalId: NodeJS.Timeout;
 
@@ -389,7 +398,7 @@ function App() {
         if (event.target.value === 'indexer-api') {
             if (indexerApiUrl) {
                 setIdenaIndexerApiUrl(indexerApiUrl);
-                setPostersAddressInvalid(false);
+                setIdenaIndexerApiUrlInvalid(false);
             } else {
                 setInputIdenaIndexerApiUrl(initIndexerApiUrl);
                 setIdenaIndexerApiUrl(initIndexerApiUrl);
@@ -866,9 +875,9 @@ function App() {
     };
 
     return (
-        <main className="mx-auto flex h-full w-full max-w-[1720px] flex-row gap-6 p-4">
-            <div className="flex-1 flex justify-end">
-                <div className="w-[260px] min-w-[260px] ml-2 mr-2 flex flex-col">
+        <main className="mx-auto flex h-full w-full min-w-[1320px] max-w-[1880px] flex-row gap-4 px-4 py-3">
+            <div className="flex flex-none justify-end">
+                <div className="w-[280px] min-w-[280px] ml-2 mr-1 flex flex-col">
                     <div className="text-[28px] mb-3">
                         <Link to="/">idena.social</Link>
                     </div>
@@ -927,10 +936,30 @@ function App() {
                             <input id="inputFindingPastPosts" type="radio" name="inputFindingPastPosts" value="rpc" checked={inputFindingPastPosts === 'rpc'} onChange={handleInputFindingPastPostsToggle} />
                             <label htmlFor="inputFindingPastPosts" className="flex-none text-right">Use RPC</label>
                         </div>
-                        {!isDesktopOnchainMode && (
-                            <div className="flex flex-row gap-2">
-                                <input id="notUseFindPastBlocksWithTxsApi" type="radio" name="inputFindingPastPosts" value="indexer-api" checked={inputFindingPastPosts === 'indexer-api'} onChange={handleInputFindingPastPostsToggle} />
-                                <label htmlFor="notUseFindPastBlocksWithTxsApi" className="flex-none text-right">Use Indexer Api</label>
+                        <div className="flex flex-row gap-2">
+                            <input id="notUseFindPastBlocksWithTxsApi" type="radio" name="inputFindingPastPosts" value="indexer-api" checked={inputFindingPastPosts === 'indexer-api'} onChange={handleInputFindingPastPostsToggle} />
+                            <label htmlFor="notUseFindPastBlocksWithTxsApi" className="flex-none text-right">Use official Idena indexer fallback</label>
+                            <span
+                                className="mt-[1px] text-[11px] text-gray-400 hover:cursor-help"
+                                title="This option only helps read older history. It calls the official Idena indexer at https://api.idena.io when your own node RPC does not return enough past posts. Posting, liking, tipping and image uploads still use your own node RPC."
+                            >
+                                ⓘ
+                            </span>
+                        </div>
+                        {isDesktopOnchainMode && inputFindingPastPosts === 'indexer-api' && (
+                            <div className="flex flex-col ml-5 text-[14px]">
+                                <p className="text-[11px] text-stone-400">
+                                    Official fallback reader:
+                                </p>
+                                <input
+                                    className="flex-1 mb-1 py-0.5 px-1 outline-1 text-[11px] placeholder:text-gray-500"
+                                    disabled={true}
+                                    value={officialIndexerApiUrl}
+                                    readOnly={true}
+                                />
+                                <p className="text-[11px] text-stone-400">
+                                    Read-only fallback for older posts. Posting still uses your node RPC.
+                                </p>
                             </div>
                         )}
                         {!isDesktopOnchainMode && inputFindingPastPosts === 'indexer-api' && (
@@ -957,7 +986,8 @@ function App() {
                     </div>
                 </div>
             </div>
-            <div className="min-w-[720px] max-w-[820px] flex-[1_1_760px]">
+            <div className="min-w-0 flex-1">
+                <div className="mx-auto w-full max-w-[1080px]">
                 <Outlet
                     context={{
                         currentBlockCaptured,
@@ -996,8 +1026,10 @@ function App() {
                         inputSendingTxs,
                     }}
                 />
+                </div>
             </div>
-            <div className="flex-1 flex justify-start">
+            {!isDesktopOnchainMode && (
+            <div className="flex flex-none justify-start">
                 <div className="mt-3 mr-2 ml-2 hidden w-[320px] min-w-[320px] xl:flex xl:flex-col text-[13px]">
                     <div className="flex flex-col h-[90px] justify-center">
                         <div className="px-1 font-[700] text-gray-400"><p>{currentAd?.title ?? defaultAd.title}</p></div>
@@ -1018,6 +1050,7 @@ function App() {
                     </div>
                 </div>
             </div>
+            )}
             <div onClick={(e) => e.stopPropagation()}>
                 <Modal
                     isOpen={!!modalOpen} 

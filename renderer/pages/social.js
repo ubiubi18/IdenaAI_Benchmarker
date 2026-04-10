@@ -1,6 +1,6 @@
 import React from 'react'
 import NextLink from 'next/link'
-import {Box, Flex, HStack, Stack, Text} from '@chakra-ui/react'
+import {Box, Button, Flex, HStack, Stack, Text, Tooltip} from '@chakra-ui/react'
 import Layout from '../shared/components/layout'
 import {SecondaryButton} from '../shared/components/button'
 import {
@@ -14,7 +14,9 @@ import {useChainState} from '../shared/providers/chain-context'
 import {BASE_API_URL, BASE_INTERNAL_API_PORT} from '../shared/api/api-client'
 
 const SOCIAL_BOOTSTRAP_STORAGE_KEY = 'idenaSocialDesktopBootstrap'
+const SOCIAL_HISTORY_MODE_STORAGE_KEY = 'idenaSocialDesktopHistoryMode'
 const SOCIAL_CONTRACT_ADDRESS = '0xc0324f3Cf8158D6E27dc0A07c221636056174718'
+const SOCIAL_OFFICIAL_INDEXER_URL = 'https://api.idena.io'
 const SOCIAL_MAX_IMAGE_BYTES = 1024 * 1024
 const SOCIAL_IMAGE_FORMATS = [
   'PNG',
@@ -30,7 +32,41 @@ function formatBytesAsMib(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`
 }
 
-function buildSocialNodeBootstrap(settings) {
+// eslint-disable-next-line react/prop-types
+function InfoHint({label}) {
+  return (
+    <Tooltip
+      label={label}
+      hasArrow
+      placement="top"
+      openDelay={150}
+      maxW="sm"
+      px={3}
+      py={2}
+      fontSize="sm"
+    >
+      <Box
+        as="span"
+        display="inline-flex"
+        alignItems="center"
+        justifyContent="center"
+        w="18px"
+        h="18px"
+        borderRadius="full"
+        borderWidth="1px"
+        borderColor="gray.300"
+        color="gray.500"
+        fontSize="11px"
+        fontWeight={700}
+        cursor="help"
+      >
+        i
+      </Box>
+    </Tooltip>
+  )
+}
+
+function buildSocialNodeBootstrap(settings, historyMode) {
   const nodeUrl = settings.useExternalNode
     ? settings.url || BASE_API_URL
     : `http://localhost:${settings.internalPort || BASE_INTERNAL_API_PORT}`
@@ -43,62 +79,157 @@ function buildSocialNodeBootstrap(settings) {
     embeddedMode: 'desktop-onchain',
     nodeUrl,
     nodeApiKey,
-    indexerApiUrl: '',
+    indexerApiUrl:
+      historyMode === 'indexer-api' ? SOCIAL_OFFICIAL_INDEXER_URL : '',
     sendingTxs: 'rpc',
-    findingPastPosts: 'rpc',
+    findingPastPosts: historyMode,
   }
 }
 
 export default function SocialPage() {
   const settings = useSettingsState()
   const {offline, syncing} = useChainState()
+  const {externalApiKey, internalApiKey, internalPort, url, useExternalNode} =
+    settings
 
   const [iframeNonce, setIframeNonce] = React.useState(0)
   const [bootstrapReady, setBootstrapReady] = React.useState(false)
+  const [historyMode, setHistoryMode] = React.useState('rpc')
+  const lastBootstrapJsonRef = React.useRef('')
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const savedMode = window.localStorage.getItem(
+      SOCIAL_HISTORY_MODE_STORAGE_KEY
+    )
+    if (savedMode === 'rpc' || savedMode === 'indexer-api') {
+      setHistoryMode(savedMode)
+    }
+  }, [])
 
   const bootstrap = React.useMemo(
-    () => buildSocialNodeBootstrap(settings),
-    [settings]
+    () =>
+      buildSocialNodeBootstrap(
+        {
+          externalApiKey,
+          internalApiKey,
+          internalPort,
+          url,
+          useExternalNode,
+        },
+        historyMode === 'indexer-api' ? 'indexer-api' : 'rpc'
+      ),
+    [
+      externalApiKey,
+      historyMode,
+      internalApiKey,
+      internalPort,
+      url,
+      useExternalNode,
+    ]
   )
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return
+    window.localStorage.setItem(SOCIAL_HISTORY_MODE_STORAGE_KEY, historyMode)
+  }, [historyMode])
 
-    window.localStorage.setItem(
-      SOCIAL_BOOTSTRAP_STORAGE_KEY,
-      JSON.stringify(bootstrap)
-    )
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const bootstrapJson = JSON.stringify(bootstrap)
+    if (lastBootstrapJsonRef.current !== bootstrapJson) {
+      window.localStorage.setItem(SOCIAL_BOOTSTRAP_STORAGE_KEY, bootstrapJson)
+      lastBootstrapJsonRef.current = bootstrapJson
+    }
+
     setBootstrapReady(true)
   }, [bootstrap])
+
+  const usingIndexerFallback = historyMode === 'indexer-api'
 
   return (
     <Layout>
       <Page px={0} py={0} overflow="hidden">
         <Box px={8} py={6}>
           <PageTitle mb={2}>Social</PageTitle>
-          <Stack spacing={3} maxW="6xl">
+          <Stack spacing={3} maxW="7xl">
             <Text color="muted">
-              Local bundled `idena.social` UI running inside idena-desktop.
-              Posts and reads default to your current node RPC settings, not to
-              an external website or indexer API.
+              Local bundled `idena.social` UI inside idena-desktop. Posting
+              always uses your own node RPC. Older-history lookup can stay on
+              your node RPC or switch to the official Idena indexer as a
+              read-only fallback.
             </Text>
-            <HStack spacing={4} flexWrap="wrap">
-              <Text>
-                Node: <strong>{bootstrap.nodeUrl}</strong>
-              </Text>
-              <Text>
-                Sending: <strong>RPC only</strong>
-              </Text>
-              <Text>
-                History scan: <strong>RPC only</strong>
-              </Text>
+            <HStack spacing={6} flexWrap="wrap" align="flex-start">
+              <HStack spacing={2}>
+                <Text>
+                  Node: <strong>{bootstrap.nodeUrl}</strong>
+                </Text>
+                <InfoHint label="This embedded social view reads your current idena-desktop node URL and API key. The key stays local to this desktop app session." />
+              </HStack>
+              <HStack spacing={2}>
+                <Text>
+                  Sending: <strong>RPC only</strong>
+                </Text>
+                <InfoHint label="Posting, liking, tipping and image uploads use only your own node RPC. Picture bytes are first stored through your node IPFS path, then referenced on-chain by CID." />
+              </HStack>
+              <HStack spacing={2}>
+                <Text>
+                  History scan:{' '}
+                  <strong>
+                    {usingIndexerFallback
+                      ? 'official indexer fallback'
+                      : 'RPC only'}
+                  </strong>
+                </Text>
+                <InfoHint
+                  label={
+                    usingIndexerFallback
+                      ? `Older posts are currently loaded from the official Idena indexer at ${SOCIAL_OFFICIAL_INDEXER_URL}. This is read-only fallback for history lookup. Posting still goes through your own node RPC.`
+                      : 'Older posts are currently searched only through your own node RPC. Some nodes do not expose deep post history reliably or quickly.'
+                  }
+                />
+              </HStack>
+              <HStack spacing={2}>
+                <Text>
+                  Image posts:{' '}
+                  <strong>
+                    {formatBytesAsMib(SOCIAL_MAX_IMAGE_BYTES)} max
+                  </strong>
+                </Text>
+                <InfoHint
+                  label={`Supported formats: ${SOCIAL_IMAGE_FORMATS.join(
+                    ', '
+                  )}. An image post adds one dna_storeToIpfs transaction for the file plus one contract_call for the message. Text above 100 characters adds another IPFS storage transaction.`}
+                />
+              </HStack>
+              <HStack spacing={2}>
+                <Text>
+                  Fees: <strong>live max-fee estimate in composer</strong>
+                </Text>
+                <InfoHint label="The composer inside the social view shows a conservative max-fee estimate from your own node RPC for the current draft. The final charged fee can be lower." />
+              </HStack>
             </HStack>
-            <HStack spacing={3}>
+            <HStack spacing={3} flexWrap="wrap">
               <SecondaryButton
                 onClick={() => setIframeNonce((value) => value + 1)}
               >
                 Reload social view
               </SecondaryButton>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setHistoryMode((currentMode) =>
+                    currentMode === 'rpc' ? 'indexer-api' : 'rpc'
+                  )
+                  setIframeNonce((value) => value + 1)
+                }}
+              >
+                {usingIndexerFallback
+                  ? 'Switch back to node RPC history'
+                  : 'Use official indexer for older history'}
+              </Button>
               <NextLink href="/settings/node" passHref>
                 <TextLink>Node settings</TextLink>
               </NextLink>
@@ -108,36 +239,11 @@ export default function SocialPage() {
                 Contract on scan.idena.io
               </ExternalLink>
             </HStack>
-            <Box
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="lg"
-              bg="gray.50"
-              px={4}
-              py={3}
-            >
-              <Stack spacing={1}>
-                <Text fontWeight={500}>
-                  Posting images in embedded RPC mode
-                </Text>
-                <Text color="muted">
-                  Max image size:{' '}
-                  <strong>{formatBytesAsMib(SOCIAL_MAX_IMAGE_BYTES)}</strong>.
-                  Supported formats:{' '}
-                  <strong>{SOCIAL_IMAGE_FORMATS.join(', ')}</strong>.
-                </Text>
-                <Text color="muted">
-                  A post with an image uses one on-chain `dna_storeToIpfs`
-                  transaction for the file plus one `contract_call` for the
-                  message. Messages longer than 100 characters add another IPFS
-                  storage transaction.
-                </Text>
-                <Text color="muted">
-                  The composer inside the social view now shows a live max-fee
-                  estimate for the current draft using your own node RPC.
-                </Text>
-              </Stack>
-            </Box>
+            <Text color="muted" fontSize="sm">
+              {usingIndexerFallback
+                ? `Fallback reader active: ${SOCIAL_OFFICIAL_INDEXER_URL}. It is used only for older history lookup, not for posting.`
+                : 'Default reader active: your own node RPC only. If older posts do not appear, switch to the official read-only indexer fallback.'}
+            </Text>
             {(offline || syncing) && (
               <Text color="orange.500">
                 Your node is currently {offline ? 'offline' : 'syncing'}. The
@@ -152,11 +258,11 @@ export default function SocialPage() {
           {bootstrapReady ? (
             <Box
               as="iframe"
-              key={iframeNonce}
+              key={`${historyMode}:${iframeNonce}`}
               src="/idena-social/index.html#/"
               title="idena.social"
               w="full"
-              h="calc(100vh - 220px)"
+              h="calc(100vh - 250px)"
               border="1px solid"
               borderColor="gray.100"
               borderRadius="lg"
@@ -167,7 +273,7 @@ export default function SocialPage() {
               align="center"
               justify="center"
               w="full"
-              h="calc(100vh - 220px)"
+              h="calc(100vh - 250px)"
               border="1px solid"
               borderColor="gray.100"
               borderRadius="lg"

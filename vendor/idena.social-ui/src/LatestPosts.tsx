@@ -81,6 +81,9 @@ function LatestPosts() {
     const [mainDraftText, setMainDraftText] = useState('');
 
     const mainPostMediaAttachment = postMediaAttachmentsRef.current['main'];
+    const mainFeeTooltipText = mainComposerCostEstimate
+        ? `Current conservative max-fee cap from your own node RPC: about ${mainComposerCostEstimate.totalMaxFeeDna} iDNA. Breakdown: contract call ${mainComposerCostEstimate.contractCallMaxFeeDna} iDNA${mainComposerCostEstimate.imageStoredToIpfs ? `, image storage ${mainComposerCostEstimate.imageStoreMaxFeeDna} iDNA` : ''}${mainComposerCostEstimate.textStoredToIpfs ? `, long-text storage ${mainComposerCostEstimate.textStoreMaxFeeDna} iDNA` : ''}. The actual charged fee can be lower.`
+        : 'Start typing or attach an image to request a conservative max-fee estimate from your own node RPC.';
 
     useEffect(() => {
         if (submittingPost === 'main') {
@@ -177,26 +180,40 @@ function LatestPosts() {
             {mainPostMediaAttachment && <div className="mx-4 my-1">
                 <img className="max-h-120 max-w-100 size-auto rounded-sm" src={mainPostMediaAttachment.dataUrl} />
             </div>}
-            <div className="mt-2 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-[12px] text-stone-300">
-                <p><strong>Image limit:</strong> {(MAX_POST_MEDIA_BYTES_RPC / (1024 * 1024)).toFixed(0)} MiB in embedded RPC mode.</p>
-                <p><strong>Formats:</strong> PNG, JPEG, GIF, WebP, AVIF, APNG, SVG.</p>
-                <p><strong>Posting model:</strong> an image adds one <code>dna_storeToIpfs</code> transaction plus one <code>contract_call</code>. Text over 100 chars adds another IPFS storage transaction.</p>
-                {mainComposerCostEstimateLoading && <p className="text-stone-400">Estimating current max fee…</p>}
-                {!mainComposerCostEstimateLoading && mainComposerCostEstimate && (
-                    <div className="mt-1 space-y-0.5">
-                        <p><strong>Current max-fee estimate:</strong> about {mainComposerCostEstimate.totalMaxFeeDna} iDNA.</p>
-                        <p className="text-stone-400">
-                            Breakdown: contract call {mainComposerCostEstimate.contractCallMaxFeeDna} iDNA
-                            {mainComposerCostEstimate.imageStoredToIpfs ? `, image storage ${mainComposerCostEstimate.imageStoreMaxFeeDna} iDNA` : ''}
-                            {mainComposerCostEstimate.textStoredToIpfs ? `, long-text storage ${mainComposerCostEstimate.textStoreMaxFeeDna} iDNA` : ''}.
-                        </p>
-                        <p className="text-stone-400">This is a conservative max-fee cap from your own node RPC. Actual charged fee can be lower.</p>
-                    </div>
-                )}
-                {!mainComposerCostEstimateLoading && !mainComposerCostEstimate && !mainComposerCostEstimateError && (
-                    <p className="text-stone-400">Select an image or start typing to see a live max-fee estimate.</p>
-                )}
-                {!mainComposerCostEstimateLoading && mainComposerCostEstimateError && (
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-stone-300">
+                <p>
+                    <strong>Image limit:</strong> {(MAX_POST_MEDIA_BYTES_RPC / (1024 * 1024)).toFixed(0)} MiB
+                    <span
+                        className="ml-1 text-stone-400 hover:cursor-help"
+                        title="Supported formats: PNG, JPEG, GIF, WebP, AVIF, APNG, SVG. In embedded desktop RPC mode the file is stored through your own node IPFS path first and then referenced on-chain by CID."
+                    >
+                        ⓘ
+                    </span>
+                </p>
+                <p>
+                    <strong>Posting model:</strong> RPC + on-chain reference
+                    <span
+                        className="ml-1 text-stone-400 hover:cursor-help"
+                        title="An image post adds one dna_storeToIpfs transaction for the file plus one contract_call for the message. Text over 100 characters adds another IPFS storage transaction."
+                    >
+                        ⓘ
+                    </span>
+                </p>
+                <p>
+                    <strong>Current max-fee:</strong>{' '}
+                    {mainComposerCostEstimateLoading
+                        ? 'estimating…'
+                        : mainComposerCostEstimate
+                            ? `about ${mainComposerCostEstimate.totalMaxFeeDna} iDNA`
+                            : mainComposerCostEstimateError || 'start typing or attach an image'}
+                    <span
+                        className="ml-1 text-stone-400 hover:cursor-help"
+                        title={mainFeeTooltipText}
+                    >
+                        ⓘ
+                    </span>
+                </p>
+                {mainComposerCostEstimateError && !mainComposerCostEstimateLoading && (
                     <p className="text-red-400">{mainComposerCostEstimateError}</p>
                 )}
             </div>

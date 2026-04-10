@@ -19,10 +19,14 @@ function formatMb(bytes) {
 }
 
 function listTrackedFiles() {
-  const output = execFileSync('git', ['ls-files', '-z'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-  })
+  const output = execFileSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    }
+  )
 
   return output.split('\0').filter(Boolean)
 }
@@ -31,31 +35,36 @@ const failures = []
 const warnings = []
 
 for (const filePath of listTrackedFiles()) {
-  const stat = fs.statSync(filePath)
-  if (stat.isFile()) {
-    const isAllowedLargeArtifact = allowedLargeArtifacts.has(filePath)
+  if (fs.existsSync(filePath)) {
+    const stat = fs.statSync(filePath)
+    if (stat.isFile()) {
+      const isAllowedLargeArtifact = allowedLargeArtifacts.has(filePath)
 
-    if (stat.size >= githubHardLimitGuardBytes) {
-      failures.push(
-        `${filePath} is ${formatMb(
-          stat.size
-        )}; move it to Git LFS or release artifacts before publishing`
-      )
-    } else if (
-      stat.size >= githubWarningLimitBytes &&
-      !isAllowedLargeArtifact
-    ) {
-      failures.push(
-        `${filePath} is ${formatMb(
-          stat.size
-        )}; new large tracked files must use Git LFS or release artifacts`
-      )
-    } else if (stat.size >= githubWarningLimitBytes && isAllowedLargeArtifact) {
-      warnings.push(
-        `${filePath} is ${formatMb(
-          stat.size
-        )}; allowed bundled wasm artifact, but consider Git LFS/artifacts for formal releases`
-      )
+      if (stat.size >= githubHardLimitGuardBytes) {
+        failures.push(
+          `${filePath} is ${formatMb(
+            stat.size
+          )}; move it to Git LFS or release artifacts before publishing`
+        )
+      } else if (
+        stat.size >= githubWarningLimitBytes &&
+        !isAllowedLargeArtifact
+      ) {
+        failures.push(
+          `${filePath} is ${formatMb(
+            stat.size
+          )}; new large tracked files must use Git LFS or release artifacts`
+        )
+      } else if (
+        stat.size >= githubWarningLimitBytes &&
+        isAllowedLargeArtifact
+      ) {
+        warnings.push(
+          `${filePath} is ${formatMb(
+            stat.size
+          )}; allowed bundled wasm artifact, but consider Git LFS/artifacts for formal releases`
+        )
+      }
     }
   }
 }

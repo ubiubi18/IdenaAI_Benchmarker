@@ -53,7 +53,11 @@ const CHECKS = [
 ]
 
 function listTrackedFiles() {
-  return execFileSync('git', ['ls-files'], {encoding: 'utf8'})
+  return execFileSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard'],
+    {encoding: 'utf8'}
+  )
     .split('\n')
     .map((entry) => entry.trim())
     .filter(Boolean)
@@ -70,6 +74,10 @@ function shouldScan(filePath) {
 }
 
 function inspectFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return []
+  }
+
   const content = fs.readFileSync(filePath, 'utf8')
   const fileFindings = []
 
