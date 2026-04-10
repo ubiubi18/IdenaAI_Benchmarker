@@ -1,8 +1,8 @@
-import { supportedImageTypes, type Post, type Tip } from './logic/asyncUtils';
+import { MAX_POST_MEDIA_BYTES_RPC, supportedImageTypes, type Post, type Tip, type RpcPostCostEstimate } from './logic/asyncUtils';
 import { useOutletContext } from 'react-router';
 import PostComponent from './components/PostComponent';
 import { type MouseEventLocal, type PostDomSettingsCollection } from './App.exports';
-import { useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 
 type LatestPostsProps = {
     currentBlockCaptured: number,
@@ -30,6 +30,14 @@ type LatestPostsProps = {
     tipsRef: React.RefObject<Record<string, { totalAmount: number, tips: Tip[] }>>,
     setPostMediaAttachmentHandler: (location: string, file?: File | undefined) => Promise<void>,
     postMediaAttachmentsRef: React.RefObject<any>,
+    estimatePostCostHandler: (inputText: string, mediaFile?: File | undefined) => Promise<RpcPostCostEstimate | null>,
+    mainComposerCostEstimate: RpcPostCostEstimate | null,
+    setMainComposerCostEstimate: React.Dispatch<React.SetStateAction<RpcPostCostEstimate | null>>,
+    mainComposerCostEstimateError: string,
+    setMainComposerCostEstimateError: React.Dispatch<React.SetStateAction<string>>,
+    mainComposerCostEstimateLoading: boolean,
+    setMainComposerCostEstimateLoading: React.Dispatch<React.SetStateAction<boolean>>,
+    inputSendingTxs: string,
 };
 
 function LatestPosts() {
@@ -59,11 +67,86 @@ function LatestPosts() {
         tipsRef,
         setPostMediaAttachmentHandler,
         postMediaAttachmentsRef,
+        estimatePostCostHandler,
+        mainComposerCostEstimate,
+        setMainComposerCostEstimate,
+        mainComposerCostEstimateError,
+        setMainComposerCostEstimateError,
+        mainComposerCostEstimateLoading,
+        setMainComposerCostEstimateLoading,
+        inputSendingTxs,
     } = useOutletContext() as LatestPostsProps;
 
     const [, forceUpdate] = useReducer(x => x + 1, 0);
+    const [mainDraftText, setMainDraftText] = useState('');
 
     const mainPostMediaAttachment = postMediaAttachmentsRef.current['main'];
+
+    useEffect(() => {
+        if (submittingPost === 'main') {
+            setMainDraftText('');
+            setMainComposerCostEstimate(null);
+            setMainComposerCostEstimateError('');
+        }
+    }, [
+        setMainComposerCostEstimate,
+        setMainComposerCostEstimateError,
+        submittingPost,
+    ]);
+
+    useEffect(() => {
+        let canceled = false;
+        let timeoutId: ReturnType<typeof setTimeout>;
+
+        const runEstimate = async () => {
+            setMainComposerCostEstimateError('');
+
+            if (inputSendingTxs !== 'rpc') {
+                setMainComposerCostEstimate(null);
+                setMainComposerCostEstimateLoading(false);
+                return;
+            }
+
+            if (!mainDraftText && !mainPostMediaAttachment?.file) {
+                setMainComposerCostEstimate(null);
+                setMainComposerCostEstimateLoading(false);
+                return;
+            }
+
+            setMainComposerCostEstimateLoading(true);
+
+            try {
+                const estimate = await estimatePostCostHandler(mainDraftText, mainPostMediaAttachment?.file);
+                if (!canceled) {
+                    setMainComposerCostEstimate(estimate);
+                }
+            } catch (error) {
+                if (!canceled) {
+                    setMainComposerCostEstimate(null);
+                    setMainComposerCostEstimateError('Fee estimate unavailable right now.')
+                }
+            } finally {
+                if (!canceled) {
+                    setMainComposerCostEstimateLoading(false);
+                }
+            }
+        };
+
+        timeoutId = setTimeout(runEstimate, 350);
+
+        return () => {
+            canceled = true;
+            clearTimeout(timeoutId);
+        };
+    }, [
+        estimatePostCostHandler,
+        inputSendingTxs,
+        mainDraftText,
+        mainPostMediaAttachment?.file,
+        setMainComposerCostEstimate,
+        setMainComposerCostEstimateError,
+        setMainComposerCostEstimateLoading,
+    ]);
 
 
     const addMediaHandler = async (e: React.ChangeEvent<HTMLInputElement>, location: string) => {
@@ -88,10 +171,35 @@ function LatestPosts() {
                 className="w-full field-sizing-content min-h-[104px] max-h-[520px] py-1 px-2 mt-5 outline-1 placeholder:text-gray-500 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-track]:bg-neutral-700 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500 [&::-webkit-scrollbar-corner]:bg-neutral-500"
                 placeholder="Write your post here..."
                 disabled={inputPostDisabled}
+                value={mainDraftText}
+                onChange={(event) => setMainDraftText(event.target.value)}
             />
             {mainPostMediaAttachment && <div className="mx-4 my-1">
                 <img className="max-h-120 max-w-100 size-auto rounded-sm" src={mainPostMediaAttachment.dataUrl} />
             </div>}
+            <div className="mt-2 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-[12px] text-stone-300">
+                <p><strong>Image limit:</strong> {(MAX_POST_MEDIA_BYTES_RPC / (1024 * 1024)).toFixed(0)} MiB in embedded RPC mode.</p>
+                <p><strong>Formats:</strong> PNG, JPEG, GIF, WebP, AVIF, APNG, SVG.</p>
+                <p><strong>Posting model:</strong> an image adds one <code>dna_storeToIpfs</code> transaction plus one <code>contract_call</code>. Text over 100 chars adds another IPFS storage transaction.</p>
+                {mainComposerCostEstimateLoading && <p className="text-stone-400">Estimating current max fee…</p>}
+                {!mainComposerCostEstimateLoading && mainComposerCostEstimate && (
+                    <div className="mt-1 space-y-0.5">
+                        <p><strong>Current max-fee estimate:</strong> about {mainComposerCostEstimate.totalMaxFeeDna} iDNA.</p>
+                        <p className="text-stone-400">
+                            Breakdown: contract call {mainComposerCostEstimate.contractCallMaxFeeDna} iDNA
+                            {mainComposerCostEstimate.imageStoredToIpfs ? `, image storage ${mainComposerCostEstimate.imageStoreMaxFeeDna} iDNA` : ''}
+                            {mainComposerCostEstimate.textStoredToIpfs ? `, long-text storage ${mainComposerCostEstimate.textStoreMaxFeeDna} iDNA` : ''}.
+                        </p>
+                        <p className="text-stone-400">This is a conservative max-fee cap from your own node RPC. Actual charged fee can be lower.</p>
+                    </div>
+                )}
+                {!mainComposerCostEstimateLoading && !mainComposerCostEstimate && !mainComposerCostEstimateError && (
+                    <p className="text-stone-400">Select an image or start typing to see a live max-fee estimate.</p>
+                )}
+                {!mainComposerCostEstimateLoading && mainComposerCostEstimateError && (
+                    <p className="text-red-400">{mainComposerCostEstimateError}</p>
+                )}
+            </div>
             <div className="flex flex-row gap-2">
                 <div className="flex-1 -mt-1.5">
                     {mainPostMediaAttachment ? <>

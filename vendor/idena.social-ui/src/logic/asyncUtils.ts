@@ -1,6 +1,7 @@
+import { create, toBinary } from "@bufbuild/protobuf";
 import Decimal from "decimal.js";
-import { calculateMaxFee, calculateNonce, dna2num, dnaBase, hex2str, hexToDecimal, sanitizeStr } from "./utils";
-import { CallContractAttachment, contractArgumentFormat, hexToUint8Array, toHexString, Transaction, transactionType, type ContractArgumentFormatValue, type TransactionTypeValue } from "idena-sdk-js-lite";
+import { calculateMaxFee, calculateNonce, dna2num, dnaBase, hex2str, hexToDecimal, sanitizeStr, str2bytes } from "./utils";
+import { CallContractAttachment, ProtoStoreToIpfsAttachmentSchema, contractArgumentFormat, hexToUint8Array, toHexString, Transaction, transactionType, type ContractArgumentFormatValue, type TransactionTypeValue } from "idena-sdk-js-lite";
 import ErrorLoadingMedia from '../assets/error-loading-media.png';
 
 export const breakingChanges = {
@@ -11,6 +12,11 @@ export const breakingChanges = {
 
 export const supportedImageTypes = ['image/apng', 'image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/svg+xml', 'image/webp'];
 export const supportedVideoTypes = ['audio/mpeg', 'audio/mp4', 'audio/ogg', 'video/mp4', 'video/webm', 'video/ogg'];
+export const MAX_POST_MEDIA_BYTES_RPC = 1024 * 1024;
+export const MAX_POST_MEDIA_BYTES_IDENA_APP = 1024 * 5;
+
+const PLACEHOLDER_IPFS_URL = 'ipfs://bafybeigdyrzt5z4jj7f26dx3e6nqoeqcn2xyv4lrfjltx3dyx47n56lcfi';
+const PLACEHOLDER_IPFS_CID_BYTES = new Uint8Array(34).fill(1);
 
 const identityStateConversion: Record<number, string> = {
     0: 'Undefined',
@@ -77,7 +83,7 @@ export type RpcClient = ReturnType<typeof getRpcClient>;
 
 type GetMaxFeeData = {
         from: string,
-        to: string,
+        to?: string,
         type: TransactionTypeValue,
         amount: number,
         payload: any,
@@ -97,6 +103,126 @@ export const getMaxFee = async (rpcClient: RpcClient, data: GetMaxFeeData) => {
         console.error(error);
         return (0).toString();
     }
+};
+
+const dnaWeiToFloatString = (amount?: string) =>
+    new Decimal(amount || '0').div(new Decimal(dnaBase)).toFixed(5);
+
+const buildPostArgsValue = (
+    inputPost: string,
+    media: string[],
+    mediaType: string[],
+    replyToPostId?: string | null,
+    channelId?: string | null,
+) => JSON.stringify({
+    message: inputPost,
+    ...(replyToPostId && { replyToPostId }),
+    ...(channelId && { channelId }),
+    ...(media.length && { media }),
+    ...(mediaType.length && { mediaType }),
+});
+
+const estimateStoreToIpfsMaxFee = async (
+    rpcClient: RpcClient,
+    address: string,
+    size: number,
+) => {
+    const payload = toBinary(
+        ProtoStoreToIpfsAttachmentSchema,
+        create(ProtoStoreToIpfsAttachmentSchema, {
+            cid: PLACEHOLDER_IPFS_CID_BYTES,
+            size,
+        }),
+    );
+
+    return getMaxFee(rpcClient, {
+        from: address,
+        type: transactionType.StoreToIpfsTx,
+        amount: 0,
+        payload,
+    });
+};
+
+export type RpcPostCostEstimate = {
+    textStoredToIpfs: boolean,
+    imageStoredToIpfs: boolean,
+    textStoreMaxFeeDna: string,
+    imageStoreMaxFeeDna: string,
+    contractCallMaxFeeDna: string,
+    totalMaxFeeDna: string,
+};
+
+export const estimateRpcPostCost = async (
+    rpcClient: RpcClient,
+    address: string,
+    contractAddress: string,
+    makePostMethod: string,
+    inputText: string,
+    mediaFile?: File,
+    replyToPostId?: string | null,
+    channelId?: string | null,
+): Promise<RpcPostCostEstimate> => {
+    const textBytes = str2bytes(inputText);
+    const textStoredToIpfs = textBytes.length > 100;
+    const imageStoredToIpfs = !!mediaFile;
+
+    const messageForContract = textStoredToIpfs ? PLACEHOLDER_IPFS_URL : inputText;
+    const mediaForContract = mediaFile ? [PLACEHOLDER_IPFS_URL] : [];
+    const mediaTypeForContract = mediaFile ? [mediaFile.type] : [];
+
+    const argsValue = buildPostArgsValue(
+        messageForContract,
+        mediaForContract,
+        mediaTypeForContract,
+        replyToPostId,
+        channelId,
+    );
+
+    const args = [
+        {
+            format: contractArgumentFormat.String,
+            index: 0,
+            value: argsValue,
+        },
+    ];
+
+    const payload = new CallContractAttachment();
+    payload.setArgs(args);
+    payload.method = makePostMethod;
+
+    const callMaxFeeResult = await getMaxFee(rpcClient, {
+        from: address,
+        to: contractAddress,
+        type: transactionType.CallContractTx,
+        amount: 0.00001,
+        payload,
+    });
+
+    const { maxFeeDecimal: contractCallMaxFeeDna } = calculateMaxFee(
+        callMaxFeeResult,
+        messageForContract.length + JSON.stringify(mediaForContract).length,
+    );
+
+    const textStoreMaxFee = textStoredToIpfs
+        ? await estimateStoreToIpfsMaxFee(rpcClient, address, textBytes.length)
+        : '0';
+    const imageStoreMaxFee = mediaFile
+        ? await estimateStoreToIpfsMaxFee(rpcClient, address, mediaFile.size)
+        : '0';
+
+    const totalMaxFeeDna = new Decimal(contractCallMaxFeeDna)
+        .add(dnaWeiToFloatString(textStoreMaxFee))
+        .add(dnaWeiToFloatString(imageStoreMaxFee))
+        .toFixed(5);
+
+    return {
+        textStoredToIpfs,
+        imageStoredToIpfs,
+        textStoreMaxFeeDna: dnaWeiToFloatString(textStoreMaxFee),
+        imageStoreMaxFeeDna: dnaWeiToFloatString(imageStoreMaxFee),
+        contractCallMaxFeeDna,
+        totalMaxFeeDna,
+    };
 };
 
 export const getPastTxsWithIdenaIndexerApi = async (inputIdenaIndexerApiUrl: string, contractAddress: string, limit: number, continuationToken?: string) => {

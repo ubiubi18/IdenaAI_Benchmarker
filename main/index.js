@@ -286,8 +286,9 @@ if (isFirstInstance) {
 const createMainWindow = () => {
   mainWindow = new BrowserWindow({
     title: app.name,
-    width: 1080,
-    height: 740,
+    width: 1320,
+    minWidth: 1180,
+    height: 820,
     webPreferences: {
       nodeIntegration: false,
       preload: join(__dirname, 'preload.js'),

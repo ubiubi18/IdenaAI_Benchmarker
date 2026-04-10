@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Modal from 'react-modal';
 import { IdenaApprovedAds, type ApprovedAd } from 'idena-approved-ads';
-import { type Post, type Poster, type Tip, breakingChanges, getNewPosterAndPost, getReplyPosts, deOrphanReplyPosts, getTransactionDetails, getBlockHeightFromTxHash, submitPost, processTip, submitSendTip, supportedImageTypes, storeFileToIpfs, getPastTxsWithIdenaIndexerApi, getRpcClient, type RpcClient } from './logic/asyncUtils';
+import { type Post, type Poster, type Tip, type RpcPostCostEstimate, MAX_POST_MEDIA_BYTES_IDENA_APP, MAX_POST_MEDIA_BYTES_RPC, breakingChanges, estimateRpcPostCost, getNewPosterAndPost, getReplyPosts, deOrphanReplyPosts, getTransactionDetails, getBlockHeightFromTxHash, submitPost, processTip, submitSendTip, supportedImageTypes, storeFileToIpfs, getPastTxsWithIdenaIndexerApi, getRpcClient, type RpcClient } from './logic/asyncUtils';
 import { getBase64FromDataUrl, getDisplayAddress, isObjectEmpty, str2bytes } from './logic/utils';
 import WhatIsIdenaPng from './assets/whatisidena.png';
 import { Link, Outlet } from 'react-router';
@@ -74,9 +74,6 @@ const SCAN_POSTS_TTL = 1 * 60;
 const INDEXER_API_ITEMS_LIMIT = 20;
 const SET_NEW_POSTS_ADDED_DELAY = 20;
 const SUBMITTING_POST_INTERVAL = 2000;
-const MAX_POST_MEDIA_BYTES = 1024 * 1024;
-const MAX_POST_MEDIA_BYTES_WEBAPP = 1024 * 5;
-
 
 const DEBUG = false;
 
@@ -163,6 +160,9 @@ function App() {
     const tipsRef = useRef<Record<string, { totalAmount: number, tips: Tip[] }>>({});
     const [idenaWalletBalance, setIdenaWalletBalance] = useState<string>('0');
     const postMediaAttachmentsRef = useRef<any>({});
+    const [mainComposerCostEstimate, setMainComposerCostEstimate] = useState<RpcPostCostEstimate | null>(null);
+    const [mainComposerCostEstimateError, setMainComposerCostEstimateError] = useState<string>('');
+    const [mainComposerCostEstimateLoading, setMainComposerCostEstimateLoading] = useState<boolean>(false);
 
 
     const setRpcClient = (idenaNodeUrl: string, idenaNodeApiKey: string, setNodeAvailable: React.Dispatch<React.SetStateAction<boolean>>) => {
@@ -710,12 +710,12 @@ function App() {
             return;
         }
 
-        if (inputSendingTxs === 'rpc' && file.size > MAX_POST_MEDIA_BYTES) {
+        if (inputSendingTxs === 'rpc' && file.size > MAX_POST_MEDIA_BYTES_RPC) {
             alert('1MB is the maximum size. This image is too large.');
             return;
         }
 
-        if (inputSendingTxs === 'idena-app' && file.size > MAX_POST_MEDIA_BYTES_WEBAPP) {
+        if (inputSendingTxs === 'idena-app' && file.size > MAX_POST_MEDIA_BYTES_IDENA_APP) {
             alert('5KB is the maximum size when using the Idena App. This image is too large.');
             return;
         }
@@ -734,6 +734,26 @@ function App() {
         } catch {
             alert('Failed to read media file.');
         }
+    };
+
+    const estimatePostCostHandler = async (
+        inputText: string,
+        mediaFile?: File,
+    ) => {
+        if (!rpcClientRef.current || inputSendingTxs !== 'rpc') {
+            return null;
+        }
+
+        const fromAddress = postersAddressRef.current || inputPostersAddress || zeroAddress;
+
+        return estimateRpcPostCost(
+            rpcClientRef.current,
+            fromAddress,
+            contractAddressCurrent,
+            makePostMethod,
+            inputText,
+            mediaFile,
+        );
     };
 
     const submitPostHandler = async (location: string, replyToPostId?: string, channelId?: string) => {
@@ -846,9 +866,9 @@ function App() {
     };
 
     return (
-        <main className="w-full flex flex-row p-2">
+        <main className="mx-auto flex h-full w-full max-w-[1720px] flex-row gap-6 p-4">
             <div className="flex-1 flex justify-end">
-                <div className="w-[200px] min-w-[200px] ml-2 mr-8 flex flex-col">
+                <div className="w-[260px] min-w-[260px] ml-2 mr-2 flex flex-col">
                     <div className="text-[28px] mb-3">
                         <Link to="/">idena.social</Link>
                     </div>
@@ -937,7 +957,7 @@ function App() {
                     </div>
                 </div>
             </div>
-            <div className="flex-none min-w-[500px] max-w-[500px]">
+            <div className="min-w-[720px] max-w-[820px] flex-[1_1_760px]">
                 <Outlet
                     context={{
                         currentBlockCaptured,
@@ -966,11 +986,19 @@ function App() {
                         tipsRef,
                         setPostMediaAttachmentHandler,
                         postMediaAttachmentsRef,
+                        estimatePostCostHandler,
+                        mainComposerCostEstimate,
+                        setMainComposerCostEstimate,
+                        mainComposerCostEstimateError,
+                        setMainComposerCostEstimateError,
+                        mainComposerCostEstimateLoading,
+                        setMainComposerCostEstimateLoading,
+                        inputSendingTxs,
                     }}
                 />
             </div>
             <div className="flex-1 flex justify-start">
-                <div className="w-[288px] min-w-[288px] mt-3 mr-2 ml-8 flex flex-col text-[13px]">
+                <div className="mt-3 mr-2 ml-2 hidden w-[320px] min-w-[320px] xl:flex xl:flex-col text-[13px]">
                     <div className="flex flex-col h-[90px] justify-center">
                         <div className="px-1 font-[700] text-gray-400"><p>{currentAd?.title ?? defaultAd.title}</p></div>
                         <div className="px-1"><p>{currentAd?.desc ?? defaultAd.desc}</p></div>
