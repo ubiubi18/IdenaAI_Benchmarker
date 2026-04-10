@@ -875,7 +875,8 @@ function App() {
     };
 
     return (
-        <main className="mx-auto flex h-full w-full min-w-[1320px] max-w-[1880px] flex-row gap-4 px-4 py-3">
+        <main className={`mx-auto flex h-full w-full ${isDesktopOnchainMode ? 'max-w-[1440px] flex-col px-3 py-3' : 'max-w-[1880px] flex-row gap-4 px-4 py-3'}`}>
+            {!isDesktopOnchainMode && (
             <div className="flex flex-none justify-end">
                 <div className="w-[280px] min-w-[280px] ml-2 mr-1 flex flex-col">
                     <div className="text-[28px] mb-3">
@@ -986,8 +987,9 @@ function App() {
                     </div>
                 </div>
             </div>
+            )}
             <div className="min-w-0 flex-1">
-                <div className="mx-auto w-full max-w-[1080px]">
+                <div className={`mx-auto w-full ${isDesktopOnchainMode ? 'max-w-[1280px]' : 'max-w-[1080px]'}`}>
                 <Outlet
                     context={{
                         currentBlockCaptured,
@@ -1024,6 +1026,7 @@ function App() {
                         mainComposerCostEstimateLoading,
                         setMainComposerCostEstimateLoading,
                         inputSendingTxs,
+                        embeddedDesktopOnchainMode: isDesktopOnchainMode,
                     }}
                 />
                 </div>

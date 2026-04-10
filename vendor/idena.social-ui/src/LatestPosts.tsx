@@ -38,7 +38,19 @@ type LatestPostsProps = {
     mainComposerCostEstimateLoading: boolean,
     setMainComposerCostEstimateLoading: React.Dispatch<React.SetStateAction<boolean>>,
     inputSendingTxs: string,
+    embeddedDesktopOnchainMode?: boolean,
 };
+
+function HoverInfo({ label, widthClass = 'w-72' }: { label: string, widthClass?: string }) {
+    return (
+        <span className="group relative ml-1 inline-flex align-middle">
+            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-stone-500 text-[10px] font-[700] text-stone-300 hover:cursor-help">i</span>
+            <span className={`pointer-events-none absolute left-1/2 top-full z-50 mt-2 hidden -translate-x-1/2 rounded-md border border-stone-700 bg-stone-950 px-3 py-2 text-left text-[11px] leading-4 text-stone-200 shadow-2xl group-hover:block ${widthClass}`}>
+                {label}
+            </span>
+        </span>
+    );
+}
 
 function LatestPosts() {
     const {
@@ -75,6 +87,7 @@ function LatestPosts() {
         mainComposerCostEstimateLoading,
         setMainComposerCostEstimateLoading,
         inputSendingTxs,
+        embeddedDesktopOnchainMode,
     } = useOutletContext() as LatestPostsProps;
 
     const [, forceUpdate] = useReducer(x => x + 1, 0);
@@ -167,7 +180,7 @@ function LatestPosts() {
     };
 
     return (<>
-        <div>
+        <div className={embeddedDesktopOnchainMode ? 'mx-auto w-full max-w-[1180px]' : ''}>
             <textarea
                 id='post-input-main'
                 rows={4}
@@ -183,21 +196,11 @@ function LatestPosts() {
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-stone-300">
                 <p>
                     <strong>Image limit:</strong> {(MAX_POST_MEDIA_BYTES_RPC / (1024 * 1024)).toFixed(0)} MiB
-                    <span
-                        className="ml-1 text-stone-400 hover:cursor-help"
-                        title="Supported formats: PNG, JPEG, GIF, WebP, AVIF, APNG, SVG. In embedded desktop RPC mode the file is stored through your own node IPFS path first and then referenced on-chain by CID."
-                    >
-                        ⓘ
-                    </span>
+                    <HoverInfo label="Supported formats: PNG, JPEG, GIF, WebP, AVIF, APNG, SVG. In embedded desktop RPC mode the file is stored through your own node IPFS path first and then referenced on-chain by CID." />
                 </p>
                 <p>
                     <strong>Posting model:</strong> RPC + on-chain reference
-                    <span
-                        className="ml-1 text-stone-400 hover:cursor-help"
-                        title="An image post adds one dna_storeToIpfs transaction for the file plus one contract_call for the message. Text over 100 characters adds another IPFS storage transaction."
-                    >
-                        ⓘ
-                    </span>
+                    <HoverInfo label="An image post adds one dna_storeToIpfs transaction for the file plus one contract_call for the message. Text over 100 characters adds another IPFS storage transaction." />
                 </p>
                 <p>
                     <strong>Current max-fee:</strong>{' '}
@@ -206,12 +209,7 @@ function LatestPosts() {
                         : mainComposerCostEstimate
                             ? `about ${mainComposerCostEstimate.totalMaxFeeDna} iDNA`
                             : mainComposerCostEstimateError || 'start typing or attach an image'}
-                    <span
-                        className="ml-1 text-stone-400 hover:cursor-help"
-                        title={mainFeeTooltipText}
-                    >
-                        ⓘ
-                    </span>
+                    <HoverInfo label={mainFeeTooltipText} widthClass="w-80" />
                 </p>
                 {mainComposerCostEstimateError && !mainComposerCostEstimateLoading && (
                     <p className="text-red-400">{mainComposerCostEstimateError}</p>

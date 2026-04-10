@@ -11,6 +11,25 @@ import cashGraySvg from '../assets/cash-gray.svg';
 import cashGreenSvg from '../assets/cash-green.svg';
 
 const likeEmoji = '❤️';
+const bootstrapStorageKey = 'idenaSocialDesktopBootstrap';
+
+function isEmbeddedDesktopOnchainMode() {
+    if (typeof window === 'undefined') {
+        return false;
+    }
+
+    try {
+        const raw = window.localStorage.getItem(bootstrapStorageKey);
+        if (!raw) {
+            return false;
+        }
+
+        const parsed = JSON.parse(raw);
+        return parsed?.embeddedMode === 'desktop-onchain';
+    } catch {
+        return false;
+    }
+}
 
 type PostComponentProps = {
     postId: string,
@@ -64,6 +83,7 @@ function PostComponent(props: PostComponentProps) {
     } = props;
 
     const [, forceUpdate] = useReducer(x => x + 1, 0);
+    const embeddedDesktopOnchainMode = isEmbeddedDesktopOnchainMode();
 
     const { key: locationKey } = location;
 
@@ -237,7 +257,7 @@ function PostComponent(props: PostComponentProps) {
     let mouseClicked = false;
 
     const handlePostMouseDown = () => {
-        if (!isPostOutlet) {
+        if (!isPostOutlet && !embeddedDesktopOnchainMode) {
             mouseClicked = true;
             setTimeout(() => {
                 mouseClicked = false;
@@ -245,7 +265,7 @@ function PostComponent(props: PostComponentProps) {
         }
     };
     const handlePostClick = () => {
-        if (!isPostOutlet) {
+        if (!isPostOutlet && !embeddedDesktopOnchainMode) {
             if (mouseClicked) {
                 const to = `/post/${postId}`;
                 if (to !== location.pathname) {
