@@ -15,7 +15,9 @@
   "license": "MIT",
   "scripts": {
     "start": "dotenv -e .env.local electron .",
-    "build": "next build renderer && next export renderer",
+    "build:social": "npm ci --prefix vendor/idena.social-ui && npm run build --prefix vendor/idena.social-ui && node scripts/sync-idena-social-ui.js",
+    "build:renderer": "node scripts/run-next-static-build.js",
+    "build": "npm run build:social && npm run build:renderer",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win --publish onTag",
     "dist:mac": "npm run build && electron-builder --mac --publish onTag",
@@ -56,6 +58,8 @@
       "!coverage/**",
       "!.nyc_output",
       "!.nyc_output/**",
+      "!vendor",
+      "!vendor/**",
       "!renderer",
       "renderer/out"
     ],

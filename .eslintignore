@@ -1,4 +1,6 @@
 renderer/.next
 renderer/out
 **/dist
+vendor
+renderer/public/idena-social
 **/shared/models/proto/**

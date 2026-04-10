@@ -1,0 +1,7 @@
+version: v2
+plugins:
+  - remote: buf.build/bufbuild/es:v2.10.2
+    out: src/logic/idena-sdk-js-modified/models/proto
+    opt: target=ts
+inputs:
+  - directory: src/logic/idena-sdk-js-modified/models/proto/models.proto

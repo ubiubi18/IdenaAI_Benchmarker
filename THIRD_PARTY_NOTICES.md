@@ -10,6 +10,8 @@ upstream project. Review this file before preparing a public release.
 | Idena node source snapshot                            | `idena-go/`                        | LGPL-3.0. See `idena-go/LICENSE` and `LICENSES/LGPL-3.0.txt`.                                                               |
 | Idena wasm Go binding snapshot                        | `idena-wasm-binding/`              | LGPL-3.0. See `idena-wasm-binding/LICENSE` and `LICENSES/LGPL-3.0.txt`.                                                     |
 | Idena wasm runtime source snapshot                    | `idena-wasm/`                      | Bundled source snapshot. Verify upstream license metadata before publishing a formal binary release.                        |
+| `idena.social` smart-contract snapshot                | `vendor/idena.social-contract/`    | MIT. Copyright 2025 N3CR0M4NC3R. Keep `vendor/idena.social-contract/LICENCE` in redistributed source bundles.               |
+| `idena.social-ui` source snapshot                     | `vendor/idena.social-ui/`          | MIT. Copyright 2025 N3CR0M4NC3R. Used to build the bundled in-app Social view snapshot. Keep its `LICENCE` file in place.  |
 | Sample flip data                                      | `samples/flips/`                   | Research sample material bundled for reproducibility. Verify distribution constraints before public dataset redistribution. |
 
 ## Release Notes

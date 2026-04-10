@@ -35,6 +35,7 @@ This fork keeps the familiar desktop app flow available while adding optional AI
 - AI-assisted flip story generation
 - AI-assisted flip image generation
 - AI flip solving and benchmark runs
+- bundled in-app `idena.social` access through the current node RPC settings
 - off-chain benchmark sample data
 - experimental, guarded on-chain automation flows
 
@@ -266,7 +267,18 @@ Bundled source snapshots are included for reproducibility and runtime inspection
 - [`idena-go/`](idena-go): Idena node source snapshot
 - [`idena-wasm/`](idena-wasm): wasm runtime source snapshot
 - [`idena-wasm-binding/`](idena-wasm-binding): Go binding layer and static libs
+- [`vendor/idena.social-contract/`](vendor/idena.social-contract): bundled
+  `idena.social` smart-contract source snapshot
+- [`vendor/idena.social-ui/`](vendor/idena.social-ui): bundled `idena.social`
+  UI source snapshot used for the in-app Social page
 - [`samples/flips/`](samples/flips): small decoded benchmark sample files
+
+If you change the bundled social UI source and want to refresh the embedded app
+snapshot, run:
+
+```bash
+npm run build:social
+```
 
 Most AI/UI work only touches `main/`, `renderer/`, and `scripts/`. Node or WASM
 work needs the bundled source directories too.

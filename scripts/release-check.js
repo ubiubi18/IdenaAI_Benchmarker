@@ -11,6 +11,8 @@ const syntaxCheckedFiles = [
   'scripts/check-release-metadata.js',
   'scripts/check-release-artifacts.js',
   'scripts/check-electron-safety.js',
+  'scripts/sync-idena-social-ui.js',
+  'scripts/run-next-static-build.js',
   'scripts/release-check.js',
   'main/channels.js',
   'main/index.js',

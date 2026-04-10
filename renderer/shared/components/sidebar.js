@@ -56,6 +56,7 @@ import {TodoVotingCountBadge} from '../../screens/oracles/components'
 import {
   ClockIcon,
   ContactsIcon,
+  GlobeIcon,
   GalleryIcon,
   MoreIcon,
   OracleIcon,
@@ -307,6 +308,9 @@ function Navbar() {
       </NavItem>
       <NavItem href="/contacts" icon={ContactsIcon}>
         {t('Contacts')}
+      </NavItem>
+      <NavItem href="/social" icon={GlobeIcon}>
+        {t('Social')}
       </NavItem>
       <NavItem href="/oracles/list" icon={OracleIcon} display>
         {todoCount > 0 ? (
