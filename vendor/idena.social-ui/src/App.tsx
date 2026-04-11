@@ -328,6 +328,11 @@ function App() {
     type RecurseForward = () => Promise<void>;
     useEffect(() => {
         if (initialBlock && nodeAvailable) {
+            if (isDesktopOnchainMode) {
+                setCurrentBlockCaptured(initialBlock);
+                return undefined;
+            }
+
             let recurseForwardIntervalId: NodeJS.Timeout;
 
             (async function recurseForward() {
@@ -875,7 +880,10 @@ function App() {
     };
 
     return (
-        <main className={`mx-auto flex h-full w-full ${isDesktopOnchainMode ? 'max-w-none flex-col px-4 py-3' : 'max-w-[1880px] flex-row gap-4 px-4 py-3'}`}>
+        <main
+            className={`mx-auto flex h-full w-full ${isDesktopOnchainMode ? 'max-w-none flex-col px-4 py-3' : 'max-w-[1880px] flex-row gap-4 px-4 py-3'}`}
+            style={isDesktopOnchainMode ? { width: '100%', maxWidth: '100%' } : undefined}
+        >
             {!isDesktopOnchainMode && (
             <div className="flex flex-none justify-end">
                 <div className="w-[280px] min-w-[280px] ml-2 mr-1 flex flex-col">
@@ -989,7 +997,10 @@ function App() {
             </div>
             )}
             <div className="min-w-0 flex-1">
-                <div className={`mx-auto w-full ${isDesktopOnchainMode ? 'max-w-[1480px]' : 'max-w-[1080px]'}`}>
+                <div
+                    className={`mx-auto w-full ${isDesktopOnchainMode ? 'max-w-[1480px]' : 'max-w-[1080px]'}`}
+                    style={isDesktopOnchainMode ? { width: '100%', maxWidth: '1480px' } : undefined}
+                >
                 <Outlet
                     context={{
                         currentBlockCaptured,

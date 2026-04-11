@@ -42,10 +42,19 @@ type LatestPostsProps = {
 };
 
 function HoverInfo({ label, widthClass = 'w-72' }: { label: string, widthClass?: string }) {
+    const [open, setOpen] = useState(false);
+
     return (
-        <span className="group relative ml-1 inline-flex align-middle">
+        <span
+            className="relative ml-1 inline-flex align-middle"
+            onMouseEnter={() => setOpen(true)}
+            onMouseLeave={() => setOpen(false)}
+        >
             <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-stone-500 text-[10px] font-[700] text-stone-300 hover:cursor-help">i</span>
-            <span className={`pointer-events-none absolute left-1/2 top-full z-50 mt-2 hidden -translate-x-1/2 rounded-md border border-stone-700 bg-stone-950 px-3 py-2 text-left text-[11px] leading-4 text-stone-200 shadow-2xl group-hover:block ${widthClass}`}>
+            <span
+                className={`pointer-events-none absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2 rounded-md border border-stone-700 bg-stone-950 px-3 py-2 text-left text-[11px] leading-4 text-stone-200 shadow-2xl ${widthClass}`}
+                style={{ display: open ? 'block' : 'none' }}
+            >
                 {label}
             </span>
         </span>
@@ -180,7 +189,10 @@ function LatestPosts() {
     };
 
     return (<>
-        <div className={embeddedDesktopOnchainMode ? 'mx-auto w-full max-w-[1360px]' : 'w-full'}>
+        <div
+            className={embeddedDesktopOnchainMode ? 'mx-auto w-full max-w-[1360px]' : 'w-full'}
+            style={embeddedDesktopOnchainMode ? { width: '100%', maxWidth: '1360px' } : undefined}
+        >
             <textarea
                 id='post-input-main'
                 rows={4}
