@@ -6,6 +6,7 @@ const {
   Tray,
   Menu,
   nativeTheme,
+  screen,
   shell,
   // eslint-disable-next-line import/no-extraneous-dependencies
 } = require('electron')
@@ -284,11 +285,21 @@ if (isFirstInstance) {
 }
 
 const createMainWindow = () => {
+  const {workAreaSize} = screen.getPrimaryDisplay()
+  const responsiveWidth = Math.max(
+    1360,
+    Math.min(1800, Math.floor(workAreaSize.width * 0.94))
+  )
+  const responsiveHeight = Math.max(
+    900,
+    Math.min(1100, Math.floor(workAreaSize.height * 0.94))
+  )
+
   mainWindow = new BrowserWindow({
     title: app.name,
-    width: 1560,
+    width: responsiveWidth,
     minWidth: 1320,
-    height: 920,
+    height: responsiveHeight,
     webPreferences: {
       nodeIntegration: false,
       preload: join(__dirname, 'preload.js'),

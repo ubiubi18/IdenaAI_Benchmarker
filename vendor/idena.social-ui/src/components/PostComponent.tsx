@@ -283,7 +283,7 @@ function PostComponent(props: PostComponentProps) {
     };
 
     return (<>
-        <div className={`flex flex-col pt-3 bg-stone-800 ${!isPostOutlet ? 'hover:cursor-pointer' : ''}`} onMouseDown={handlePostMouseDown} onClick={handlePostClick}>
+        <div className={`w-full flex flex-col pt-3 bg-stone-800 ${!isPostOutlet && !embeddedDesktopOnchainMode ? 'hover:cursor-pointer' : ''}`} onMouseDown={handlePostMouseDown} onClick={handlePostClick}>
             <div className="flex flex-row">
                 <div className="w-15 flex-none flex flex-col">
                     <div className="h-17 flex-none -mt-3">
@@ -303,7 +303,7 @@ function PostComponent(props: PostComponentProps) {
                 <p className="[word-break:break-word]">{messageLinesDisplay.map((line, i, arr) => <>{line}{arr.length - 1 !== i && <br />}</>)}{showTruncatedMessageLines && <span> <a className="hover:underline cursor-pointer text-blue-400 whitespace-nowrap" onClick={(e) => toggleViewMoreHandler(post, e)}>view more</a></span>}</p>
             </div>
             {post.image && <div className="mx-4 my-2">
-                <img className="max-h-120 max-w-100 size-auto rounded-sm" src={post.image} />
+                <img className="max-h-[720px] w-auto max-w-full rounded-sm" src={post.image} />
             </div>}
             <div className="flex flex-row ml-2 mr-3 mb-1.5 text-[12px]">
                 <div className="w-22">
@@ -338,7 +338,7 @@ function PostComponent(props: PostComponentProps) {
                             <textarea
                                 id={`post-input-${post.postId}`}
                                 rows={1}
-                                className="w-full field-sizing-content max-w-[408px] min-h-[29px] max-h-[520px] py-1 px-2 outline-1 bg-stone-900 placeholder:text-gray-500 text-[14px] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-track]:bg-neutral-700 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500 [&::-webkit-scrollbar-corner]:bg-neutral-500"
+                                className="w-full field-sizing-content min-h-[29px] max-h-[520px] py-1 px-2 outline-1 bg-stone-900 placeholder:text-gray-500 text-[14px] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-track]:bg-neutral-700 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500 [&::-webkit-scrollbar-corner]:bg-neutral-500"
                                 placeholder="Reply here..."
                                 disabled={inputPostDisabled}
                                 onFocus={replyInputOnFocusHandler}
@@ -351,7 +351,7 @@ function PostComponent(props: PostComponentProps) {
                         </div>
                     </div>
                     {postMediaAttachment && <div className="my-1">
-                            <img className="max-h-100 max-w-92 size-auto rounded-sm" src={postMediaAttachment.dataUrl} />
+                            <img className="max-h-[520px] w-auto max-w-full rounded-sm" src={postMediaAttachment.dataUrl} />
                     </div>}
                     <div className="leading-[12px]">
                         {postMediaAttachment ? <>
@@ -431,7 +431,7 @@ function PostComponent(props: PostComponentProps) {
                                     <p className="[word-break:break-word]">{messageLinesDisplay.map((line, i, arr) => <>{line}{arr.length - 1 !== i && <br />}</>)}{showTruncatedMessageLines && <span> <a className="hover:underline cursor-pointer text-[12px] text-blue-400 whitespace-nowrap" onClick={(e) => toggleViewMoreHandler(replyPost, e)}>view more</a></span>}</p>
                                 </div>
                                 {replyPost.image && <div className="ml-12 mr-4 my-1">
-                                    <img className="max-h-100 max-w-92 size-auto rounded-sm" src={replyPost.image} />
+                                    <img className="max-h-[520px] w-auto max-w-full rounded-sm" src={replyPost.image} />
                                 </div>}
                                 <div className="w-full pt-2 px-4 flex flex-row text-[12px]">
                                     <div className="w-26">
@@ -508,7 +508,7 @@ function PostComponent(props: PostComponentProps) {
                                                                     <p className="[word-break:break-word]">{messageLines.map((line, i, arr) => <>{line}{arr.length - 1 !== i && <br />}</>)}</p>
                                                                 </div>
                                                                 {discussionPost.image && <div className="my-1 mx-1">
-                                                                    <img className="max-h-80 max-w-74 size-auto rounded-sm" src={discussionPost.image} />
+                                                                    <img className="max-h-[420px] w-auto max-w-full rounded-sm" src={discussionPost.image} />
                                                                 </div>}
                                                             </div>
                                                             <div className="pt-0.5 mr-1 text-[12px] flex flex-col gap-0.5">
@@ -543,7 +543,7 @@ function PostComponent(props: PostComponentProps) {
                                                     <textarea
                                                         id={`post-input-${replyPost.postId}`}
                                                         rows={2}
-                                                        className="w-full field-sizing-content max-w-[385px] min-h-[26px] max-h-[312px] py-1 px-2 outline-1 bg-stone-900 placeholder:text-gray-500 text-[12px] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-track]:bg-neutral-700 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500 [&::-webkit-scrollbar-corner]:bg-neutral-500"
+                                                        className="w-full field-sizing-content min-h-[26px] max-h-[312px] py-1 px-2 outline-1 bg-stone-900 placeholder:text-gray-500 text-[12px] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-track]:bg-neutral-700 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500 [&::-webkit-scrollbar-corner]:bg-neutral-500"
                                                         placeholder="Comment here..."
                                                         disabled={inputPostDisabled}
                                                     />
@@ -554,7 +554,7 @@ function PostComponent(props: PostComponentProps) {
                                             </div>
                                         </div>
                                         {postMediaAttachment && <div className="my-1">
-                                            <img className="max-h-80 max-w-74 size-auto rounded-sm" src={postMediaAttachment.dataUrl} />
+                                            <img className="max-h-[420px] w-auto max-w-full rounded-sm" src={postMediaAttachment.dataUrl} />
                                         </div>}
                                         <div className="leading-[12px]">
                                             {postMediaAttachment ? <>

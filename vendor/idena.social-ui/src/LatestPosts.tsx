@@ -180,18 +180,18 @@ function LatestPosts() {
     };
 
     return (<>
-        <div className={embeddedDesktopOnchainMode ? 'mx-auto w-full max-w-[1180px]' : ''}>
+        <div className={embeddedDesktopOnchainMode ? 'mx-auto w-full max-w-[1360px]' : 'w-full'}>
             <textarea
                 id='post-input-main'
                 rows={4}
-                className="w-full field-sizing-content min-h-[104px] max-h-[520px] py-1 px-2 mt-5 outline-1 placeholder:text-gray-500 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-track]:bg-neutral-700 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500 [&::-webkit-scrollbar-corner]:bg-neutral-500"
+                className="w-full field-sizing-content min-h-[120px] max-h-[520px] py-1 px-2 mt-5 outline-1 placeholder:text-gray-500 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-gray-100 [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-track]:bg-neutral-700 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500 [&::-webkit-scrollbar-corner]:bg-neutral-500"
                 placeholder="Write your post here..."
                 disabled={inputPostDisabled}
                 value={mainDraftText}
                 onChange={(event) => setMainDraftText(event.target.value)}
             />
             {mainPostMediaAttachment && <div className="mx-4 my-1">
-                <img className="max-h-120 max-w-100 size-auto rounded-sm" src={mainPostMediaAttachment.dataUrl} />
+                <img className="max-h-[640px] w-auto max-w-full rounded-sm" src={mainPostMediaAttachment.dataUrl} />
             </div>}
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-stone-300">
                 <p>
@@ -240,9 +240,9 @@ function LatestPosts() {
             <p>Current Block: #{currentBlockCaptured ? currentBlockCaptured : (nodeAvailable ? 'Loading...' : '')}</p>
             {!nodeAvailable && <p className="text-[11px] text-red-400">Blocks are not being captured. Please update your node.</p>}
         </div>
-        <ul>
+        <ul className="w-full">
             {orderedPostIds.map((postId) => (
-                <li key={postId}>
+                <li key={postId} className="w-full">
                     <PostComponent
                         postId={postId}
                         postsRef={postsRef}
