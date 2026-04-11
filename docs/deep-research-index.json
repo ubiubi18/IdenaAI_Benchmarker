@@ -1,16 +1,19 @@
 {
   "schema_version": "1.0",
-  "generated_at_utc": "2026-04-03T06:59:20+00:00",
+  "generated_at_utc": "2026-04-11T09:37:04+00:00",
   "project": {
-    "name": "idenaai-desktop",
-    "product_name": "idenaAI-desktop",
+    "name": "idena-desktop",
+    "product_name": "idena-desktop",
     "version": "0.0.1",
-    "repository": "idena-network/idena-desktop"
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/ubiubi18/IdenaAI_Benchmarker.git"
+    }
   },
   "git": {
-    "branch": "research/benchmark-desktop",
-    "head": "c4b5ed87e19c5e35be18533bcc38df90aa77986c",
-    "head_short": "c4b5ed87"
+    "branch": "codex/add-locked-sense-selection",
+    "head": "30e203662210a03efa3d2bc6d4ad7f6af7a33f64",
+    "head_short": "30e2036"
   },
   "entrypoints": {
     "desktop_main": "main/index.js",
@@ -38,15 +41,15 @@
         "area": "docs",
         "notes": "Project and implementation docs",
         "size_bytes": 10154,
-        "modified_utc": "2026-03-30T07:18:18+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "docs/worklog.md",
         "role": "documentation",
         "area": "docs",
         "notes": "Project and implementation docs",
-        "size_bytes": 183672,
-        "modified_utc": "2026-04-03T06:59:15+00:00"
+        "size_bytes": 175427,
+        "modified_utc": "2026-04-07T10:47:56+00:00"
       },
       {
         "path": "docs/dependency-issues.md",
@@ -54,7 +57,7 @@
         "area": "docs",
         "notes": "Project and implementation docs",
         "size_bytes": 5916,
-        "modified_utc": "2026-03-25T23:33:03+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "docs/context-snapshot.md",
@@ -62,7 +65,7 @@
         "area": "docs",
         "notes": "Project and implementation docs",
         "size_bytes": 2756,
-        "modified_utc": "2026-04-03T06:59:03+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "docs/flip-format-reference.md",
@@ -70,7 +73,7 @@
         "area": "docs",
         "notes": "Project and implementation docs",
         "size_bytes": 2226,
-        "modified_utc": "2026-03-25T23:33:03+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "docs/flip-consensus-audit.md",
@@ -78,7 +81,7 @@
         "area": "docs",
         "notes": "Project and implementation docs",
         "size_bytes": 1095,
-        "modified_utc": "2026-03-25T23:33:03+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "docs/flip-challenge-import.md",
@@ -86,23 +89,23 @@
         "area": "docs",
         "notes": "Project and implementation docs",
         "size_bytes": 2573,
-        "modified_utc": "2026-03-25T23:33:03+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "docs/flip-reasoning-paper-optimizations.md",
         "role": "documentation",
         "area": "docs",
         "notes": "Project and implementation docs",
-        "size_bytes": 1988,
-        "modified_utc": "2026-03-26T01:59:55+00:00"
+        "size_bytes": 1979,
+        "modified_utc": "2026-04-07T10:46:47+00:00"
       },
       {
         "path": "docs/deep-research-integration.md",
         "role": "documentation",
         "area": "docs",
         "notes": "Project and implementation docs",
-        "size_bytes": 1546,
-        "modified_utc": "2026-04-03T06:58:25+00:00"
+        "size_bytes": 1511,
+        "modified_utc": "2026-04-07T10:46:47+00:00"
       }
     ],
     "ai_backend": [
@@ -111,8 +114,8 @@
         "role": "backend",
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
-        "size_bytes": 126033,
-        "modified_utc": "2026-04-03T06:37:10+00:00"
+        "size_bytes": 298836,
+        "modified_utc": "2026-04-07T10:27:15+00:00"
       },
       {
         "path": "main/ai-providers/prompt.js",
@@ -120,15 +123,15 @@
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
         "size_bytes": 6243,
-        "modified_utc": "2026-03-25T16:47:39+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "main/ai-providers/constants.js",
         "role": "backend",
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
-        "size_bytes": 3391,
-        "modified_utc": "2026-03-30T21:07:20+00:00"
+        "size_bytes": 3544,
+        "modified_utc": "2026-04-04T18:33:05+00:00"
       },
       {
         "path": "main/ai-providers/decision.js",
@@ -136,7 +139,7 @@
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
         "size_bytes": 3233,
-        "modified_utc": "2026-03-30T21:58:54+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "main/ai-providers/profile.js",
@@ -144,31 +147,31 @@
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
         "size_bytes": 3585,
-        "modified_utc": "2026-03-25T16:48:36+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "main/ai-providers/providers/openai.js",
         "role": "backend",
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
-        "size_bytes": 11383,
-        "modified_utc": "2026-03-30T09:52:35+00:00"
+        "size_bytes": 14489,
+        "modified_utc": "2026-04-03T22:59:42+00:00"
       },
       {
         "path": "main/ai-providers/providers/gemini.js",
         "role": "backend",
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
-        "size_bytes": 8864,
-        "modified_utc": "2026-03-31T21:24:54+00:00"
+        "size_bytes": 10071,
+        "modified_utc": "2026-04-04T18:33:30+00:00"
       },
       {
         "path": "main/ai-providers/providers/anthropic.js",
         "role": "backend",
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
-        "size_bytes": 4833,
-        "modified_utc": "2026-03-26T02:21:11+00:00"
+        "size_bytes": 5172,
+        "modified_utc": "2026-04-04T18:33:50+00:00"
       },
       {
         "path": "main/ai-providers/providers/legacy-heuristic.js",
@@ -176,7 +179,7 @@
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
         "size_bytes": 4266,
-        "modified_utc": "2026-03-26T02:36:49+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "main/ai-test-unit.js",
@@ -184,7 +187,7 @@
         "area": "ai",
         "notes": "Main-process AI provider and decision logic",
         "size_bytes": 18147,
-        "modified_utc": "2026-03-26T07:23:54+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       }
     ],
     "ai_ui": [
@@ -193,40 +196,40 @@
         "role": "frontend",
         "area": "ai",
         "notes": "UI flow for flip builder, validation, and test unit",
-        "size_bytes": 163825,
-        "modified_utc": "2026-04-03T00:00:21+00:00"
+        "size_bytes": 240134,
+        "modified_utc": "2026-04-06T21:36:30+00:00"
       },
       {
         "path": "renderer/pages/validation.js",
         "role": "frontend",
         "area": "ai",
         "notes": "UI flow for flip builder, validation, and test unit",
-        "size_bytes": 40791,
-        "modified_utc": "2026-03-26T06:07:01+00:00"
+        "size_bytes": 42626,
+        "modified_utc": "2026-04-06T22:21:54+00:00"
       },
       {
         "path": "renderer/pages/settings/ai.js",
         "role": "frontend",
         "area": "ai",
         "notes": "UI flow for flip builder, validation, and test unit",
-        "size_bytes": 50227,
-        "modified_utc": "2026-03-30T07:31:28+00:00"
+        "size_bytes": 61729,
+        "modified_utc": "2026-04-06T22:22:21+00:00"
       },
       {
         "path": "renderer/pages/settings/ai-test-unit.js",
         "role": "frontend",
         "area": "ai",
         "notes": "UI flow for flip builder, validation, and test unit",
-        "size_bytes": 2769,
-        "modified_utc": "2026-03-30T07:31:28+00:00"
+        "size_bytes": 2100,
+        "modified_utc": "2026-04-06T21:36:42+00:00"
       },
       {
         "path": "renderer/screens/validation/ai/solver-orchestrator.js",
         "role": "frontend",
         "area": "ai",
         "notes": "UI flow for flip builder, validation, and test unit",
-        "size_bytes": 19047,
-        "modified_utc": "2026-03-26T06:07:11+00:00"
+        "size_bytes": 19045,
+        "modified_utc": "2026-04-04T18:33:25+00:00"
       },
       {
         "path": "renderer/screens/validation/ai/test-unit-utils.js",
@@ -234,23 +237,23 @@
         "area": "ai",
         "notes": "UI flow for flip builder, validation, and test unit",
         "size_bytes": 10870,
-        "modified_utc": "2026-03-26T07:35:05+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "renderer/screens/flips/components.js",
         "role": "frontend",
         "area": "ai",
         "notes": "UI flow for flip builder, validation, and test unit",
-        "size_bytes": 49939,
-        "modified_utc": "2026-03-31T21:51:46+00:00"
+        "size_bytes": 52074,
+        "modified_utc": "2026-04-04T21:22:36+00:00"
       },
       {
         "path": "renderer/screens/flips/machines.js",
         "role": "frontend",
         "area": "ai",
         "notes": "UI flow for flip builder, validation, and test unit",
-        "size_bytes": 41706,
-        "modified_utc": "2026-03-30T10:31:43+00:00"
+        "size_bytes": 43841,
+        "modified_utc": "2026-04-05T09:13:04+00:00"
       }
     ],
     "ops_and_data": [
@@ -260,7 +263,7 @@
         "area": "ops",
         "notes": "Dataset import, audit, and run capture tools",
         "size_bytes": 9591,
-        "modified_utc": "2026-03-25T11:11:07+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "scripts/audit_flip_consensus.py",
@@ -268,7 +271,7 @@
         "area": "ops",
         "notes": "Dataset import, audit, and run capture tools",
         "size_bytes": 10453,
-        "modified_utc": "2026-03-24T09:37:34+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "scripts/preload_ai_test_unit_queue.py",
@@ -276,7 +279,7 @@
         "area": "ops",
         "notes": "Dataset import, audit, and run capture tools",
         "size_bytes": 6993,
-        "modified_utc": "2026-03-26T06:58:34+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "scripts/record_ai_test_run.sh",
@@ -284,7 +287,7 @@
         "area": "ops",
         "notes": "Dataset import, audit, and run capture tools",
         "size_bytes": 1144,
-        "modified_utc": "2026-03-25T11:22:30+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "scripts/idena_flip_pipeline.py",
@@ -292,7 +295,7 @@
         "area": "ops",
         "notes": "Dataset import, audit, and run capture tools",
         "size_bytes": 32172,
-        "modified_utc": "2026-04-03T06:35:50+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "scripts/build_deep_research_index.py",
@@ -300,7 +303,7 @@
         "area": "ops",
         "notes": "Dataset import, audit, and run capture tools",
         "size_bytes": 7116,
-        "modified_utc": "2026-04-03T06:58:13+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       }
     ],
     "tests": [
@@ -309,8 +312,8 @@
         "role": "tests",
         "area": "quality",
         "notes": "Focused tests for AI bridge and helpers",
-        "size_bytes": 50007,
-        "modified_utc": "2026-04-03T00:02:29+00:00"
+        "size_bytes": 163455,
+        "modified_utc": "2026-04-05T11:34:05+00:00"
       },
       {
         "path": "main/ai-providers/decision.test.js",
@@ -318,23 +321,23 @@
         "area": "quality",
         "notes": "Focused tests for AI bridge and helpers",
         "size_bytes": 1722,
-        "modified_utc": "2026-03-30T21:57:53+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       },
       {
         "path": "main/ai-providers/profile.test.js",
         "role": "tests",
         "area": "quality",
         "notes": "Focused tests for AI bridge and helpers",
-        "size_bytes": 1936,
-        "modified_utc": "2026-03-25T16:48:46+00:00"
+        "size_bytes": 2146,
+        "modified_utc": "2026-04-04T18:34:16+00:00"
       },
       {
         "path": "main/ai-providers/providers/openai.test.js",
         "role": "tests",
         "area": "quality",
         "notes": "Focused tests for AI bridge and helpers",
-        "size_bytes": 4286,
-        "modified_utc": "2026-03-26T07:04:13+00:00"
+        "size_bytes": 9829,
+        "modified_utc": "2026-04-03T22:59:42+00:00"
       },
       {
         "path": "main/ai-test-unit.test.js",
@@ -342,7 +345,7 @@
         "area": "quality",
         "notes": "Focused tests for AI bridge and helpers",
         "size_bytes": 8035,
-        "modified_utc": "2026-03-25T11:10:29+00:00"
+        "modified_utc": "2026-04-03T09:42:27+00:00"
       }
     ]
   }
