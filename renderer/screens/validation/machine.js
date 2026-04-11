@@ -36,6 +36,7 @@ export const createValidationMachine = ({
   shortSessionDuration,
   longSessionDuration,
   locale,
+  onDecodedFlip,
 }) =>
   createMachine(
     {
@@ -578,9 +579,13 @@ export const createValidationMachine = ({
                           ),
                           invoke: {
                             src:
-                              ({longFlips}) =>
+                              ({longFlips, epoch}) =>
                               (cb) =>
-                                fetchFlips(missingHashes(longFlips), cb),
+                                fetchFlips(missingHashes(longFlips), cb, 0, {
+                                  epoch,
+                                  sessionType: SessionType.Long,
+                                  onDecodedFlip,
+                                }),
                             onDone: 'check',
                           },
                         },
@@ -1052,20 +1057,31 @@ export const createValidationMachine = ({
       services: {
         fetchShortHashes: () => fetchFlipHashes(SessionType.Short),
         fetchShortFlips:
-          ({shortFlips}) =>
+          ({shortFlips, epoch}) =>
           (cb) =>
             fetchFlips(
               shortFlips.filter(readyNotFetchedFlip).map(({hash}) => hash),
-              cb
+              cb,
+              0,
+              {
+                epoch,
+                sessionType: SessionType.Short,
+                onDecodedFlip,
+              }
             ),
         fetchLongHashes: () => fetchFlipHashes(SessionType.Long),
         fetchLongFlips:
-          ({longFlips}) =>
+          ({longFlips, epoch}) =>
           (cb) =>
             fetchFlips(
               longFlips.filter(readyNotFetchedFlip).map(({hash}) => hash),
               cb,
-              1000
+              1000,
+              {
+                epoch,
+                sessionType: SessionType.Long,
+                onDecodedFlip,
+              }
             ),
         // eslint-disable-next-line no-shadow
         fetchTranslations: ({longFlips, currentIndex, locale}) =>
@@ -1272,16 +1288,31 @@ export const createValidationMachine = ({
     }
   )
 
-function fetchFlips(hashes, cb, delay = 0) {
+function fetchFlips(
+  hashes,
+  cb,
+  delay = 0,
+  {epoch, sessionType, onDecodedFlip} = {}
+) {
   global.logger.debug(`Calling flip_get rpc for hashes`, hashes)
   return forEachAsync(hashes, (hash) =>
     fetchFlip(hash)
       .then(({result, error}) => {
         global.logger.debug(`Get flip_get response`, hash)
+        const flip = decodeFlip({...result}, ({images}) => {
+          if (typeof onDecodedFlip === 'function') {
+            onDecodedFlip({
+              flipHash: hash,
+              epoch,
+              sessionType,
+              images,
+            })
+          }
+        })
         cb({
           type: 'FLIP',
           flip: {
-            ...decodeFlip({...result}),
+            ...flip,
             hash,
             fetched: !!result && !error,
             missing: !!error,
@@ -1302,7 +1333,7 @@ function fetchFlips(hashes, cb, delay = 0) {
   )
 }
 
-function decodeFlip({hash, hex, publicHex, privateHex}) {
+function decodeFlip({hash, hex, publicHex, privateHex}, onDecoded) {
   try {
     let images
     let orders
@@ -1314,6 +1345,14 @@ function decodeFlip({hash, hex, publicHex, privateHex}) {
       images = images.concat(privateImages)
     } else {
       ;[images, orders] = decode(hex)
+    }
+
+    if (typeof onDecoded === 'function') {
+      try {
+        onDecoded({images})
+      } catch {
+        // Capture is optional and must never affect validation rendering.
+      }
     }
 
     return {

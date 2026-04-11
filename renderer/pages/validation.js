@@ -170,6 +170,7 @@ function ValidationSession({
     }),
     [forceAiPreview, settings.aiSolver]
   )
+  const localAiCaptureEnabled = Boolean(settings.localAi?.captureEnabled)
   const [aiSolving, setAiSolving] = useState(false)
   const [aiProgress, setAiProgress] = useState(null)
   const [aiLastRun, setAiLastRun] = useState(null)
@@ -197,10 +198,36 @@ function ValidationSession({
         shortSessionDuration,
         longSessionDuration,
         locale: i18n.language || 'en',
+        onDecodedFlip: ({flipHash, epoch: epochNumber, sessionType, images}) => {
+          if (
+            !localAiCaptureEnabled ||
+            !global.ipcRenderer ||
+            typeof global.ipcRenderer.send !== 'function'
+          ) {
+            return
+          }
+
+          try {
+            global.ipcRenderer.send('localAi.captureFlip', {
+              flipHash,
+              epoch: epochNumber,
+              sessionType,
+              images,
+            })
+          } catch (error) {
+            if (global.isDev) {
+              global.logger.debug(
+                'localAi.captureFlip failed',
+                error && error.message
+              )
+            }
+          }
+        },
       }),
     [
       epoch,
       i18n.language,
+      localAiCaptureEnabled,
       longSessionDuration,
       shortSessionDuration,
       validationStart,

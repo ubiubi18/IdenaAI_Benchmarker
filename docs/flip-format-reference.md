@@ -1,11 +1,11 @@
 # Flip Format Reference (Desktop AI Test Unit)
 
 ## Source paths
-- `$WORKSPACE/idena-desktop/renderer/shared/api/dna.js`
-- `$WORKSPACE/idena-desktop/renderer/screens/flips/utils.js`
-- `$WORKSPACE/idena-desktop/renderer/screens/validation/machine.js`
-- `$WORKSPACE/idena-desktop/renderer/screens/validation/ai/test-unit-utils.js`
-- `$WORKSPACE/idena-go/api/flip_api.go`
+- `$WORKSPACE/IdenaAI/renderer/shared/api/dna.js`
+- `$WORKSPACE/IdenaAI/renderer/screens/flips/utils.js`
+- `$WORKSPACE/IdenaAI/renderer/screens/validation/machine.js`
+- `$WORKSPACE/IdenaAI/renderer/screens/validation/ai/test-unit-utils.js`
+- `$WORKSPACE/IdenaAI/idena-go/api/flip_api.go`
 
 ## Protocol-side request/response shapes
 

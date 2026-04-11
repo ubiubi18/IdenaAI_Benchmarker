@@ -112,6 +112,26 @@ function AppProviders(props) {
       }
     }
 
+    if (!global.localAi) {
+      const empty = async () => ({ok: false, status: 'unavailable'})
+      global.localAi = {
+        status: async () => ({
+          available: false,
+          running: false,
+          sidecarReachable: false,
+          sidecarModelCount: 0,
+          lastError: 'Local AI bridge is not available in this build',
+        }),
+        start: empty,
+        stop: async () => ({ok: true}),
+        listModels: async () => ({ok: false, models: [], total: 0}),
+        chat: empty,
+        captionFlip: async () => ({ok: false, status: 'not_implemented'}),
+        ocrImage: async () => ({ok: false, status: 'not_implemented'}),
+        trainEpoch: async () => ({ok: false, status: 'not_implemented'}),
+      }
+    }
+
     if (!global.toggleFullScreen) {
       global.toggleFullScreen = () => {}
     }

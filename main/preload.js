@@ -81,6 +81,16 @@ process.once('loaded', () => {
       }
     },
   }
+  global.localAi = {
+    status: (payload) => ipcRenderer.invoke('localAi.status', payload),
+    start: (payload) => ipcRenderer.invoke('localAi.start', payload),
+    stop: () => ipcRenderer.invoke('localAi.stop'),
+    listModels: (payload) => ipcRenderer.invoke('localAi.listModels', payload),
+    chat: (payload) => ipcRenderer.invoke('localAi.chat', payload),
+    captionFlip: (payload) => ipcRenderer.invoke('localAi.captionFlip', payload),
+    ocrImage: (payload) => ipcRenderer.invoke('localAi.ocrImage', payload),
+    trainEpoch: (payload) => ipcRenderer.invoke('localAi.trainEpoch', payload),
+  }
 
   global.flipStore = flips
   global.invitesDb = invites

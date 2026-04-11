@@ -145,6 +145,39 @@ const DEFAULT_AI_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
+const DEFAULT_LOCAL_AI_SETTINGS = {
+  enabled: false,
+  runtimeMode: 'sidecar',
+  baseUrl: 'http://localhost:5000',
+  captureEnabled: false,
+  federated: {
+    enabled: false,
+    relays: [],
+    minExamples: 5,
+    clipNorm: 1.0,
+    dpNoise: 0.01,
+  },
+  eligibilityGate: {
+    requireValidatedIdentity: true,
+    requireLocalNode: true,
+  },
+}
+
+function buildLocalAiSettings(settings = {}) {
+  return {
+    ...DEFAULT_LOCAL_AI_SETTINGS,
+    ...(settings || {}),
+    federated: {
+      ...DEFAULT_LOCAL_AI_SETTINGS.federated,
+      ...((settings && settings.federated) || {}),
+    },
+    eligibilityGate: {
+      ...DEFAULT_LOCAL_AI_SETTINGS.eligibilityGate,
+      ...((settings && settings.eligibilityGate) || {}),
+    },
+  }
+}
+
 function numberOrFallback(value, fallback) {
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -195,17 +228,40 @@ function formatErrorForToast(error) {
   return message
 }
 
+function formatLocalAiStatusDescription(result, t) {
+  const modelCount = Number(result && result.sidecarModelCount) || 0
+  const baseUrl = String(result && result.baseUrl ? result.baseUrl : '').trim()
+
+  if (result && result.sidecarReachable) {
+    return t('{{count}} model(s) discovered at {{baseUrl}}.', {
+      count: modelCount,
+      baseUrl: baseUrl || 'the configured Local AI URL',
+    })
+  }
+
+  return (
+    String(result && result.lastError).trim() ||
+    t('No Local AI sidecar responded at {{baseUrl}}.', {
+      baseUrl: baseUrl || 'the configured Local AI URL',
+    })
+  )
+}
+
 export default function AiSettingsPage() {
   const {t} = useTranslation()
   const toast = useToast()
   const router = useRouter()
 
   const settings = useSettingsState()
-  const {updateAiSolverSettings} = useSettingsDispatch()
+  const {updateAiSolverSettings, updateLocalAiSettings} = useSettingsDispatch()
 
   const aiSolver = useMemo(
     () => ({...DEFAULT_AI_SETTINGS, ...(settings.aiSolver || {})}),
     [settings.aiSolver]
+  )
+  const localAi = useMemo(
+    () => buildLocalAiSettings(settings.localAi),
+    [settings.localAi]
   )
 
   const [apiKey, setApiKey] = useState('')
@@ -218,6 +274,9 @@ export default function AiSettingsPage() {
   const [showAdvancedAiSettings, setShowAdvancedAiSettings] = useState(false)
   const setupSectionRef = React.useRef(null)
   const [isEnableDialogOpen, setIsEnableDialogOpen] = useState(false)
+  const [isCheckingLocalAi, setIsCheckingLocalAi] = useState(false)
+  const [isStartingLocalAi, setIsStartingLocalAi] = useState(false)
+  const [isStoppingLocalAi, setIsStoppingLocalAi] = useState(false)
   const [providerKeyStatus, setProviderKeyStatus] = useState({
     checked: false,
     checking: true,
@@ -280,6 +339,21 @@ export default function AiSettingsPage() {
     }
     return global.aiSolver
   }
+
+  const ensureLocalAiBridge = () => {
+    if (!global.localAi) {
+      throw new Error('Local AI bridge is not available in this build')
+    }
+    return global.localAi
+  }
+
+  const buildLocalAiRuntimePayload = useCallback(
+    () => ({
+      mode: localAi.runtimeMode,
+      baseUrl: localAi.baseUrl,
+    }),
+    [localAi.baseUrl, localAi.runtimeMode]
+  )
 
   const hasSessionKeyForProvider = async (provider) => {
     const bridge = ensureBridge()
@@ -1485,6 +1559,203 @@ export default function AiSettingsPage() {
                 )}
               </>
             ) : null}
+          </Stack>
+        </SettingsSection>
+
+        <SettingsSection title={t('Local AI')}>
+          <Stack spacing={4}>
+            <Text color="muted" fontSize="sm">
+              {t(
+                'These settings only prepare the future local runtime flow. They do not start a runtime or capture flips yet.'
+              )}
+            </Text>
+
+            <Flex align="center" justify="space-between">
+              <Box>
+                <Text fontWeight={500}>{t('Enable local AI')}</Text>
+                <Text color="muted" fontSize="sm">
+                  {t(
+                    'Keep this off until a local runtime is available on this machine.'
+                  )}
+                </Text>
+              </Box>
+              <Switch
+                isChecked={!!localAi.enabled}
+                onChange={() =>
+                  updateLocalAiSettings({enabled: !localAi.enabled})
+                }
+              />
+            </Flex>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Runtime mode')}</SettingsFormLabel>
+              <Select
+                value={localAi.runtimeMode || 'sidecar'}
+                onChange={(e) =>
+                  updateLocalAiSettings({runtimeMode: e.target.value})
+                }
+                w="xs"
+              >
+                <option value="sidecar">{t('Sidecar')}</option>
+              </Select>
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Local runtime URL')}</SettingsFormLabel>
+              <Input
+                value={localAi.baseUrl || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({baseUrl: e.target.value})
+                }
+                placeholder="http://localhost:5000"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <Flex align="center" justify="space-between">
+              <Box>
+                <Text fontWeight={500}>{t('Capture flips locally')}</Text>
+                <Text color="muted" fontSize="sm">
+                  {t(
+                    'Stores only the preference for a later local capture pipeline.'
+                  )}
+                </Text>
+              </Box>
+              <Switch
+                isChecked={!!localAi.captureEnabled}
+                onChange={() =>
+                  updateLocalAiSettings({
+                    captureEnabled: !localAi.captureEnabled,
+                  })
+                }
+              />
+            </Flex>
+
+            <Flex align="center" justify="space-between">
+              <Box>
+                <Text fontWeight={500}>{t('Enable federated updates')}</Text>
+                <Text color="muted" fontSize="sm">
+                  {t(
+                    'Stores the future federated-learning preference only. No background sharing starts in this build.'
+                  )}
+                </Text>
+              </Box>
+              <Switch
+                isChecked={!!localAi.federated.enabled}
+                onChange={() =>
+                  updateLocalAiSettings({
+                    federated: {
+                      enabled: !localAi.federated.enabled,
+                    },
+                  })
+                }
+              />
+            </Flex>
+
+            <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+              <Stack spacing={2}>
+                <Text fontWeight={500}>{t('Runtime control')}</Text>
+                <Text color="muted" fontSize="sm">
+                  {t(
+                    'These controls only probe or mark the optional local sidecar. Cloud provider flows stay unchanged unless you explicitly choose a local-compatible provider.'
+                  )}
+                </Text>
+                <Stack isInline spacing={2}>
+                  <SecondaryButton
+                    isDisabled={!localAi.enabled || isStartingLocalAi}
+                    onClick={async () => {
+                      setIsStartingLocalAi(true)
+
+                      try {
+                        const result = await ensureLocalAiBridge().start(
+                          buildLocalAiRuntimePayload()
+                        )
+
+                        notify(
+                          t('Local AI runtime updated'),
+                          formatLocalAiStatusDescription(result, t),
+                          result && result.sidecarReachable ? 'success' : 'warning'
+                        )
+                      } catch (error) {
+                        notify(
+                          t('Unable to start Local AI'),
+                          formatErrorForToast(error),
+                          'error'
+                        )
+                      } finally {
+                        setIsStartingLocalAi(false)
+                      }
+                    }}
+                  >
+                    {t('Start local AI')}
+                  </SecondaryButton>
+                  <SecondaryButton
+                    isDisabled={!localAi.enabled || isStoppingLocalAi}
+                    onClick={async () => {
+                      setIsStoppingLocalAi(true)
+
+                      try {
+                        await ensureLocalAiBridge().stop()
+
+                        notify(
+                          t('Local AI runtime stopped'),
+                          t(
+                            'The optional Local AI bridge is now idle. Existing cloud providers were not changed.'
+                          ),
+                          'info'
+                        )
+                      } catch (error) {
+                        notify(
+                          t('Unable to stop Local AI'),
+                          formatErrorForToast(error),
+                          'error'
+                        )
+                      } finally {
+                        setIsStoppingLocalAi(false)
+                      }
+                    }}
+                  >
+                    {t('Stop local AI')}
+                  </SecondaryButton>
+                  <SecondaryButton
+                    isDisabled={!localAi.enabled || isCheckingLocalAi}
+                    onClick={async () => {
+                      setIsCheckingLocalAi(true)
+
+                      try {
+                        const result = await ensureLocalAiBridge().status({
+                          ...buildLocalAiRuntimePayload(),
+                          refresh: true,
+                        })
+
+                        notify(
+                          result && result.sidecarReachable
+                            ? t('Local AI sidecar reachable')
+                            : t('Local AI sidecar unavailable'),
+                          formatLocalAiStatusDescription(result, t),
+                          result && result.sidecarReachable ? 'success' : 'warning'
+                        )
+                      } catch (error) {
+                        notify(
+                          t('Unable to check Local AI status'),
+                          formatErrorForToast(error),
+                          'error'
+                        )
+                      } finally {
+                        setIsCheckingLocalAi(false)
+                      }
+                    }}
+                  >
+                    {t('Check status')}
+                  </SecondaryButton>
+                </Stack>
+                <Text color="muted" fontSize="sm">
+                  {t(
+                    'To route the existing solver through a local OpenAI-compatible runtime later, choose OpenAI-compatible (custom) in the provider section and point it at this sidecar URL.'
+                  )}
+                </Text>
+              </Stack>
+            </Box>
           </Stack>
         </SettingsSection>
 

@@ -14,6 +14,7 @@ const SET_INTERNAL_KEY = 'SET_INTERNAL_KEY'
 const SET_CONNECTION_DETAILS = 'SET_CONNECTION_DETAILS'
 const TOGGLE_AUTO_ACTIVATE_MINING = 'TOGGLE_AUTO_ACTIVATE_MINING'
 const UPDATE_AI_SOLVER_SETTINGS = 'UPDATE_AI_SOLVER_SETTINGS'
+const UPDATE_LOCAL_AI_SETTINGS = 'UPDATE_LOCAL_AI_SETTINGS'
 
 const randomKey = () =>
   Math.random().toString(36).substring(2, 13) +
@@ -60,6 +61,62 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
+const DEFAULT_LOCAL_AI_SETTINGS = {
+  enabled: false,
+  runtimeMode: 'sidecar',
+  baseUrl: 'http://localhost:5000',
+  captureEnabled: false,
+  federated: {
+    enabled: false,
+    relays: [],
+    minExamples: 5,
+    clipNorm: 1.0,
+    dpNoise: 0.01,
+  },
+  eligibilityGate: {
+    requireValidatedIdentity: true,
+    requireLocalNode: true,
+  },
+}
+
+function buildAiSolverSettings(settings = {}) {
+  return {
+    ...DEFAULT_AI_SOLVER_SETTINGS,
+    ...(settings || {}),
+  }
+}
+
+// localAi includes nested settings, so it needs structured hydration.
+function buildLocalAiSettings(settings = {}) {
+  return {
+    ...DEFAULT_LOCAL_AI_SETTINGS,
+    ...(settings || {}),
+    federated: {
+      ...DEFAULT_LOCAL_AI_SETTINGS.federated,
+      ...((settings && settings.federated) || {}),
+    },
+    eligibilityGate: {
+      ...DEFAULT_LOCAL_AI_SETTINGS.eligibilityGate,
+      ...((settings && settings.eligibilityGate) || {}),
+    },
+  }
+}
+
+function mergeLocalAiSettings(current = {}, next = {}) {
+  return buildLocalAiSettings({
+    ...(current || {}),
+    ...(next || {}),
+    federated: {
+      ...((current && current.federated) || {}),
+      ...((next && next.federated) || {}),
+    },
+    eligibilityGate: {
+      ...((current && current.eligibilityGate) || {}),
+      ...((next && next.eligibilityGate) || {}),
+    },
+  })
+}
+
 const initialState = {
   url: BASE_API_URL,
   internalPort: BASE_INTERNAL_API_PORT,
@@ -72,7 +129,8 @@ const initialState = {
   externalApiKey: '',
   lng: AVAILABLE_LANGS[0],
   autoActivateMining: true,
-  aiSolver: DEFAULT_AI_SOLVER_SETTINGS,
+  aiSolver: buildAiSolverSettings(),
+  localAi: buildLocalAiSettings(),
 }
 
 if (global.env && global.env.NODE_ENV === 'e2e') {
@@ -97,10 +155,8 @@ function settingsReducer(state, action) {
       return {
         ...initialState,
         ...state,
-        aiSolver: {
-          ...DEFAULT_AI_SOLVER_SETTINGS,
-          ...(state.aiSolver || {}),
-        },
+        aiSolver: buildAiSolverSettings(state.aiSolver),
+        localAi: buildLocalAiSettings(state.localAi),
         initialized: true,
       }
     case UPDATE_UI_VERSION: {
@@ -138,11 +194,16 @@ function settingsReducer(state, action) {
     case UPDATE_AI_SOLVER_SETTINGS: {
       return {
         ...state,
-        aiSolver: {
-          ...DEFAULT_AI_SOLVER_SETTINGS,
+        aiSolver: buildAiSolverSettings({
           ...(state.aiSolver || {}),
           ...action.data,
-        },
+        }),
+      }
+    }
+    case UPDATE_LOCAL_AI_SETTINGS: {
+      return {
+        ...state,
+        localAi: mergeLocalAiSettings(state.localAi, action.data),
       }
     }
     default:
@@ -155,12 +216,15 @@ const SettingsDispatchContext = React.createContext()
 
 // eslint-disable-next-line react/prop-types
 export function SettingsProvider({children}) {
+  const persistedSettings = loadPersistentState('settings') || {}
+
   const [state, dispatch] = usePersistence(
     useLogger(
       React.useReducer(settingsReducer, {
-        autoActivateMining: initialState.autoActivateMining,
-        aiSolver: DEFAULT_AI_SOLVER_SETTINGS,
-        ...(loadPersistentState('settings') || initialState),
+        ...initialState,
+        ...persistedSettings,
+        aiSolver: buildAiSolverSettings(persistedSettings.aiSolver),
+        localAi: buildLocalAiSettings(persistedSettings.localAi),
       })
     ),
     'settings'
@@ -227,6 +291,13 @@ export function SettingsProvider({children}) {
     [dispatch]
   )
 
+  const updateLocalAiSettings = useCallback(
+    (data) => {
+      dispatch({type: UPDATE_LOCAL_AI_SETTINGS, data})
+    },
+    [dispatch]
+  )
+
   return (
     <SettingsStateContext.Provider value={state}>
       <SettingsDispatchContext.Provider
@@ -238,6 +309,7 @@ export function SettingsProvider({children}) {
             setConnectionDetails,
             toggleAutoActivateMining,
             updateAiSolverSettings,
+            updateLocalAiSettings,
           }),
           [
             changeLanguage,
@@ -246,6 +318,7 @@ export function SettingsProvider({children}) {
             toggleRunInternalNode,
             toggleUseExternalNode,
             updateAiSolverSettings,
+            updateLocalAiSettings,
           ]
         )}
       >

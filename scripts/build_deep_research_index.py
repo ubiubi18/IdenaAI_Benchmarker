@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +36,13 @@ def run_git(args: List[str]) -> str:
         .decode("utf-8", errors="replace")
         .strip()
     )
+
+
+def maybe_git(args: List[str]) -> Optional[str]:
+    try:
+        return run_git(args)
+    except Exception:
+        return None
 
 
 def utc_iso(ts: float) -> str:
@@ -65,9 +72,22 @@ def keep_existing(paths: Iterable[Path]) -> List[Path]:
 def main() -> None:
     package_json = REPO_ROOT / "package.json"
     package = json.loads(package_json.read_text(encoding="utf-8"))
+    origin_remote = maybe_git(["remote", "get-url", "origin"])
+    upstream_remote = maybe_git(["remote", "get-url", "upstream"])
+    repository = package.get("repository", "")
+
+    if isinstance(repository, dict):
+        repository = {
+            **repository,
+            "url": origin_remote or repository.get("url", ""),
+        }
+    elif origin_remote:
+        repository = {"type": "git", "url": origin_remote}
 
     docs_files = keep_existing(
         [
+            REPO_ROOT / "docs" / "private-repo-codex-context.md",
+            REPO_ROOT / "docs" / "deep-research-private-notes.md",
             REPO_ROOT / "docs" / "fork-plan.md",
             REPO_ROOT / "docs" / "worklog.md",
             REPO_ROOT / "docs" / "dependency-issues.md",
@@ -159,12 +179,23 @@ def main() -> None:
             "name": package.get("name", ""),
             "product_name": package.get("productName", ""),
             "version": package.get("version", ""),
-            "repository": package.get("repository", ""),
+            "repository": repository,
         },
         "git": {
             "branch": run_git(["branch", "--show-current"]),
             "head": run_git(["rev-parse", "HEAD"]),
             "head_short": run_git(["rev-parse", "--short", "HEAD"]),
+            "remotes": {
+                "origin": origin_remote,
+                "upstream": upstream_remote,
+            },
+        },
+        "workflow": {
+            "development_repository": origin_remote,
+            "reference_repository": upstream_remote,
+            "active_branch": run_git(["branch", "--show-current"]),
+            "public_repo_policy": "reference-only",
+            "push_target_remote": "origin",
         },
         "entrypoints": {
             "desktop_main": "main/index.js",
@@ -173,12 +204,15 @@ def main() -> None:
             "ai_bridge": "main/ai-providers/bridge.js",
         },
         "quick_start": [
+            "git remote -v",
+            "git status --short --branch",
             "npm run start",
             "npm run test -- --runInBand main/ai-providers/bridge.test.js",
             "npm run index:deep-research",
         ],
         "deep_research_hints": [
-            "Start with docs/context-snapshot.md and docs/fork-plan.md for architecture and roadmap.",
+            "Start with docs/private-repo-codex-context.md and docs/deep-research-private-notes.md for private-repo workflow guardrails.",
+            "Use docs/context-snapshot.md and docs/fork-plan.md for architecture and historical roadmap context.",
             "Use docs/worklog.md for chronological implementation evidence and command history.",
             "Use docs/flip-format-reference.md before importing or normalizing flip JSON.",
             "Use main/ai-providers/bridge.js as primary backend entry for solver and generator behavior.",

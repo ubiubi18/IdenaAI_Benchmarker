@@ -59,6 +59,8 @@ const {
 } = require('./channels')
 const {createAiProviderBridge} = require('./ai-providers')
 const {createAiTestUnitBridge} = require('./ai-test-unit')
+const {createLocalAiFederated} = require('./local-ai/federated')
+const {createLocalAiManager} = require('./local-ai/manager')
 const {
   startNode,
   stopNode,
@@ -79,6 +81,14 @@ const aiProviderBridge = createAiProviderBridge(logger)
 const aiTestUnitBridge = createAiTestUnitBridge({
   logger,
   aiProviderBridge,
+})
+const localAiManager = createLocalAiManager({
+  logger,
+  isDev,
+})
+const localAiFederated = createLocalAiFederated({
+  logger,
+  isDev,
 })
 
 const IMAGE_SEARCH_SOURCE_TIMEOUT_MS = 8000
@@ -1022,6 +1032,60 @@ ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
     })
     throw error
   }
+})
+
+ipcMain.handle('localAi.status', async (_event, payload) =>
+  localAiManager.status(payload)
+)
+
+ipcMain.handle('localAi.start', async (_event, payload) =>
+  localAiManager.start(payload)
+)
+
+ipcMain.handle('localAi.stop', async () => localAiManager.stop())
+
+ipcMain.handle('localAi.listModels', async (_event, payload) =>
+  localAiManager.listModels(payload)
+)
+
+ipcMain.handle('localAi.chat', async (_event, payload) =>
+  localAiManager.chat(payload)
+)
+
+ipcMain.handle('localAi.captionFlip', async (_event, payload) =>
+  localAiManager.captionFlip(payload)
+)
+
+ipcMain.handle('localAi.ocrImage', async (_event, payload) =>
+  localAiManager.ocrImage(payload)
+)
+
+ipcMain.handle('localAi.trainEpoch', async (_event, payload) =>
+  localAiManager.trainEpoch(payload)
+)
+
+ipcMain.handle('localAi.buildManifest', async (_event, epoch) =>
+  localAiManager.buildManifest(epoch)
+)
+
+ipcMain.handle('localAi.buildBundle', async (_event, epoch) =>
+  localAiFederated.buildUpdateBundle(epoch)
+)
+
+ipcMain.handle('localAi.importBundle', async (_event, filePath) =>
+  localAiFederated.importUpdateBundle(filePath)
+)
+
+ipcMain.handle('localAi.aggregate', async () =>
+  localAiFederated.aggregateAcceptedBundles()
+)
+
+ipcMain.on('localAi.captureFlip', (_event, payload) => {
+  Promise.resolve(localAiManager.captureFlip(payload)).catch((error) => {
+    logger.error('Local AI capture failed', {
+      error: error.toString(),
+    })
+  })
 })
 
 const KEY_VALUE = {}
