@@ -25,7 +25,7 @@ Output format:
 `expectedAnswer` is used by the AI benchmark UI to compute post-run success rate.
 
 ## Import script
-- `$WORKSPACE/idena-desktop/scripts/import_flip_challenge.py`
+- `$WORKSPACE/IdenaAI/scripts/import_flip_challenge.py`
 
 ## One-time dependency
 ```bash
@@ -35,19 +35,19 @@ python3 -m pip install --user pyarrow
 ## Example imports
 Generate first 200 test flips:
 ```bash
-cd $WORKSPACE/idena-desktop
+cd $WORKSPACE/IdenaAI
 python3 scripts/import_flip_challenge.py --split test --max-flips 200 --output data/flip-challenge-test-200-decoded.json
 ```
 
 Generate next chunk (200-399):
 ```bash
-cd $WORKSPACE/idena-desktop
+cd $WORKSPACE/IdenaAI
 python3 scripts/import_flip_challenge.py --split test --skip-flips 200 --max-flips 200 --output data/flip-challenge-test-200-to-399-decoded.json
 ```
 
 Generate multiple chunks:
 ```bash
-cd $WORKSPACE/idena-desktop
+cd $WORKSPACE/IdenaAI
 for SKIP in 0 200 400 600 800; do
   if [ "$SKIP" -eq 0 ]; then
     OUT="data/flip-challenge-test-200-decoded.json"
@@ -72,7 +72,7 @@ done
 
 ## Imported locally in this workspace
 Generated files under:
-- `$WORKSPACE/idena-desktop/data`
+- `$WORKSPACE/IdenaAI/data`
 
 Current test split exports:
 - `flip-challenge-test-200-decoded.json`

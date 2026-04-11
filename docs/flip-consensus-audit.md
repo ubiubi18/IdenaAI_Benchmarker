@@ -12,7 +12,7 @@ This utility audits local AI test-unit runs against FLIP-Challenge human consens
 
 ## Command
 ```bash
-cd $WORKSPACE/idena-desktop
+cd $WORKSPACE/IdenaAI
 python3 scripts/audit_flip_consensus.py --run-index -1 --parquet-dir .tmp/flip-challenge/data
 ```
 

@@ -82,6 +82,8 @@ def git_meta(cwd: Path) -> dict:
         "branch": git_output(cwd, ["branch", "--show-current"]),
         "head": git_output(cwd, ["rev-parse", "HEAD"]),
         "head_short": git_output(cwd, ["rev-parse", "--short", "HEAD"]),
+        "origin": git_output(cwd, ["remote", "get-url", "origin"]),
+        "upstream": git_output(cwd, ["remote", "get-url", "upstream"]),
     }
 
 
@@ -92,22 +94,23 @@ def main() -> None:
     root_docs = exists(
         [
             ROOT / "README.md",
-            ROOT / "DISCLAIMER.md",
             ROOT / "LICENSE",
             ROOT / "docs" / "audit-manifest.md",
-            ROOT / "docs" / "reproducible-setup.md",
+            ROOT / "docs" / "deep-research-integration.md",
+            ROOT / "docs" / "private-repo-codex-context.md",
+            ROOT / "docs" / "deep-research-private-notes.md",
         ]
     )
 
     desktop_core = exists(
         [
-            ROOT / "idena-desktop" / "main" / "index.js",
-            ROOT / "idena-desktop" / "main" / "ai-providers" / "bridge.js",
-            ROOT / "idena-desktop" / "renderer" / "pages" / "flips" / "new.js",
-            ROOT / "idena-desktop" / "renderer" / "pages" / "validation.js",
-            ROOT / "idena-desktop" / "docs" / "context-snapshot.md",
-            ROOT / "idena-desktop" / "docs" / "fork-plan.md",
-            ROOT / "idena-desktop" / "docs" / "worklog.md",
+            ROOT / "main" / "index.js",
+            ROOT / "main" / "ai-providers" / "bridge.js",
+            ROOT / "renderer" / "pages" / "flips" / "new.js",
+            ROOT / "renderer" / "pages" / "validation.js",
+            ROOT / "docs" / "context-snapshot.md",
+            ROOT / "docs" / "fork-plan.md",
+            ROOT / "docs" / "worklog.md",
         ]
     )
 
@@ -123,12 +126,11 @@ def main() -> None:
 
     tools = exists(
         [
-            ROOT / "scripts" / "verify_snapshot.sh",
-            ROOT / "scripts" / "bootstrap_upstream_workspace.sh",
-            ROOT / "idena-desktop" / "scripts" / "import_flip_challenge.py",
-            ROOT / "idena-desktop" / "scripts" / "audit_flip_consensus.py",
-            ROOT / "idena-desktop" / "scripts" / "preload_ai_test_unit_queue.py",
+            ROOT / "scripts" / "build_deep_research_index.py",
             ROOT / "scripts" / "build_chatgpt_connector_index.py",
+            ROOT / "scripts" / "import_flip_challenge.py",
+            ROOT / "scripts" / "audit_flip_consensus.py",
+            ROOT / "scripts" / "preload_ai_test_unit_queue.py",
         ]
     )
 
@@ -158,7 +160,7 @@ def main() -> None:
     )
 
     subrepos = []
-    for d in [ROOT, ROOT / "idena-desktop", ROOT / "idena-go"]:
+    for d in [ROOT, ROOT / "idena-go"]:
         if (d / ".git").exists():
             subrepos.append(git_meta(d))
 
@@ -168,13 +170,16 @@ def main() -> None:
         "repository": {
             "name": repo_name,
             "relative_root": ".",
+            "development_remote": git_output(ROOT, ["remote", "get-url", "origin"]),
+            "reference_remote": git_output(ROOT, ["remote", "get-url", "upstream"]),
         },
         "git_context": subrepos,
         "connector_target": "chatgpt-deep-research",
         "quick_start": [
-            "bash scripts/verify_snapshot.sh",
-            "cd idena-desktop && npm install && npm run start",
-            "cd idena-desktop && python3 scripts/preload_ai_test_unit_queue.py --help",
+            "git remote -v",
+            "git status --short --branch",
+            "npm run index:deep-research",
+            "python3 scripts/preload_ai_test_unit_queue.py --help",
             "python3 scripts/build_chatgpt_connector_index.py",
         ],
         "sections": {
