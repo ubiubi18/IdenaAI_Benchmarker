@@ -29,7 +29,7 @@ const SOCIAL_IMAGE_FORMATS = [
 ]
 
 function formatBytesAsMib(bytes) {
-  return `${(bytes / (1024 * 1024)).toFixed(0)} MiB`
+  return `${(bytes / (1024 * 1024)).toFixed(0)} MB`
 }
 
 // eslint-disable-next-line react/prop-types
@@ -150,8 +150,8 @@ export default function SocialPage() {
 
   return (
     <Layout>
-      <Page px={0} py={0} overflow="hidden">
-        <Box px={8} py={6}>
+      <Page px={0} py={0} overflow="hidden" align="stretch">
+        <Box px={8} py={6} w="full">
           <PageTitle mb={2}>Social</PageTitle>
           <Stack spacing={3} maxW="7xl">
             <Text color="muted">
@@ -254,7 +254,7 @@ export default function SocialPage() {
           </Stack>
         </Box>
 
-        <Flex flex={1} px={8} pb={6} minH="0">
+        <Flex flex={1} w="full" px={8} pb={6} minH="0">
           {bootstrapReady ? (
             <Box
               as="iframe"

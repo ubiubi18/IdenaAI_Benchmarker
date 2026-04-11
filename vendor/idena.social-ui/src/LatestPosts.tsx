@@ -207,8 +207,8 @@ function LatestPosts() {
             </div>}
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-stone-300">
                 <p>
-                    <strong>Image limit:</strong> {(MAX_POST_MEDIA_BYTES_RPC / (1024 * 1024)).toFixed(0)} MiB
-                    <HoverInfo label="Supported formats: PNG, JPEG, GIF, WebP, AVIF, APNG, SVG. In embedded desktop RPC mode the file is stored through your own node IPFS path first and then referenced on-chain by CID." />
+                    <strong>Image limit:</strong> {(MAX_POST_MEDIA_BYTES_RPC / (1024 * 1024)).toFixed(0)} MB
+                    <HoverInfo label="Supported formats: PNG, JPEG, GIF, WebP, AVIF, APNG, SVG. The current embedded RPC limit is 1 MB. In desktop RPC mode the file is stored through your own node IPFS path first and then referenced on-chain by CID." />
                 </p>
                 <p>
                     <strong>Posting model:</strong> RPC + on-chain reference
