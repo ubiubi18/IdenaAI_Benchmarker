@@ -948,7 +948,7 @@ assemblyscript@^0.18.31:
     binaryen "100.0.0-nightly.20210413"
     long "^4.0.0"
 
-assemblyscript@^0.19.23:
+assemblyscript@0.19.23, assemblyscript@^0.19.23:
   version "0.19.23"
   resolved "https://registry.yarnpkg.com/assemblyscript/-/assemblyscript-0.19.23.tgz#16ece69f7f302161e2e736a0f6a474e6db72134c"
   integrity sha512-fwOQNZVTMga5KRsfY80g7cpOl4PsFQczMwHzdtgoqLXaYhkhavufKb0sB0l3T1DUxpAufA0KNhlbpuuhZUwxMA==
@@ -956,14 +956,6 @@ assemblyscript@^0.19.23:
     binaryen "102.0.0-nightly.20211028"
     long "^5.2.0"
     source-map-support "^0.5.20"
-
-assemblyscript@^0.27.29:
-  version "0.27.37"
-  resolved "https://registry.yarnpkg.com/assemblyscript/-/assemblyscript-0.27.37.tgz#ed0a98778f077357a280cf7437931c949fb042ff"
-  integrity sha512-YtY5k3PiV3SyUQ6gRlR2OCn8dcVRwkpiG/k2T5buoL2ymH/Z/YbaYWbk/f9mO2HTgEtGWjPiAQrIuvA7G/63Gg==
-  dependencies:
-    binaryen "116.0.0-nightly.20240114"
-    long "^5.2.4"
 
 astral-regex@^2.0.0:
   version "2.0.0"
