@@ -10,8 +10,21 @@ const {
   shell,
   // eslint-disable-next-line import/no-extraneous-dependencies
 } = require('electron')
-const {autoUpdater} = require('electron-updater')
-const isDev = require('electron-is-dev')
+// electron-updater is disabled in dev because Electron 9 runtime
+// does not support fs/promises used by newer updater versions
+let autoUpdater = null
+
+const isDev = process.defaultApp || process.env.NODE_ENV !== 'production'
+
+if (!isDev) {
+  try {
+    ;({autoUpdater} = require('electron-updater'))
+  } catch (e) {
+    console.warn('[updater] failed to load electron-updater:', e.message)
+  }
+} else {
+  console.log('[updater] skipped in development mode')
+}
 const prepareNext = require('electron-next')
 const fs = require('fs-extra')
 const i18next = require('i18next')
@@ -800,13 +813,15 @@ nodeUpdater.on('update-downloaded', (info) => {
   sendMainWindowMsg(AUTO_UPDATE_EVENT, 'node-update-ready', info)
 })
 
-autoUpdater.on('download-progress', (info) => {
-  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
-})
+if (autoUpdater) {
+  autoUpdater.on('download-progress', (info) => {
+    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
+  })
 
-autoUpdater.on('update-downloaded', (info) => {
-  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
-})
+  autoUpdater.on('update-downloaded', (info) => {
+    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
+  })
+}
 
 ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   logger.info(`new autoupdate command`, command, data)
@@ -818,7 +833,9 @@ ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
     case 'update-ui': {
       if (isWin) {
         didConfirmQuit = true
-        autoUpdater.quitAndInstall()
+        if (autoUpdater) {
+          autoUpdater.quitAndInstall()
+        }
       } else {
         shell.openExternal('https://www.idena.io/download')
       }
@@ -865,7 +882,9 @@ function checkForUpdates() {
           }, 30000)
         }
       } else {
-        await autoUpdater.checkForUpdates()
+        if (autoUpdater) {
+          await autoUpdater.checkForUpdates()
+        }
       }
     } catch (e) {
       logger.error('error while checking UI update', e.toString())
