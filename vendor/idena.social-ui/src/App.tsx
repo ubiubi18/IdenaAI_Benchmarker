@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import Modal from 'react-modal';
 import { IdenaApprovedAds, type ApprovedAd } from 'idena-approved-ads';
-import { type Post, type Poster, type Tip, type RpcPostCostEstimate, MAX_POST_MEDIA_BYTES_IDENA_APP, MAX_POST_MEDIA_BYTES_RPC, breakingChanges, estimateRpcPostCost, getNewPosterAndPost, getReplyPosts, deOrphanReplyPosts, getTransactionDetails, getBlockHeightFromTxHash, submitPost, processTip, submitSendTip, supportedImageTypes, storeFileToIpfs, getPastTxsWithIdenaIndexerApi, getRpcClient, type RpcClient } from './logic/asyncUtils';
-import { getBase64FromDataUrl, getDisplayAddress, isObjectEmpty, str2bytes } from './logic/utils';
+import { type Post, type Poster, type Tip, type RpcPostCostEstimate, breakingChanges, estimateRpcPostCost, getNewPosterAndPost, getReplyPosts, deOrphanReplyPosts, getTransactionDetails, getBlockHeightFromTxHash, submitPost, processTip, submitSendTip, supportedImageTypes, storeFileToIpfs, getPastTxsWithIdenaIndexerApi, getRpcClient, type RpcClient, copyPostTx } from './logic/asyncUtils';
+import { getDisplayAddress, getTextAndMediaForPost, isObjectEmpty, str2bytes } from './logic/utils';
 import WhatIsIdenaPng from './assets/whatisidena.png';
 import { Link, Outlet } from 'react-router';
-import type { MouseEventLocal, PostDomSettingsCollection } from './App.exports';
+import type { MouseEventLocal, PostDomSettingsCollection, PostMediaAttachment } from './App.exports';
 import ModalLikesTipsComponent from './components/ModalLikesTipsComponent';
 import ModalSendTipComponent from './components/ModalSendTipComponent';
 
@@ -30,6 +30,7 @@ const readDesktopBootstrap = (): DesktopBootstrap => {
         if (!raw) {
             return {};
         }
+
         const parsed = JSON.parse(raw);
         return parsed && typeof parsed === 'object' ? parsed : {};
     } catch (error) {
@@ -46,7 +47,8 @@ const officialIndexerApiUrl = 'https://api.idena.io';
 const defaultNodeUrl = desktopBootstrap.nodeUrl || 'http://localhost:9119';
 const defaultNodeApiKey = desktopBootstrap.nodeApiKey || '';
 const initIndexerApiUrl = desktopBootstrap.indexerApiUrl || officialIndexerApiUrl;
-const contractAddressCurrent = '0xc0324f3Cf8158D6E27dc0A07c221636056174718';
+const contractAddressCurrent = '0xa1c5c1A8c6a1Af596078A5c9653F24c216fE1cb2';
+const contractAddress3 = '0xc0324f3Cf8158D6E27dc0A07c221636056174718';
 const contractAddress2 = '0xC5B35B4Dc4359Cc050D502564E789A374f634fA9';
 const contractAddress1 = '0x8d318630eB62A032d2f8073d74f05cbF7c6C87Ae';
 const firstBlock = 10135627;
@@ -75,6 +77,9 @@ const SCAN_POSTS_TTL = 1 * 60;
 const INDEXER_API_ITEMS_LIMIT = 20;
 const SET_NEW_POSTS_ADDED_DELAY = 20;
 const SUBMITTING_POST_INTERVAL = 2000;
+const MAX_POST_MEDIA_BYTES = 1024 * 1024;
+const MAX_POST_MEDIA_BYTES_WEBAPP = 1024 * 5;
+
 
 const DEBUG = false;
 
@@ -160,10 +165,12 @@ function App() {
     const modalSendTipRef = useRef<Post>(undefined);
     const tipsRef = useRef<Record<string, { totalAmount: number, tips: Tip[] }>>({});
     const [idenaWalletBalance, setIdenaWalletBalance] = useState<string>('0');
-    const postMediaAttachmentsRef = useRef<any>({});
+    const postMediaAttachmentsRef = useRef<Record<string, PostMediaAttachment | undefined>>({});
     const [mainComposerCostEstimate, setMainComposerCostEstimate] = useState<RpcPostCostEstimate | null>(null);
     const [mainComposerCostEstimateError, setMainComposerCostEstimateError] = useState<string>('');
     const [mainComposerCostEstimateLoading, setMainComposerCostEstimateLoading] = useState<boolean>(false);
+    const copyTxHandlerEnabledRef = useRef<boolean>(true);
+    const lastUsedNonceSavedRef = useRef<number>(0);
 
 
     const setRpcClient = (idenaNodeUrl: string, idenaNodeApiKey: string, setNodeAvailable: React.Dispatch<React.SetStateAction<boolean>>) => {
@@ -403,7 +410,7 @@ function App() {
         if (event.target.value === 'indexer-api') {
             if (indexerApiUrl) {
                 setIdenaIndexerApiUrl(indexerApiUrl);
-                setIdenaIndexerApiUrlInvalid(false);
+                setPostersAddressInvalid(false);
             } else {
                 setInputIdenaIndexerApiUrl(initIndexerApiUrl);
                 setIdenaIndexerApiUrl(initIndexerApiUrl);
@@ -452,6 +459,8 @@ function App() {
                                 pastContractAddressRef!.current = contractAddress1;
                             } else if (getBlockByHeightResult.timestamp < breakingChanges.v9.timestamp) {
                                 pastContractAddressRef!.current = contractAddress2;
+                            } else if (getBlockByHeightResult.timestamp < breakingChanges.v10.timestamp) {
+                                pastContractAddressRef!.current = contractAddress3;
                             }
                         }
                         throw 'no transactions';
@@ -477,6 +486,9 @@ function App() {
                         continuationTokenRef!.current = continuationToken;
                     } else {
                         if (pastContractAddressRef!.current === contractAddressCurrent) {
+                            pastContractAddressRef!.current = contractAddress3;
+                            continuationTokenRef!.current = undefined;
+                        } else if (pastContractAddressRef!.current === contractAddress3) {
                             pastContractAddressRef!.current = contractAddress2;
                             continuationTokenRef!.current = undefined;
                         } else if (pastContractAddressRef!.current === contractAddress2) {
@@ -557,8 +569,9 @@ function App() {
 
                     if (postChannelRegex.test(newPost!.channelId)) {
                         const preV9 = newPost!.timestamp < breakingChanges.v9.timestamp;
+                        const preV10 = newPost!.timestamp < breakingChanges.v10.timestamp;
                         const discussionPostIdRaw = newPost!.channelId.split(discussPrefix)[1];
-                        const discussionPostId = preV9 ? breakingChanges.v9.postIdPrefix + discussionPostIdRaw : discussionPostIdRaw;
+                        const discussionPostId = preV9 ? breakingChanges.v9.postIdPrefix + discussionPostIdRaw : preV10 ? breakingChanges.v10.postIdPrefix + discussionPostIdRaw: discussionPostIdRaw;
                         const discussionPost = postsRef.current[discussionPostId];
                         const orphaned = !discussionPost || discussionPost.orphaned;
 
@@ -724,12 +737,12 @@ function App() {
             return;
         }
 
-        if (inputSendingTxs === 'rpc' && file.size > MAX_POST_MEDIA_BYTES_RPC) {
+        if (inputSendingTxs === 'rpc' && file.size > MAX_POST_MEDIA_BYTES) {
             alert('1MB is the maximum size. This image is too large.');
             return;
         }
 
-        if (inputSendingTxs === 'idena-app' && file.size > MAX_POST_MEDIA_BYTES_IDENA_APP) {
+        if (inputSendingTxs === 'idena-app' && file.size > MAX_POST_MEDIA_BYTES_WEBAPP) {
             alert('5KB is the maximum size when using the Idena App. This image is too large.');
             return;
         }
@@ -770,6 +783,58 @@ function App() {
         );
     };
 
+    const copyPostTxHandler = async (location: string, replyToPostId?: string, channelId?: string) => {
+        if (!nodeAvailable) {
+            alert('Node unavailable, cannot copy!');
+            return;
+        }
+
+        const copyTxTextElement = document.getElementById(`post-copytx-${location}`) as HTMLElement;
+        const savedInnerText = copyTxTextElement!.innerText;
+
+        if (copyTxHandlerEnabledRef.current) {
+            copyTxHandlerEnabledRef.current = false;
+            copyTxTextElement!.innerText = 'Copying';
+
+            const postTextareaElement = document.getElementById(`post-input-${location}`) as HTMLTextAreaElement;
+            const postMediaAttachment = postMediaAttachmentsRef.current[location];
+
+            let { inputText, media, mediaType } = getTextAndMediaForPost(postTextareaElement, postMediaAttachment);
+
+            if (!inputText && !postMediaAttachment) {
+                alert('No text or media provided!');
+                copyTxTextElement!.innerText = savedInnerText;
+                copyTxHandlerEnabledRef.current = true;
+                return;
+            }
+
+            copyPostTx(
+                postersAddress,
+                contractAddressCurrent,
+                makePostMethod,
+                inputText,
+                media,
+                mediaType,
+                replyToPostId ?? null,
+                channelId ?? null,
+                rpcClientRef.current!,
+                lastUsedNonceSavedRef,
+            ).then((res) => {
+
+                if (res?.success) {
+                    copyTxTextElement!.innerText = 'Copied ✅';
+                } else {
+                    copyTxTextElement!.innerText = 'Copied ❌';
+                }
+
+                setTimeout(() => {
+                    copyTxTextElement!.innerText = savedInnerText;
+                    copyTxHandlerEnabledRef.current = true;
+                }, 1000);
+            });
+        }
+    }
+
     const submitPostHandler = async (location: string, replyToPostId?: string, channelId?: string) => {
         if (!nodeAvailable) {
             alert('Node unavailable, cannot post!');
@@ -777,23 +842,19 @@ function App() {
         }
 
         const postTextareaElement = document.getElementById(`post-input-${location}`) as HTMLTextAreaElement;
-        let inputText = postTextareaElement.value ?? '';
-
         const postMediaAttachment = postMediaAttachmentsRef.current[location];
 
+        let { inputText, media, mediaType } = getTextAndMediaForPost(postTextareaElement, postMediaAttachment);
+
         if (!inputText && !postMediaAttachment) {
+            alert('No text or media provided!');
             return;
         }
-
-        const { base64Media, base64MediaType } = postMediaAttachment ? getBase64FromDataUrl(postMediaAttachment.dataUrl) : {};
-
-        let media = base64Media ? [base64Media] : [];
-        let mediaType = base64MediaType ? [base64MediaType] : [];
 
         if (inputSendingTxs === 'rpc') {
             if (inputText.length > 100) {
                 const fileBytes = str2bytes(inputText);
-                const cidAddress = await storeFileToIpfs(rpcClientRef.current!, fileBytes, postersAddressRef.current);
+                const cidAddress = await storeFileToIpfs(rpcClientRef.current!, lastUsedNonceSavedRef, fileBytes, postersAddressRef.current);
 
                 if (!cidAddress) {
                     alert('Something went wrong. Probably you have insufficient iDNA.');
@@ -805,7 +866,7 @@ function App() {
             if (postMediaAttachment) {
                 const fileBytes = new Uint8Array(await postMediaAttachment.file.arrayBuffer());
 
-                const cidAddress = await storeFileToIpfs(rpcClientRef.current!, fileBytes, postersAddressRef.current);
+                const cidAddress = await storeFileToIpfs(rpcClientRef.current!, lastUsedNonceSavedRef, fileBytes, postersAddressRef.current);
 
                 if (!cidAddress) {
                     alert('Something went wrong. Probably you have insufficient iDNA.');
@@ -821,7 +882,7 @@ function App() {
 
         setSubmittingPost(location);
 
-        await submitPost(postersAddress, contractAddressCurrent, makePostMethod, inputText, media, mediaType, replyToPostId ?? null, channelId ?? null, inputSendingTxs, rpcClientRef.current!, callbackUrl);
+        await submitPost(postersAddress, contractAddressCurrent, makePostMethod, inputText, media, mediaType, replyToPostId ?? null, channelId ?? null, inputSendingTxs, rpcClientRef.current!, lastUsedNonceSavedRef, callbackUrl);
     };
 
     const submitLikeHandler = async (emoji: string, location: string, replyToPostId?: string, channelId?: string) => {
@@ -832,7 +893,7 @@ function App() {
 
         setSubmittingLike(location);
 
-        await submitPost(postersAddress, contractAddressCurrent, makePostMethod, emoji, [], [], replyToPostId ?? null, channelId ?? null, inputSendingTxs, rpcClientRef.current!, callbackUrl);
+        await submitPost(postersAddress, contractAddressCurrent, makePostMethod, emoji, [], [], replyToPostId ?? null, channelId ?? null, inputSendingTxs, rpcClientRef.current!, lastUsedNonceSavedRef, callbackUrl);
     };
 
     const submitSendTipHandler = async (location: string, tipToPostId: string, tipAmount: string) => {
@@ -843,7 +904,7 @@ function App() {
 
         setSubmittingTip(location);
 
-        await submitSendTip(postersAddress, contractAddressCurrent, sendTipMethod, tipToPostId, tipAmount, inputSendingTxs, rpcClientRef.current!, callbackUrl);
+        await submitSendTip(postersAddress, contractAddressCurrent, sendTipMethod, tipToPostId, tipAmount, inputSendingTxs, rpcClientRef.current!, lastUsedNonceSavedRef, callbackUrl);
     };
 
     const handleOpenLikesModal = (e: MouseEventLocal, likePosts: Post[]) => {
@@ -861,7 +922,7 @@ function App() {
     const handleOpenSendTipModal = (e: MouseEventLocal, tipToPost: Post) => {
         e.stopPropagation();
 
-        const isBreakingChangeDisabled = tipToPost.timestamp <= breakingChanges.v9.timestamp;
+        const isBreakingChangeDisabled = tipToPost.timestamp <= breakingChanges.v10.timestamp;
 
         if (inputPostDisabled || isBreakingChangeDisabled) {
             return;
@@ -1017,6 +1078,7 @@ function App() {
                         pastBlockCaptured,
                         SET_NEW_POSTS_ADDED_DELAY,
                         inputPostDisabled,
+                        copyPostTxHandler,
                         submitPostHandler,
                         submitLikeHandler,
                         submittingPost,

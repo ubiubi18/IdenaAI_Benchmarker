@@ -1,6 +1,5 @@
 const path = require('path');
 const fs = require('fs');
-const { longMessage } = require('./longMessage');
 
 const {
     toHexString,
@@ -87,7 +86,7 @@ describe('idena.social.wasm', () => {
             expect(receipt.events[0].args[8]).toBe(str2hex('0x12345,0x54321,0x00001'));
             expect(parseInt(receipt.events[0].args[9], 16)).toBe(0);
 
-            expect(receipt.events[1].event).toBe('_getIdentity');
+            expect(receipt.events[1].event).toBe('_identity');
             expect(receipt.events[1].args.length).toBe(4);
 
             // Setting the sender for all tests.
@@ -162,7 +161,7 @@ describe('idena.social.wasm', () => {
             expect(parseInt(rmZeros(receipt.events[0].args[2]), 16)).toBe(1);
             expect(parseInt(receipt.events[0].args[3], 16)).toBe(10e18);
 
-            expect(receipt.events[1].event).toBe('_getIdentity');
+            expect(receipt.events[1].event).toBe('_identity');
             expect(receipt.events[1].args.length).toBe(4);
         });
 
@@ -242,7 +241,7 @@ describe('idena.social.wasm', () => {
             expect(receipt.events[0].args[5]).toBe(str2hex('0x00002'));
             expect(parseInt(receipt.events[0].args[6], 16)).toBe(0);
 
-            expect(receipt.events[1].event).toBe('_getIdentity');
+            expect(receipt.events[1].event).toBe('_identity');
             expect(receipt.events[1].args.length).toBe(4);
         });
     });

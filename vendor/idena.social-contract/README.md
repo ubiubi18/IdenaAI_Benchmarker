@@ -1,3 +1,3 @@
 # idena.social
 
-Smart Contract is live: https://scan.idena.io/contract/0xc0324f3Cf8158D6E27dc0A07c221636056174718
+Smart Contract is live: https://scan.idena.io/contract/0xa1c5c1A8c6a1Af596078A5c9653F24c216fE1cb2
