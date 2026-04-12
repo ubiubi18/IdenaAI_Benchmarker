@@ -59,8 +59,13 @@ const {
 } = require('./channels')
 const {createAiProviderBridge} = require('./ai-providers')
 const {createAiTestUnitBridge} = require('./ai-test-unit')
+const {prepareDb} = require('./stores/setup')
 const {createLocalAiFederated} = require('./local-ai/federated')
 const {createLocalAiManager} = require('./local-ai/manager')
+const {
+  ensureLocalAiEnabled,
+  isLocalAiEnabled,
+} = require('./local-ai/enablement')
 const {
   startNode,
   stopNode,
@@ -101,6 +106,229 @@ let tray
 const nodeUpdater = new NodeUpdater(logger)
 
 let dnaUrl
+
+function loadMainSettings() {
+  try {
+    return prepareDb('settings').getState() || {}
+  } catch {
+    return {}
+  }
+}
+
+function getMainLocalAiSettings(payload = {}) {
+  const settings = loadMainSettings()
+  const localAi =
+    settings && settings.localAi && typeof settings.localAi === 'object'
+      ? settings.localAi
+      : {}
+
+  return {
+    enabled: localAi.enabled === true,
+    mode: String(localAi.runtimeMode || payload.mode || 'sidecar').trim() || 'sidecar',
+    runtimeType:
+      String(localAi.runtimeType || payload.runtimeType || 'ollama').trim() ||
+      'ollama',
+    baseUrl:
+      typeof localAi.endpoint === 'string'
+        ? localAi.endpoint.trim()
+        : typeof localAi.baseUrl === 'string'
+        ? localAi.baseUrl.trim()
+        : typeof payload.endpoint === 'string'
+        ? payload.endpoint.trim()
+        : typeof payload.baseUrl === 'string'
+        ? payload.baseUrl.trim()
+        : 'http://127.0.0.1:11434',
+    model:
+      typeof localAi.model === 'string'
+        ? localAi.model.trim()
+        : typeof payload.model === 'string'
+        ? payload.model.trim()
+        : '',
+    visionModel:
+      typeof localAi.visionModel === 'string'
+        ? localAi.visionModel.trim()
+        : typeof payload.visionModel === 'string'
+        ? payload.visionModel.trim()
+        : 'moondream',
+  }
+}
+
+function assertLocalAiEnabled(action) {
+  try {
+    ensureLocalAiEnabled(loadMainSettings())
+  } catch (error) {
+    if (isDev && logger && typeof logger.debug === 'function') {
+      logger.debug('Local AI IPC blocked because Local AI is disabled', {
+        action,
+      })
+    }
+    throw error
+  }
+}
+
+function withLocalAiEnabled(action, handler) {
+  return async (...args) => {
+    assertLocalAiEnabled(action)
+    return handler(...args)
+  }
+}
+
+function buildDisabledLocalAiStatus(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    enabled: false,
+    status: 'disabled',
+    runtime: localAi.runtimeType,
+    runtimeType: localAi.runtimeType,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    sidecarReachable: false,
+    sidecarCheckedAt: null,
+    sidecarModelCount: 0,
+    error: null,
+    lastError: null,
+  }
+}
+
+function buildLocalAiStatusResponse(result = {}) {
+  const reachable = result.sidecarReachable
+  const status =
+    reachable === true ? 'ok' : reachable === false ? 'error' : 'checking'
+
+  return {
+    ...result,
+    enabled: true,
+    status,
+    runtime:
+      String(
+        (result.health && result.health.runtime) ||
+          result.runtimeType ||
+          'ollama'
+      ).trim() || 'ollama',
+    error:
+      status === 'error'
+        ? String(result.lastError || '').trim() || 'unavailable'
+        : null,
+  }
+}
+
+function buildDisabledLocalAiChatResponse(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    ok: false,
+    enabled: false,
+    status: 'disabled',
+    provider: 'local-ai',
+    runtimeType: localAi.runtimeType,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    model: localAi.model,
+    content: null,
+    error: 'local_ai_disabled',
+    lastError: 'Local AI is disabled',
+  }
+}
+
+function buildDisabledLocalAiFlipToTextResponse(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    ok: false,
+    enabled: false,
+    status: 'disabled',
+    provider: 'local-ai',
+    runtimeType: localAi.runtimeType,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    visionModel: localAi.visionModel,
+    text: null,
+    error: 'local_ai_disabled',
+    lastError: 'Local AI is disabled',
+  }
+}
+
+function buildDisabledLocalAiCheckFlipSequenceResponse(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    ok: false,
+    enabled: false,
+    status: 'disabled',
+    provider: 'local-ai',
+    runtimeType: localAi.runtimeType,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    model: localAi.model,
+    visionModel: localAi.visionModel,
+    classification: null,
+    confidence: null,
+    reason: null,
+    sequenceText: null,
+    error: 'local_ai_disabled',
+    lastError: 'Local AI is disabled',
+  }
+}
+
+function buildLocalAiChatPayload(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+  const nextPayload =
+    payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+
+  return {
+    ...nextPayload,
+    mode: localAi.mode,
+    runtimeType: localAi.runtimeType,
+    baseUrl: localAi.baseUrl,
+    endpoint: localAi.baseUrl,
+    model: localAi.model,
+  }
+}
+
+function buildLocalAiFlipToTextPayload(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+  const nextPayload =
+    payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+
+  return {
+    ...nextPayload,
+    mode: localAi.mode,
+    runtimeType: localAi.runtimeType,
+    baseUrl: localAi.baseUrl,
+    endpoint: localAi.baseUrl,
+    model: localAi.model,
+    visionModel: localAi.visionModel,
+    input:
+      typeof nextPayload.input !== 'undefined'
+        ? nextPayload.input
+        : typeof nextPayload.payload !== 'undefined'
+        ? nextPayload.payload
+        : nextPayload,
+  }
+}
+
+function buildLocalAiCheckFlipSequencePayload(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+  const nextPayload =
+    payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+
+  return {
+    ...nextPayload,
+    mode: localAi.mode,
+    runtimeType: localAi.runtimeType,
+    baseUrl: localAi.baseUrl,
+    endpoint: localAi.baseUrl,
+    model: localAi.model,
+    visionModel: localAi.visionModel,
+    input:
+      typeof nextPayload.input !== 'undefined'
+        ? nextPayload.input
+        : typeof nextPayload.payload !== 'undefined'
+        ? nextPayload.payload
+        : nextPayload,
+  }
+}
 
 function normalizeImageSearchResult(item) {
   if (!item || typeof item !== 'object') {
@@ -1034,53 +1262,145 @@ ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
   }
 })
 
-ipcMain.handle('localAi.status', async (_event, payload) =>
-  localAiManager.status(payload)
+ipcMain.handle(
+  'localAi.status',
+  async (_event, payload) => {
+    if (!isLocalAiEnabled(loadMainSettings())) {
+      return buildDisabledLocalAiStatus(payload)
+    }
+
+    return buildLocalAiStatusResponse(await localAiManager.status(payload))
+  }
 )
 
-ipcMain.handle('localAi.start', async (_event, payload) =>
-  localAiManager.start(payload)
+ipcMain.handle(
+  'localAi.start',
+  withLocalAiEnabled('start', async (_event, payload) =>
+    localAiManager.start(payload)
+  )
 )
 
-ipcMain.handle('localAi.stop', async () => localAiManager.stop())
-
-ipcMain.handle('localAi.listModels', async (_event, payload) =>
-  localAiManager.listModels(payload)
+ipcMain.handle(
+  'localAi.stop',
+  withLocalAiEnabled('stop', async () => localAiManager.stop())
 )
 
-ipcMain.handle('localAi.chat', async (_event, payload) =>
-  localAiManager.chat(payload)
+ipcMain.handle(
+  'localAi.listModels',
+  withLocalAiEnabled('listModels', async (_event, payload) =>
+    localAiManager.listModels(payload)
+  )
 )
 
-ipcMain.handle('localAi.captionFlip', async (_event, payload) =>
-  localAiManager.captionFlip(payload)
+ipcMain.handle(
+  'localAi.chat',
+  async (_event, payload) => {
+    if (!isLocalAiEnabled(loadMainSettings())) {
+      return buildDisabledLocalAiChatResponse(payload)
+    }
+
+    return {
+      ...(await localAiManager.chat(buildLocalAiChatPayload(payload))),
+      enabled: true,
+    }
+  }
 )
 
-ipcMain.handle('localAi.ocrImage', async (_event, payload) =>
-  localAiManager.ocrImage(payload)
+ipcMain.handle(
+  'localAi.checkFlipSequence',
+  async (_event, payload) => {
+    if (!isLocalAiEnabled(loadMainSettings())) {
+      return buildDisabledLocalAiCheckFlipSequenceResponse(payload)
+    }
+
+    return {
+      ...(await localAiManager.checkFlipSequence(
+        buildLocalAiCheckFlipSequencePayload(payload)
+      )),
+      enabled: true,
+    }
+  }
 )
 
-ipcMain.handle('localAi.trainEpoch', async (_event, payload) =>
-  localAiManager.trainEpoch(payload)
+ipcMain.handle(
+  'localAi.flipToText',
+  async (_event, payload) => {
+    if (!isLocalAiEnabled(loadMainSettings())) {
+      return buildDisabledLocalAiFlipToTextResponse(payload)
+    }
+
+    return {
+      ...(await localAiManager.flipToText(
+        buildLocalAiFlipToTextPayload(payload)
+      )),
+      enabled: true,
+    }
+  }
 )
 
-ipcMain.handle('localAi.buildManifest', async (_event, epoch) =>
-  localAiManager.buildManifest(epoch)
+ipcMain.handle(
+  'localAi.captionFlip',
+  withLocalAiEnabled('captionFlip', async (_event, payload) =>
+    localAiManager.captionFlip(payload)
+  )
 )
 
-ipcMain.handle('localAi.buildBundle', async (_event, epoch) =>
-  localAiFederated.buildUpdateBundle(epoch)
+ipcMain.handle(
+  'localAi.ocrImage',
+  withLocalAiEnabled('ocrImage', async (_event, payload) =>
+    localAiManager.ocrImage(payload)
+  )
 )
 
-ipcMain.handle('localAi.importBundle', async (_event, filePath) =>
-  localAiFederated.importUpdateBundle(filePath)
+ipcMain.handle(
+  'localAi.trainEpoch',
+  withLocalAiEnabled('trainEpoch', async (_event, payload) =>
+    localAiManager.trainEpoch(payload)
+  )
 )
 
-ipcMain.handle('localAi.aggregate', async () =>
-  localAiFederated.aggregateAcceptedBundles()
+ipcMain.handle(
+  'localAi.buildManifest',
+  withLocalAiEnabled('buildManifest', async (_event, epoch) =>
+    localAiManager.buildManifest(epoch)
+  )
+)
+
+ipcMain.handle(
+  'localAi.buildTrainingCandidatePackage',
+  withLocalAiEnabled('buildTrainingCandidatePackage', async (_event, payload) =>
+    localAiManager.buildTrainingCandidatePackage(payload)
+  )
+)
+
+ipcMain.handle(
+  'localAi.buildBundle',
+  withLocalAiEnabled('buildBundle', async (_event, epoch) =>
+    localAiFederated.buildUpdateBundle(epoch)
+  )
+)
+
+ipcMain.handle(
+  'localAi.importBundle',
+  withLocalAiEnabled('importBundle', async (_event, filePath) =>
+    localAiFederated.importUpdateBundle(filePath)
+  )
+)
+
+ipcMain.handle(
+  'localAi.aggregate',
+  withLocalAiEnabled('aggregate', async () =>
+    localAiFederated.aggregateAcceptedBundles()
+  )
 )
 
 ipcMain.on('localAi.captureFlip', (_event, payload) => {
+  try {
+    assertLocalAiEnabled('captureFlip')
+  } catch {
+    return
+  }
+
   Promise.resolve(localAiManager.captureFlip(payload)).catch((error) => {
     logger.error('Local AI capture failed', {
       error: error.toString(),

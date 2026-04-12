@@ -87,9 +87,14 @@ process.once('loaded', () => {
     stop: () => ipcRenderer.invoke('localAi.stop'),
     listModels: (payload) => ipcRenderer.invoke('localAi.listModels', payload),
     chat: (payload) => ipcRenderer.invoke('localAi.chat', payload),
+    checkFlipSequence: (payload) =>
+      ipcRenderer.invoke('localAi.checkFlipSequence', payload),
+    flipToText: (payload) => ipcRenderer.invoke('localAi.flipToText', payload),
     captionFlip: (payload) => ipcRenderer.invoke('localAi.captionFlip', payload),
     ocrImage: (payload) => ipcRenderer.invoke('localAi.ocrImage', payload),
     trainEpoch: (payload) => ipcRenderer.invoke('localAi.trainEpoch', payload),
+    buildTrainingCandidatePackage: (payload) =>
+      ipcRenderer.invoke('localAi.buildTrainingCandidatePackage', payload),
   }
 
   global.flipStore = flips

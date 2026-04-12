@@ -64,8 +64,13 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
 const DEFAULT_LOCAL_AI_SETTINGS = {
   enabled: false,
   runtimeMode: 'sidecar',
-  baseUrl: 'http://localhost:5000',
+  runtimeType: 'ollama',
+  baseUrl: 'http://127.0.0.1:11434',
+  endpoint: 'http://127.0.0.1:11434',
+  model: '',
+  visionModel: 'moondream',
   captureEnabled: false,
+  trainEnabled: false,
   federated: {
     enabled: false,
     relays: [],

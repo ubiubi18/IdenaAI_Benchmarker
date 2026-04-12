@@ -19,6 +19,48 @@ function resolveUserDataPath() {
   return appDataPath('userData')
 }
 
+function omitRawImageFields(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value
+  }
+
+  const next = {...value}
+
+  delete next.images
+  delete next.rawImage
+  delete next.rawImages
+  delete next.imageData
+  delete next.base64
+  delete next.dataUrl
+
+  return next
+}
+
+function sanitizeCollectionItems(value, field) {
+  if (!Array.isArray(value && value[field])) {
+    return value
+  }
+
+  return {
+    ...value,
+    [field]: value[field].map((item) => omitRawImageFields(item)),
+  }
+}
+
+function sanitizeForPersistence(filePath, obj) {
+  const normalizedPath = String(filePath || '')
+
+  if (normalizedPath.includes(`${path.sep}captures${path.sep}`)) {
+    return sanitizeCollectionItems(omitRawImageFields(obj), 'captures')
+  }
+
+  if (normalizedPath.includes(`${path.sep}training-candidates${path.sep}`)) {
+    return sanitizeCollectionItems(omitRawImageFields(obj), 'items')
+  }
+
+  return obj
+}
+
 function createLocalAiStorage({
   baseDir,
   getUserDataPath = resolveUserDataPath,
@@ -54,7 +96,11 @@ function createLocalAiStorage({
     )
 
     await fs.ensureDir(dirPath)
-    await fs.writeFile(tempPath, `${JSON.stringify(obj, null, 2)}\n`, 'utf8')
+    await fs.writeFile(
+      tempPath,
+      `${JSON.stringify(sanitizeForPersistence(targetPath, obj), null, 2)}\n`,
+      'utf8'
+    )
 
     try {
       await fs.move(tempPath, targetPath, {overwrite: true})

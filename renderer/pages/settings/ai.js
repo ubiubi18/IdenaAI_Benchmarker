@@ -148,8 +148,13 @@ const DEFAULT_AI_SETTINGS = {
 const DEFAULT_LOCAL_AI_SETTINGS = {
   enabled: false,
   runtimeMode: 'sidecar',
-  baseUrl: 'http://localhost:5000',
+  runtimeType: 'ollama',
+  baseUrl: 'http://127.0.0.1:11434',
+  endpoint: 'http://127.0.0.1:11434',
+  model: '',
+  visionModel: 'moondream',
   captureEnabled: false,
+  trainEnabled: false,
   federated: {
     enabled: false,
     relays: [],
@@ -162,6 +167,16 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
     requireLocalNode: true,
   },
 }
+
+const DEFAULT_LOCAL_AI_DEBUG_CHAT_PROMPT =
+  'Reply with one short sentence confirming local chat works.'
+
+const DEFAULT_LOCAL_AI_DEBUG_FLIP_INPUT = `{
+  "images": [
+    "/absolute/path/to/panel-1.png",
+    "/absolute/path/to/panel-2.png"
+  ]
+}`
 
 function buildLocalAiSettings(settings = {}) {
   return {
@@ -241,10 +256,159 @@ function formatLocalAiStatusDescription(result, t) {
 
   return (
     String(result && result.lastError).trim() ||
-    t('No Local AI sidecar responded at {{baseUrl}}.', {
+    t('No Local AI runtime responded at {{baseUrl}}.', {
       baseUrl: baseUrl || 'the configured Local AI URL',
     })
   )
+}
+
+function normalizeLocalAiStatusResult(result, fallbackBaseUrl) {
+  const reachable =
+    result && typeof result.sidecarReachable === 'boolean'
+      ? result.sidecarReachable
+      : null
+
+  return {
+    enabled: result ? result.enabled !== false : true,
+    status:
+      String(result && result.status ? result.status : '').trim() ||
+      (reachable === true ? 'ok' : 'error'),
+    runtime:
+      String(
+        result && (result.runtime || result.runtimeType)
+          ? result.runtime || result.runtimeType
+          : 'ollama'
+      ).trim() || 'ollama',
+    baseUrl:
+      String(
+        result && result.baseUrl ? result.baseUrl : fallbackBaseUrl || ''
+      ).trim() || String(fallbackBaseUrl || '').trim(),
+    sidecarReachable: reachable === true,
+    sidecarModelCount: Number(result && result.sidecarModelCount) || 0,
+    error:
+      String((result && (result.error || result.lastError)) || '').trim() ||
+      null,
+    lastError: String((result && result.lastError) || '').trim() || null,
+  }
+}
+
+function formatLocalAiDebugResult(result) {
+  if (!result) {
+    return ''
+  }
+
+  try {
+    return JSON.stringify(result, null, 2)
+  } catch {
+    return String(result)
+  }
+}
+
+function parseLocalAiDebugJsonInput(value) {
+  const text = String(value || '').trim()
+
+  if (!text) {
+    return {
+      ok: false,
+      error: 'Provide JSON input with one or more local panel image paths.',
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(text)
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        error: 'Debug input must be a JSON object.',
+      }
+    }
+
+    return {
+      ok: true,
+      value: parsed,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: String((error && error.message) || error || '').trim(),
+    }
+  }
+}
+
+function formatLocalAiTrainingPackageTimestamp(value) {
+  const text = String(value || '').trim()
+
+  if (!text) {
+    return '-'
+  }
+
+  const nextDate = new Date(text)
+
+  if (!Number.isFinite(nextDate.getTime())) {
+    return text
+  }
+
+  return nextDate.toLocaleString()
+}
+
+function LocalAiDebugResult({label, result}) {
+  if (!result) {
+    return null
+  }
+
+  return (
+    <SettingsFormControl>
+      <SettingsFormLabel>{label}</SettingsFormLabel>
+      <Textarea
+        isReadOnly
+        minH="120px"
+        value={formatLocalAiDebugResult(result)}
+      />
+    </SettingsFormControl>
+  )
+}
+
+function describeLocalAiRuntimeStatus({
+  enabled,
+  isChecking,
+  result,
+  baseUrl,
+  t,
+}) {
+  if (!enabled) {
+    return {
+      tone: 'muted',
+      title: t('Local AI disabled'),
+      description: t('Enable Local AI to allow local runtime health checks.'),
+    }
+  }
+
+  if (isChecking) {
+    return {
+      tone: 'blue.500',
+      title: t('Checking Local AI'),
+      description: t('Trying {{baseUrl}}.', {
+        baseUrl: String(baseUrl || 'http://localhost:5000').trim(),
+      }),
+    }
+  }
+
+  if (result && result.status === 'ok') {
+    return {
+      tone: 'green.500',
+      title: t('Local AI runtime available'),
+      description: formatLocalAiStatusDescription(result, t),
+    }
+  }
+
+  return {
+    tone: 'red.500',
+    title: t('Local AI runtime unavailable'),
+    description:
+      (result && (result.error || result.lastError)) ||
+      t('Check the local runtime URL and try again.'),
+  }
 }
 
 export default function AiSettingsPage() {
@@ -263,6 +427,17 @@ export default function AiSettingsPage() {
     () => buildLocalAiSettings(settings.localAi),
     [settings.localAi]
   )
+  const localAiRuntimeUrl = useMemo(() => {
+    if (typeof localAi.endpoint === 'string') {
+      return localAi.endpoint.trim()
+    }
+
+    if (typeof localAi.baseUrl === 'string') {
+      return localAi.baseUrl.trim()
+    }
+
+    return DEFAULT_LOCAL_AI_SETTINGS.endpoint
+  }, [localAi.baseUrl, localAi.endpoint])
 
   const [apiKey, setApiKey] = useState('')
   const [isUpdatingKey, setIsUpdatingKey] = useState(false)
@@ -277,6 +452,41 @@ export default function AiSettingsPage() {
   const [isCheckingLocalAi, setIsCheckingLocalAi] = useState(false)
   const [isStartingLocalAi, setIsStartingLocalAi] = useState(false)
   const [isStoppingLocalAi, setIsStoppingLocalAi] = useState(false)
+  const [localAiStatusResult, setLocalAiStatusResult] = useState(() =>
+    normalizeLocalAiStatusResult(
+      {
+        enabled: !!localAi.enabled,
+        status: localAi.enabled ? 'error' : 'disabled',
+        runtime: localAi.runtimeType || 'ollama',
+        baseUrl: localAiRuntimeUrl,
+        error: localAi.enabled
+          ? 'Check the local runtime URL and try again.'
+          : null,
+      },
+      localAiRuntimeUrl
+    )
+  )
+  const [localAiDebugChatPrompt, setLocalAiDebugChatPrompt] = useState(
+    DEFAULT_LOCAL_AI_DEBUG_CHAT_PROMPT
+  )
+  const [localAiDebugFlipInput, setLocalAiDebugFlipInput] = useState(
+    DEFAULT_LOCAL_AI_DEBUG_FLIP_INPUT
+  )
+  const [isRunningLocalAiChat, setIsRunningLocalAiChat] = useState(false)
+  const [isRunningLocalAiFlipToText, setIsRunningLocalAiFlipToText] =
+    useState(false)
+  const [isRunningLocalAiFlipChecker, setIsRunningLocalAiFlipChecker] =
+    useState(false)
+  const [localAiChatResult, setLocalAiChatResult] = useState(null)
+  const [localAiFlipToTextResult, setLocalAiFlipToTextResult] = useState(null)
+  const [localAiFlipCheckerResult, setLocalAiFlipCheckerResult] = useState(null)
+  const [localAiPackageEpoch, setLocalAiPackageEpoch] = useState('')
+  const [isLoadingLocalAiPackage, setIsLoadingLocalAiPackage] = useState(false)
+  const [isExportingLocalAiPackage, setIsExportingLocalAiPackage] =
+    useState(false)
+  const [localAiPackagePreview, setLocalAiPackagePreview] = useState(null)
+  const [localAiPackageExportPath, setLocalAiPackageExportPath] = useState('')
+  const [localAiPackageError, setLocalAiPackageError] = useState('')
   const [providerKeyStatus, setProviderKeyStatus] = useState({
     checked: false,
     checking: true,
@@ -350,9 +560,290 @@ export default function AiSettingsPage() {
   const buildLocalAiRuntimePayload = useCallback(
     () => ({
       mode: localAi.runtimeMode,
-      baseUrl: localAi.baseUrl,
+      runtimeType: localAi.runtimeType || 'ollama',
+      baseUrl: localAiRuntimeUrl,
+      endpoint: localAiRuntimeUrl,
+      model: String(localAi.model || '').trim(),
+      visionModel: String(
+        localAi.visionModel || DEFAULT_LOCAL_AI_SETTINGS.visionModel
+      ).trim(),
     }),
-    [localAi.baseUrl, localAi.runtimeMode]
+    [
+      localAi.model,
+      localAi.runtimeMode,
+      localAi.runtimeType,
+      localAi.visionModel,
+      localAiRuntimeUrl,
+    ]
+  )
+
+  const requestLocalAiStatus = useCallback(async () => {
+    if (!localAi.enabled) {
+      const result = normalizeLocalAiStatusResult(
+        {
+          enabled: false,
+          status: 'disabled',
+          runtime: localAi.runtimeType || 'ollama',
+          baseUrl: localAiRuntimeUrl,
+          error: null,
+          lastError: null,
+        },
+        localAiRuntimeUrl
+      )
+      setLocalAiStatusResult(result)
+      return result
+    }
+
+    setIsCheckingLocalAi(true)
+
+    try {
+      const result = normalizeLocalAiStatusResult(
+        await ensureLocalAiBridge().status({
+          ...buildLocalAiRuntimePayload(),
+          refresh: true,
+        }),
+        localAiRuntimeUrl
+      )
+      setLocalAiStatusResult(result)
+      return result
+    } catch (error) {
+      const result = normalizeLocalAiStatusResult(
+        {
+          enabled: true,
+          status: 'error',
+          runtime: localAi.runtimeType || 'ollama',
+          baseUrl: localAiRuntimeUrl,
+          error: formatErrorForToast(error),
+          lastError: formatErrorForToast(error),
+        },
+        localAiRuntimeUrl
+      )
+      setLocalAiStatusResult(result)
+      return result
+    } finally {
+      setIsCheckingLocalAi(false)
+    }
+  }, [
+    buildLocalAiRuntimePayload,
+    localAi.enabled,
+    localAi.runtimeType,
+    localAiRuntimeUrl,
+  ])
+
+  useEffect(() => {
+    if (!localAi.enabled) {
+      setLocalAiStatusResult(
+        normalizeLocalAiStatusResult(
+          {
+            enabled: false,
+            status: 'disabled',
+            runtime: localAi.runtimeType || 'ollama',
+            baseUrl: localAiRuntimeUrl,
+            error: null,
+            lastError: null,
+          },
+          localAiRuntimeUrl
+        )
+      )
+      return
+    }
+
+    setLocalAiStatusResult((current) => {
+      if (current && current.enabled !== false) {
+        return current
+      }
+
+      return normalizeLocalAiStatusResult(
+        {
+          enabled: true,
+          status: 'error',
+          runtime: localAi.runtimeType || 'ollama',
+          baseUrl: localAiRuntimeUrl,
+          error: 'Check the local runtime URL and try again.',
+          lastError: 'Check the local runtime URL and try again.',
+        },
+        localAiRuntimeUrl
+      )
+    })
+  }, [localAi.enabled, localAi.runtimeType, localAiRuntimeUrl])
+
+  const localAiRuntimeStatus = useMemo(
+    () =>
+      describeLocalAiRuntimeStatus({
+        enabled: !!localAi.enabled,
+        isChecking: isCheckingLocalAi,
+        result: localAiStatusResult,
+        baseUrl: localAiRuntimeUrl,
+        t,
+      }),
+    [
+      isCheckingLocalAi,
+      localAi.enabled,
+      localAiRuntimeUrl,
+      localAiStatusResult,
+      t,
+    ]
+  )
+
+  const runLocalAiChatTest = useCallback(async () => {
+    const prompt = String(localAiDebugChatPrompt || '').trim()
+
+    if (!prompt) {
+      setLocalAiChatResult({
+        ok: false,
+        status: 'validation_error',
+        error: 'prompt_required',
+        lastError: t('Provide a prompt before running the local chat test.'),
+      })
+      return
+    }
+
+    setIsRunningLocalAiChat(true)
+
+    try {
+      const result = await ensureLocalAiBridge().chat({
+        ...buildLocalAiRuntimePayload(),
+        input: prompt,
+      })
+      setLocalAiChatResult(result)
+    } catch (error) {
+      setLocalAiChatResult({
+        ok: false,
+        status: 'error',
+        error: 'request_failed',
+        lastError: formatErrorForToast(error),
+      })
+    } finally {
+      setIsRunningLocalAiChat(false)
+    }
+  }, [buildLocalAiRuntimePayload, localAiDebugChatPrompt, t])
+
+  const runLocalAiFlipTest = useCallback(
+    async (method) => {
+      const parsedInput = parseLocalAiDebugJsonInput(localAiDebugFlipInput)
+
+      if (!parsedInput.ok) {
+        const errorResult = {
+          ok: false,
+          status: 'validation_error',
+          error: 'invalid_debug_input',
+          lastError: parsedInput.error,
+        }
+
+        if (method === 'flipToText') {
+          setLocalAiFlipToTextResult(errorResult)
+        } else {
+          setLocalAiFlipCheckerResult(errorResult)
+        }
+        return
+      }
+
+      if (method === 'flipToText') {
+        setIsRunningLocalAiFlipToText(true)
+      } else {
+        setIsRunningLocalAiFlipChecker(true)
+      }
+
+      try {
+        const bridge = ensureLocalAiBridge()
+        const handler =
+          method === 'flipToText'
+            ? bridge.flipToText.bind(bridge)
+            : bridge.checkFlipSequence.bind(bridge)
+        const result = await handler({
+          ...buildLocalAiRuntimePayload(),
+          ...parsedInput.value,
+        })
+
+        if (method === 'flipToText') {
+          setLocalAiFlipToTextResult(result)
+        } else {
+          setLocalAiFlipCheckerResult(result)
+        }
+      } catch (error) {
+        const errorResult = {
+          ok: false,
+          status: 'error',
+          error: 'request_failed',
+          lastError: formatErrorForToast(error),
+        }
+
+        if (method === 'flipToText') {
+          setLocalAiFlipToTextResult(errorResult)
+        } else {
+          setLocalAiFlipCheckerResult(errorResult)
+        }
+      } finally {
+        if (method === 'flipToText') {
+          setIsRunningLocalAiFlipToText(false)
+        } else {
+          setIsRunningLocalAiFlipChecker(false)
+        }
+      }
+    },
+    [buildLocalAiRuntimePayload, localAiDebugFlipInput]
+  )
+
+  const runLocalAiTrainingPackageAction = useCallback(
+    async (includePackage) => {
+      const epoch = String(localAiPackageEpoch || '').trim()
+
+      if (!epoch) {
+        setLocalAiPackageError(
+          t('Enter an epoch before generating a package preview.')
+        )
+
+        if (includePackage) {
+          setLocalAiPackagePreview(null)
+        } else {
+          setLocalAiPackageExportPath('')
+        }
+
+        return
+      }
+
+      if (includePackage) {
+        setIsLoadingLocalAiPackage(true)
+      } else {
+        setIsExportingLocalAiPackage(true)
+      }
+
+      setLocalAiPackageError('')
+
+      try {
+        const result =
+          await ensureLocalAiBridge().buildTrainingCandidatePackage({
+            epoch,
+            includePackage,
+          })
+
+        if (includePackage) {
+          setLocalAiPackagePreview(result)
+        } else {
+          setLocalAiPackageExportPath(
+            String(
+              result && result.packagePath ? result.packagePath : ''
+            ).trim()
+          )
+        }
+      } catch (error) {
+        const message = formatErrorForToast(error)
+        setLocalAiPackageError(message)
+
+        if (includePackage) {
+          setLocalAiPackagePreview(null)
+        } else {
+          setLocalAiPackageExportPath('')
+        }
+      } finally {
+        if (includePackage) {
+          setIsLoadingLocalAiPackage(false)
+        } else {
+          setIsExportingLocalAiPackage(false)
+        }
+      }
+    },
+    [localAiPackageEpoch, t]
   )
 
   const hasSessionKeyForProvider = async (provider) => {
@@ -1566,7 +2057,7 @@ export default function AiSettingsPage() {
           <Stack spacing={4}>
             <Text color="muted" fontSize="sm">
               {t(
-                'These settings only prepare the future local runtime flow. They do not start a runtime or capture flips yet.'
+                'These settings are local-only and opt-in. Existing cloud provider behavior stays unchanged unless you explicitly enable Local AI.'
               )}
             </Text>
 
@@ -1601,23 +2092,72 @@ export default function AiSettingsPage() {
             </SettingsFormControl>
 
             <SettingsFormControl>
-              <SettingsFormLabel>{t('Local runtime URL')}</SettingsFormLabel>
-              <Input
-                value={localAi.baseUrl || ''}
+              <SettingsFormLabel>{t('Runtime type')}</SettingsFormLabel>
+              <Select
+                value={localAi.runtimeType || 'ollama'}
                 onChange={(e) =>
-                  updateLocalAiSettings({baseUrl: e.target.value})
+                  updateLocalAiSettings({runtimeType: e.target.value})
                 }
-                placeholder="http://localhost:5000"
+                w="xs"
+              >
+                <option value="ollama">{t('Ollama')}</option>
+              </Select>
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>
+                {t('Local runtime endpoint')}
+              </SettingsFormLabel>
+              <Input
+                value={localAiRuntimeUrl}
+                onChange={(e) =>
+                  updateLocalAiSettings({
+                    baseUrl: e.target.value,
+                    endpoint: e.target.value,
+                  })
+                }
+                placeholder="http://127.0.0.1:11434"
                 w="xl"
               />
             </SettingsFormControl>
 
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Local runtime model')}</SettingsFormLabel>
+              <Input
+                value={localAi.model || ''}
+                onChange={(e) => updateLocalAiSettings({model: e.target.value})}
+                placeholder="llama3.1:8b"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Local vision model')}</SettingsFormLabel>
+              <Input
+                value={
+                  typeof localAi.visionModel === 'string'
+                    ? localAi.visionModel
+                    : DEFAULT_LOCAL_AI_SETTINGS.visionModel
+                }
+                onChange={(e) =>
+                  updateLocalAiSettings({visionModel: e.target.value})
+                }
+                placeholder="moondream"
+                w="xl"
+              />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {t('Used for local image-aware flip-to-text.')}
+              </Text>
+            </SettingsFormControl>
+
             <Flex align="center" justify="space-between">
               <Box>
-                <Text fontWeight={500}>{t('Capture flips locally')}</Text>
+                <Text fontWeight={500}>
+                  {t('Capture eligible flips locally')}
+                </Text>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'Stores only the preference for a later local capture pipeline.'
+                    'Stores the local capture preference only. This does not change cloud-provider behavior.'
                   )}
                 </Text>
               </Box>
@@ -1652,14 +2192,29 @@ export default function AiSettingsPage() {
               />
             </Flex>
 
-            <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              p={3}
+            >
               <Stack spacing={2}>
                 <Text fontWeight={500}>{t('Runtime control')}</Text>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'These controls only probe or mark the optional local sidecar. Cloud provider flows stay unchanged unless you explicitly choose a local-compatible provider.'
+                    'These controls only probe or mark the optional local runtime. Cloud provider flows stay unchanged unless you explicitly choose Local AI.'
                   )}
                 </Text>
+                <Box bg="gray.50" borderRadius="md" p={3}>
+                  <Stack spacing={1}>
+                    <Text color={localAiRuntimeStatus.tone} fontWeight={500}>
+                      {localAiRuntimeStatus.title}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {localAiRuntimeStatus.description}
+                    </Text>
+                  </Stack>
+                </Box>
                 <Stack isInline spacing={2}>
                   <SecondaryButton
                     isDisabled={!localAi.enabled || isStartingLocalAi}
@@ -1667,14 +2222,20 @@ export default function AiSettingsPage() {
                       setIsStartingLocalAi(true)
 
                       try {
-                        const result = await ensureLocalAiBridge().start(
-                          buildLocalAiRuntimePayload()
+                        const result = normalizeLocalAiStatusResult(
+                          await ensureLocalAiBridge().start(
+                            buildLocalAiRuntimePayload()
+                          ),
+                          localAiRuntimeUrl
                         )
+                        setLocalAiStatusResult(result)
 
                         notify(
                           t('Local AI runtime updated'),
                           formatLocalAiStatusDescription(result, t),
-                          result && result.sidecarReachable ? 'success' : 'warning'
+                          result && result.status === 'ok'
+                            ? 'success'
+                            : 'warning'
                         )
                       } catch (error) {
                         notify(
@@ -1696,6 +2257,19 @@ export default function AiSettingsPage() {
 
                       try {
                         await ensureLocalAiBridge().stop()
+                        setLocalAiStatusResult(
+                          normalizeLocalAiStatusResult(
+                            {
+                              enabled: true,
+                              status: 'error',
+                              runtime: localAi.runtimeType || 'ollama',
+                              baseUrl: localAiRuntimeUrl,
+                              error: t('Local AI runtime is idle.'),
+                              lastError: t('Local AI runtime is idle.'),
+                            },
+                            localAiRuntimeUrl
+                          )
+                        )
 
                         notify(
                           t('Local AI runtime stopped'),
@@ -1720,20 +2294,17 @@ export default function AiSettingsPage() {
                   <SecondaryButton
                     isDisabled={!localAi.enabled || isCheckingLocalAi}
                     onClick={async () => {
-                      setIsCheckingLocalAi(true)
-
                       try {
-                        const result = await ensureLocalAiBridge().status({
-                          ...buildLocalAiRuntimePayload(),
-                          refresh: true,
-                        })
+                        const result = await requestLocalAiStatus()
 
                         notify(
-                          result && result.sidecarReachable
-                            ? t('Local AI sidecar reachable')
-                            : t('Local AI sidecar unavailable'),
+                          result && result.status === 'ok'
+                            ? t('Local AI runtime reachable')
+                            : t('Local AI runtime unavailable'),
                           formatLocalAiStatusDescription(result, t),
-                          result && result.sidecarReachable ? 'success' : 'warning'
+                          result && result.status === 'ok'
+                            ? 'success'
+                            : 'warning'
                         )
                       } catch (error) {
                         notify(
@@ -1741,8 +2312,6 @@ export default function AiSettingsPage() {
                           formatErrorForToast(error),
                           'error'
                         )
-                      } finally {
-                        setIsCheckingLocalAi(false)
                       }
                     }}
                   >
@@ -1751,11 +2320,301 @@ export default function AiSettingsPage() {
                 </Stack>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'To route the existing solver through a local OpenAI-compatible runtime later, choose OpenAI-compatible (custom) in the provider section and point it at this sidecar URL.'
+                    'To route the existing solver through a local OpenAI-compatible runtime later, choose OpenAI-compatible (custom) in the provider section and point it at this local runtime endpoint.'
                   )}
                 </Text>
               </Stack>
             </Box>
+
+            {localAi.enabled ? (
+              <Box
+                borderWidth="1px"
+                borderColor="orange.100"
+                borderRadius="md"
+                p={3}
+                bg="orange.012"
+              >
+                <Stack spacing={3}>
+                  <Text fontWeight={500}>{t('Local AI Debug')}</Text>
+                  <Text color="muted" fontSize="sm">
+                    {t('Developer test tools. No cloud fallback.')}
+                  </Text>
+
+                  <Box bg="white" borderRadius="md" p={3}>
+                    <Stack spacing={2}>
+                      <Flex align="center" justify="space-between">
+                        <Box>
+                          <Text fontWeight={500}>{t('Runtime status')}</Text>
+                          <Text color="muted" fontSize="sm">
+                            {localAiRuntimeStatus.description}
+                          </Text>
+                        </Box>
+                        <Text
+                          color={localAiRuntimeStatus.tone}
+                          fontWeight={600}
+                        >
+                          {localAiRuntimeStatus.title}
+                        </Text>
+                      </Flex>
+                      <Stack isInline spacing={2}>
+                        <SecondaryButton
+                          isLoading={isCheckingLocalAi}
+                          onClick={async () => {
+                            try {
+                              await requestLocalAiStatus()
+                            } catch (error) {
+                              notify(
+                                t('Unable to check Local AI status'),
+                                formatErrorForToast(error),
+                                'error'
+                              )
+                            }
+                          }}
+                        >
+                          {t('Check Local AI')}
+                        </SecondaryButton>
+                      </Stack>
+                      <LocalAiDebugResult
+                        label={t('Status result')}
+                        result={localAiStatusResult}
+                      />
+                    </Stack>
+                  </Box>
+
+                  <Box bg="white" borderRadius="md" p={3}>
+                    <Stack spacing={3}>
+                      <Text fontWeight={500}>{t('Chat test')}</Text>
+                      <SettingsFormControl>
+                        <SettingsFormLabel>{t('Prompt')}</SettingsFormLabel>
+                        <Textarea
+                          value={localAiDebugChatPrompt}
+                          onChange={(e) =>
+                            setLocalAiDebugChatPrompt(e.target.value)
+                          }
+                          minH="90px"
+                        />
+                      </SettingsFormControl>
+                      <Stack isInline spacing={2}>
+                        <SecondaryButton
+                          isLoading={isRunningLocalAiChat}
+                          onClick={runLocalAiChatTest}
+                        >
+                          {t('Run Local Chat')}
+                        </SecondaryButton>
+                      </Stack>
+                      <LocalAiDebugResult
+                        label={t('Chat result')}
+                        result={localAiChatResult}
+                      />
+                    </Stack>
+                  </Box>
+
+                  <Box bg="white" borderRadius="md" p={3}>
+                    <Stack spacing={3}>
+                      <Text fontWeight={500}>
+                        {t('flipToText / checker test')}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Provide JSON with local image paths, for example {"images":["/absolute/path/panel-1.png","/absolute/path/panel-2.png"]}.'
+                        )}
+                      </Text>
+                      <SettingsFormControl>
+                        <SettingsFormLabel>{t('Input JSON')}</SettingsFormLabel>
+                        <Textarea
+                          value={localAiDebugFlipInput}
+                          onChange={(e) =>
+                            setLocalAiDebugFlipInput(e.target.value)
+                          }
+                          minH="140px"
+                        />
+                      </SettingsFormControl>
+                      <Stack isInline spacing={2}>
+                        <SecondaryButton
+                          isLoading={isRunningLocalAiFlipToText}
+                          onClick={() => runLocalAiFlipTest('flipToText')}
+                        >
+                          {t('Run flipToText')}
+                        </SecondaryButton>
+                        <SecondaryButton
+                          isLoading={isRunningLocalAiFlipChecker}
+                          onClick={() =>
+                            runLocalAiFlipTest('checkFlipSequence')
+                          }
+                        >
+                          {t('Run Flip Checker')}
+                        </SecondaryButton>
+                      </Stack>
+                      <LocalAiDebugResult
+                        label={t('flipToText result')}
+                        result={localAiFlipToTextResult}
+                      />
+                      <LocalAiDebugResult
+                        label={t('Flip checker result')}
+                        result={localAiFlipCheckerResult}
+                      />
+                    </Stack>
+                  </Box>
+
+                  <Box bg="white" borderRadius="md" p={3}>
+                    <Stack spacing={3}>
+                      <Text fontWeight={500}>
+                        {t('Local AI Training Package Review')}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Developer/admin review only. This generates a local post-consensus package preview and export path. No training or sharing is triggered.'
+                        )}
+                      </Text>
+                      <SettingsFormControl>
+                        <SettingsFormLabel>{t('Epoch')}</SettingsFormLabel>
+                        <Input
+                          value={localAiPackageEpoch}
+                          onChange={(e) =>
+                            setLocalAiPackageEpoch(e.target.value)
+                          }
+                          placeholder="12"
+                          w="xs"
+                        />
+                      </SettingsFormControl>
+                      <Stack isInline spacing={2}>
+                        <SecondaryButton
+                          isLoading={isLoadingLocalAiPackage}
+                          onClick={() => runLocalAiTrainingPackageAction(true)}
+                        >
+                          {t('Generate Package Preview')}
+                        </SecondaryButton>
+                        <SecondaryButton
+                          isLoading={isExportingLocalAiPackage}
+                          onClick={() => runLocalAiTrainingPackageAction(false)}
+                        >
+                          {t('Export Package')}
+                        </SecondaryButton>
+                      </Stack>
+                      {localAiPackageError ? (
+                        <Text color="orange.500" fontSize="sm">
+                          {localAiPackageError}
+                        </Text>
+                      ) : null}
+                      {localAiPackageExportPath ? (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.100"
+                          borderRadius="md"
+                          p={3}
+                        >
+                          <Stack spacing={1}>
+                            <Text fontWeight={500}>{t('Export complete')}</Text>
+                            <Text color="muted" fontSize="sm">
+                              {localAiPackageExportPath}
+                            </Text>
+                          </Stack>
+                        </Box>
+                      ) : null}
+                      {localAiPackagePreview &&
+                      localAiPackagePreview.package ? (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.100"
+                          borderRadius="md"
+                          p={3}
+                        >
+                          <Stack spacing={3}>
+                            <Stack spacing={1}>
+                              <Text fontWeight={500}>
+                                {t('Package metadata')}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Schema version')}:{' '}
+                                {localAiPackagePreview.package.schemaVersion}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Created')}:{' '}
+                                {formatLocalAiTrainingPackageTimestamp(
+                                  localAiPackagePreview.package.createdAt
+                                )}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Eligible')}:{' '}
+                                {Number(
+                                  localAiPackagePreview.package.eligibleCount
+                                ) || 0}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Excluded')}:{' '}
+                                {Number(
+                                  localAiPackagePreview.package.excludedCount
+                                ) || 0}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Package path')}:{' '}
+                                {localAiPackagePreview.packagePath}
+                              </Text>
+                            </Stack>
+
+                            <Stack spacing={2}>
+                              <Text fontWeight={500}>
+                                {t('Included items')}
+                              </Text>
+                              {(Array.isArray(
+                                localAiPackagePreview.package.items
+                              )
+                                ? localAiPackagePreview.package.items.slice(
+                                    0,
+                                    5
+                                  )
+                                : []
+                              ).map((item) => (
+                                <Box
+                                  key={`${item.flipHash || 'unknown'}-${
+                                    item.capturedAt || 'na'
+                                  }`}
+                                  borderWidth="1px"
+                                  borderColor="gray.50"
+                                  borderRadius="md"
+                                  p={2}
+                                >
+                                  <Stack spacing={1}>
+                                    <Text fontSize="sm" fontWeight={500}>
+                                      {item.flipHash || t('Unknown item')}
+                                    </Text>
+                                    <Text color="muted" fontSize="xs">
+                                      {t('Answer')}: {item.finalAnswer || '-'} •{' '}
+                                      {t('Session')}: {item.sessionType || '-'}{' '}
+                                      • {t('Panels')}:{' '}
+                                      {Number(item.panelCount) || 0}
+                                    </Text>
+                                    <Text color="muted" fontSize="xs">
+                                      {t('Captured')}:{' '}
+                                      {formatLocalAiTrainingPackageTimestamp(
+                                        item.capturedAt
+                                      )}
+                                    </Text>
+                                  </Stack>
+                                </Box>
+                              ))}
+                              {Array.isArray(
+                                localAiPackagePreview.package.items
+                              ) &&
+                              localAiPackagePreview.package.items.length > 5 ? (
+                                <Text color="muted" fontSize="xs">
+                                  {t(
+                                    'Showing the first {{count}} items only.',
+                                    {
+                                      count: 5,
+                                    }
+                                  )}
+                                </Text>
+                              ) : null}
+                            </Stack>
+                          </Stack>
+                        </Box>
+                      ) : null}
+                    </Stack>
+                  </Box>
+                </Stack>
+              </Box>
+            ) : null}
           </Stack>
         </SettingsSection>
 

@@ -2,8 +2,10 @@ const {createLocalAiStorage} = require('./storage')
 const {createLocalAiSidecar} = require('./sidecar')
 
 const CAPTURE_INDEX_VERSION = 1
+const TRAINING_CANDIDATE_PACKAGE_VERSION = 1
 const MAX_CAPTURE_INDEX_ITEMS = 1000
 const MAX_RECENT_CAPTURES = 20
+const ELIGIBLE_CONSENSUS_ANSWERS = new Set(['left', 'right'])
 
 function normalizeMode(value, fallback = 'sidecar') {
   const mode = String(value || fallback).trim()
@@ -59,6 +61,23 @@ function normalizeConsensus(consensus) {
   }
 }
 
+function hasExplicitConsensus(payload) {
+  return Boolean(
+    payload &&
+      payload.consensus &&
+      typeof payload.consensus === 'object' &&
+      !Array.isArray(payload.consensus)
+  )
+}
+
+function hasEligibleConsensusAnswer(consensus) {
+  return Boolean(
+    consensus &&
+      consensus.finalAnswer &&
+      ELIGIBLE_CONSENSUS_ANSWERS.has(String(consensus.finalAnswer).trim())
+  )
+}
+
 function toCaptureMeta(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return null
@@ -77,6 +96,7 @@ function toCaptureMeta(payload) {
     epoch: normalizeEpoch(payload.epoch),
     sessionType: normalizeSessionType(payload.sessionType),
     panelCount: images.length,
+    timestamp: Date.now(),
     capturedAt: new Date().toISOString(),
     consensus: normalizeConsensus(payload.consensus),
   }
@@ -98,6 +118,8 @@ function normalizeCapture(item) {
     epoch: normalizeEpoch(item.epoch),
     sessionType: normalizeSessionType(item.sessionType),
     panelCount: normalizePanelCount(item.panelCount),
+    timestamp:
+      Number.isFinite(Number(item.timestamp)) ? Number(item.timestamp) : Date.now(),
     capturedAt:
       String(item.capturedAt || '').trim() || new Date().toISOString(),
     consensus: normalizeConsensus(item.consensus),
@@ -142,6 +164,13 @@ function manifestPath(storage, epoch) {
   return storage.resolveLocalAiPath('manifests', `epoch-${epoch}-manifest.json`)
 }
 
+function trainingCandidatePackagePath(storage, epoch) {
+  return storage.resolveLocalAiPath(
+    'training-candidates',
+    `epoch-${epoch}-candidates.json`
+  )
+}
+
 function createBaseModelId(mode) {
   return `local-ai:${normalizeMode(mode)}:mvp-placeholder-v1`
 }
@@ -171,6 +200,8 @@ function getExclusionReasons(capture, epoch) {
 
   if (!capture.consensus || !capture.consensus.finalAnswer) {
     reasons.push('missing_consensus')
+  } else if (!hasEligibleConsensusAnswer(capture.consensus)) {
+    reasons.push('invalid_consensus')
   }
 
   if (capture.consensus && capture.consensus.reported) {
@@ -182,6 +213,89 @@ function getExclusionReasons(capture, epoch) {
   }
 
   return reasons
+}
+
+function getCaptureSkipReasons(payload, capture) {
+  const reasons = []
+  const explicitConsensus = hasExplicitConsensus(payload)
+
+  if (capture && capture.consensus && capture.consensus.reported) {
+    reasons.push('reported')
+  }
+
+  if (capture && capture.consensus && capture.consensus.finalAnswer) {
+    if (!hasEligibleConsensusAnswer(capture.consensus)) {
+      reasons.push('invalid_consensus')
+    }
+  } else if (explicitConsensus) {
+    reasons.push('missing_consensus')
+  }
+
+  return reasons
+}
+
+function collectInconsistencyFlags(excluded) {
+  const flags = new Set()
+
+  excluded.forEach(({reasons}) => {
+    if (reasons.includes('missing_consensus')) {
+      flags.add('contains_unresolved_captures')
+    }
+
+    if (reasons.includes('reported')) {
+      flags.add('contains_reported_captures')
+    }
+
+    if (reasons.includes('invalid_consensus')) {
+      flags.add('contains_invalid_consensus')
+    }
+
+    if (reasons.includes('epoch_mismatch')) {
+      flags.add('contains_other_epoch_captures')
+    }
+
+    if (reasons.includes('missing_local_metadata')) {
+      flags.add('contains_incomplete_metadata')
+    }
+  })
+
+  return Array.from(flags)
+}
+
+function normalizePackagedCapturedAt(value) {
+  const raw = String(value || '').trim()
+
+  if (!raw) {
+    throw new Error('captured_at_required')
+  }
+
+  const nextDate = new Date(raw)
+
+  if (!Number.isFinite(nextDate.getTime())) {
+    throw new Error('captured_at_invalid')
+  }
+
+  return nextDate.toISOString()
+}
+
+function buildTrainingCandidateItem(capture) {
+  if (!capture || typeof capture !== 'object' || Array.isArray(capture)) {
+    throw new Error('invalid_capture')
+  }
+
+  if (!capture.consensus || !hasEligibleConsensusAnswer(capture.consensus)) {
+    throw new Error('final_consensus_required')
+  }
+
+  return {
+    flipHash: capture.flipHash,
+    epoch: capture.epoch,
+    sessionType: capture.sessionType,
+    panelCount: capture.panelCount,
+    timestamp: Number(capture.timestamp),
+    capturedAt: normalizePackagedCapturedAt(capture.capturedAt),
+    finalAnswer: capture.consensus.finalAnswer,
+  }
 }
 
 function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
@@ -303,6 +417,7 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
 
     const health = await localAiSidecar.getHealth({
       baseUrl: state.baseUrl,
+      runtimeType: next.runtimeType,
       timeoutMs: next.timeoutMs,
     })
     let models = {
@@ -315,6 +430,7 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     if (health.ok) {
       models = await localAiSidecar.listModels({
         baseUrl: state.baseUrl,
+        runtimeType: next.runtimeType,
         timeoutMs: next.timeoutMs,
       })
     }
@@ -391,6 +507,7 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
 
     const result = await localAiSidecar.listModels({
       baseUrl: state.baseUrl,
+      runtimeType: next.runtimeType,
       timeoutMs: next.timeoutMs,
     })
 
@@ -416,8 +533,78 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
 
     const result = await localAiSidecar.chat({
       baseUrl: state.baseUrl,
+      runtimeType: next.runtimeType,
       model: next.model,
       messages: next.messages,
+      message: next.message,
+      prompt: next.prompt,
+      input: next.input,
+      timeoutMs: next.timeoutMs,
+    })
+
+    updateSidecarState({
+      reachable: Boolean(result.ok),
+      checkedAt: new Date().toISOString(),
+      lastError: result.lastError,
+    })
+
+    return {
+      ...result,
+      ...currentStatus(),
+    }
+  }
+
+  async function flipToText(payload = {}) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+
+    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+
+    const result = await localAiSidecar.flipToText({
+      baseUrl: state.baseUrl,
+      runtimeType: next.runtimeType,
+      visionModel: next.visionModel,
+      model: next.model,
+      input:
+        typeof next.input !== 'undefined'
+          ? next.input
+          : typeof next.payload !== 'undefined'
+          ? next.payload
+          : next,
+      timeoutMs: next.timeoutMs,
+    })
+
+    updateSidecarState({
+      reachable: Boolean(result.ok),
+      checkedAt: new Date().toISOString(),
+      lastError: result.lastError,
+    })
+
+    return {
+      ...result,
+      ...currentStatus(),
+    }
+  }
+
+  async function checkFlipSequence(payload = {}) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+
+    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+
+    const result = await localAiSidecar.checkFlipSequence({
+      baseUrl: state.baseUrl,
+      runtimeType: next.runtimeType,
+      visionModel: next.visionModel,
+      model: next.model,
+      input:
+        typeof next.input !== 'undefined'
+          ? next.input
+          : typeof next.payload !== 'undefined'
+          ? next.payload
+          : next,
       timeoutMs: next.timeoutMs,
     })
 
@@ -524,6 +711,29 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       }
     }
 
+    // Decoded flips often arrive before final consensus, so only explicit
+    // disqualifiers are blocked here. Unknown cases still rely on manifest-time
+    // post-consensus filtering.
+    const skipReasons = getCaptureSkipReasons(payload, capture)
+
+    if (skipReasons.length) {
+      state.lastError = null
+
+      if (isDev && logger && typeof logger.debug === 'function') {
+        logger.debug('Skipping ineligible local AI capture', {
+          flipHash: capture.flipHash,
+          reasons: skipReasons,
+        })
+      }
+
+      return {
+        ok: false,
+        skipped: true,
+        reasons: skipReasons,
+        ...currentStatus(),
+      }
+    }
+
     state.capturedCount += 1
     state.lastError = null
     state.captureIndex = state.captureIndex
@@ -598,11 +808,16 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       eligibleFlipHashes.push(capture.flipHash)
     })
 
+    const inconsistencyFlags = collectInconsistencyFlags(excluded)
+
     const manifest = {
       epoch,
       baseModelId: createBaseModelId(state.mode),
       eligibleFlipHashes,
+      flipCount: eligibleFlipHashes.length,
       excluded,
+      skippedCount: excluded.length,
+      inconsistencyFlags,
       generatedAt: new Date().toISOString(),
     }
     const nextManifestPath = manifestPath(localAiStorage, epoch)
@@ -626,17 +841,102 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     }
   }
 
+  async function buildTrainingCandidatePackage(payload) {
+    await hydrate()
+
+    if (state.loadError) {
+      throw new Error('Local AI capture index is unavailable')
+    }
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const items = []
+    const excluded = []
+
+    reduceLatestCaptures(state.captureIndex).forEach((capture) => {
+      const reasons = getExclusionReasons(capture, epoch)
+
+      if (reasons.length) {
+        excluded.push({
+          flipHash: capture.flipHash || null,
+          reasons,
+        })
+        return
+      }
+
+      try {
+        items.push(buildTrainingCandidateItem(capture))
+      } catch (error) {
+        excluded.push({
+          flipHash: capture.flipHash || null,
+          reasons: ['packaging_failed'],
+        })
+
+        if (logger && typeof logger.error === 'function') {
+          logger.error('Unable to package local AI training candidate', {
+            flipHash: capture.flipHash || null,
+            epoch,
+            error: error.toString(),
+          })
+        }
+      }
+    })
+
+    const nextPackagePath = trainingCandidatePackagePath(localAiStorage, epoch)
+    const inconsistencyFlags = collectInconsistencyFlags(excluded)
+    const candidatePackage = {
+      schemaVersion: TRAINING_CANDIDATE_PACKAGE_VERSION,
+      packageType: 'local-ai-training-candidates',
+      epoch,
+      createdAt: new Date().toISOString(),
+      eligibleCount: items.length,
+      excludedCount: excluded.length,
+      inconsistencyFlags,
+      items,
+      excluded,
+    }
+
+    await localAiStorage.writeJsonAtomic(nextPackagePath, candidatePackage)
+
+    if (isDev && logger && typeof logger.debug === 'function') {
+      logger.debug('Local AI training candidate package built', {
+        epoch,
+        eligibleCount: items.length,
+        excludedCount: excluded.length,
+        packagePath: nextPackagePath,
+      })
+    }
+
+    return {
+      epoch,
+      eligibleCount: items.length,
+      excludedCount: excluded.length,
+      packagePath: nextPackagePath,
+      package: next.includePackage ? candidatePackage : undefined,
+    }
+  }
+
   return {
     status,
     start,
     stop,
     listModels,
     chat,
+    checkFlipSequence,
+    flipToText,
     captionFlip,
     ocrImage,
     trainEpoch,
     captureFlip,
     buildManifest,
+    buildTrainingCandidatePackage,
   }
 }
 
