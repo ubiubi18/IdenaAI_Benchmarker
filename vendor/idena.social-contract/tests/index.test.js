@@ -10,7 +10,7 @@ const {
     ContractArgumentFormat,
 } = require('idena-sdk-tests');
 
-const CONTRACT_RUNNER_URL = 'http://localhost:3333';
+const CONTRACT_RUNNER_URL = process.env.IDENA_CONTRACT_RUNNER_URL || 'http://localhost:3333';
 
 function str2hex(str) {
     return toHexString(Buffer.from(str));
