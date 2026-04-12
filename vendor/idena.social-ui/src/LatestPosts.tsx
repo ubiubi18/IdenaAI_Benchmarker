@@ -18,6 +18,7 @@ type LatestPostsProps = {
     pastBlockCaptured: number,
     SET_NEW_POSTS_ADDED_DELAY: number,
     inputPostDisabled: boolean,
+    copyPostTxHandler: (location: string, replyToPostId?: string | undefined, channelId?: string | undefined) => Promise<void>,
     submitPostHandler: (location: string, replyToPostId?: string | undefined, channelId?: string | undefined) => Promise<void>,
     submitLikeHandler: (emoji: string, location: string, replyToPostId?: string | undefined, channelId?: string | undefined) => Promise<void>,
     submittingPost: string,
@@ -76,6 +77,7 @@ function LatestPosts() {
         pastBlockCaptured,
         SET_NEW_POSTS_ADDED_DELAY,
         inputPostDisabled,
+        copyPostTxHandler,
         submitPostHandler,
         submitLikeHandler,
         submittingPost,
@@ -145,10 +147,10 @@ function LatestPosts() {
                 if (!canceled) {
                     setMainComposerCostEstimate(estimate);
                 }
-            } catch (error) {
+            } catch {
                 if (!canceled) {
                     setMainComposerCostEstimate(null);
-                    setMainComposerCostEstimateError('Fee estimate unavailable right now.')
+                    setMainComposerCostEstimateError('Fee estimate unavailable right now.');
                 }
             } finally {
                 if (!canceled) {
@@ -173,11 +175,10 @@ function LatestPosts() {
         setMainComposerCostEstimateLoading,
     ]);
 
-
     const addMediaHandler = async (e: React.ChangeEvent<HTMLInputElement>, location: string) => {
         e?.stopPropagation();
 
-        await setPostMediaAttachmentHandler(location, e.currentTarget.files?.[0])
+        await setPostMediaAttachmentHandler(location, e.currentTarget.files?.[0]);
         forceUpdate();
     };
 
@@ -243,6 +244,7 @@ function LatestPosts() {
                             onChange={(e) => addMediaHandler(e, 'main')}
                         />
                     </>}
+                    <p id="post-copytx-main" className="inline-block -mt-1 ml-2 text-blue-400 text-[12px] hover:cursor-pointer hover:underline" onClick={() => !inputPostDisabled && copyPostTxHandler('main')}>Copy tx</p>
                 </div>
                 <p className="text-right w-50 mt-0.5 text-gray-400 text-[12px]">Your post will take time to display due to blockchain acceptance.</p>
                 <button className="h-9 w-27 my-1 px-4 py-1 bg-white/10 inset-ring inset-ring-white/5 hover:bg-white/20 cursor-pointer" disabled={inputPostDisabled} onClick={() => submitPostHandler('main')}>{submittingPost === 'main' ? 'Posting...' : 'Post!'}</button>
@@ -263,6 +265,7 @@ function LatestPosts() {
                         discussPrefix={discussPrefix}
                         SET_NEW_POSTS_ADDED_DELAY={SET_NEW_POSTS_ADDED_DELAY}
                         inputPostDisabled={inputPostDisabled}
+                        copyPostTxHandler={copyPostTxHandler}
                         submitPostHandler={submitPostHandler}
                         submitLikeHandler={submitLikeHandler}
                         submittingPost={submittingPost}
