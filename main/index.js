@@ -11,8 +11,6 @@ const {
   // eslint-disable-next-line import/no-extraneous-dependencies
 } = require('electron')
 const {autoUpdater} = require('electron-updater')
-const isDev = require('electron-is-dev')
-const prepareNext = require('electron-next')
 const fs = require('fs-extra')
 const i18next = require('i18next')
 const {image_search: imageSearch} = require('duckduckgo-images-api')
@@ -27,12 +25,13 @@ const appDataPath = require('./app-data-path')
 const isWin = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
 const isLinux = process.platform === 'linux'
-
-app.allowRendererProcessReuse = true
+const isDev = !app.isPackaged
 
 if (process.env.NODE_ENV === 'e2e') {
   app.setPath('userData', join(app.getPath('userData'), 'tests'))
   fs.removeSync(app.getPath('userData'))
+} else if (isDev) {
+  app.setPath('userData', join(app.getPath('userData'), 'IdenaAI-dev'))
 }
 
 if (isWin) {
@@ -66,6 +65,16 @@ const {
   ensureLocalAiEnabled,
   isLocalAiEnabled,
 } = require('./local-ai/enablement')
+const {
+  LOCAL_AI_RUNTIME_MODE,
+  LOCAL_AI_RUNTIME,
+  LOCAL_AI_RUNTIME_FAMILY,
+  LOCAL_AI_DEFAULT_BASE_URL,
+  LOCAL_AI_DEFAULT_MODEL,
+  LOCAL_AI_ADAPTER_STRATEGY,
+  LOCAL_AI_TRAINING_POLICY,
+  LOCAL_AI_CONTRACT_VERSION,
+} = require('./local-ai/constants')
 const {
   startNode,
   stopNode,
@@ -106,6 +115,14 @@ let tray
 const nodeUpdater = new NodeUpdater(logger)
 
 let dnaUrl
+let isCheckingForUpdates = false
+
+const RELEASE_REPOSITORY = {
+  owner: 'ubiubi18',
+  repo: 'IdenaAI',
+}
+
+const RELEASE_URL = `https://api.github.com/repos/${RELEASE_REPOSITORY.owner}/${RELEASE_REPOSITORY.repo}/releases/latest`
 
 function loadMainSettings() {
   try {
@@ -157,10 +174,9 @@ function getMainLocalAiSettings(payload = {}) {
 
   return {
     enabled: localAi.enabled === true,
-    mode: pickTrimmedString([localAi.runtimeMode, nextPayload.mode], 'sidecar'),
-    runtimeType: pickTrimmedString(
-      [localAi.runtimeType, nextPayload.runtimeType],
-      'ollama'
+    mode: pickTrimmedString(
+      [localAi.runtimeMode, nextPayload.mode],
+      LOCAL_AI_RUNTIME_MODE
     ),
     baseUrl: pickTrimmedString(
       [
@@ -169,12 +185,24 @@ function getMainLocalAiSettings(payload = {}) {
         nextPayload.endpoint,
         nextPayload.baseUrl,
       ],
-      'http://127.0.0.1:11434'
+      LOCAL_AI_DEFAULT_BASE_URL
     ),
-    model: pickTrimmedString([localAi.model, nextPayload.model], ''),
-    visionModel: pickTrimmedString(
-      [localAi.visionModel, nextPayload.visionModel],
-      'moondream'
+    model: pickTrimmedString(
+      [localAi.model, nextPayload.model],
+      LOCAL_AI_DEFAULT_MODEL
+    ),
+    runtime: LOCAL_AI_RUNTIME,
+    runtimeFamily: pickTrimmedString(
+      [localAi.runtimeFamily, nextPayload.runtimeFamily],
+      LOCAL_AI_RUNTIME_FAMILY
+    ),
+    adapterStrategy: pickTrimmedString(
+      [localAi.adapterStrategy, nextPayload.adapterStrategy],
+      LOCAL_AI_ADAPTER_STRATEGY
+    ),
+    trainingPolicy: pickTrimmedString(
+      [localAi.trainingPolicy, nextPayload.trainingPolicy],
+      LOCAL_AI_TRAINING_POLICY
     ),
   }
 }
@@ -205,8 +233,9 @@ function buildDisabledLocalAiStatus(payload = {}) {
   return {
     enabled: false,
     status: 'disabled',
-    runtime: localAi.runtimeType,
-    runtimeType: localAi.runtimeType,
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     sidecarReachable: false,
@@ -234,9 +263,15 @@ function buildLocalAiStatusResponse(result = {}) {
     runtime:
       String(
         (result.health && result.health.runtime) ||
-          result.runtimeType ||
-          'ollama'
-      ).trim() || 'ollama',
+          result.runtime ||
+          LOCAL_AI_RUNTIME
+      ).trim() || LOCAL_AI_RUNTIME,
+    runtimeFamily:
+      String(result.runtimeFamily || LOCAL_AI_RUNTIME_FAMILY).trim() ||
+      LOCAL_AI_RUNTIME_FAMILY,
+    contractVersion:
+      String(result.contractVersion || LOCAL_AI_CONTRACT_VERSION).trim() ||
+      LOCAL_AI_CONTRACT_VERSION,
     error:
       status === 'error'
         ? String(result.lastError || '').trim() || 'unavailable'
@@ -252,7 +287,9 @@ function buildDisabledLocalAiChatResponse(payload = {}) {
     enabled: false,
     status: 'disabled',
     provider: 'local-ai',
-    runtimeType: localAi.runtimeType,
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     model: localAi.model,
@@ -270,17 +307,19 @@ function buildDisabledLocalAiFlipToTextResponse(payload = {}) {
     enabled: false,
     status: 'disabled',
     provider: 'local-ai',
-    runtimeType: localAi.runtimeType,
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
-    visionModel: localAi.visionModel,
+    model: localAi.model,
     text: null,
     error: 'local_ai_disabled',
     lastError: 'Local AI is disabled',
   }
 }
 
-function buildDisabledLocalAiCheckFlipSequenceResponse(payload = {}) {
+function buildDisabledLocalAiFlipJudgeResponse(payload = {}) {
   const localAi = getMainLocalAiSettings(payload)
 
   return {
@@ -288,15 +327,40 @@ function buildDisabledLocalAiCheckFlipSequenceResponse(payload = {}) {
     enabled: false,
     status: 'disabled',
     provider: 'local-ai',
-    runtimeType: localAi.runtimeType,
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     model: localAi.model,
-    visionModel: localAi.visionModel,
+    decision: null,
     classification: null,
     confidence: null,
     reason: null,
+    ambiguityFlags: [],
+    ambiguity_flags: [],
+    summary: null,
     sequenceText: null,
+    error: 'local_ai_disabled',
+    lastError: 'Local AI is disabled',
+  }
+}
+
+function buildDisabledLocalAiInfoResponse(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    ok: false,
+    enabled: false,
+    status: 'disabled',
+    provider: 'local-ai',
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
+    adapterStrategy: localAi.adapterStrategy,
+    trainingPolicy: localAi.trainingPolicy,
+    model: localAi.model,
+    models: [],
     error: 'local_ai_disabled',
     lastError: 'Local AI is disabled',
   }
@@ -309,43 +373,50 @@ function buildLocalAiChatPayload(payload = {}) {
   return {
     ...nextPayload,
     mode: localAi.mode,
-    runtimeType: localAi.runtimeType,
     baseUrl: localAi.baseUrl,
     endpoint: localAi.baseUrl,
     model: localAi.model,
+    runtimeFamily: localAi.runtimeFamily,
+    adapterStrategy: localAi.adapterStrategy,
+    trainingPolicy: localAi.trainingPolicy,
   }
 }
 
-function buildLocalAiFlipToTextPayload(payload = {}) {
+function buildLocalAiInfoPayload(payload = {}) {
   const localAi = getMainLocalAiSettings(payload)
   const nextPayload = normalizeLocalAiPayload(payload)
 
   return {
     ...nextPayload,
     mode: localAi.mode,
-    runtimeType: localAi.runtimeType,
     baseUrl: localAi.baseUrl,
     endpoint: localAi.baseUrl,
     model: localAi.model,
-    visionModel: localAi.visionModel,
-    input: pickLocalAiInput(nextPayload),
+    runtimeFamily: localAi.runtimeFamily,
+    adapterStrategy: localAi.adapterStrategy,
+    trainingPolicy: localAi.trainingPolicy,
   }
 }
 
-function buildLocalAiCheckFlipSequencePayload(payload = {}) {
+function buildLocalAiFlipJudgePayload(payload = {}) {
   const localAi = getMainLocalAiSettings(payload)
   const nextPayload = normalizeLocalAiPayload(payload)
 
   return {
     ...nextPayload,
     mode: localAi.mode,
-    runtimeType: localAi.runtimeType,
     baseUrl: localAi.baseUrl,
     endpoint: localAi.baseUrl,
     model: localAi.model,
-    visionModel: localAi.visionModel,
+    runtimeFamily: localAi.runtimeFamily,
+    adapterStrategy: localAi.adapterStrategy,
+    trainingPolicy: localAi.trainingPolicy,
     input: pickLocalAiInput(nextPayload),
   }
+}
+
+function buildLocalAiTrainHookPayload(payload = {}) {
+  return buildLocalAiInfoPayload(payload)
 }
 
 function normalizeImageSearchResult(item) {
@@ -558,6 +629,8 @@ const createMainWindow = () => {
     height: responsiveHeight,
     webPreferences: {
       nodeIntegration: false,
+      contextIsolation: false,
+      sandbox: false,
       preload: join(__dirname, 'preload.js'),
     },
     icon: resolve(__dirname, 'static', 'icon-128@2x.png'),
@@ -746,7 +819,9 @@ function trayIcon() {
 
 if (isMac) {
   nativeTheme.on('updated', () => {
-    tray.setImage(resolve(__dirname, 'static', 'tray', trayIcon()))
+    if (tray) {
+      tray.setImage(resolve(__dirname, 'static', 'tray', trayIcon()))
+    }
   })
 }
 
@@ -774,9 +849,7 @@ const createTray = () => {
   tray.setContextMenu(contextMenu)
 }
 
-// Prepare the renderer once the app is ready
-app.on('ready', async () => {
-  await prepareNext('./renderer')
+async function bootstrapApp() {
   const i18nConfig = getI18nConfig()
 
   i18next.init(i18nConfig, (err) => {
@@ -794,7 +867,15 @@ app.on('ready', async () => {
 
     checkForUpdates()
   })
-})
+}
+
+app
+  .whenReady()
+  .then(bootstrapApp)
+  .catch((error) => {
+    logger.error('Failed to bootstrap Electron runtime', error)
+    app.exit(1)
+  })
 
 if (!app.isDefaultProtocolClient('dna')) {
   // Define custom protocol handler. Deep linking works on packaged versions of the application!
@@ -834,7 +915,14 @@ ipcMain.on('confirm-quit', () => {
   app.quit()
 })
 
-app.on('activate', showMainWindow)
+app.on('activate', () => {
+  if (!mainWindow) {
+    createMainWindow()
+    return
+  }
+
+  showMainWindow()
+})
 
 app.on('window-all-closed', () => {
   if (!isMac) {
@@ -1064,6 +1152,10 @@ autoUpdater.on('update-downloaded', (info) => {
   sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
 })
 
+autoUpdater.on('error', (error) => {
+  logger.error('error while checking UI update', error.toString())
+})
+
 ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   logger.info(`new autoupdate command`, command, data)
   switch (command) {
@@ -1072,11 +1164,13 @@ ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
       break
     }
     case 'update-ui': {
-      if (isWin) {
+      if (isWin && app.isPackaged) {
         didConfirmQuit = true
         autoUpdater.quitAndInstall()
       } else {
-        shell.openExternal('https://www.idena.io/download')
+        shell.openExternal(
+          `https://github.com/${RELEASE_REPOSITORY.owner}/${RELEASE_REPOSITORY.repo}/releases`
+        )
       }
       break
     }
@@ -1099,13 +1193,12 @@ ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   }
 })
 
-const RELEASE_URL =
-  'https://api.github.com/repos/idena-network/idena-desktop/releases/latest'
-
 function checkForUpdates() {
-  if (isDev) {
+  if (isDev || !app.isPackaged || isCheckingForUpdates) {
     return
   }
+
+  isCheckingForUpdates = true
 
   async function runCheck() {
     try {
@@ -1307,6 +1400,17 @@ ipcMain.handle(
   )
 )
 
+ipcMain.handle('localAi.info', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiInfoResponse(payload)
+  }
+
+  return {
+    ...(await localAiManager.info(buildLocalAiInfoPayload(payload))),
+    enabled: true,
+  }
+})
+
 ipcMain.handle('localAi.chat', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiChatResponse(payload)
@@ -1318,14 +1422,25 @@ ipcMain.handle('localAi.chat', async (_event, payload) => {
   }
 })
 
+ipcMain.handle('localAi.flipJudge', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiFlipJudgeResponse(payload)
+  }
+
+  return {
+    ...(await localAiManager.flipJudge(buildLocalAiFlipJudgePayload(payload))),
+    enabled: true,
+  }
+})
+
 ipcMain.handle('localAi.checkFlipSequence', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
-    return buildDisabledLocalAiCheckFlipSequenceResponse(payload)
+    return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
 
   return {
     ...(await localAiManager.checkFlipSequence(
-      buildLocalAiCheckFlipSequencePayload(payload)
+      buildLocalAiFlipJudgePayload(payload)
     )),
     enabled: true,
   }
@@ -1337,9 +1452,7 @@ ipcMain.handle('localAi.flipToText', async (_event, payload) => {
   }
 
   return {
-    ...(await localAiManager.flipToText(
-      buildLocalAiFlipToTextPayload(payload)
-    )),
+    ...(await localAiManager.flipToText(buildLocalAiFlipJudgePayload(payload))),
     enabled: true,
   }
 })
@@ -1359,9 +1472,16 @@ ipcMain.handle(
 )
 
 ipcMain.handle(
+  'localAi.trainHook',
+  withLocalAiEnabled('trainHook', async (_event, payload) =>
+    localAiManager.trainHook(buildLocalAiTrainHookPayload(payload))
+  )
+)
+
+ipcMain.handle(
   'localAi.trainEpoch',
   withLocalAiEnabled('trainEpoch', async (_event, payload) =>
-    localAiManager.trainEpoch(payload)
+    localAiManager.trainEpoch(buildLocalAiTrainHookPayload(payload))
   )
 )
 

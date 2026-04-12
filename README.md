@@ -136,7 +136,9 @@ cp .env.example .env.local
 
 Edit only the values you need. Do not commit `.env.local` or provider keys.
 
-If Electron fails to install correctly, rebuild its downloaded binary:
+`npm start` now launches the Next.js renderer dev server and Electron together.
+
+If Electron or a native addon needs to be rebuilt for the current runtime:
 
 ```bash
 npm rebuild electron
@@ -182,7 +184,9 @@ npm run clean
 npm start
 ```
 
-If Electron fails to install correctly:
+`npm start` now launches the Next.js renderer dev server and Electron together.
+
+If Electron or a native addon needs to be rebuilt for the current runtime:
 
 ```bash
 npm rebuild electron

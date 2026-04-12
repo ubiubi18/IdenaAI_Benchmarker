@@ -2,8 +2,10 @@
 const electron = require('electron')
 
 const {clipboard, nativeImage, ipcRenderer, shell, webFrame} = electron
-
-const isDev = require('electron-is-dev')
+const isDev =
+  process.env.NODE_ENV === 'development' ||
+  process.env.ELECTRON_IS_DEV === '1' ||
+  process.defaultApp === true
 
 const levelup = require('levelup')
 const leveldown = require('leveldown')
@@ -86,7 +88,10 @@ process.once('loaded', () => {
     start: (payload) => ipcRenderer.invoke('localAi.start', payload),
     stop: () => ipcRenderer.invoke('localAi.stop'),
     listModels: (payload) => ipcRenderer.invoke('localAi.listModels', payload),
+    info: (payload) => ipcRenderer.invoke('localAi.info', payload),
     chat: (payload) => ipcRenderer.invoke('localAi.chat', payload),
+    flipJudge: (payload) => ipcRenderer.invoke('localAi.flipJudge', payload),
+    trainHook: (payload) => ipcRenderer.invoke('localAi.trainHook', payload),
     checkFlipSequence: (payload) =>
       ipcRenderer.invoke('localAi.checkFlipSequence', payload),
     flipToText: (payload) => ipcRenderer.invoke('localAi.flipToText', payload),
