@@ -2,6 +2,14 @@ const crypto = require('crypto')
 const path = require('path')
 const fs = require('fs-extra')
 
+const TRAINING_PACKAGE_REVIEW_STATUSES = new Set([
+  'draft',
+  'reviewed',
+  'approved',
+  'rejected',
+])
+const NO_FALLBACK = Symbol('no-local-ai-storage-fallback')
+
 let appDataPath = null
 
 try {
@@ -61,6 +69,62 @@ function sanitizeForPersistence(filePath, obj) {
   return obj
 }
 
+function normalizeTrainingPackageReviewStatus(value, fallback = 'draft') {
+  const nextStatus = String(value || fallback)
+    .trim()
+    .toLowerCase()
+
+  if (!TRAINING_PACKAGE_REVIEW_STATUSES.has(nextStatus)) {
+    return fallback
+  }
+
+  return nextStatus
+}
+
+function normalizeTrainingPackageReviewedAt(value, reviewStatus) {
+  if (reviewStatus === 'draft') {
+    return null
+  }
+
+  const raw = String(value || '').trim()
+
+  if (!raw) {
+    return null
+  }
+
+  const nextDate = new Date(raw)
+
+  if (!Number.isFinite(nextDate.getTime())) {
+    return null
+  }
+
+  return nextDate.toISOString()
+}
+
+function normalizeTrainingCandidatePackage(packageData) {
+  if (
+    !packageData ||
+    typeof packageData !== 'object' ||
+    Array.isArray(packageData)
+  ) {
+    return packageData
+  }
+
+  const reviewStatus = normalizeTrainingPackageReviewStatus(
+    packageData.reviewStatus,
+    'draft'
+  )
+
+  return {
+    ...packageData,
+    reviewStatus,
+    reviewedAt: normalizeTrainingPackageReviewedAt(
+      packageData.reviewedAt,
+      reviewStatus
+    ),
+  }
+}
+
 function createLocalAiStorage({
   baseDir,
   getUserDataPath = resolveUserDataPath,
@@ -69,8 +133,8 @@ function createLocalAiStorage({
     return baseDir || path.join(getUserDataPath(), 'local-ai')
   }
 
-  function resolveLocalAiPath() {
-    return path.join(resolveBaseDir(), ...arguments)
+  function resolveLocalAiPath(...segments) {
+    return path.join(resolveBaseDir(), ...segments)
   }
 
   async function ensureDir(dirPath) {
@@ -124,6 +188,59 @@ function createLocalAiStorage({
     }
   }
 
+  async function readTrainingCandidatePackage(
+    filePath,
+    fallbackValue = NO_FALLBACK
+  ) {
+    try {
+      return normalizeTrainingCandidatePackage(await readJson(filePath))
+    } catch (error) {
+      if (error && error.code === 'ENOENT' && fallbackValue !== NO_FALLBACK) {
+        if (fallbackValue === null) {
+          return null
+        }
+
+        return normalizeTrainingCandidatePackage(fallbackValue)
+      }
+
+      throw error
+    }
+  }
+
+  async function updateTrainingCandidatePackageReview(filePath, review = {}) {
+    const targetPath = String(filePath || '').trim()
+
+    if (!targetPath) {
+      throw new Error('filePath is required')
+    }
+
+    const reviewStatus = normalizeTrainingPackageReviewStatus(
+      review.reviewStatus,
+      ''
+    )
+
+    if (!TRAINING_PACKAGE_REVIEW_STATUSES.has(reviewStatus)) {
+      throw new Error('reviewStatus is invalid')
+    }
+
+    const currentPackage = await readTrainingCandidatePackage(targetPath)
+    const nextPackage = {
+      ...currentPackage,
+      reviewStatus,
+      reviewedAt:
+        reviewStatus === 'draft'
+          ? null
+          : normalizeTrainingPackageReviewedAt(
+              review.reviewedAt || new Date().toISOString(),
+              reviewStatus
+            ),
+    }
+
+    await writeJsonAtomic(targetPath, nextPackage)
+
+    return normalizeTrainingCandidatePackage(nextPackage)
+  }
+
   async function writeBuffer(filePath, buffer) {
     const targetPath = String(filePath || '').trim()
 
@@ -139,7 +256,10 @@ function createLocalAiStorage({
   }
 
   function sha256(bufferOrString) {
-    if (!Buffer.isBuffer(bufferOrString) && typeof bufferOrString !== 'string') {
+    if (
+      !Buffer.isBuffer(bufferOrString) &&
+      typeof bufferOrString !== 'string'
+    ) {
       throw new TypeError('sha256 expects a Buffer or string input')
     }
 
@@ -150,8 +270,10 @@ function createLocalAiStorage({
     ensureDir,
     exists,
     readJson,
+    readTrainingCandidatePackage,
     resolveLocalAiPath,
     sha256,
+    updateTrainingCandidatePackageReview,
     writeBuffer,
     writeJsonAtomic,
   }

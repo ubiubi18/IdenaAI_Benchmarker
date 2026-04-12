@@ -90,11 +90,19 @@ process.once('loaded', () => {
     checkFlipSequence: (payload) =>
       ipcRenderer.invoke('localAi.checkFlipSequence', payload),
     flipToText: (payload) => ipcRenderer.invoke('localAi.flipToText', payload),
-    captionFlip: (payload) => ipcRenderer.invoke('localAi.captionFlip', payload),
+    captionFlip: (payload) =>
+      ipcRenderer.invoke('localAi.captionFlip', payload),
     ocrImage: (payload) => ipcRenderer.invoke('localAi.ocrImage', payload),
     trainEpoch: (payload) => ipcRenderer.invoke('localAi.trainEpoch', payload),
+    loadTrainingCandidatePackage: (payload) =>
+      ipcRenderer.invoke('localAi.loadTrainingCandidatePackage', payload),
     buildTrainingCandidatePackage: (payload) =>
       ipcRenderer.invoke('localAi.buildTrainingCandidatePackage', payload),
+    updateTrainingCandidatePackageReview: (payload) =>
+      ipcRenderer.invoke(
+        'localAi.updateTrainingCandidatePackageReview',
+        payload
+      ),
   }
 
   global.flipStore = flips

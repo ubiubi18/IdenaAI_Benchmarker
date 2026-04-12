@@ -251,6 +251,8 @@ describe('local-ai manager', () => {
       schemaVersion: 1,
       packageType: 'local-ai-training-candidates',
       epoch: 12,
+      reviewStatus: 'draft',
+      reviewedAt: null,
       eligibleCount: 1,
       excludedCount: 3,
     })
@@ -338,6 +340,80 @@ describe('local-ai manager', () => {
       expect.objectContaining({
         flipHash: 'flip-b',
         epoch: 12,
+      })
+    )
+  })
+
+  it('loads saved training-candidate packages and defaults missing review state to draft', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'training-candidates',
+      'epoch-12-candidates.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-training-candidates',
+      epoch: 12,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [{flipHash: 'flip-a', finalAnswer: 'left'}],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await expect(
+      manager.loadTrainingCandidatePackage({epoch: 12})
+    ).resolves.toMatchObject({
+      epoch: 12,
+      eligibleCount: 1,
+      excludedCount: 0,
+      packagePath: filePath,
+      package: expect.objectContaining({
+        reviewStatus: 'draft',
+        reviewedAt: null,
+      }),
+    })
+  })
+
+  it('updates saved training-candidate review status locally', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'training-candidates',
+      'epoch-12-candidates.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-training-candidates',
+      epoch: 12,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [{flipHash: 'flip-a', finalAnswer: 'left'}],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const result = await manager.updateTrainingCandidatePackageReview({
+      epoch: 12,
+      reviewStatus: 'approved',
+    })
+
+    expect(result).toMatchObject({
+      epoch: 12,
+      eligibleCount: 1,
+      excludedCount: 0,
+      packagePath: filePath,
+      package: expect.objectContaining({
+        reviewStatus: 'approved',
+        reviewedAt: expect.any(String),
+      }),
+    })
+    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        reviewStatus: 'approved',
+        reviewedAt: expect.any(String),
       })
     )
   })

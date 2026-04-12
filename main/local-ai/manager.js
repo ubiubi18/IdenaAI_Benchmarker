@@ -23,6 +23,18 @@ function normalizeRuntimePayload(payload) {
     : {}
 }
 
+function pickRuntimeInput(payload) {
+  if (typeof payload.input !== 'undefined') {
+    return payload.input
+  }
+
+  if (typeof payload.payload !== 'undefined') {
+    return payload.payload
+  }
+
+  return payload
+}
+
 function normalizeEpoch(value) {
   const epoch = Number.parseInt(value, 10)
   return Number.isFinite(epoch) ? epoch : null
@@ -118,8 +130,9 @@ function normalizeCapture(item) {
     epoch: normalizeEpoch(item.epoch),
     sessionType: normalizeSessionType(item.sessionType),
     panelCount: normalizePanelCount(item.panelCount),
-    timestamp:
-      Number.isFinite(Number(item.timestamp)) ? Number(item.timestamp) : Date.now(),
+    timestamp: Number.isFinite(Number(item.timestamp))
+      ? Number(item.timestamp)
+      : Date.now(),
     capturedAt:
       String(item.capturedAt || '').trim() || new Date().toISOString(),
     consensus: normalizeConsensus(item.consensus),
@@ -566,12 +579,7 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       runtimeType: next.runtimeType,
       visionModel: next.visionModel,
       model: next.model,
-      input:
-        typeof next.input !== 'undefined'
-          ? next.input
-          : typeof next.payload !== 'undefined'
-          ? next.payload
-          : next,
+      input: pickRuntimeInput(next),
       timeoutMs: next.timeoutMs,
     })
 
@@ -599,12 +607,7 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       runtimeType: next.runtimeType,
       visionModel: next.visionModel,
       model: next.model,
-      input:
-        typeof next.input !== 'undefined'
-          ? next.input
-          : typeof next.payload !== 'undefined'
-          ? next.payload
-          : next,
+      input: pickRuntimeInput(next),
       timeoutMs: next.timeoutMs,
     })
 
@@ -896,6 +899,8 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       packageType: 'local-ai-training-candidates',
       epoch,
       createdAt: new Date().toISOString(),
+      reviewStatus: 'draft',
+      reviewedAt: null,
       eligibleCount: items.length,
       excludedCount: excluded.length,
       inconsistencyFlags,
@@ -923,6 +928,77 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     }
   }
 
+  async function loadTrainingCandidatePackage(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const nextPackagePath = trainingCandidatePackagePath(localAiStorage, epoch)
+    const candidatePackage = await localAiStorage.readTrainingCandidatePackage(
+      nextPackagePath,
+      null
+    )
+
+    if (!candidatePackage) {
+      throw new Error('Training candidate package is unavailable')
+    }
+
+    return {
+      epoch,
+      eligibleCount: Number(candidatePackage.eligibleCount) || 0,
+      excludedCount: Number(candidatePackage.excludedCount) || 0,
+      packagePath: nextPackagePath,
+      package: candidatePackage,
+    }
+  }
+
+  async function updateTrainingCandidatePackageReview(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const nextPackagePath = trainingCandidatePackagePath(localAiStorage, epoch)
+    let candidatePackage
+
+    try {
+      candidatePackage =
+        await localAiStorage.updateTrainingCandidatePackageReview(
+          nextPackagePath,
+          {
+            reviewStatus: next.reviewStatus,
+          }
+        )
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        throw new Error('Training candidate package is unavailable')
+      }
+
+      throw error
+    }
+
+    return {
+      epoch,
+      eligibleCount: Number(candidatePackage.eligibleCount) || 0,
+      excludedCount: Number(candidatePackage.excludedCount) || 0,
+      packagePath: nextPackagePath,
+      package: candidatePackage,
+    }
+  }
+
   return {
     status,
     start,
@@ -937,6 +1013,8 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     captureFlip,
     buildManifest,
     buildTrainingCandidatePackage,
+    loadTrainingCandidatePackage,
+    updateTrainingCandidatePackageReview,
   }
 }
 

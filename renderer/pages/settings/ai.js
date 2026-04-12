@@ -352,6 +352,48 @@ function formatLocalAiTrainingPackageTimestamp(value) {
   return nextDate.toLocaleString()
 }
 
+function normalizeLocalAiTrainingPackageReviewStatus(value) {
+  const reviewStatus = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  switch (reviewStatus) {
+    case 'reviewed':
+    case 'approved':
+    case 'rejected':
+      return reviewStatus
+    case 'draft':
+    default:
+      return 'draft'
+  }
+}
+
+function describeLocalAiTrainingPackageReviewStatus(status, t) {
+  switch (normalizeLocalAiTrainingPackageReviewStatus(status)) {
+    case 'reviewed':
+      return {
+        label: t('Reviewed'),
+        color: 'blue.500',
+      }
+    case 'approved':
+      return {
+        label: t('Approved'),
+        color: 'green.500',
+      }
+    case 'rejected':
+      return {
+        label: t('Rejected'),
+        color: 'red.500',
+      }
+    case 'draft':
+    default:
+      return {
+        label: t('Draft'),
+        color: 'orange.500',
+      }
+  }
+}
+
 function LocalAiDebugResult({label, result}) {
   if (!result) {
     return null
@@ -483,6 +525,8 @@ export default function AiSettingsPage() {
   const [localAiPackageEpoch, setLocalAiPackageEpoch] = useState('')
   const [isLoadingLocalAiPackage, setIsLoadingLocalAiPackage] = useState(false)
   const [isExportingLocalAiPackage, setIsExportingLocalAiPackage] =
+    useState(false)
+  const [isUpdatingLocalAiPackageReview, setIsUpdatingLocalAiPackageReview] =
     useState(false)
   const [localAiPackagePreview, setLocalAiPackagePreview] = useState(null)
   const [localAiPackageExportPath, setLocalAiPackageExportPath] = useState('')
@@ -811,14 +855,48 @@ export default function AiSettingsPage() {
       setLocalAiPackageError('')
 
       try {
-        const result =
-          await ensureLocalAiBridge().buildTrainingCandidatePackage({
-            epoch,
-            includePackage,
-          })
+        const bridge = ensureLocalAiBridge()
+        let result = null
+
+        if (includePackage) {
+          try {
+            result = await bridge.loadTrainingCandidatePackage({epoch})
+          } catch (error) {
+            const message = formatErrorForToast(error)
+
+            if (!/training candidate package is unavailable/i.test(message)) {
+              throw error
+            }
+
+            result = await bridge.buildTrainingCandidatePackage({
+              epoch,
+              includePackage: true,
+            })
+          }
+        } else {
+          try {
+            result = await bridge.loadTrainingCandidatePackage({epoch})
+          } catch (error) {
+            const message = formatErrorForToast(error)
+
+            if (!/training candidate package is unavailable/i.test(message)) {
+              throw error
+            }
+
+            result = await bridge.buildTrainingCandidatePackage({
+              epoch,
+              includePackage: false,
+            })
+          }
+        }
 
         if (includePackage) {
           setLocalAiPackagePreview(result)
+          setLocalAiPackageExportPath(
+            String(
+              result && result.packagePath ? result.packagePath : ''
+            ).trim()
+          )
         } else {
           setLocalAiPackageExportPath(
             String(
@@ -841,6 +919,40 @@ export default function AiSettingsPage() {
         } else {
           setIsExportingLocalAiPackage(false)
         }
+      }
+    },
+    [localAiPackageEpoch, t]
+  )
+
+  const updateLocalAiTrainingPackageReviewStatus = useCallback(
+    async (reviewStatus) => {
+      const epoch = String(localAiPackageEpoch || '').trim()
+
+      if (!epoch) {
+        setLocalAiPackageError(
+          t('Enter an epoch before updating the package review status.')
+        )
+        return
+      }
+
+      setIsUpdatingLocalAiPackageReview(true)
+      setLocalAiPackageError('')
+
+      try {
+        const result =
+          await ensureLocalAiBridge().updateTrainingCandidatePackageReview({
+            epoch,
+            reviewStatus,
+          })
+
+        setLocalAiPackagePreview(result)
+        setLocalAiPackageExportPath(
+          String(result && result.packagePath ? result.packagePath : '').trim()
+        )
+      } catch (error) {
+        setLocalAiPackageError(formatErrorForToast(error))
+      } finally {
+        setIsUpdatingLocalAiPackageReview(false)
       }
     },
     [localAiPackageEpoch, t]
@@ -1043,6 +1155,16 @@ export default function AiSettingsPage() {
     providerKeyStatus.requiredProviders,
     t,
   ])
+  const localAiPackageReviewStatusUi = useMemo(
+    () =>
+      describeLocalAiTrainingPackageReviewStatus(
+        localAiPackagePreview &&
+          localAiPackagePreview.package &&
+          localAiPackagePreview.package.reviewStatus,
+        t
+      ),
+    [localAiPackagePreview, t]
+  )
 
   return (
     <SettingsLayout>
@@ -2524,6 +2646,20 @@ export default function AiSettingsPage() {
                               <Text fontWeight={500}>
                                 {t('Package metadata')}
                               </Text>
+                              <Text
+                                color={localAiPackageReviewStatusUi.color}
+                                fontSize="sm"
+                                fontWeight={600}
+                              >
+                                {t('Review status')}:{' '}
+                                {localAiPackageReviewStatusUi.label}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Reviewed at')}:{' '}
+                                {formatLocalAiTrainingPackageTimestamp(
+                                  localAiPackagePreview.package.reviewedAt
+                                )}
+                              </Text>
                               <Text color="muted" fontSize="sm">
                                 {t('Schema version')}:{' '}
                                 {localAiPackagePreview.package.schemaVersion}
@@ -2550,6 +2686,60 @@ export default function AiSettingsPage() {
                                 {t('Package path')}:{' '}
                                 {localAiPackagePreview.packagePath}
                               </Text>
+                              <Text color="muted" fontSize="xs">
+                                {t(
+                                  'Only approved packages should be used for future federated workflows.'
+                                )}
+                              </Text>
+                            </Stack>
+
+                            <Stack isInline spacing={2}>
+                              <SecondaryButton
+                                isDisabled={isUpdatingLocalAiPackageReview}
+                                isLoading={
+                                  isUpdatingLocalAiPackageReview &&
+                                  normalizeLocalAiTrainingPackageReviewStatus(
+                                    localAiPackagePreview.package.reviewStatus
+                                  ) === 'draft'
+                                }
+                                onClick={() =>
+                                  updateLocalAiTrainingPackageReviewStatus(
+                                    'draft'
+                                  )
+                                }
+                              >
+                                {t('Mark Draft')}
+                              </SecondaryButton>
+                              <SecondaryButton
+                                isDisabled={isUpdatingLocalAiPackageReview}
+                                onClick={() =>
+                                  updateLocalAiTrainingPackageReviewStatus(
+                                    'reviewed'
+                                  )
+                                }
+                              >
+                                {t('Mark Reviewed')}
+                              </SecondaryButton>
+                              <SecondaryButton
+                                isDisabled={isUpdatingLocalAiPackageReview}
+                                onClick={() =>
+                                  updateLocalAiTrainingPackageReviewStatus(
+                                    'approved'
+                                  )
+                                }
+                              >
+                                {t('Approve')}
+                              </SecondaryButton>
+                              <SecondaryButton
+                                isDisabled={isUpdatingLocalAiPackageReview}
+                                onClick={() =>
+                                  updateLocalAiTrainingPackageReviewStatus(
+                                    'rejected'
+                                  )
+                                }
+                              >
+                                {t('Reject')}
+                              </SecondaryButton>
                             </Stack>
 
                             <Stack spacing={2}>

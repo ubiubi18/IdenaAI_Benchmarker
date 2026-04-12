@@ -250,6 +250,11 @@ Typical research workflows include:
 - Off-chain Benchmark: tests solver behavior on local/sample flips
 - On-chain Automatic Flow: experimental automation for real validation flows
 
+Local AI also includes a local-only post-consensus training-package flow. New
+packages start as `draft` and can be marked `reviewed`, `approved`, or
+`rejected` locally in the settings UI. This is still review state only: not
+training, not federated sharing, and not cloud upload.
+
 Cheap or very small models failed most often in early testing. If results are poor, try different providers, models, and advanced settings, but watch cost and latency.
 
 ## Repository Layout

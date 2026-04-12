@@ -115,8 +115,41 @@ function loadMainSettings() {
   }
 }
 
+function pickTrimmedString(values, fallback = '') {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const text = value.trim()
+
+      if (text) {
+        return text
+      }
+    }
+  }
+
+  return fallback
+}
+
+function normalizeLocalAiPayload(payload = {}) {
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload
+    : {}
+}
+
+function pickLocalAiInput(nextPayload) {
+  if (typeof nextPayload.input !== 'undefined') {
+    return nextPayload.input
+  }
+
+  if (typeof nextPayload.payload !== 'undefined') {
+    return nextPayload.payload
+  }
+
+  return nextPayload
+}
+
 function getMainLocalAiSettings(payload = {}) {
   const settings = loadMainSettings()
+  const nextPayload = normalizeLocalAiPayload(payload)
   const localAi =
     settings && settings.localAi && typeof settings.localAi === 'object'
       ? settings.localAi
@@ -124,32 +157,25 @@ function getMainLocalAiSettings(payload = {}) {
 
   return {
     enabled: localAi.enabled === true,
-    mode: String(localAi.runtimeMode || payload.mode || 'sidecar').trim() || 'sidecar',
-    runtimeType:
-      String(localAi.runtimeType || payload.runtimeType || 'ollama').trim() ||
-      'ollama',
-    baseUrl:
-      typeof localAi.endpoint === 'string'
-        ? localAi.endpoint.trim()
-        : typeof localAi.baseUrl === 'string'
-        ? localAi.baseUrl.trim()
-        : typeof payload.endpoint === 'string'
-        ? payload.endpoint.trim()
-        : typeof payload.baseUrl === 'string'
-        ? payload.baseUrl.trim()
-        : 'http://127.0.0.1:11434',
-    model:
-      typeof localAi.model === 'string'
-        ? localAi.model.trim()
-        : typeof payload.model === 'string'
-        ? payload.model.trim()
-        : '',
-    visionModel:
-      typeof localAi.visionModel === 'string'
-        ? localAi.visionModel.trim()
-        : typeof payload.visionModel === 'string'
-        ? payload.visionModel.trim()
-        : 'moondream',
+    mode: pickTrimmedString([localAi.runtimeMode, nextPayload.mode], 'sidecar'),
+    runtimeType: pickTrimmedString(
+      [localAi.runtimeType, nextPayload.runtimeType],
+      'ollama'
+    ),
+    baseUrl: pickTrimmedString(
+      [
+        localAi.endpoint,
+        localAi.baseUrl,
+        nextPayload.endpoint,
+        nextPayload.baseUrl,
+      ],
+      'http://127.0.0.1:11434'
+    ),
+    model: pickTrimmedString([localAi.model, nextPayload.model], ''),
+    visionModel: pickTrimmedString(
+      [localAi.visionModel, nextPayload.visionModel],
+      'moondream'
+    ),
   }
 }
 
@@ -193,8 +219,13 @@ function buildDisabledLocalAiStatus(payload = {}) {
 
 function buildLocalAiStatusResponse(result = {}) {
   const reachable = result.sidecarReachable
-  const status =
-    reachable === true ? 'ok' : reachable === false ? 'error' : 'checking'
+  let status = 'checking'
+
+  if (reachable === true) {
+    status = 'ok'
+  } else if (reachable === false) {
+    status = 'error'
+  }
 
   return {
     ...result,
@@ -273,8 +304,7 @@ function buildDisabledLocalAiCheckFlipSequenceResponse(payload = {}) {
 
 function buildLocalAiChatPayload(payload = {}) {
   const localAi = getMainLocalAiSettings(payload)
-  const nextPayload =
-    payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+  const nextPayload = normalizeLocalAiPayload(payload)
 
   return {
     ...nextPayload,
@@ -288,8 +318,7 @@ function buildLocalAiChatPayload(payload = {}) {
 
 function buildLocalAiFlipToTextPayload(payload = {}) {
   const localAi = getMainLocalAiSettings(payload)
-  const nextPayload =
-    payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+  const nextPayload = normalizeLocalAiPayload(payload)
 
   return {
     ...nextPayload,
@@ -299,19 +328,13 @@ function buildLocalAiFlipToTextPayload(payload = {}) {
     endpoint: localAi.baseUrl,
     model: localAi.model,
     visionModel: localAi.visionModel,
-    input:
-      typeof nextPayload.input !== 'undefined'
-        ? nextPayload.input
-        : typeof nextPayload.payload !== 'undefined'
-        ? nextPayload.payload
-        : nextPayload,
+    input: pickLocalAiInput(nextPayload),
   }
 }
 
 function buildLocalAiCheckFlipSequencePayload(payload = {}) {
   const localAi = getMainLocalAiSettings(payload)
-  const nextPayload =
-    payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+  const nextPayload = normalizeLocalAiPayload(payload)
 
   return {
     ...nextPayload,
@@ -321,12 +344,7 @@ function buildLocalAiCheckFlipSequencePayload(payload = {}) {
     endpoint: localAi.baseUrl,
     model: localAi.model,
     visionModel: localAi.visionModel,
-    input:
-      typeof nextPayload.input !== 'undefined'
-        ? nextPayload.input
-        : typeof nextPayload.payload !== 'undefined'
-        ? nextPayload.payload
-        : nextPayload,
+    input: pickLocalAiInput(nextPayload),
   }
 }
 
@@ -1262,16 +1280,13 @@ ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
   }
 })
 
-ipcMain.handle(
-  'localAi.status',
-  async (_event, payload) => {
-    if (!isLocalAiEnabled(loadMainSettings())) {
-      return buildDisabledLocalAiStatus(payload)
-    }
-
-    return buildLocalAiStatusResponse(await localAiManager.status(payload))
+ipcMain.handle('localAi.status', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiStatus(payload)
   }
-)
+
+  return buildLocalAiStatusResponse(await localAiManager.status(payload))
+})
 
 ipcMain.handle(
   'localAi.start',
@@ -1292,51 +1307,42 @@ ipcMain.handle(
   )
 )
 
-ipcMain.handle(
-  'localAi.chat',
-  async (_event, payload) => {
-    if (!isLocalAiEnabled(loadMainSettings())) {
-      return buildDisabledLocalAiChatResponse(payload)
-    }
-
-    return {
-      ...(await localAiManager.chat(buildLocalAiChatPayload(payload))),
-      enabled: true,
-    }
+ipcMain.handle('localAi.chat', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiChatResponse(payload)
   }
-)
 
-ipcMain.handle(
-  'localAi.checkFlipSequence',
-  async (_event, payload) => {
-    if (!isLocalAiEnabled(loadMainSettings())) {
-      return buildDisabledLocalAiCheckFlipSequenceResponse(payload)
-    }
-
-    return {
-      ...(await localAiManager.checkFlipSequence(
-        buildLocalAiCheckFlipSequencePayload(payload)
-      )),
-      enabled: true,
-    }
+  return {
+    ...(await localAiManager.chat(buildLocalAiChatPayload(payload))),
+    enabled: true,
   }
-)
+})
 
-ipcMain.handle(
-  'localAi.flipToText',
-  async (_event, payload) => {
-    if (!isLocalAiEnabled(loadMainSettings())) {
-      return buildDisabledLocalAiFlipToTextResponse(payload)
-    }
-
-    return {
-      ...(await localAiManager.flipToText(
-        buildLocalAiFlipToTextPayload(payload)
-      )),
-      enabled: true,
-    }
+ipcMain.handle('localAi.checkFlipSequence', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiCheckFlipSequenceResponse(payload)
   }
-)
+
+  return {
+    ...(await localAiManager.checkFlipSequence(
+      buildLocalAiCheckFlipSequencePayload(payload)
+    )),
+    enabled: true,
+  }
+})
+
+ipcMain.handle('localAi.flipToText', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiFlipToTextResponse(payload)
+  }
+
+  return {
+    ...(await localAiManager.flipToText(
+      buildLocalAiFlipToTextPayload(payload)
+    )),
+    enabled: true,
+  }
+})
 
 ipcMain.handle(
   'localAi.captionFlip',
@@ -1367,9 +1373,25 @@ ipcMain.handle(
 )
 
 ipcMain.handle(
+  'localAi.loadTrainingCandidatePackage',
+  withLocalAiEnabled('loadTrainingCandidatePackage', async (_event, payload) =>
+    localAiManager.loadTrainingCandidatePackage(payload)
+  )
+)
+
+ipcMain.handle(
   'localAi.buildTrainingCandidatePackage',
   withLocalAiEnabled('buildTrainingCandidatePackage', async (_event, payload) =>
     localAiManager.buildTrainingCandidatePackage(payload)
+  )
+)
+
+ipcMain.handle(
+  'localAi.updateTrainingCandidatePackageReview',
+  withLocalAiEnabled(
+    'updateTrainingCandidatePackageReview',
+    async (_event, payload) =>
+      localAiManager.updateTrainingCandidatePackageReview(payload)
   )
 )
 

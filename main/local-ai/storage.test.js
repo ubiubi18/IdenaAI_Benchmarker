@@ -124,6 +124,124 @@ describe('local-ai storage', () => {
     })
   })
 
+  it('treats existing packages without reviewStatus as draft', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'training-candidates',
+      'epoch-12-candidates.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      epoch: 12,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [],
+      excluded: [],
+    })
+
+    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        schemaVersion: 1,
+        epoch: 12,
+        reviewStatus: 'draft',
+        reviewedAt: null,
+      })
+    )
+  })
+
+  it('persists reviewed package status updates', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'training-candidates',
+      'epoch-12-candidates.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      epoch: 12,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [],
+      excluded: [],
+    })
+
+    const result = await storage.updateTrainingCandidatePackageReview(filePath, {
+      reviewStatus: 'reviewed',
+    })
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        reviewStatus: 'reviewed',
+        reviewedAt: expect.any(String),
+      })
+    )
+    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        reviewStatus: 'reviewed',
+        reviewedAt: expect.any(String),
+      })
+    )
+  })
+
+  it('persists approved package status updates', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'training-candidates',
+      'epoch-12-candidates.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      epoch: 12,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [],
+      excluded: [],
+    })
+
+    await storage.updateTrainingCandidatePackageReview(filePath, {
+      reviewStatus: 'approved',
+    })
+
+    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        reviewStatus: 'approved',
+        reviewedAt: expect.any(String),
+      })
+    )
+  })
+
+  it('persists rejected package status updates', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'training-candidates',
+      'epoch-12-candidates.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      epoch: 12,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [],
+      excluded: [],
+    })
+
+    await storage.updateTrainingCandidatePackageReview(filePath, {
+      reviewStatus: 'rejected',
+    })
+
+    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        reviewStatus: 'rejected',
+        reviewedAt: expect.any(String),
+      })
+    )
+  })
+
   it('hashes strings and buffers', () => {
     expect(storage.sha256('hello')).toBe(
       '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
