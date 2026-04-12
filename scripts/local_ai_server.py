@@ -38,6 +38,7 @@ class LocalAiHandler(BaseHTTPRequestHandler):
                 self,
                 200,
                 {
+                    "status": "ok",
                     "ok": True,
                     "service": "local-ai-sidecar-stub",
                     "generatedAt": int(time.time()),

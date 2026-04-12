@@ -22,20 +22,31 @@ Implemented now:
 - conservative epoch manifest generation
 - local bundle build and local bundle import
 - replay protection and base-model compatibility checks
+- safe bundle rejection handling with observable accepted/rejected outcomes
 - guarded aggregation that stays honest when real deltas do not exist yet
 - optional local sidecar interface for health, models, chat, caption, OCR, and
   training calls
+- Ollama-backed Local AI chat and image-aware `flipToText` inference
+- advisory Local AI flip checker with `consistent` / `ambiguous` /
+  `inconsistent` sequence classifications
+- post-consensus Local AI training-candidate packaging for eligible local items
 - focused Jest tests for the Local AI plumbing
 
 Still placeholder or stubbed:
 
 - sidecar `caption`, `ocr`, and `train` are interface-only or stub-only
+- `flipToText` uses Ollama vision with `moondream` as the default local vision
+  model; OCR is still not implemented
+- image-aware `flipToText` and the flip checker use a 2-stage local pipeline:
+  panel captions first, then ordered sequence reduction/checking
 - main-process signing verification does not yet perform full Node-RPC trust
   validation
 - update bundles are still metadata-first and currently use `deltaType: "none"`
   by default
 - aggregation currently produces a `metadata_only_noop` result until real
   adapter/LoRA deltas exist
+- training-candidate packaging is preparation only: no training, no model
+  deltas, and no federated exchange are performed yet
 - no relay/coordinator networking, automated sharing, or federated aggregation
   protocol exists yet
 
@@ -63,19 +74,33 @@ Still placeholder or stubbed:
    result. At the current MVP stage this remains a guarded no-op when no real
    deltas are present.
 10. `main/local-ai/sidecar.js` provides the optional local runtime interface.
-    The existing cloud provider bridge is not replaced.
+    The current Ollama-backed `chat` path operates on text, and
+    `flipToText` uses local vision inference with the configured Ollama vision
+    model. The Local AI flip checker is advisory only and does not make final
+    solve decisions. The existing cloud provider bridge is not replaced.
+11. `buildTrainingCandidatePackage(epoch)` creates a local-only package from
+    eligible finalized captures after the available final-consensus signal is
+    present. Reported, unresolved, and invalid items are excluded when those
+    signals are available.
 
 ## Trust Boundaries And Safety Rules
 
 - Raw/private flips remain local.
+- Raw/private flip images in the current `flipToText` path are processed only
+  through the local Ollama runtime and are not uploaded through a cloud path.
+- Raw/private flip images used by the advisory checker also remain local and are
+  not uploaded through a cloud path.
 - The MVP local path does not upload bundles, captures, manifests, or
   aggregation outputs anywhere.
 - Future unknown flips must remain private until consensus is available.
 - Training eligibility is conservative:
   - no final consensus means exclusion
   - reported flips are excluded
+  - invalid/rejected consensus answers are excluded
   - epoch mismatches are excluded
   - missing local metadata is excluded
+- Training-candidate packages contain only safe local metadata and consensus
+  labels. Raw/private flip images are not included.
 - Bundle acceptance is gated by:
   - schema validation
   - base model ID/hash compatibility
@@ -83,6 +108,8 @@ Still placeholder or stubbed:
   - nonce replay protection
   - duplicate bundle detection
   - rejection of raw image payloads
+- malformed or rejected bundles fail closed and are not added to accepted local
+  bundle storage
 - Placeholder signatures are integrity-only, not production-grade identity
   proof.
 - Cloud-provider behavior should remain unchanged unless Local AI is explicitly
@@ -108,8 +135,8 @@ Still placeholder or stubbed:
 - local sidecar script is a small stub, not a real training runtime
 - placeholder signature handling is explicit but not yet equivalent to real
   verifier-backed identity checks
-- aggregation records readiness and compatibility but does not merge real model
-  deltas yet
+- aggregation records readiness, accepted/rejected counts, and compatibility but
+  does not merge real model deltas yet
 
 ### Later phases
 

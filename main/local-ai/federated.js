@@ -419,6 +419,8 @@ function buildAggregationSummary({
     minimumCompatibleBundles: MIN_COMPATIBLE_BUNDLES,
     compatibleCount: compatibleBundles.length,
     skippedCount: skipped.length,
+    acceptedCount: compatibleBundles.length,
+    rejectedCount: skipped.length,
     deltaAvailability,
     reason,
     generatedAt: new Date().toISOString(),
@@ -431,6 +433,94 @@ function buildAggregationSummary({
     })),
     skipped,
   }
+}
+
+function buildImportResult({
+  accepted,
+  reason,
+  identity = null,
+  epoch = null,
+  bundlePath = null,
+  storedPath = null,
+  bundleId = null,
+  signed,
+  signatureType = null,
+}) {
+  const result = {
+    accepted,
+    reason,
+    identity,
+    epoch,
+    bundlePath,
+    storedPath,
+    acceptedCount: accepted ? 1 : 0,
+    rejectedCount: accepted ? 0 : 1,
+  }
+
+  if (bundleId) {
+    result.bundleId = bundleId
+  }
+
+  if (typeof signed === 'boolean') {
+    result.signed = signed
+  }
+
+  if (signatureType) {
+    result.signatureType = signatureType
+  }
+
+  return result
+}
+
+function logAcceptedBundles(logger, acceptedBundles) {
+  if (!logger || typeof logger.debug !== 'function') {
+    return
+  }
+
+  acceptedBundles.forEach((entry, index) => {
+    logger.debug('Local AI accepted bundle observed', {
+      index,
+      bundleId: entry.bundleId,
+      epoch: entry.epoch,
+      fileName: path.basename(entry.storedPath),
+    })
+  })
+}
+
+function logRejectedBundles(logger, skipped) {
+  if (!logger || typeof logger.debug !== 'function') {
+    return
+  }
+
+  skipped.forEach((entry, index) => {
+    logger.debug('Local AI bundle rejected during aggregation', {
+      index,
+      bundleId: entry.bundleId,
+      reason: entry.reason,
+    })
+  })
+}
+
+function logImportResult(logger, result) {
+  if (!logger || typeof logger.debug !== 'function') {
+    return
+  }
+
+  logger.debug(
+    result.accepted
+      ? 'Local AI update bundle accepted'
+      : 'Local AI update bundle rejected',
+    {
+      bundleId: result.bundleId || null,
+      epoch: result.epoch,
+      identity: result.identity,
+      fileName: result.bundlePath ? path.basename(result.bundlePath) : null,
+      storedFileName: result.storedPath ? path.basename(result.storedPath) : null,
+      reason: result.reason,
+      acceptedCount: result.acceptedCount,
+      rejectedCount: result.rejectedCount,
+    }
+  )
 }
 
 function createLocalAiFederated({
@@ -532,25 +622,30 @@ function createLocalAiFederated({
     const sourcePath = normalizeFilePath(filePath)
 
     if (!sourcePath) {
-      return {
+      const result = buildImportResult({
         accepted: false,
         reason: 'file_path_required',
-        identity: null,
-        epoch: null,
-        bundlePath: null,
-        storedPath: null,
+      })
+
+      if (isDev) {
+        logImportResult(logger, result)
       }
+
+      return result
     }
 
     if (!(await localAiStorage.exists(sourcePath))) {
-      return {
+      const result = buildImportResult({
         accepted: false,
         reason: 'file_not_found',
-        identity: null,
-        epoch: null,
         bundlePath: sourcePath,
-        storedPath: null,
+      })
+
+      if (isDev) {
+        logImportResult(logger, result)
       }
+
+      return result
     }
 
     let bundle
@@ -560,140 +655,199 @@ function createLocalAiFederated({
     } catch (error) {
       if (logger && typeof logger.error === 'function') {
         logger.error('Unable to load Local AI update bundle', {
+          fileName: path.basename(sourcePath),
           error: error.toString(),
         })
       }
 
-      return {
+      const result = buildImportResult({
         accepted: false,
         reason: 'schema_invalid',
-        identity: null,
-        epoch: null,
         bundlePath: sourcePath,
-        storedPath: null,
+      })
+
+      if (isDev) {
+        logImportResult(logger, result)
       }
+
+      return result
     }
 
     const validation = validateBundleShape(bundle)
 
     if (!validation.ok) {
-      return {
+      const result = buildImportResult({
         accepted: false,
         reason: validation.reason,
-        identity: null,
-        epoch: null,
         bundlePath: sourcePath,
-        storedPath: null,
-      }
-    }
-
-    const expectedBaseModel = await resolveBaseModelReference(
-      localAiStorage,
-      getBaseModelReference
-    )
-
-    if (
-      validation.baseModelId !== expectedBaseModel.baseModelId ||
-      validation.baseModelHash !== expectedBaseModel.baseModelHash
-    ) {
-      return {
-        accepted: false,
-        reason: 'base_model_mismatch',
-        identity: validation.identity,
-        epoch: validation.epoch,
-        bundlePath: sourcePath,
-        storedPath: null,
-      }
-    }
-
-    const signatureCheck = await verifyBundleSignature({
-      storage: localAiStorage,
-      payload: validation.payload,
-      signature: validation.signature,
-      identity: validation.identity,
-      verifySignature,
-    })
-
-    if (!signatureCheck.ok) {
-      return {
-        accepted: false,
-        reason: signatureCheck.reason,
-        identity: validation.identity,
-        epoch: validation.epoch,
-        bundlePath: sourcePath,
-        storedPath: null,
-      }
-    }
-
-    const bundleId = computeBundleId(localAiStorage, bundle)
-    const nextReceivedIndex = normalizeReceivedIndex(
-      await localAiStorage.readJson(
-        receivedIndexPath(localAiStorage),
-        defaultReceivedIndex()
-      )
-    )
-
-    if (nextReceivedIndex.bundles.some((item) => item.nonce === validation.nonce)) {
-      return {
-        accepted: false,
-        reason: 'duplicate_nonce',
-        identity: validation.identity,
-        epoch: validation.epoch,
-        bundlePath: sourcePath,
-        storedPath: null,
-      }
-    }
-
-    if (nextReceivedIndex.bundles.some((item) => item.bundleId === bundleId)) {
-      return {
-        accepted: false,
-        reason: 'duplicate_bundle',
-        identity: validation.identity,
-        epoch: validation.epoch,
-        bundlePath: sourcePath,
-        storedPath: null,
-      }
-    }
-
-    const storedPath = receivedBundlePath(localAiStorage, validation.epoch, bundleId)
-    const importedAt = new Date().toISOString()
-
-    await localAiStorage.writeJsonAtomic(storedPath, bundle)
-    await localAiStorage.writeJsonAtomic(receivedIndexPath(localAiStorage), {
-      version: RECEIVED_INDEX_VERSION,
-      bundles: nextReceivedIndex.bundles.concat({
-        bundleId,
-        nonce: validation.nonce,
-        storedPath,
-        importedAt,
-        identity: validation.identity,
-        epoch: validation.epoch,
-        baseModelId: validation.baseModelId,
-        baseModelHash: validation.baseModelHash,
-        signatureType: validation.signature.type,
-        signed: signatureCheck.signed,
-      }),
-    })
-
-    if (isDev && logger && typeof logger.debug === 'function') {
-      logger.debug('Local AI update bundle imported', {
-        epoch: validation.epoch,
-        identity: validation.identity,
-        signed: signatureCheck.signed,
-        bundleId,
-        storedPath,
       })
+
+      if (isDev) {
+        logImportResult(logger, result)
+      }
+
+      return result
     }
 
-    return {
-      accepted: true,
-      reason: null,
-      identity: validation.identity,
-      epoch: validation.epoch,
-      bundlePath: sourcePath,
-      storedPath,
-      signed: signatureCheck.signed,
-      signatureType: validation.signature.type,
+    let bundleId = null
+
+    try {
+      const expectedBaseModel = await resolveBaseModelReference(
+        localAiStorage,
+        getBaseModelReference
+      )
+
+      if (
+        validation.baseModelId !== expectedBaseModel.baseModelId ||
+        validation.baseModelHash !== expectedBaseModel.baseModelHash
+      ) {
+        const result = buildImportResult({
+          accepted: false,
+          reason: 'base_model_mismatch',
+          identity: validation.identity,
+          epoch: validation.epoch,
+          bundlePath: sourcePath,
+        })
+
+        if (isDev) {
+          logImportResult(logger, result)
+        }
+
+        return result
+      }
+
+      const signatureCheck = await verifyBundleSignature({
+        storage: localAiStorage,
+        payload: validation.payload,
+        signature: validation.signature,
+        identity: validation.identity,
+        verifySignature,
+      })
+
+      if (!signatureCheck.ok) {
+        const result = buildImportResult({
+          accepted: false,
+          reason: signatureCheck.reason,
+          identity: validation.identity,
+          epoch: validation.epoch,
+          bundlePath: sourcePath,
+        })
+
+        if (isDev) {
+          logImportResult(logger, result)
+        }
+
+        return result
+      }
+
+      bundleId = computeBundleId(localAiStorage, bundle)
+      const nextReceivedIndex = normalizeReceivedIndex(
+        await localAiStorage.readJson(
+          receivedIndexPath(localAiStorage),
+          defaultReceivedIndex()
+        )
+      )
+
+      if (
+        nextReceivedIndex.bundles.some((item) => item.nonce === validation.nonce)
+      ) {
+        const result = buildImportResult({
+          accepted: false,
+          reason: 'duplicate_nonce',
+          identity: validation.identity,
+          epoch: validation.epoch,
+          bundlePath: sourcePath,
+          bundleId,
+        })
+
+        if (isDev) {
+          logImportResult(logger, result)
+        }
+
+        return result
+      }
+
+      if (nextReceivedIndex.bundles.some((item) => item.bundleId === bundleId)) {
+        const result = buildImportResult({
+          accepted: false,
+          reason: 'duplicate_bundle',
+          identity: validation.identity,
+          epoch: validation.epoch,
+          bundlePath: sourcePath,
+          bundleId,
+        })
+
+        if (isDev) {
+          logImportResult(logger, result)
+        }
+
+        return result
+      }
+
+      const storedPath = receivedBundlePath(
+        localAiStorage,
+        validation.epoch,
+        bundleId
+      )
+      const importedAt = new Date().toISOString()
+
+      await localAiStorage.writeJsonAtomic(storedPath, bundle)
+      await localAiStorage.writeJsonAtomic(receivedIndexPath(localAiStorage), {
+        version: RECEIVED_INDEX_VERSION,
+        bundles: nextReceivedIndex.bundles.concat({
+          bundleId,
+          nonce: validation.nonce,
+          storedPath,
+          importedAt,
+          identity: validation.identity,
+          epoch: validation.epoch,
+          baseModelId: validation.baseModelId,
+          baseModelHash: validation.baseModelHash,
+          signatureType: validation.signature.type,
+          signed: signatureCheck.signed,
+        }),
+      })
+
+      const result = buildImportResult({
+        accepted: true,
+        reason: null,
+        identity: validation.identity,
+        epoch: validation.epoch,
+        bundlePath: sourcePath,
+        storedPath,
+        bundleId,
+        signed: signatureCheck.signed,
+        signatureType: validation.signature.type,
+      })
+
+      if (isDev) {
+        logImportResult(logger, result)
+      }
+
+      return result
+    } catch (error) {
+      if (logger && typeof logger.error === 'function') {
+        logger.error('Local AI update bundle import failed', {
+          fileName: path.basename(sourcePath),
+          bundleId,
+          error: error.toString(),
+        })
+      }
+
+      const result = buildImportResult({
+        accepted: false,
+        reason: 'import_failed',
+        identity: validation.identity,
+        epoch: validation.epoch,
+        bundlePath: sourcePath,
+        bundleId,
+      })
+
+      if (isDev) {
+        logImportResult(logger, result)
+      }
+
+      return result
     }
   }
 
@@ -708,10 +862,15 @@ function createLocalAiFederated({
         defaultReceivedIndex()
       )
     )
+    const acceptedBundles = nextReceivedIndex.bundles
     const compatibleBundles = []
     const skipped = []
 
-    for (const entry of nextReceivedIndex.bundles) {
+    if (isDev) {
+      logAcceptedBundles(logger, acceptedBundles)
+    }
+
+    for (const entry of acceptedBundles) {
       if (
         entry.baseModelId !== expectedBaseModel.baseModelId ||
         entry.baseModelHash !== expectedBaseModel.baseModelHash
@@ -775,6 +934,10 @@ function createLocalAiFederated({
       compatibleBundles.push({entry, validation})
     }
 
+    if (isDev) {
+      logRejectedBundles(logger, skipped)
+    }
+
     const bundlesWithDeltas = compatibleBundles.filter(({validation}) => {
       const deltaType = String(validation.payload.deltaType || '').trim()
       return deltaType && deltaType !== 'none'
@@ -806,11 +969,13 @@ function createLocalAiFederated({
       logger.debug('Local AI aggregation completed', {
         aggregated: result.aggregated,
         mode: result.mode,
-        compatibleCount: result.compatibleCount,
-        skippedCount: result.skippedCount,
-        reason: result.reason,
-        outputPath,
-      })
+      compatibleCount: result.compatibleCount,
+      skippedCount: result.skippedCount,
+      acceptedCount: result.acceptedCount,
+      rejectedCount: result.rejectedCount,
+      reason: result.reason,
+      outputPath,
+    })
     }
 
     return {
@@ -818,6 +983,8 @@ function createLocalAiFederated({
       mode: result.mode,
       compatibleCount: result.compatibleCount,
       skippedCount: result.skippedCount,
+      acceptedCount: result.acceptedCount,
+      rejectedCount: result.rejectedCount,
       outputPath,
       baseModelId: result.baseModelId,
     }

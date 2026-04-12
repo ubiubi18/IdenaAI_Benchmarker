@@ -65,6 +65,7 @@ import {
 } from '../shared/components/button'
 import {FloatDebug, Toast, Tooltip} from '../shared/components/components'
 import {useChainState} from '../shared/providers/chain-context'
+import {reorderList} from '../shared/utils/arr'
 import {
   useSettingsDispatch,
   useSettingsState,
@@ -113,6 +114,216 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   customProviderName: 'Custom OpenAI-compatible',
   customProviderBaseUrl: 'https://api.openai.com/v1',
   customProviderChatPath: '/chat/completions',
+}
+
+function formatErrorForToast(error) {
+  const raw = String((error && error.message) || error || '').trim()
+  const prefix = /Error invoking remote method '[^']+':\s*/i
+  const withoutIpcPrefix = raw.replace(prefix, '').trim()
+
+  return withoutIpcPrefix || 'Unknown error'
+}
+
+function hasLocalAiValidationSequences(flip) {
+  return Boolean(
+    flip &&
+      flip.decoded &&
+      Array.isArray(flip.images) &&
+      flip.images.length > 0 &&
+      Array.isArray(flip.orders) &&
+      flip.orders.length >= 2 &&
+      flip.orders.every((order) => Array.isArray(order) && order.length > 0)
+  )
+}
+
+async function imageSrcToDataUrl(src) {
+  const value = String(src || '').trim()
+
+  if (!value) {
+    throw new Error('Validation panel image is missing')
+  }
+
+  if (value.startsWith('data:')) {
+    return value
+  }
+
+  const response = await fetch(value)
+
+  if (!response.ok) {
+    throw new Error('Unable to load validation panel image')
+  }
+
+  const blob = await response.blob()
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = () => {
+      if (typeof reader.result === 'string' && reader.result.trim()) {
+        resolve(reader.result)
+      } else {
+        reject(new Error('Unable to read validation panel image'))
+      }
+    }
+
+    reader.onerror = () => {
+      reject(new Error('Unable to read validation panel image'))
+    }
+
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function buildOrderedLocalAiImages(images = [], order = []) {
+  const orderedImages = reorderList(images, order).filter(Boolean)
+  return Promise.all(orderedImages.map((src) => imageSrcToDataUrl(src)))
+}
+
+function shortenLocalAiReason(value, maxLength = 140) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text
+}
+
+function describeLocalAiRecommendation(result, t) {
+  if (!result) {
+    return {
+      label: t('Not checked'),
+      color: 'muted',
+      detail: t('Run a local advisory check to compare the two story options.'),
+    }
+  }
+
+  if (!result.ok) {
+    return {
+      label: t('Unavailable'),
+      color: 'orange.500',
+      detail:
+        shortenLocalAiReason(result.lastError || result.error) ||
+        t('Local AI recommendation is unavailable right now.'),
+    }
+  }
+
+  const confidence = String(result.confidence || '').trim()
+  const reason = shortenLocalAiReason(result.reason)
+  const detail = [
+    confidence ? t('{{confidence}} confidence', {confidence}) : '',
+    reason,
+  ]
+    .filter(Boolean)
+    .join(' • ')
+
+  switch (result.classification) {
+    case 'consistent':
+      return {
+        label: t('Likely consistent'),
+        color: 'green.500',
+        detail: detail || t('This sequence looks coherent panel to panel.'),
+      }
+    case 'inconsistent':
+      return {
+        label: t('Likely inconsistent'),
+        color: 'red.500',
+        detail:
+          detail ||
+          t('This sequence may contain a contradiction or bad order.'),
+      }
+    case 'ambiguous':
+    default:
+      return {
+        label: t('Possibly ambiguous'),
+        color: 'orange.500',
+        detail: detail || t('This sequence may be plausible but unclear.'),
+      }
+  }
+}
+
+function LocalAiValidationRecommendation({
+  isShortSessionMode,
+  isChecking,
+  canCheck,
+  recommendation,
+  onCheck,
+}) {
+  const {t} = useTranslation()
+  const panelBg = isShortSessionMode ? 'whiteAlpha.100' : 'gray.50'
+  const panelBorder = isShortSessionMode ? 'whiteAlpha.300' : 'gray.100'
+  const titleColor = isShortSessionMode ? 'whiteAlpha.900' : 'brandGray.500'
+  const bodyColor = isShortSessionMode ? 'whiteAlpha.800' : 'muted'
+  const left = describeLocalAiRecommendation(recommendation.left, t)
+  const right = describeLocalAiRecommendation(recommendation.right, t)
+
+  return (
+    <Stack
+      spacing={2}
+      px={4}
+      py={3}
+      mx={6}
+      mb={3}
+      borderWidth="1px"
+      borderColor={panelBorder}
+      borderRadius="md"
+      bg={panelBg}
+    >
+      <Flex align="center" justify="space-between">
+        <Box>
+          <Text fontSize="xs" fontWeight={600} color={titleColor}>
+            {t('Local AI recommendation')}
+          </Text>
+          <Text fontSize="xs" color={bodyColor}>
+            {t('Local AI recommendation only. It does not change your answer.')}
+          </Text>
+        </Box>
+        <SecondaryButton
+          isDisabled={!canCheck}
+          isLoading={isChecking}
+          onClick={onCheck}
+        >
+          {t('Check with Local AI')}
+        </SecondaryButton>
+      </Flex>
+
+      {recommendation.status === 'checking' ? (
+        <Text fontSize="xs" color={bodyColor}>
+          {t('Checking the current left and right story sequences locally...')}
+        </Text>
+      ) : null}
+
+      {recommendation.error ? (
+        <Text fontSize="xs" color="orange.500">
+          {recommendation.error}
+        </Text>
+      ) : null}
+
+      <Stack spacing={1}>
+        <Flex align="center" justify="space-between">
+          <Text fontSize="xs" color={bodyColor}>
+            {t('Left story')}
+          </Text>
+          <Text fontSize="xs" fontWeight={600} color={left.color}>
+            {left.label}
+          </Text>
+        </Flex>
+        <Text fontSize="xs" color={bodyColor}>
+          {left.detail}
+        </Text>
+      </Stack>
+
+      <Stack spacing={1}>
+        <Flex align="center" justify="space-between">
+          <Text fontSize="xs" color={bodyColor}>
+            {t('Right story')}
+          </Text>
+          <Text fontSize="xs" fontWeight={600} color={right.color}>
+            {right.label}
+          </Text>
+        </Flex>
+        <Text fontSize="xs" color={bodyColor}>
+          {right.detail}
+        </Text>
+      </Stack>
+    </Stack>
+  )
 }
 
 export default function ValidationPage() {
@@ -170,13 +381,21 @@ function ValidationSession({
     }),
     [forceAiPreview, settings.aiSolver]
   )
-  const localAiCaptureEnabled = Boolean(settings.localAi?.captureEnabled)
+  const localAiCaptureEnabled = settings.localAi?.captureEnabled === true
   const [aiSolving, setAiSolving] = useState(false)
   const [aiProgress, setAiProgress] = useState(null)
   const [aiLastRun, setAiLastRun] = useState(null)
   const [aiLiveTimeline, setAiLiveTimeline] = useState([])
   const [aiActiveFlip, setAiActiveFlip] = useState(null)
   const [awaitingHumanReporting, setAwaitingHumanReporting] = useState(false)
+  const [localAiRecommendation, setLocalAiRecommendation] = useState({
+    status: 'idle',
+    left: null,
+    right: null,
+    error: '',
+  })
+  const [isCheckingLocalAiRecommendation, setIsCheckingLocalAiRecommendation] =
+    useState(false)
   const autoSolveStartedRef = useRef({short: false, long: false})
 
   const {
@@ -198,7 +417,12 @@ function ValidationSession({
         shortSessionDuration,
         longSessionDuration,
         locale: i18n.language || 'en',
-        onDecodedFlip: ({flipHash, epoch: epochNumber, sessionType, images}) => {
+        onDecodedFlip: ({
+          flipHash,
+          epoch: epochNumber,
+          sessionType,
+          images,
+        }) => {
           if (
             !localAiCaptureEnabled ||
             !global.ipcRenderer ||
@@ -277,6 +501,15 @@ function ValidationSession({
 
   const flips = sessionFlips(state)
   const currentFlip = flips[currentIndex]
+  const localAiValidationEnabled = settings.localAi?.enabled === true
+  const localAiCheckerAvailable =
+    localAiValidationEnabled &&
+    global.localAi &&
+    typeof global.localAi.checkFlipSequence === 'function'
+  const canCheckCurrentFlipWithLocalAi =
+    localAiCheckerAvailable &&
+    (isShortSession(state) || isLongSessionFlips(state)) &&
+    hasLocalAiValidationSequences(currentFlip)
 
   const flipTimerDetails = {
     isShortSession: isShortSession(state),
@@ -615,6 +848,61 @@ function ValidationSession({
   }, [awaitingHumanReporting, notifyAi, state, t])
 
   useEffect(() => {
+    setLocalAiRecommendation({
+      status: 'idle',
+      left: null,
+      right: null,
+      error: '',
+    })
+  }, [currentFlip?.hash, localAiCheckerAvailable])
+
+  const runLocalAiRecommendation = useCallback(async () => {
+    if (!canCheckCurrentFlipWithLocalAi || !currentFlip) {
+      return
+    }
+
+    setIsCheckingLocalAiRecommendation(true)
+    setLocalAiRecommendation({
+      status: 'checking',
+      left: null,
+      right: null,
+      error: '',
+    })
+
+    try {
+      const leftImages = await buildOrderedLocalAiImages(
+        currentFlip.images,
+        currentFlip.orders[0]
+      )
+      const rightImages = await buildOrderedLocalAiImages(
+        currentFlip.images,
+        currentFlip.orders[1]
+      )
+
+      const left = await global.localAi.checkFlipSequence({images: leftImages})
+      const right = await global.localAi.checkFlipSequence({
+        images: rightImages,
+      })
+
+      setLocalAiRecommendation({
+        status: 'ready',
+        left,
+        right,
+        error: '',
+      })
+    } catch (error) {
+      setLocalAiRecommendation({
+        status: 'error',
+        left: null,
+        right: null,
+        error: formatErrorForToast(error),
+      })
+    } finally {
+      setIsCheckingLocalAiRecommendation(false)
+    }
+  }, [canCheckCurrentFlipWithLocalAi, currentFlip])
+
+  useEffect(() => {
     if (aiSessionType !== 'short') {
       autoSolveStartedRef.current.short = false
     }
@@ -901,6 +1189,15 @@ function ValidationSession({
             )}
         </FlipChallenge>
       </CurrentStep>
+      {canCheckCurrentFlipWithLocalAi ? (
+        <LocalAiValidationRecommendation
+          isShortSessionMode={isShortSession(state)}
+          isChecking={isCheckingLocalAiRecommendation}
+          canCheck={canCheckCurrentFlipWithLocalAi}
+          recommendation={localAiRecommendation}
+          onCheck={runLocalAiRecommendation}
+        />
+      ) : null}
       {(isShortSession(state) || isLongSessionFlips(state)) &&
         aiSolverSettings.enabled && (
           <AiTelemetryPanel

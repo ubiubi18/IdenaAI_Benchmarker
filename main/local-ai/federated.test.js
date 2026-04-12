@@ -173,6 +173,8 @@ describe('local-ai federated bundle helper', () => {
       identity: PLACEHOLDER_IDENTITY,
       epoch: 7,
       bundlePath: built.bundlePath,
+      acceptedCount: 1,
+      rejectedCount: 0,
       signed: false,
       signatureType: 'placeholder_sha256',
     })
@@ -203,6 +205,8 @@ describe('local-ai federated bundle helper', () => {
       reason: 'duplicate_nonce',
       identity: PLACEHOLDER_IDENTITY,
       epoch: 7,
+      acceptedCount: 0,
+      rejectedCount: 1,
     })
   })
 
@@ -228,6 +232,8 @@ describe('local-ai federated bundle helper', () => {
       reason: 'base_model_mismatch',
       identity: PLACEHOLDER_IDENTITY,
       epoch: 7,
+      acceptedCount: 0,
+      rejectedCount: 1,
     })
   })
 
@@ -252,7 +258,75 @@ describe('local-ai federated bundle helper', () => {
       reason: 'schema_invalid',
       identity: null,
       epoch: null,
+      acceptedCount: 0,
+      rejectedCount: 1,
     })
+  })
+
+  it('fails safely when a bundle cannot be parsed from disk', async () => {
+    const logger = mockLogger()
+    const bundleFilePath = storage.resolveLocalAiPath('incoming', 'broken.json')
+
+    await fs.ensureDir(path.dirname(bundleFilePath))
+    await fs.writeFile(bundleFilePath, '{"version": 1,', 'utf8')
+
+    const federated = createLocalAiFederated({
+      logger,
+      isDev: true,
+      storage,
+    })
+
+    await expect(federated.importUpdateBundle(bundleFilePath)).resolves.toMatchObject({
+      accepted: false,
+      reason: 'schema_invalid',
+      bundlePath: bundleFilePath,
+      acceptedCount: 0,
+      rejectedCount: 1,
+    })
+    expect(logger.error).toHaveBeenCalledWith(
+      'Unable to load Local AI update bundle',
+      expect.objectContaining({
+        fileName: 'broken.json',
+      })
+    )
+  })
+
+  it('fails safely when accepted bundle storage update throws unexpectedly', async () => {
+    await writeManifest(7)
+
+    const logger = mockLogger()
+    const failingStorage = {
+      ...storage,
+      writeJsonAtomic: jest.fn(async (filePath, obj) => {
+        if (String(filePath).endsWith(`${path.sep}received${path.sep}index.json`)) {
+          throw new Error('disk full')
+        }
+
+        return storage.writeJsonAtomic(filePath, obj)
+      }),
+    }
+    const federated = createLocalAiFederated({
+      logger,
+      isDev: true,
+      storage: failingStorage,
+    })
+    const built = await federated.buildUpdateBundle(7)
+
+    await expect(federated.importUpdateBundle(built.bundlePath)).resolves.toMatchObject({
+      accepted: false,
+      reason: 'import_failed',
+      identity: PLACEHOLDER_IDENTITY,
+      epoch: 7,
+      bundlePath: built.bundlePath,
+      acceptedCount: 0,
+      rejectedCount: 1,
+    })
+    expect(logger.error).toHaveBeenCalledWith(
+      'Local AI update bundle import failed',
+      expect.objectContaining({
+        fileName: path.basename(built.bundlePath),
+      })
+    )
   })
 
   it('treats real-signature bundles as unverifiable until a verifier exists', async () => {
@@ -284,6 +358,8 @@ describe('local-ai federated bundle helper', () => {
       reason: 'signature_unverifiable',
       identity: '0x1234',
       epoch: 7,
+      acceptedCount: 0,
+      rejectedCount: 1,
     })
   })
 
@@ -308,14 +384,18 @@ describe('local-ai federated bundle helper', () => {
       reason: 'contains_raw_payload',
       identity: null,
       epoch: null,
+      acceptedCount: 0,
+      rejectedCount: 1,
     })
   })
 
   it('aggregates accepted metadata-only bundles as an honest no-op result', async () => {
     await writeManifest(7)
 
+    const logger = mockLogger()
     const federated = createLocalAiFederated({
-      logger: mockLogger(),
+      logger,
+      isDev: true,
       storage,
     })
 
@@ -333,6 +413,8 @@ describe('local-ai federated bundle helper', () => {
       mode: 'metadata_only_noop',
       compatibleCount: 2,
       skippedCount: 0,
+      acceptedCount: 2,
+      rejectedCount: 0,
       baseModelId: DEFAULT_BASE_MODEL_ID,
     })
     expect(result).toMatchObject({
@@ -343,11 +425,67 @@ describe('local-ai federated bundle helper', () => {
       minimumCompatibleBundles: 2,
       compatibleCount: 2,
       skippedCount: 0,
+      acceptedCount: 2,
+      rejectedCount: 0,
       deltaAvailability: 'none',
       reason: 'no_real_model_deltas',
     })
     expect(result.compatibleBundles).toHaveLength(2)
     expect(JSON.stringify(result)).not.toContain('"images"')
+    expect(logger.debug).toHaveBeenCalledWith(
+      'Local AI accepted bundle observed',
+      expect.objectContaining({
+        index: 0,
+        epoch: 7,
+        bundleId: expect.any(String),
+        fileName: expect.stringMatching(/\.json$/),
+      })
+    )
+    expect(logger.debug).toHaveBeenCalledWith(
+      'Local AI accepted bundle observed',
+      expect.objectContaining({
+        index: 1,
+        epoch: 7,
+        bundleId: expect.any(String),
+        fileName: expect.stringMatching(/\.json$/),
+      })
+    )
+  })
+
+  it('does not crash when the accepted bundle index is empty', async () => {
+    const logger = mockLogger()
+    const federated = createLocalAiFederated({
+      logger,
+      isDev: true,
+      storage,
+    })
+
+    const summary = await federated.aggregateAcceptedBundles()
+    const result = await storage.readJson(summary.outputPath)
+
+    expect(summary).toMatchObject({
+      aggregated: false,
+      mode: 'metadata_only_noop',
+      compatibleCount: 0,
+      skippedCount: 0,
+      acceptedCount: 0,
+      rejectedCount: 0,
+      baseModelId: DEFAULT_BASE_MODEL_ID,
+    })
+    expect(result).toMatchObject({
+      aggregated: false,
+      mode: 'metadata_only_noop',
+      compatibleCount: 0,
+      skippedCount: 0,
+      acceptedCount: 0,
+      rejectedCount: 0,
+      reason: 'insufficient_compatible_bundles',
+    })
+    expect(
+      logger.debug.mock.calls.filter(
+        ([message]) => message === 'Local AI accepted bundle observed'
+      )
+    ).toHaveLength(0)
   })
 
   it('keeps aggregation honest when bundles advertise unsupported delta payloads', async () => {
@@ -391,12 +529,16 @@ describe('local-ai federated bundle helper', () => {
       aggregated: false,
       mode: 'metadata_only_noop',
       compatibleCount: 2,
+      acceptedCount: 2,
+      rejectedCount: 0,
       baseModelId: DEFAULT_BASE_MODEL_ID,
     })
     expect(result).toMatchObject({
       aggregated: false,
       mode: 'metadata_only_noop',
       compatibleCount: 2,
+      acceptedCount: 2,
+      rejectedCount: 0,
       deltaAvailability: 'unsupported',
       reason: 'unsupported_delta_payload',
     })
@@ -459,9 +601,15 @@ describe('local-ai federated bundle helper', () => {
       mode: 'metadata_only_noop',
       compatibleCount: 1,
       skippedCount: 1,
+      acceptedCount: 1,
+      rejectedCount: 1,
       baseModelId: DEFAULT_BASE_MODEL_ID,
     })
     expect(result.reason).toBe('insufficient_compatible_bundles')
+    expect(result).toMatchObject({
+      acceptedCount: 1,
+      rejectedCount: 1,
+    })
     expect(result.skipped).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
