@@ -9,7 +9,22 @@ import {useFailToast} from '../hooks/use-toast'
 import {strip} from '../utils/obj'
 import {canKill} from '../../screens/contacts/utils'
 
-const db = global.invitesDb || {}
+function getInviteDb() {
+  const db = global.invitesDb
+
+  if (db && typeof db.getInvites === 'function') {
+    return db
+  }
+
+  return {
+    getInvites: () => [],
+    getActivationTx: () => '',
+    clearActivationTx: () => {},
+    setActivationTx: () => {},
+    addInvite: () => null,
+    updateInvite: () => {},
+  }
+}
 
 const InviteStateContext = React.createContext()
 const InviteDispatchContext = React.createContext()
@@ -22,6 +37,7 @@ export function InviteProvider({children}) {
 
   React.useEffect(() => {
     let ignore = false
+    const db = getInviteDb()
 
     async function fetchData(savedInvites) {
       const txs = (
@@ -127,7 +143,7 @@ export function InviteProvider({children}) {
     async () => {
       function resetActivation() {
         setActivationTx('')
-        db.clearActivationTx()
+        getInviteDb().clearActivationTx()
       }
 
       try {
@@ -236,7 +252,7 @@ export function InviteProvider({children}) {
           canKill: true,
         }
 
-        const id = db.addInvite(issuedInvite)
+        const id = getInviteDb().addInvite(issuedInvite)
         const invite = {...issuedInvite, id, mining: true}
         setInvites([...invites, invite])
 
@@ -267,7 +283,7 @@ export function InviteProvider({children}) {
       )
 
       const invite = {id: key, firstName: newFirstName, lastName: newLastName}
-      db.updateInvite(id, invite)
+      getInviteDb().updateInvite(id, invite)
     },
     [invites]
   )
@@ -282,7 +298,7 @@ export function InviteProvider({children}) {
             : currentInvite
         )
       )
-      db.updateInvite(id, {id, deletedAt})
+      getInviteDb().updateInvite(id, {id, deletedAt})
     },
     [invites]
   )
@@ -306,7 +322,7 @@ export function InviteProvider({children}) {
           )
         )
         const invite = {id, terminateHash: result, terminatedAt: Date.now()}
-        db.updateInvite(id, invite)
+        getInviteDb().updateInvite(id, invite)
       }
 
       return {result, error}
@@ -330,7 +346,7 @@ export function InviteProvider({children}) {
         })
       )
       const invite = {id: key, deletedAt: null}
-      db.updateInvite(id, invite)
+      getInviteDb().updateInvite(id, invite)
     },
     [invites]
   )
@@ -342,7 +358,7 @@ export function InviteProvider({children}) {
         strip({to: address, key: code})
       )
       setActivationTx(result)
-      db.setActivationTx(result)
+      getInviteDb().setActivationTx(result)
     },
     [address]
   )

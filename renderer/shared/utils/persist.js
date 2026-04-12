@@ -1,4 +1,10 @@
-const loadDb = global.prepareDb || {}
+function loadDb(name) {
+  if (typeof global.prepareDb === 'function') {
+    return global.prepareDb(name)
+  }
+
+  throw new Error('Persistent storage bridge is unavailable')
+}
 
 export function loadPersistentState(dbName) {
   try {

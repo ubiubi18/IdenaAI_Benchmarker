@@ -24,8 +24,17 @@ import {
 } from '../../screens/settings/containers'
 import {PrivateKeyIcon} from '../../shared/components/icons'
 
-const {clear: clearFlips} = global.flipStore || {}
-const inviteDb = global.invitesDb || {}
+function clearFlips() {
+  if (global.flipStore && typeof global.flipStore.clear === 'function') {
+    global.flipStore.clear()
+  }
+}
+
+function clearInvites() {
+  if (global.invitesDb && typeof global.invitesDb.clearInvites === 'function') {
+    global.invitesDb.clearInvites()
+  }
+}
 
 function Settings() {
   const {t} = useTranslation()
@@ -129,7 +138,7 @@ function Settings() {
           <Box my={4}>
             <SettingsLinkButton
               onClick={() => {
-                inviteDb.clearInvites()
+                clearInvites()
                 showSuccessToast(t('Invites removed'))
               }}
             >
