@@ -254,6 +254,8 @@ Local AI also includes a local-only post-consensus training-package flow. New
 packages start as `draft` and can be marked `reviewed`, `approved`, or
 `rejected` locally in the settings UI. This is still review state only: not
 training, not federated sharing, and not cloud upload.
+Only locally approved packages are marked `federatedReady: true`, which is a
+local preparation step only and still does not perform any federated sharing.
 
 Cheap or very small models failed most often in early testing. If results are poor, try different providers, models, and advanced settings, but watch cost and latency.
 

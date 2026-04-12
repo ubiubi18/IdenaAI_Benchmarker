@@ -901,6 +901,7 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       createdAt: new Date().toISOString(),
       reviewStatus: 'draft',
       reviewedAt: null,
+      federatedReady: false,
       eligibleCount: items.length,
       excludedCount: excluded.length,
       inconsistencyFlags,

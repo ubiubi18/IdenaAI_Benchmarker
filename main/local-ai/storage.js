@@ -63,7 +63,10 @@ function sanitizeForPersistence(filePath, obj) {
   }
 
   if (normalizedPath.includes(`${path.sep}training-candidates${path.sep}`)) {
-    return sanitizeCollectionItems(omitRawImageFields(obj), 'items')
+    return sanitizeCollectionItems(
+      omitRawImageFields(normalizeTrainingCandidatePackage(obj)),
+      'items'
+    )
   }
 
   return obj
@@ -79,6 +82,12 @@ function normalizeTrainingPackageReviewStatus(value, fallback = 'draft') {
   }
 
   return nextStatus
+}
+
+function getFederatedReadyFromReviewStatus(reviewStatus) {
+  return (
+    normalizeTrainingPackageReviewStatus(reviewStatus, 'draft') === 'approved'
+  )
 }
 
 function normalizeTrainingPackageReviewedAt(value, reviewStatus) {
@@ -122,6 +131,7 @@ function normalizeTrainingCandidatePackage(packageData) {
       packageData.reviewedAt,
       reviewStatus
     ),
+    federatedReady: getFederatedReadyFromReviewStatus(reviewStatus),
   }
 }
 
@@ -234,6 +244,7 @@ function createLocalAiStorage({
               review.reviewedAt || new Date().toISOString(),
               reviewStatus
             ),
+      federatedReady: getFederatedReadyFromReviewStatus(reviewStatus),
     }
 
     await writeJsonAtomic(targetPath, nextPackage)

@@ -253,6 +253,7 @@ describe('local-ai manager', () => {
       epoch: 12,
       reviewStatus: 'draft',
       reviewedAt: null,
+      federatedReady: false,
       eligibleCount: 1,
       excludedCount: 3,
     })
@@ -372,6 +373,7 @@ describe('local-ai manager', () => {
       package: expect.objectContaining({
         reviewStatus: 'draft',
         reviewedAt: null,
+        federatedReady: false,
       }),
     })
   })
@@ -408,12 +410,14 @@ describe('local-ai manager', () => {
       package: expect.objectContaining({
         reviewStatus: 'approved',
         reviewedAt: expect.any(String),
+        federatedReady: true,
       }),
     })
     await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
       expect.objectContaining({
         reviewStatus: 'approved',
         reviewedAt: expect.any(String),
+        federatedReady: true,
       })
     )
   })

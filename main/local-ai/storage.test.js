@@ -114,6 +114,9 @@ describe('local-ai storage', () => {
 
     await expect(storage.readJson(filePath)).resolves.toEqual({
       eligibleCount: 1,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      federatedReady: false,
       items: [
         {
           flipHash: 'flip-a',
@@ -145,6 +148,7 @@ describe('local-ai storage', () => {
         epoch: 12,
         reviewStatus: 'draft',
         reviewedAt: null,
+        federatedReady: false,
       })
     )
   })
@@ -174,12 +178,14 @@ describe('local-ai storage', () => {
       expect.objectContaining({
         reviewStatus: 'reviewed',
         reviewedAt: expect.any(String),
+        federatedReady: false,
       })
     )
     await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
       expect.objectContaining({
         reviewStatus: 'reviewed',
         reviewedAt: expect.any(String),
+        federatedReady: false,
       })
     )
   })
@@ -209,6 +215,7 @@ describe('local-ai storage', () => {
       expect.objectContaining({
         reviewStatus: 'approved',
         reviewedAt: expect.any(String),
+        federatedReady: true,
       })
     )
   })
@@ -238,6 +245,38 @@ describe('local-ai storage', () => {
       expect.objectContaining({
         reviewStatus: 'rejected',
         reviewedAt: expect.any(String),
+        federatedReady: false,
+      })
+    )
+  })
+
+  it('resets federatedReady when an approved package is changed back to reviewed', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'training-candidates',
+      'epoch-12-candidates.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      federatedReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [],
+      excluded: [],
+    })
+
+    await storage.updateTrainingCandidatePackageReview(filePath, {
+      reviewStatus: 'reviewed',
+    })
+
+    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        reviewStatus: 'reviewed',
+        reviewedAt: expect.any(String),
+        federatedReady: false,
       })
     )
   })

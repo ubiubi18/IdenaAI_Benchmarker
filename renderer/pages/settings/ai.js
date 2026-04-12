@@ -394,6 +394,20 @@ function describeLocalAiTrainingPackageReviewStatus(status, t) {
   }
 }
 
+function describeLocalAiTrainingPackageFederatedReady(value, t) {
+  if (value) {
+    return {
+      label: t('Yes'),
+      color: 'green.500',
+    }
+  }
+
+  return {
+    label: t('No'),
+    color: 'muted',
+  }
+}
+
 function LocalAiDebugResult({label, result}) {
   if (!result) {
     return null
@@ -1161,6 +1175,18 @@ export default function AiSettingsPage() {
         localAiPackagePreview &&
           localAiPackagePreview.package &&
           localAiPackagePreview.package.reviewStatus,
+        t
+      ),
+    [localAiPackagePreview, t]
+  )
+  const localAiPackageFederatedReadyUi = useMemo(
+    () =>
+      describeLocalAiTrainingPackageFederatedReady(
+        Boolean(
+          localAiPackagePreview &&
+            localAiPackagePreview.package &&
+            localAiPackagePreview.package.federatedReady
+        ),
         t
       ),
     [localAiPackagePreview, t]
@@ -2660,6 +2686,14 @@ export default function AiSettingsPage() {
                                   localAiPackagePreview.package.reviewedAt
                                 )}
                               </Text>
+                              <Text
+                                color={localAiPackageFederatedReadyUi.color}
+                                fontSize="sm"
+                                fontWeight={500}
+                              >
+                                {t('Federated-ready')}:{' '}
+                                {localAiPackageFederatedReadyUi.label}
+                              </Text>
                               <Text color="muted" fontSize="sm">
                                 {t('Schema version')}:{' '}
                                 {localAiPackagePreview.package.schemaVersion}
@@ -2689,6 +2723,11 @@ export default function AiSettingsPage() {
                               <Text color="muted" fontSize="xs">
                                 {t(
                                   'Only approved packages should be used for future federated workflows.'
+                                )}
+                              </Text>
+                              <Text color="muted" fontSize="xs">
+                                {t(
+                                  'Federated-ready is a local preparation marker only. No sharing happens here.'
                                 )}
                               </Text>
                             </Stack>
