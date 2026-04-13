@@ -503,7 +503,13 @@ function App() {
                     throw 'this should not happen';
                 }
 
-                const transactionsWithDetails = await getTransactionDetails(transactions, contractAddress, allMethods, rpcClientRef.current!);
+                const transactionsWithDetails = await getTransactionDetails(
+                    transactions,
+                    contractAddress,
+                    allMethods,
+                    rpcClientRef.current!,
+                    isRecurseBackwardWithIndexerApi ? indexerApiUrlRef.current : undefined,
+                );
 
                 let lastValidTransaction;
 

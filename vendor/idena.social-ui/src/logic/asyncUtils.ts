@@ -250,6 +250,36 @@ export const getPastTxsWithIdenaIndexerApi = async (inputIdenaIndexerApiUrl: str
     }
 };
 
+const getIndexerApiPath = (inputIdenaIndexerApiUrl: string, path: string, params?: Record<string, string>) => {
+    const normalizedBaseUrl = inputIdenaIndexerApiUrl.replace(/\/+$/, '');
+    const normalizedPath = path.replace(/^\/+/, '');
+    const queryString = params ? new URLSearchParams(params).toString() : '';
+    return `${normalizedBaseUrl}/${normalizedPath}${queryString ? `?${queryString}` : ''}`;
+};
+
+const getIndexerJson = async (inputIdenaIndexerApiUrl: string, path: string, params?: Record<string, string>) => {
+    try {
+        const response = await fetch(getIndexerApiPath(inputIdenaIndexerApiUrl, path, params));
+
+        if (!response.ok) {
+            throw new Error(`Response status: ${response.status}`);
+        }
+
+        return await response.json();
+    } catch (error: unknown) {
+        console.error(error);
+        return { error };
+    }
+};
+
+export const getIndexerTransaction = async (inputIdenaIndexerApiUrl: string, txHash: string) =>
+    getIndexerJson(inputIdenaIndexerApiUrl, `api/Transaction/${txHash}`);
+
+export const getIndexerTransactionEvents = async (inputIdenaIndexerApiUrl: string, txHash: string, limit: number) =>
+    getIndexerJson(inputIdenaIndexerApiUrl, `api/Transaction/${txHash}/Events`, {
+        limit: limit.toString(),
+    });
+
 export const getChildPostIds = (parentId: string, postsTreeRef: Record<string, string>) => {
     const childPostIds = [];
     let childPostId;
@@ -270,21 +300,60 @@ export const getTransactionDetails = async (
     contractAddress: string,
     methods: string[],
     rpcClient: RpcClient,
+    inputIdenaIndexerApiUrl?: string,
 ) => {
-    const transactionReceipts = await Promise.all(transactions.map((transaction) => rpcClient('bcn_txReceipt', [transaction.txHash])));
+    const transactionDetails = await Promise.all(transactions.map(async (transaction) => {
+        const receipt = await rpcClient('bcn_txReceipt', [transaction.txHash]);
 
-    const filteredReceipts = transactionReceipts.filter((receipt) =>
-        (receipt.error && (() => { throw 'rpc unavailable' })()) ||
-        receipt.result &&
-        receipt.result.success === true &&
-        receipt.result.contract === contractAddress.toLowerCase() &&
-        methods.includes(receipt.result.method)
-    );
+        if (receipt.result &&
+            receipt.result.success === true &&
+            receipt.result.contract === contractAddress.toLowerCase() &&
+            methods.includes(receipt.result.method)
+        ) {
+            return {
+                eventArgs: receipt.result.events?.[0]?.args,
+                eventArgs2nd: receipt.result.events?.[1]?.args,
+                method: receipt.result.method,
+                ...transaction,
+            };
+        }
 
-    const reducedTxs = transactions.reduce((acc, curr) => ({ ...acc, [curr.txHash]: curr }), {}) as Record<string, GetTransactionDetailsInput>;
-    const transactionDetails = filteredReceipts.map(receipt => ({ eventArgs: receipt.result.events?.[0]?.args, eventArgs2nd: receipt.result.events?.[1]?.args, method: receipt.result.method, ...reducedTxs[receipt.result.txHash] }));
+        if (!inputIdenaIndexerApiUrl) {
+            if (receipt.error) {
+                throw 'rpc unavailable';
+            }
+            return null;
+        }
 
-    return transactionDetails;
+        const [indexerTransactionResponse, indexerEventsResponse] = await Promise.all([
+            getIndexerTransaction(inputIdenaIndexerApiUrl, transaction.txHash),
+            getIndexerTransactionEvents(inputIdenaIndexerApiUrl, transaction.txHash, 10),
+        ]);
+
+        if (indexerTransactionResponse.error || indexerEventsResponse.error) {
+            return null;
+        }
+
+        const txReceipt = indexerTransactionResponse.result?.txReceipt;
+
+        if (!txReceipt ||
+            txReceipt.success !== true ||
+            txReceipt.contractAddress?.toLowerCase() !== contractAddress.toLowerCase() ||
+            !methods.includes(txReceipt.method)
+        ) {
+            return null;
+        }
+
+        return {
+            eventArgs: indexerEventsResponse.result?.[0]?.data,
+            eventArgs2nd: indexerEventsResponse.result?.[1]?.data,
+            method: txReceipt.method,
+            ...transaction,
+            blockHeight: transaction.blockHeight ?? indexerTransactionResponse.result?.blockHeight,
+        };
+    }));
+
+    return transactionDetails.filter((transactionDetail) => !!transactionDetail);
 }
 
 export const getNewPosterAndPost = async (

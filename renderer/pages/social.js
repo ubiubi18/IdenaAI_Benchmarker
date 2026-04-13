@@ -14,7 +14,7 @@ import {useChainState} from '../shared/providers/chain-context'
 import {BASE_API_URL, BASE_INTERNAL_API_PORT} from '../shared/api/api-client'
 
 const SOCIAL_BOOTSTRAP_STORAGE_KEY = 'idenaSocialDesktopBootstrap'
-const SOCIAL_HISTORY_MODE_STORAGE_KEY = 'idenaSocialDesktopHistoryMode'
+const SOCIAL_HISTORY_MODE_STORAGE_KEY = 'idenaSocialDesktopHistoryModeV2'
 const SOCIAL_CONTRACT_ADDRESS = '0xa1c5c1A8c6a1Af596078A5c9653F24c216fE1cb2'
 const SOCIAL_OFFICIAL_INDEXER_URL = 'https://api.idena.io'
 const SOCIAL_MAX_IMAGE_BYTES = 1024 * 1024
@@ -79,8 +79,7 @@ function buildSocialNodeBootstrap(settings, historyMode) {
     embeddedMode: 'desktop-onchain',
     nodeUrl,
     nodeApiKey,
-    indexerApiUrl:
-      historyMode === 'indexer-api' ? SOCIAL_OFFICIAL_INDEXER_URL : '',
+    indexerApiUrl: SOCIAL_OFFICIAL_INDEXER_URL,
     sendingTxs: 'rpc',
     findingPastPosts: historyMode,
   }
@@ -94,7 +93,7 @@ export default function SocialPage() {
 
   const [iframeNonce, setIframeNonce] = React.useState(0)
   const [bootstrapReady, setBootstrapReady] = React.useState(false)
-  const [historyMode, setHistoryMode] = React.useState('rpc')
+  const [historyMode, setHistoryMode] = React.useState('indexer-api')
   const lastBootstrapJsonRef = React.useRef('')
 
   React.useEffect(() => {
@@ -156,9 +155,9 @@ export default function SocialPage() {
           <Stack spacing={3} maxW="7xl">
             <Text color="muted">
               Local bundled `idena.social` UI inside idena-desktop. Posting
-              always uses your own node RPC. Older-history lookup can stay on
-              your node RPC or switch to the official Idena indexer as a
-              read-only fallback.
+              always uses your own node RPC. Community history now defaults to
+              the official Idena indexer as a read-only fallback because node
+              RPC-only scanning is often too narrow for the full feed.
             </Text>
             <HStack spacing={6} flexWrap="wrap" align="flex-start">
               <HStack spacing={2}>
@@ -178,7 +177,7 @@ export default function SocialPage() {
                   History scan:{' '}
                   <strong>
                     {usingIndexerFallback
-                      ? 'official indexer fallback'
+                      ? 'official indexer fallback (recommended)'
                       : 'RPC only'}
                   </strong>
                 </Text>
@@ -227,8 +226,8 @@ export default function SocialPage() {
                 }}
               >
                 {usingIndexerFallback
-                  ? 'Switch back to node RPC history'
-                  : 'Use official indexer for older history'}
+                  ? 'Use node RPC-only history'
+                  : 'Use official indexer for community history'}
               </Button>
               <NextLink href="/settings/node" passHref>
                 <TextLink>Node settings</TextLink>
@@ -241,8 +240,8 @@ export default function SocialPage() {
             </HStack>
             <Text color="muted" fontSize="sm">
               {usingIndexerFallback
-                ? `Fallback reader active: ${SOCIAL_OFFICIAL_INDEXER_URL}. It is used only for older history lookup, not for posting.`
-                : 'Default reader active: your own node RPC only. If older posts do not appear, switch to the official read-only indexer fallback.'}
+                ? `Community history is currently read from ${SOCIAL_OFFICIAL_INDEXER_URL}. Posting still stays on your own node RPC.`
+                : 'RPC-only history is active. This mode may miss broader community posts even when your node is synced.'}
             </Text>
             {(offline || syncing) && (
               <Text color="orange.500">
