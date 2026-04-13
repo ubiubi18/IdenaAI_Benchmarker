@@ -32,11 +32,23 @@ function getAppInfo() {
   }
 }
 
-process.once('loaded', () => {
+function setSharedGlobal(key, value) {
+  global[key] = value
+  globalThis[key] = value
+  if (typeof window !== 'undefined') {
+    window[key] = value
+  }
+}
+
+function exposePreloadGlobals() {
   const appInfo = getAppInfo()
-  global.ipcRenderer = ipcRenderer
-  global.openExternal = shell.openExternal
-  global.aiSolver = {
+  if (typeof window !== 'undefined' && !window.global) {
+    window.global = window
+  }
+
+  setSharedGlobal('ipcRenderer', ipcRenderer)
+  setSharedGlobal('openExternal', shell.openExternal)
+  setSharedGlobal('aiSolver', {
     setProviderKey: (payload) =>
       ipcRenderer.invoke(AI_SOLVER_COMMAND, 'setProviderKey', payload),
     clearProviderKey: (payload) =>
@@ -59,8 +71,8 @@ process.once('loaded', () => {
       ipcRenderer.invoke(AI_SOLVER_COMMAND, 'generateFlipPanels', payload),
     solveFlipBatch: (payload) =>
       ipcRenderer.invoke(AI_SOLVER_COMMAND, 'solveFlipBatch', payload),
-  }
-  global.aiTestUnit = {
+  })
+  setSharedGlobal('aiTestUnit', {
     addFlips: (payload) =>
       ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'addFlips', payload),
     listFlips: (payload) =>
@@ -82,8 +94,8 @@ process.once('loaded', () => {
         ipcRenderer.removeListener(AI_TEST_UNIT_EVENT, handler)
       }
     },
-  }
-  global.localAi = {
+  })
+  setSharedGlobal('localAi', {
     status: (payload) => ipcRenderer.invoke('localAi.status', payload),
     start: (payload) => ipcRenderer.invoke('localAi.start', payload),
     stop: () => ipcRenderer.invoke('localAi.stop'),
@@ -108,50 +120,63 @@ process.once('loaded', () => {
         'localAi.updateTrainingCandidatePackageReview',
         payload
       ),
-  }
+  })
 
-  global.flipStore = flips
-  global.invitesDb = invites
-  global.contactsDb = contacts
+  setSharedGlobal('flipStore', flips)
+  setSharedGlobal('invitesDb', invites)
+  setSharedGlobal('contactsDb', contacts)
 
-  global.logger = logger
+  setSharedGlobal('logger', logger)
 
-  global.isDev = isDev
-  global.isTest = process.env.NODE_ENV === 'e2e'
+  setSharedGlobal('isDev', isDev)
+  setSharedGlobal('isTest', process.env.NODE_ENV === 'e2e')
 
-  global.prepareDb = prepareDb
-  global.isMac = process.platform === 'darwin'
+  setSharedGlobal('prepareDb', prepareDb)
+  setSharedGlobal('isMac', process.platform === 'darwin')
 
-  global.clipboard = clipboard
-  global.nativeImage = nativeImage
-  ;[global.locale] = String(appInfo.locale || 'en').split('-')
+  setSharedGlobal('clipboard', clipboard)
+  setSharedGlobal('nativeImage', nativeImage)
+  const [locale] = String(appInfo.locale || 'en').split('-')
+  setSharedGlobal('locale', locale)
 
-  global.getZoomLevel = () => webFrame.getZoomLevel()
-  global.setZoomLevel = (level) => webFrame.setZoomLevel(level)
+  setSharedGlobal('getZoomLevel', () => webFrame.getZoomLevel())
+  setSharedGlobal('setZoomLevel', (level) => webFrame.setZoomLevel(level))
 
-  global.appVersion = appInfo.version || '0.0.0'
+  setSharedGlobal('appVersion', appInfo.version || '0.0.0')
 
-  global.env = {
+  setSharedGlobal('env', {
     NODE_ENV: process.env.NODE_ENV,
     NODE_MOCK: process.env.NODE_MOCK,
     BUMP_EXTRA_FLIPS: process.env.BUMP_EXTRA_FLIPS,
     FINALIZE_FLIPS: process.env.FINALIZE_FLIPS,
     INDEXER_URL: process.env.INDEXER_URL,
-  }
+  })
 
-  global.toggleFullScreen = () => {
+  setSharedGlobal('toggleFullScreen', () => {
     ipcRenderer
       .invoke(WINDOW_COMMAND, 'toggleFullScreen')
       .catch((error) =>
         logger.warn('Cannot toggle fullscreen', error && error.message)
       )
-  }
+  })
 
-  global.levelup = levelup
-  global.leveldown = leveldown
-  global.dbPath = dbPath
-  global.sub = sub
+  setSharedGlobal('levelup', levelup)
+  setSharedGlobal('leveldown', leveldown)
+  setSharedGlobal('dbPath', dbPath)
+  setSharedGlobal('sub', sub)
 
   // eslint-disable-next-line global-require
-  global.Buffer = require('buffer').Buffer
-})
+  setSharedGlobal('Buffer', require('buffer').Buffer)
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new window.Event('idena-preload-ready'))
+  }
+}
+
+exposePreloadGlobals()
+process.once('loaded', exposePreloadGlobals)
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', exposePreloadGlobals, {
+    once: true,
+  })
+}

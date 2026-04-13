@@ -8,13 +8,13 @@ export function getRpcParams() {
   const state = loadPersistentState('settings')
   if (!state) {
     return {
-      url: `http://localhost:${BASE_INTERNAL_API_PORT}`,
+      url: `http://127.0.0.1:${BASE_INTERNAL_API_PORT}`,
       key: '',
     }
   }
   if (!state.useExternalNode) {
     return {
-      url: `http://localhost:${state.internalPort}`,
+      url: `http://127.0.0.1:${state.internalPort}`,
       key: state.internalApiKey,
     }
   }

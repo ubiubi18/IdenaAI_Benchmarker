@@ -19,7 +19,6 @@ const idenaNodePinnedReleaseUrl = `https://api.github.com/repos/idena-network/id
 const idenaChainDbFolder = 'idenachain.db'
 const minNodeBinarySize = 1024 * 1024
 const localNodeBuildToolchain = 'go1.19.13'
-const legacyDesktopDataDirName = 'Idena'
 
 const getBinarySuffix = () => (process.platform === 'win32' ? '.exe' : '')
 
@@ -27,38 +26,8 @@ function getCurrentUserDataDir() {
   return appDataPath('userData')
 }
 
-function getLegacyUserDataDir() {
-  const currentUserDataDir = getCurrentUserDataDir()
-  const legacyUserDataDir = path.join(
-    path.dirname(currentUserDataDir),
-    legacyDesktopDataDirName
-  )
-
-  if (legacyUserDataDir === currentUserDataDir) return null
-  return legacyUserDataDir
-}
-
 function resolveNodeStorageBaseDir() {
-  const currentUserDataDir = getCurrentUserDataDir()
-  const currentNodeDir = path.join(currentUserDataDir, 'node')
-  if (fs.existsSync(currentNodeDir)) {
-    return currentUserDataDir
-  }
-
-  const legacyUserDataDir = getLegacyUserDataDir()
-  if (!legacyUserDataDir) {
-    return currentUserDataDir
-  }
-
-  const legacyNodeDir = path.join(legacyUserDataDir, 'node')
-  if (fs.existsSync(legacyNodeDir)) {
-    logger.info(
-      `using legacy node storage directory for compatibility: ${legacyNodeDir}`
-    )
-    return legacyUserDataDir
-  }
-
-  return currentUserDataDir
+  return getCurrentUserDataDir()
 }
 
 const getNodeDir = () => path.join(resolveNodeStorageBaseDir(), 'node')
@@ -189,7 +158,7 @@ async function buildLocalArm64PinnedNode(tempNodeFile, onProgress) {
   }
 
   if (fs.existsSync(buildScript)) {
-    await runCommand(buildScript, [tempNodeFile], {
+    await runCommand('/usr/bin/arch', ['-arm64', '/bin/bash', buildScript, tempNodeFile], {
       cwd: repoDir,
       env,
     })

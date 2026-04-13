@@ -1,6 +1,6 @@
 {
-  "name": "idena-desktop",
-  "productName": "idena-desktop",
+  "name": "idena-ai",
+  "productName": "IdenaAI",
   "version": "0.0.1",
   "description": "Idena desktop fork with optional experimental AI flip tooling and benchmark helpers.",
   "main": "main/index.js",
@@ -41,8 +41,8 @@
     "e2e": "dotenv -e .env.e2e testcafe electron"
   },
   "build": {
-    "appId": "io.idena",
-    "artifactName": "idena-desktop-${os}-${version}.${ext}",
+    "appId": "io.idena.ai",
+    "artifactName": "idena-ai-${os}-${version}.${ext}",
     "publish": [
       {
         "provider": "github",

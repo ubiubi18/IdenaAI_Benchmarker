@@ -26,12 +26,26 @@ const isWin = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
 const isLinux = process.platform === 'linux'
 const isDev = !app.isPackaged
+const RUNTIME_APP_NAME = 'IdenaAI'
+const RUNTIME_APP_ID = 'io.idena.ai'
+
+app.setName(RUNTIME_APP_NAME)
+
+if (isWin && typeof app.setAppUserModelId === 'function') {
+  app.setAppUserModelId(RUNTIME_APP_ID)
+}
+
+const runtimeUserDataPath = join(app.getPath('appData'), RUNTIME_APP_NAME)
+app.commandLine.appendSwitch(
+  'disk-cache-dir',
+  join(runtimeUserDataPath, 'Cache')
+)
 
 if (process.env.NODE_ENV === 'e2e') {
   app.setPath('userData', join(app.getPath('userData'), 'tests'))
   fs.removeSync(app.getPath('userData'))
-} else if (isDev) {
-  app.setPath('userData', join(app.getPath('userData'), 'IdenaAI-dev'))
+} else {
+  app.setPath('userData', runtimeUserDataPath)
 }
 
 if (isWin) {
@@ -131,6 +145,17 @@ function loadMainSettings() {
     return {}
   }
 }
+
+ipcMain.on(APP_INFO_COMMAND, (event) => {
+  event.returnValue = {
+    version: appVersion,
+    locale: app.getLocale(),
+  }
+})
+
+ipcMain.on(APP_PATH_COMMAND, (event, folder) => {
+  event.returnValue = appDataPath(folder)
+})
 
 function pickTrimmedString(values, fallback = '') {
   for (const value of values) {
@@ -639,6 +664,30 @@ const createMainWindow = () => {
 
   loadRoute(mainWindow, 'home')
 
+  mainWindow.webContents.on(
+    'console-message',
+    (_event, level, message, line, sourceId) => {
+      const entry = `[renderer:${level}] ${sourceId || 'unknown'}:${line} ${message}`
+      if (level >= 2) {
+        logger.error(entry)
+      } else if (level === 1) {
+        logger.warn(entry)
+      } else {
+        logger.info(entry)
+      }
+    }
+  )
+
+  mainWindow.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      logger.error(
+        `Renderer failed to load (${isMainFrame ? 'main' : 'sub'} frame): ` +
+          `${errorCode} ${errorDescription} ${validatedUrl}`
+      )
+    }
+  )
+
   // Protocol handler for win32 and linux
   // eslint-disable-next-line no-cond-assign
   if (isWin || isLinux) {
@@ -684,10 +733,10 @@ function handleDnaLink(url) {
 
 const createMenu = () => {
   const application = {
-    label: 'idena-desktop',
+    label: RUNTIME_APP_NAME,
     submenu: [
       {
-        label: i18next.t('About idena-desktop'),
+        label: i18next.t(`About ${RUNTIME_APP_NAME}`),
         role: 'about',
       },
       {
@@ -834,7 +883,7 @@ const createTray = () => {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: i18next.t('Open idena-desktop'),
+      label: i18next.t(`Open ${RUNTIME_APP_NAME}`),
       click: showMainWindow,
     },
     {
@@ -1237,17 +1286,6 @@ ipcMain.on('reload', () => {
 
 ipcMain.on('showMainWindow', () => {
   showMainWindow()
-})
-
-ipcMain.on(APP_INFO_COMMAND, (event) => {
-  event.returnValue = {
-    locale: app.getLocale(),
-    version: app.getVersion(),
-  }
-})
-
-ipcMain.on(APP_PATH_COMMAND, (event, folder) => {
-  event.returnValue = appDataPath(folder)
 })
 
 ipcMain.handle(WINDOW_COMMAND, (event, command) => {

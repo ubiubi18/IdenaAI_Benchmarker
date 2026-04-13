@@ -1,11 +1,19 @@
 /* eslint-disable prefer-rest-params */
 /* eslint-disable no-param-reassign */
 // eslint-disable-next-line import/no-extraneous-dependencies
-const {app, ipcRenderer} = require('electron')
+let electron = {}
+try {
+  electron = require('electron') || {}
+} catch {
+  electron = {}
+}
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const {APP_PATH_COMMAND} = require('./channels')
+
+const app = electron.app || null
+const ipcRenderer = electron.ipcRenderer || null
 
 const homeDir = os.homedir ? os.homedir() : process.env.HOME
 
