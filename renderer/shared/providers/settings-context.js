@@ -14,6 +14,7 @@ const SET_INTERNAL_KEY = 'SET_INTERNAL_KEY'
 const SET_CONNECTION_DETAILS = 'SET_CONNECTION_DETAILS'
 const TOGGLE_AUTO_ACTIVATE_MINING = 'TOGGLE_AUTO_ACTIVATE_MINING'
 const UPDATE_AI_SOLVER_SETTINGS = 'UPDATE_AI_SOLVER_SETTINGS'
+const UPDATE_LOCAL_AI_SETTINGS = 'UPDATE_LOCAL_AI_SETTINGS'
 
 const randomKey = () =>
   Math.random().toString(36).substring(2, 13) +
@@ -21,14 +22,11 @@ const randomKey = () =>
   Math.random().toString(36).substring(2, 15)
 
 const CHANGE_LANGUAGE = 'CHANGE_LANGUAGE'
-const BENCHMARKER_INTERNAL_API_PORT = 9129
-const BENCHMARKER_TCP_PORT = 51505
-const BENCHMARKER_IPFS_PORT = 51506
 
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
   provider: 'openai',
-  model: 'gpt-4o-mini',
+  model: 'gpt-5.4',
   mode: 'manual',
   benchmarkProfile: 'strict',
   deadlineMs: 60 * 1000,
@@ -63,11 +61,102 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
+const DEFAULT_LOCAL_AI_SETTINGS = {
+  enabled: false,
+  runtimeMode: 'sidecar',
+  runtimeType: 'phi-sidecar',
+  runtimeFamily: 'phi-3.5-vision',
+  baseUrl: 'http://127.0.0.1:5000',
+  endpoint: 'http://127.0.0.1:5000',
+  model: 'phi-3.5-vision-instruct',
+  visionModel: 'phi-3.5-vision',
+  adapterStrategy: 'lora-first',
+  trainingPolicy: 'approved-post-consensus-only',
+  contractVersion: 'phi-sidecar/v1',
+  captureEnabled: false,
+  trainEnabled: false,
+  federated: {
+    enabled: false,
+    relays: [],
+    minExamples: 5,
+    clipNorm: 1.0,
+    dpNoise: 0.01,
+  },
+  eligibilityGate: {
+    requireValidatedIdentity: true,
+    requireLocalNode: true,
+  },
+}
+
+function normalizeLocalAiSettings(settings = {}) {
+  const nextSettings = {...(settings || {})}
+
+  if (nextSettings.runtimeType && nextSettings.runtimeType !== 'phi-sidecar') {
+    nextSettings.runtimeType = DEFAULT_LOCAL_AI_SETTINGS.runtimeType
+    nextSettings.runtimeFamily = DEFAULT_LOCAL_AI_SETTINGS.runtimeFamily
+    nextSettings.baseUrl = DEFAULT_LOCAL_AI_SETTINGS.baseUrl
+    nextSettings.endpoint = DEFAULT_LOCAL_AI_SETTINGS.endpoint
+    nextSettings.model = DEFAULT_LOCAL_AI_SETTINGS.model
+    nextSettings.visionModel = DEFAULT_LOCAL_AI_SETTINGS.visionModel
+    nextSettings.adapterStrategy = DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy
+    nextSettings.trainingPolicy = DEFAULT_LOCAL_AI_SETTINGS.trainingPolicy
+    nextSettings.contractVersion = DEFAULT_LOCAL_AI_SETTINGS.contractVersion
+  }
+
+  return nextSettings
+}
+
+function buildAiSolverSettings(settings = {}) {
+  const nextSettings = {
+    ...DEFAULT_AI_SOLVER_SETTINGS,
+    ...(settings || {}),
+  }
+
+  if (nextSettings.provider === 'openai' && nextSettings.model === 'gpt-4o-mini') {
+    nextSettings.model = 'gpt-5.4'
+  }
+
+  return nextSettings
+}
+
+// localAi includes nested settings, so it needs structured hydration.
+function buildLocalAiSettings(settings = {}) {
+  const normalizedSettings = normalizeLocalAiSettings(settings)
+
+  return {
+    ...DEFAULT_LOCAL_AI_SETTINGS,
+    ...(normalizedSettings || {}),
+    federated: {
+      ...DEFAULT_LOCAL_AI_SETTINGS.federated,
+      ...((normalizedSettings && normalizedSettings.federated) || {}),
+    },
+    eligibilityGate: {
+      ...DEFAULT_LOCAL_AI_SETTINGS.eligibilityGate,
+      ...((normalizedSettings && normalizedSettings.eligibilityGate) || {}),
+    },
+  }
+}
+
+function mergeLocalAiSettings(current = {}, next = {}) {
+  return buildLocalAiSettings({
+    ...(current || {}),
+    ...(next || {}),
+    federated: {
+      ...((current && current.federated) || {}),
+      ...((next && next.federated) || {}),
+    },
+    eligibilityGate: {
+      ...((current && current.eligibilityGate) || {}),
+      ...((next && next.eligibilityGate) || {}),
+    },
+  })
+}
+
 const initialState = {
   url: BASE_API_URL,
   internalPort: BASE_INTERNAL_API_PORT,
-  tcpPort: BENCHMARKER_TCP_PORT,
-  ipfsPort: BENCHMARKER_IPFS_PORT,
+  tcpPort: 51505,
+  ipfsPort: 51506,
   uiVersion: global.appVersion,
   useExternalNode: false,
   runInternalNode: true,
@@ -75,25 +164,8 @@ const initialState = {
   externalApiKey: '',
   lng: AVAILABLE_LANGS[0],
   autoActivateMining: true,
-  aiSolver: DEFAULT_AI_SOLVER_SETTINGS,
-}
-
-function migrateBenchmarkerNodePorts(state = {}) {
-  const nextState = {...state}
-
-  if (!nextState.internalPort || nextState.internalPort === 9119) {
-    nextState.internalPort = BENCHMARKER_INTERNAL_API_PORT
-  }
-
-  if (!nextState.tcpPort || nextState.tcpPort === 50505) {
-    nextState.tcpPort = BENCHMARKER_TCP_PORT
-  }
-
-  if (!nextState.ipfsPort || nextState.ipfsPort === 50506) {
-    nextState.ipfsPort = BENCHMARKER_IPFS_PORT
-  }
-
-  return nextState
+  aiSolver: buildAiSolverSettings(),
+  localAi: buildLocalAiSettings(),
 }
 
 if (global.env && global.env.NODE_ENV === 'e2e') {
@@ -117,11 +189,9 @@ function settingsReducer(state, action) {
     case SETTINGS_INITIALIZE:
       return {
         ...initialState,
-        ...migrateBenchmarkerNodePorts(state),
-        aiSolver: {
-          ...DEFAULT_AI_SOLVER_SETTINGS,
-          ...(state.aiSolver || {}),
-        },
+        ...state,
+        aiSolver: buildAiSolverSettings(state.aiSolver),
+        localAi: buildLocalAiSettings(state.localAi),
         initialized: true,
       }
     case UPDATE_UI_VERSION: {
@@ -159,11 +229,16 @@ function settingsReducer(state, action) {
     case UPDATE_AI_SOLVER_SETTINGS: {
       return {
         ...state,
-        aiSolver: {
-          ...DEFAULT_AI_SOLVER_SETTINGS,
+        aiSolver: buildAiSolverSettings({
           ...(state.aiSolver || {}),
           ...action.data,
-        },
+        }),
+      }
+    }
+    case UPDATE_LOCAL_AI_SETTINGS: {
+      return {
+        ...state,
+        localAi: mergeLocalAiSettings(state.localAi, action.data),
       }
     }
     default:
@@ -176,16 +251,15 @@ const SettingsDispatchContext = React.createContext()
 
 // eslint-disable-next-line react/prop-types
 export function SettingsProvider({children}) {
-  const persistedSettings = migrateBenchmarkerNodePorts(
-    loadPersistentState('settings') || initialState
-  )
+  const persistedSettings = loadPersistentState('settings') || {}
 
   const [state, dispatch] = usePersistence(
     useLogger(
       React.useReducer(settingsReducer, {
-        autoActivateMining: initialState.autoActivateMining,
-        aiSolver: DEFAULT_AI_SOLVER_SETTINGS,
+        ...initialState,
         ...persistedSettings,
+        aiSolver: buildAiSolverSettings(persistedSettings.aiSolver),
+        localAi: buildLocalAiSettings(persistedSettings.localAi),
       })
     ),
     'settings'
@@ -252,6 +326,13 @@ export function SettingsProvider({children}) {
     [dispatch]
   )
 
+  const updateLocalAiSettings = useCallback(
+    (data) => {
+      dispatch({type: UPDATE_LOCAL_AI_SETTINGS, data})
+    },
+    [dispatch]
+  )
+
   return (
     <SettingsStateContext.Provider value={state}>
       <SettingsDispatchContext.Provider
@@ -263,6 +344,7 @@ export function SettingsProvider({children}) {
             setConnectionDetails,
             toggleAutoActivateMining,
             updateAiSolverSettings,
+            updateLocalAiSettings,
           }),
           [
             changeLanguage,
@@ -271,6 +353,7 @@ export function SettingsProvider({children}) {
             toggleRunInternalNode,
             toggleUseExternalNode,
             updateAiSolverSettings,
+            updateLocalAiSettings,
           ]
         )}
       >

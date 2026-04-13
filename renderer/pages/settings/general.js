@@ -23,9 +23,7 @@ import {
   LocaleSwitcher,
 } from '../../screens/settings/containers'
 import {PrivateKeyIcon} from '../../shared/components/icons'
-
-const {clear: clearFlips} = global.flipStore || {}
-const inviteDb = global.invitesDb || {}
+import {getSharedGlobal} from '../../shared/utils/shared-global'
 
 function Settings() {
   const {t} = useTranslation()
@@ -37,6 +35,9 @@ function Settings() {
       // eslint-disable-next-line react/display-name
       render: () => <Toast title={title} />,
     })
+
+  const clearFlips = getSharedGlobal('flipStore', {}).clear || (() => {})
+  const inviteDb = getSharedGlobal('invitesDb', {clearInvites: () => {}})
 
   const {runInternalNode, useExternalNode} = useSettingsState()
 

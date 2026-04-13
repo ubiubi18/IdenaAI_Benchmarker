@@ -7340,7 +7340,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
         ? payload.renderFeedbackEnabled
         : true
     const textAuditModel = String(
-      payload.textAuditModel || 'gpt-4o-mini'
+      payload.textAuditModel || 'gpt-5.4'
     ).trim()
     const validatorModel = String(
       payload.validatorModel || textAuditModel

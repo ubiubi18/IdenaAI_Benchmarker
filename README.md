@@ -44,7 +44,10 @@ without enabling AI or adding API keys.
 
 ## Status
 
-This is a research fork, not an official Idena release. It has been tested mainly on macOS. Linux and Windows support are best-effort for now. Use it carefully:
+This is a research fork, not an official Idena release. The desktop runtime has
+been updated to Electron 30.x and tested mainly on current macOS, including
+Apple Silicon. Linux and Windows support are still best-effort and may require
+local native rebuilds. Use it carefully:
 
 - You must use your own API keys.
 - AI provider calls do cost money.
@@ -56,6 +59,9 @@ This is a research fork, not an official Idena release. It has been tested mainl
   text and images before publishing.
 
 For cost control, prefer prepaid API budgets or provider-side spending limits.
+
+This benchmarker fork uses its own app-support directory and default dev
+renderer port so it does not collide with `IdenaAI`.
 
 ## Community Build Warning
 
@@ -136,7 +142,10 @@ cp .env.example .env.local
 
 Edit only the values you need. Do not commit `.env.local` or provider keys.
 
-If Electron fails to install correctly, rebuild its downloaded binary:
+`npm start` launches the Next.js renderer dev server on `127.0.0.1:8010` and
+then starts Electron.
+
+If Electron or a native addon needs to be rebuilt for the current runtime:
 
 ```bash
 npm rebuild electron
@@ -182,7 +191,10 @@ npm run clean
 npm start
 ```
 
-If Electron fails to install correctly:
+`npm start` launches the Next.js renderer dev server on `127.0.0.1:8010` and
+then starts Electron.
+
+If Electron or a native addon needs to be rebuilt for the current runtime:
 
 ```bash
 npm rebuild electron
@@ -193,7 +205,7 @@ npm start
 ### Windows
 
 Recommended Windows path: use WSL2 with Ubuntu and follow the Linux instructions
-above. That is usually simpler than native Windows builds for older Electron
+above. That is usually simpler than native Windows builds for current Electron
 projects with native dependencies.
 
 Native Windows source build path is experimental and may require extra debugging:
@@ -235,8 +247,23 @@ npm run clean
 npm start
 ```
 
-If the native Windows build fails on old Electron/native modules, use the WSL2
+If the native Windows build fails on current Electron/native modules, use the WSL2
 Ubuntu path instead.
+
+## Updating The Electron Runtime
+
+If you update the desktop runtime, keep `electron`, `electron-builder`, and
+`electron-updater` aligned in [`package.json`](package.json), then reinstall so
+native modules are rebuilt for the matching Electron ABI:
+
+```bash
+npm install
+npm run release:check
+node scripts/rebuild-electron-runtime-deps.js
+```
+
+If a native addon is still missing after that, remove `node_modules`,
+reinstall, and rerun the rebuild helper before starting the app again.
 
 ## Optional AI Setup
 
@@ -249,6 +276,13 @@ Typical research workflows include:
 - AI Solver: helps solve flips during validation or test runs
 - Off-chain Benchmark: tests solver behavior on local/sample flips
 - On-chain Automatic Flow: experimental automation for real validation flows
+
+Local AI also includes a local-only post-consensus training-package flow. New
+packages start as `draft` and can be marked `reviewed`, `approved`, or
+`rejected` locally in the settings UI. This is still review state only: not
+training, not federated sharing, and not cloud upload.
+Only locally approved packages are marked `federatedReady: true`, which is a
+local preparation step only and still does not perform any federated sharing.
 
 Cheap or very small models failed most often in early testing. If results are poor, try different providers, models, and advanced settings, but watch cost and latency.
 

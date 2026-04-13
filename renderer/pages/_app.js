@@ -19,6 +19,10 @@ import {IdentityProvider} from '../shared/providers/identity-context'
 import {VotingNotificationProvider} from '../shared/providers/voting-notification-context'
 import {OnboardingProvider} from '../shared/providers/onboarding-context'
 import {queryClient} from '../shared/utils/utils'
+import {
+  APP_VERSION_FALLBACK,
+  syncSharedGlobal,
+} from '../shared/utils/shared-global'
 
 // err is a workaround for https://github.com/zeit/next.js/issues/8592
 export default function App({Component, err, ...pageProps}) {
@@ -53,6 +57,10 @@ export default function App({Component, err, ...pageProps}) {
 
 function AppProviders(props) {
   if (typeof window !== 'undefined') {
+    if (!window.global) {
+      window.global = window
+    }
+
     if (!global.env) {
       global.env = {}
     }
@@ -70,10 +78,11 @@ function AppProviders(props) {
     if (!global.ipcRenderer) {
       const noop = () => {}
       global.ipcRenderer = {
+        __idenaFallback: true,
         on: noop,
         send: noop,
         removeListener: noop,
-        invoke: async () => ({}),
+        invoke: async () => undefined,
       }
     }
 
@@ -112,6 +121,26 @@ function AppProviders(props) {
       }
     }
 
+    if (!global.localAi) {
+      const empty = async () => ({ok: false, status: 'unavailable'})
+      global.localAi = {
+        status: async () => ({
+          available: false,
+          running: false,
+          sidecarReachable: false,
+          sidecarModelCount: 0,
+          lastError: 'Local AI bridge is not available in this build',
+        }),
+        start: empty,
+        stop: async () => ({ok: true}),
+        listModels: async () => ({ok: false, models: [], total: 0}),
+        chat: empty,
+        captionFlip: async () => ({ok: false, status: 'not_implemented'}),
+        ocrImage: async () => ({ok: false, status: 'not_implemented'}),
+        trainEpoch: async () => ({ok: false, status: 'not_implemented'}),
+      }
+    }
+
     if (!global.toggleFullScreen) {
       global.toggleFullScreen = () => {}
     }
@@ -123,6 +152,15 @@ function AppProviders(props) {
     if (!global.setZoomLevel) {
       global.setZoomLevel = () => {}
     }
+
+    syncSharedGlobal('env', global.env)
+    syncSharedGlobal('logger', global.logger)
+    syncSharedGlobal('ipcRenderer', global.ipcRenderer)
+    syncSharedGlobal('prepareDb')
+    syncSharedGlobal('sub', global.sub)
+    syncSharedGlobal('appVersion', APP_VERSION_FALLBACK)
+    syncSharedGlobal('isDev', false)
+    syncSharedGlobal('isTest', false)
   }
 
   return (

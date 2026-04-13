@@ -86,13 +86,18 @@ import {useValidationToast} from '../../screens/validation/hooks/use-validation-
 import {useIdentityState} from '../providers/identity-context'
 import {OfflineBanner} from './layout/offline'
 import {TroubleshootingScreen} from '../../screens/troubleshooting'
+import {getSharedGlobal} from '../utils/shared-global'
 
-global.getZoomLevel = global.getZoomLevel || (() => 0)
-global.setZoomLevel = global.setZoomLevel || (() => {})
+global.getZoomLevel = getSharedGlobal('getZoomLevel', () => 0)
+global.setZoomLevel = getSharedGlobal('setZoomLevel', () => {})
 
-const AVAILABLE_TIMEOUT = global.isDev || global.isTest ? 0 : 1000 * 5
+const AVAILABLE_TIMEOUT =
+  getSharedGlobal('isDev', false) || getSharedGlobal('isTest', false)
+    ? 0
+    : 1000 * 5
 
-const sendConfirmQuit = () => global.ipcRenderer.send('confirm-quit')
+const sendConfirmQuit = () =>
+  getSharedGlobal('ipcRenderer', {send: () => {}}).send('confirm-quit')
 
 export default function Layout({
   loading,
@@ -111,7 +116,7 @@ export default function Layout({
   )
 
   React.useEffect(() => {
-    if (global.isDev) return
+    if (getSharedGlobal('isDev', false)) return
 
     const handleMouseWheel = (e) => {
       if (e.ctrlKey) {
@@ -130,7 +135,7 @@ export default function Layout({
   }, [])
 
   React.useEffect(() => {
-    if (global.isDev) return
+    if (getSharedGlobal('isDev', false)) return
 
     if (Number.isFinite(zoomLevel)) {
       global.setZoomLevel(zoomLevel)
@@ -171,6 +176,11 @@ export default function Layout({
   const [{runInternalNode}] = useSettings()
 
   React.useEffect(() => {
+    const ipcRenderer = getSharedGlobal('ipcRenderer', {
+      on: () => {},
+      removeListener: () => {},
+    })
+
     const handleRequestQuit = async () => {
       if (isReady) {
         try {
@@ -188,10 +198,10 @@ export default function Layout({
       }
     }
 
-    global.ipcRenderer.on('confirm-quit', handleRequestQuit)
+    ipcRenderer.on('confirm-quit', handleRequestQuit)
 
     return () => {
-      global.ipcRenderer.removeListener('confirm-quit', handleRequestQuit)
+      ipcRenderer.removeListener('confirm-quit', handleRequestQuit)
     }
   }, [isReady, onOpenConfirmQuit, runInternalNode])
 

@@ -8,8 +8,20 @@ import {fetchIdentity, killInvitee, sendInvite} from '../api/dna'
 import {useFailToast} from '../hooks/use-toast'
 import {strip} from '../utils/obj'
 import {canKill} from '../../screens/contacts/utils'
+import {getSharedGlobal} from '../utils/shared-global'
 
-const db = global.invitesDb || {}
+function getInviteDb() {
+  return (
+    getSharedGlobal('invitesDb') || {
+      getInvites: () => [],
+      getActivationTx: () => '',
+      updateInvite: () => {},
+      clearActivationTx: () => {},
+      addInvite: () => null,
+      setActivationTx: () => {},
+    }
+  )
+}
 
 const InviteStateContext = React.createContext()
 const InviteDispatchContext = React.createContext()
@@ -24,6 +36,7 @@ export function InviteProvider({children}) {
     let ignore = false
 
     async function fetchData(savedInvites) {
+      const db = getInviteDb()
       const txs = (
         await Promise.all(
           savedInvites
@@ -110,6 +123,8 @@ export function InviteProvider({children}) {
       }
     }
 
+    const db = getInviteDb()
+
     fetchData(db.getInvites()).catch((e) => {
       global.logger.error('An error occured while fetching identity', e.message)
     })
@@ -126,6 +141,7 @@ export function InviteProvider({children}) {
   useInterval(
     async () => {
       function resetActivation() {
+        const db = getInviteDb()
         setActivationTx('')
         db.clearActivationTx()
       }
@@ -225,6 +241,7 @@ export function InviteProvider({children}) {
 
   const addInvite = useCallback(
     async (to, amount, firstName = '', lastName = '') => {
+      const db = getInviteDb()
       const {result, error} = await sendInvite({to, amount})
       if (result) {
         const issuedInvite = {
@@ -249,6 +266,7 @@ export function InviteProvider({children}) {
 
   const updateInvite = useCallback(
     async (id, firstName, lastName) => {
+      const db = getInviteDb()
       const key = id
       const newFirstName = firstName || ''
       const newLastName = lastName || ''
@@ -274,6 +292,7 @@ export function InviteProvider({children}) {
 
   const deleteInvite = useCallback(
     async (id) => {
+      const db = getInviteDb()
       const deletedAt = Date.now()
       setInvites(
         invites.map((currentInvite) =>
@@ -289,6 +308,7 @@ export function InviteProvider({children}) {
 
   const killInvite = useCallback(
     async (id, from, to) => {
+      const db = getInviteDb()
       const {result, error} = await killInvitee(from, to)
 
       if (result) {
@@ -316,6 +336,7 @@ export function InviteProvider({children}) {
 
   const recoverInvite = useCallback(
     async (id) => {
+      const db = getInviteDb()
       const key = id
 
       setInvites(
@@ -337,6 +358,7 @@ export function InviteProvider({children}) {
 
   const activateInvite = useCallback(
     async (code) => {
+      const db = getInviteDb()
       const result = await callRpc(
         'dna_activateInvite',
         strip({to: address, key: code})

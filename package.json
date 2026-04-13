@@ -14,7 +14,9 @@
   },
   "license": "MIT",
   "scripts": {
-    "start": "dotenv -e .env.local electron .",
+    "preinstall": "node scripts/check-runtime-install.js",
+    "postinstall": "node scripts/rebuild-electron-runtime-deps.js",
+    "start": "dotenv -e .env.local node scripts/start-electron-dev.js",
     "build:social": "npm ci --prefix vendor/idena.social-ui && npm run build --prefix vendor/idena.social-ui && node scripts/sync-idena-social-ui.js",
     "build:renderer": "node scripts/run-next-static-build.js",
     "build": "npm run build:social && npm run build:renderer",
@@ -41,6 +43,13 @@
   "build": {
     "appId": "io.idena.benchmarker",
     "artifactName": "idena-ai-benchmarker-${os}-${version}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ubiubi18",
+        "repo": "IdenaAI_Benchmarker"
+      }
+    ],
     "files": [
       "**/*",
       "!**/.env",
@@ -70,14 +79,12 @@
       ]
     },
     "win": {
-      "publish": [
-        "github"
-      ],
       "icon": "main/static/icons/icon_512_2x.ico"
     },
     "mac": {
-      "publish": [
-        "github"
+      "target": [
+        "dmg",
+        "zip"
       ],
       "icon": "main/static/icons/icon-512@2x.icns"
     },
@@ -85,22 +92,20 @@
       "target": [
         "deb"
       ],
-      "publish": [
-        "github"
-      ],
       "icon": "main/static/icons/icon-512@2x.icns",
       "maintainer": "Idena <info@idena.io> (https://idena.io/)"
     }
   },
   "devDependencies": {
     "@babel/core": "^7.6.0",
+    "@electron/rebuild": "^3.7.2",
     "@testing-library/react": "^9.1.4",
     "babel-eslint": "^10.0.1",
     "babel-jest": "^24.9.0",
     "cors": "^2.8.5",
-    "dotenv-cli": "^3.1.0",
-    "electron": "^9.4.0",
-    "electron-builder": "^23.6.0",
+    "dotenv-cli": "3.1.0",
+    "electron": "30.5.1",
+    "electron-builder": "^26.8.2",
     "eslint-config-wesbos": "^3.2.3",
     "eslint-plugin-testcafe": "^0.2.1",
     "i18next-scanner": "^2.10.3",
@@ -125,10 +130,8 @@
     "dequal": "^1.0.0",
     "dexie": "^3.2.2",
     "duckduckgo-images-api": "^1.0.5",
-    "electron-is-dev": "^1.0.1",
-    "electron-next": "^3.1.5",
     "electron-store": "^3.2.0",
-    "electron-updater": "^4.0.14",
+    "electron-updater": "^6.8.3",
     "eslint": "^8.36.0",
     "express": "^4.17.1",
     "extract-colors": "^1.1.22",

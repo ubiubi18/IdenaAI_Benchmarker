@@ -10,22 +10,7 @@ const {
   shell,
   // eslint-disable-next-line import/no-extraneous-dependencies
 } = require('electron')
-// electron-updater is disabled in dev because Electron 9 runtime
-// does not support fs/promises used by newer updater versions
-let autoUpdater = null
-
-const isDev = process.defaultApp || process.env.NODE_ENV !== 'production'
-
-if (!isDev) {
-  try {
-    ;({autoUpdater} = require('electron-updater'))
-  } catch (e) {
-    console.warn('[updater] failed to load electron-updater:', e.message)
-  }
-} else {
-  console.log('[updater] skipped in development mode')
-}
-const prepareNext = require('electron-next')
+const {autoUpdater} = require('electron-updater')
 const fs = require('fs-extra')
 const i18next = require('i18next')
 const {image_search: imageSearch} = require('duckduckgo-images-api')
@@ -36,21 +21,17 @@ const {zoomIn, zoomOut, resetZoom} = require('./utils')
 const loadRoute = require('./utils/routes')
 const {getI18nConfig} = require('./language')
 const appDataPath = require('./app-data-path')
-const {prepareDb} = require('./stores/setup')
 
 const isWin = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
 const isLinux = process.platform === 'linux'
+const isDev = !app.isPackaged
 const RUNTIME_APP_NAME = 'IdenaAI_Benchmarker'
 const RUNTIME_APP_ID = 'io.idena.benchmarker'
 const BENCHMARKER_INTERNAL_API_PORT = 9129
 const BENCHMARKER_TCP_PORT = 51505
 const BENCHMARKER_IPFS_PORT = 51506
-const BENCHMARKER_RENDERER_PORT = Number(
-  process.env.IDENA_DESKTOP_RENDERER_PORT || 8010
-)
 
-app.allowRendererProcessReuse = true
 app.setName(RUNTIME_APP_NAME)
 
 if (isWin && typeof app.setAppUserModelId === 'function') {
@@ -110,8 +91,6 @@ function migrateBenchmarkerSettings() {
   }
 }
 
-migrateBenchmarkerSettings()
-
 const {
   AUTO_UPDATE_EVENT,
   AUTO_UPDATE_COMMAND,
@@ -126,6 +105,24 @@ const {
 } = require('./channels')
 const {createAiProviderBridge} = require('./ai-providers')
 const {createAiTestUnitBridge} = require('./ai-test-unit')
+const {prepareDb} = require('./stores/setup')
+migrateBenchmarkerSettings()
+const {createLocalAiFederated} = require('./local-ai/federated')
+const {createLocalAiManager} = require('./local-ai/manager')
+const {
+  ensureLocalAiEnabled,
+  isLocalAiEnabled,
+} = require('./local-ai/enablement')
+const {
+  LOCAL_AI_RUNTIME_MODE,
+  LOCAL_AI_RUNTIME,
+  LOCAL_AI_RUNTIME_FAMILY,
+  LOCAL_AI_DEFAULT_BASE_URL,
+  LOCAL_AI_DEFAULT_MODEL,
+  LOCAL_AI_ADAPTER_STRATEGY,
+  LOCAL_AI_TRAINING_POLICY,
+  LOCAL_AI_CONTRACT_VERSION,
+} = require('./local-ai/constants')
 const {
   startNode,
   stopNode,
@@ -147,6 +144,14 @@ const aiTestUnitBridge = createAiTestUnitBridge({
   logger,
   aiProviderBridge,
 })
+const localAiManager = createLocalAiManager({
+  logger,
+  isDev,
+})
+const localAiFederated = createLocalAiFederated({
+  logger,
+  isDev,
+})
 
 const IMAGE_SEARCH_SOURCE_TIMEOUT_MS = 8000
 
@@ -158,6 +163,320 @@ let tray
 const nodeUpdater = new NodeUpdater(logger)
 
 let dnaUrl
+let isCheckingForUpdates = false
+
+const RELEASE_REPOSITORY = {
+  owner: 'ubiubi18',
+  repo: 'IdenaAI_Benchmarker',
+}
+
+const RELEASE_URL = `https://api.github.com/repos/${RELEASE_REPOSITORY.owner}/${RELEASE_REPOSITORY.repo}/releases/latest`
+
+function loadMainSettings() {
+  try {
+    return prepareDb('settings').getState() || {}
+  } catch {
+    return {}
+  }
+}
+
+ipcMain.on(APP_INFO_COMMAND, (event) => {
+  event.returnValue = {
+    version: appVersion,
+    locale: app.getLocale(),
+  }
+})
+
+ipcMain.on(APP_PATH_COMMAND, (event, folder) => {
+  event.returnValue = appDataPath(folder)
+})
+
+function pickTrimmedString(values, fallback = '') {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const text = value.trim()
+
+      if (text) {
+        return text
+      }
+    }
+  }
+
+  return fallback
+}
+
+function normalizeLocalAiPayload(payload = {}) {
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload
+    : {}
+}
+
+function pickLocalAiInput(nextPayload) {
+  if (typeof nextPayload.input !== 'undefined') {
+    return nextPayload.input
+  }
+
+  if (typeof nextPayload.payload !== 'undefined') {
+    return nextPayload.payload
+  }
+
+  return nextPayload
+}
+
+function getMainLocalAiSettings(payload = {}) {
+  const settings = loadMainSettings()
+  const nextPayload = normalizeLocalAiPayload(payload)
+  const localAi =
+    settings && settings.localAi && typeof settings.localAi === 'object'
+      ? settings.localAi
+      : {}
+
+  return {
+    enabled: localAi.enabled === true,
+    mode: pickTrimmedString(
+      [localAi.runtimeMode, nextPayload.mode],
+      LOCAL_AI_RUNTIME_MODE
+    ),
+    baseUrl: pickTrimmedString(
+      [
+        localAi.endpoint,
+        localAi.baseUrl,
+        nextPayload.endpoint,
+        nextPayload.baseUrl,
+      ],
+      LOCAL_AI_DEFAULT_BASE_URL
+    ),
+    model: pickTrimmedString(
+      [localAi.model, nextPayload.model],
+      LOCAL_AI_DEFAULT_MODEL
+    ),
+    runtime: LOCAL_AI_RUNTIME,
+    runtimeFamily: pickTrimmedString(
+      [localAi.runtimeFamily, nextPayload.runtimeFamily],
+      LOCAL_AI_RUNTIME_FAMILY
+    ),
+    adapterStrategy: pickTrimmedString(
+      [localAi.adapterStrategy, nextPayload.adapterStrategy],
+      LOCAL_AI_ADAPTER_STRATEGY
+    ),
+    trainingPolicy: pickTrimmedString(
+      [localAi.trainingPolicy, nextPayload.trainingPolicy],
+      LOCAL_AI_TRAINING_POLICY
+    ),
+  }
+}
+
+function assertLocalAiEnabled(action) {
+  try {
+    ensureLocalAiEnabled(loadMainSettings())
+  } catch (error) {
+    if (isDev && logger && typeof logger.debug === 'function') {
+      logger.debug('Local AI IPC blocked because Local AI is disabled', {
+        action,
+      })
+    }
+    throw error
+  }
+}
+
+function withLocalAiEnabled(action, handler) {
+  return async (...args) => {
+    assertLocalAiEnabled(action)
+    return handler(...args)
+  }
+}
+
+function buildDisabledLocalAiStatus(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    enabled: false,
+    status: 'disabled',
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    sidecarReachable: false,
+    sidecarCheckedAt: null,
+    sidecarModelCount: 0,
+    error: null,
+    lastError: null,
+  }
+}
+
+function buildLocalAiStatusResponse(result = {}) {
+  const reachable = result.sidecarReachable
+  let status = 'checking'
+
+  if (reachable === true) {
+    status = 'ok'
+  } else if (reachable === false) {
+    status = 'error'
+  }
+
+  return {
+    ...result,
+    enabled: true,
+    status,
+    runtime:
+      String(
+        (result.health && result.health.runtime) ||
+          result.runtime ||
+          LOCAL_AI_RUNTIME
+      ).trim() || LOCAL_AI_RUNTIME,
+    runtimeFamily:
+      String(result.runtimeFamily || LOCAL_AI_RUNTIME_FAMILY).trim() ||
+      LOCAL_AI_RUNTIME_FAMILY,
+    contractVersion:
+      String(result.contractVersion || LOCAL_AI_CONTRACT_VERSION).trim() ||
+      LOCAL_AI_CONTRACT_VERSION,
+    error:
+      status === 'error'
+        ? String(result.lastError || '').trim() || 'unavailable'
+        : null,
+  }
+}
+
+function buildDisabledLocalAiChatResponse(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    ok: false,
+    enabled: false,
+    status: 'disabled',
+    provider: 'local-ai',
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    model: localAi.model,
+    content: null,
+    error: 'local_ai_disabled',
+    lastError: 'Local AI is disabled',
+  }
+}
+
+function buildDisabledLocalAiFlipToTextResponse(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    ok: false,
+    enabled: false,
+    status: 'disabled',
+    provider: 'local-ai',
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    model: localAi.model,
+    text: null,
+    error: 'local_ai_disabled',
+    lastError: 'Local AI is disabled',
+  }
+}
+
+function buildDisabledLocalAiFlipJudgeResponse(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    ok: false,
+    enabled: false,
+    status: 'disabled',
+    provider: 'local-ai',
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    model: localAi.model,
+    decision: null,
+    classification: null,
+    confidence: null,
+    reason: null,
+    ambiguityFlags: [],
+    ambiguity_flags: [],
+    summary: null,
+    sequenceText: null,
+    error: 'local_ai_disabled',
+    lastError: 'Local AI is disabled',
+  }
+}
+
+function buildDisabledLocalAiInfoResponse(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+
+  return {
+    ok: false,
+    enabled: false,
+    status: 'disabled',
+    provider: 'local-ai',
+    runtime: localAi.runtime,
+    runtimeFamily: localAi.runtimeFamily,
+    contractVersion: LOCAL_AI_CONTRACT_VERSION,
+    adapterStrategy: localAi.adapterStrategy,
+    trainingPolicy: localAi.trainingPolicy,
+    model: localAi.model,
+    models: [],
+    error: 'local_ai_disabled',
+    lastError: 'Local AI is disabled',
+  }
+}
+
+function buildLocalAiChatPayload(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+  const nextPayload = normalizeLocalAiPayload(payload)
+
+  return {
+    ...nextPayload,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    endpoint: localAi.baseUrl,
+    model: localAi.model,
+    runtimeFamily: localAi.runtimeFamily,
+    adapterStrategy: localAi.adapterStrategy,
+    trainingPolicy: localAi.trainingPolicy,
+  }
+}
+
+function buildLocalAiInfoPayload(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+  const nextPayload = normalizeLocalAiPayload(payload)
+
+  return {
+    ...nextPayload,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    endpoint: localAi.baseUrl,
+    model: localAi.model,
+    runtimeFamily: localAi.runtimeFamily,
+    adapterStrategy: localAi.adapterStrategy,
+    trainingPolicy: localAi.trainingPolicy,
+  }
+}
+
+function buildLocalAiFlipJudgePayload(payload = {}) {
+  const localAi = getMainLocalAiSettings(payload)
+  const nextPayload = normalizeLocalAiPayload(payload)
+
+  return {
+    ...nextPayload,
+    mode: localAi.mode,
+    baseUrl: localAi.baseUrl,
+    endpoint: localAi.baseUrl,
+    model: localAi.model,
+    runtimeFamily: localAi.runtimeFamily,
+    adapterStrategy: localAi.adapterStrategy,
+    trainingPolicy: localAi.trainingPolicy,
+    input: pickLocalAiInput(nextPayload),
+  }
+}
+
+function buildLocalAiTrainHookPayload(payload = {}) {
+  return buildLocalAiInfoPayload(payload)
+}
 
 function normalizeImageSearchResult(item) {
   if (!item || typeof item !== 'object') {
@@ -369,6 +688,8 @@ const createMainWindow = () => {
     height: responsiveHeight,
     webPreferences: {
       nodeIntegration: false,
+      contextIsolation: false,
+      sandbox: false,
       preload: join(__dirname, 'preload.js'),
     },
     icon: resolve(__dirname, 'static', 'icon-128@2x.png'),
@@ -376,6 +697,30 @@ const createMainWindow = () => {
   })
 
   loadRoute(mainWindow, 'home')
+
+  mainWindow.webContents.on(
+    'console-message',
+    (_event, level, message, line, sourceId) => {
+      const entry = `[renderer:${level}] ${sourceId || 'unknown'}:${line} ${message}`
+      if (level >= 2) {
+        logger.error(entry)
+      } else if (level === 1) {
+        logger.warn(entry)
+      } else {
+        logger.info(entry)
+      }
+    }
+  )
+
+  mainWindow.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      logger.error(
+        `Renderer failed to load (${isMainFrame ? 'main' : 'sub'} frame): ` +
+          `${errorCode} ${errorDescription} ${validatedUrl}`
+      )
+    }
+  )
 
   // Protocol handler for win32 and linux
   // eslint-disable-next-line no-cond-assign
@@ -557,7 +902,9 @@ function trayIcon() {
 
 if (isMac) {
   nativeTheme.on('updated', () => {
-    tray.setImage(resolve(__dirname, 'static', 'tray', trayIcon()))
+    if (tray) {
+      tray.setImage(resolve(__dirname, 'static', 'tray', trayIcon()))
+    }
   })
 }
 
@@ -585,9 +932,7 @@ const createTray = () => {
   tray.setContextMenu(contextMenu)
 }
 
-// Prepare the renderer once the app is ready
-app.on('ready', async () => {
-  await prepareNext('./renderer', BENCHMARKER_RENDERER_PORT)
+async function bootstrapApp() {
   const i18nConfig = getI18nConfig()
 
   i18next.init(i18nConfig, (err) => {
@@ -605,7 +950,15 @@ app.on('ready', async () => {
 
     checkForUpdates()
   })
-})
+}
+
+app
+  .whenReady()
+  .then(bootstrapApp)
+  .catch((error) => {
+    logger.error('Failed to bootstrap Electron runtime', error)
+    app.exit(1)
+  })
 
 if (!app.isDefaultProtocolClient('dna')) {
   // Define custom protocol handler. Deep linking works on packaged versions of the application!
@@ -645,7 +998,14 @@ ipcMain.on('confirm-quit', () => {
   app.quit()
 })
 
-app.on('activate', showMainWindow)
+app.on('activate', () => {
+  if (!mainWindow) {
+    createMainWindow()
+    return
+  }
+
+  showMainWindow()
+})
 
 app.on('window-all-closed', () => {
   if (!isMac) {
@@ -867,15 +1227,17 @@ nodeUpdater.on('update-downloaded', (info) => {
   sendMainWindowMsg(AUTO_UPDATE_EVENT, 'node-update-ready', info)
 })
 
-if (autoUpdater) {
-  autoUpdater.on('download-progress', (info) => {
-    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
-  })
+autoUpdater.on('download-progress', (info) => {
+  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
+})
 
-  autoUpdater.on('update-downloaded', (info) => {
-    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
-  })
-}
+autoUpdater.on('update-downloaded', (info) => {
+  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
+})
+
+autoUpdater.on('error', (error) => {
+  logger.error('error while checking UI update', error.toString())
+})
 
 ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   logger.info(`new autoupdate command`, command, data)
@@ -885,13 +1247,13 @@ ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
       break
     }
     case 'update-ui': {
-      if (isWin) {
+      if (isWin && app.isPackaged) {
         didConfirmQuit = true
-        if (autoUpdater) {
-          autoUpdater.quitAndInstall()
-        }
+        autoUpdater.quitAndInstall()
       } else {
-        shell.openExternal('https://www.idena.io/download')
+        shell.openExternal(
+          `https://github.com/${RELEASE_REPOSITORY.owner}/${RELEASE_REPOSITORY.repo}/releases`
+        )
       }
       break
     }
@@ -914,13 +1276,12 @@ ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   }
 })
 
-const RELEASE_URL =
-  'https://api.github.com/repos/ubiubi18/IdenaAI_Benchmarker/releases/latest'
-
 function checkForUpdates() {
-  if (isDev) {
+  if (isDev || !app.isPackaged || isCheckingForUpdates) {
     return
   }
+
+  isCheckingForUpdates = true
 
   async function runCheck() {
     try {
@@ -936,9 +1297,7 @@ function checkForUpdates() {
           }, 30000)
         }
       } else {
-        if (autoUpdater) {
-          await autoUpdater.checkForUpdates()
-        }
+        await autoUpdater.checkForUpdates()
       }
     } catch (e) {
       logger.error('error while checking UI update', e.toString())
@@ -961,17 +1320,6 @@ ipcMain.on('reload', () => {
 
 ipcMain.on('showMainWindow', () => {
   showMainWindow()
-})
-
-ipcMain.on(APP_INFO_COMMAND, (event) => {
-  event.returnValue = {
-    locale: app.getLocale(),
-    version: app.getVersion(),
-  }
-})
-
-ipcMain.on(APP_PATH_COMMAND, (event, folder) => {
-  event.returnValue = appDataPath(folder)
 })
 
 ipcMain.handle(WINDOW_COMMAND, (event, command) => {
@@ -1095,6 +1443,183 @@ ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
     })
     throw error
   }
+})
+
+ipcMain.handle('localAi.status', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiStatus(payload)
+  }
+
+  return buildLocalAiStatusResponse(await localAiManager.status(payload))
+})
+
+ipcMain.handle(
+  'localAi.start',
+  withLocalAiEnabled('start', async (_event, payload) =>
+    localAiManager.start(payload)
+  )
+)
+
+ipcMain.handle(
+  'localAi.stop',
+  withLocalAiEnabled('stop', async () => localAiManager.stop())
+)
+
+ipcMain.handle(
+  'localAi.listModels',
+  withLocalAiEnabled('listModels', async (_event, payload) =>
+    localAiManager.listModels(payload)
+  )
+)
+
+ipcMain.handle('localAi.info', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiInfoResponse(payload)
+  }
+
+  return {
+    ...(await localAiManager.info(buildLocalAiInfoPayload(payload))),
+    enabled: true,
+  }
+})
+
+ipcMain.handle('localAi.chat', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiChatResponse(payload)
+  }
+
+  return {
+    ...(await localAiManager.chat(buildLocalAiChatPayload(payload))),
+    enabled: true,
+  }
+})
+
+ipcMain.handle('localAi.flipJudge', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiFlipJudgeResponse(payload)
+  }
+
+  return {
+    ...(await localAiManager.flipJudge(buildLocalAiFlipJudgePayload(payload))),
+    enabled: true,
+  }
+})
+
+ipcMain.handle('localAi.checkFlipSequence', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiFlipJudgeResponse(payload)
+  }
+
+  return {
+    ...(await localAiManager.checkFlipSequence(
+      buildLocalAiFlipJudgePayload(payload)
+    )),
+    enabled: true,
+  }
+})
+
+ipcMain.handle('localAi.flipToText', async (_event, payload) => {
+  if (!isLocalAiEnabled(loadMainSettings())) {
+    return buildDisabledLocalAiFlipToTextResponse(payload)
+  }
+
+  return {
+    ...(await localAiManager.flipToText(buildLocalAiFlipJudgePayload(payload))),
+    enabled: true,
+  }
+})
+
+ipcMain.handle(
+  'localAi.captionFlip',
+  withLocalAiEnabled('captionFlip', async (_event, payload) =>
+    localAiManager.captionFlip(payload)
+  )
+)
+
+ipcMain.handle(
+  'localAi.ocrImage',
+  withLocalAiEnabled('ocrImage', async (_event, payload) =>
+    localAiManager.ocrImage(payload)
+  )
+)
+
+ipcMain.handle(
+  'localAi.trainHook',
+  withLocalAiEnabled('trainHook', async (_event, payload) =>
+    localAiManager.trainHook(buildLocalAiTrainHookPayload(payload))
+  )
+)
+
+ipcMain.handle(
+  'localAi.trainEpoch',
+  withLocalAiEnabled('trainEpoch', async (_event, payload) =>
+    localAiManager.trainEpoch(buildLocalAiTrainHookPayload(payload))
+  )
+)
+
+ipcMain.handle(
+  'localAi.buildManifest',
+  withLocalAiEnabled('buildManifest', async (_event, epoch) =>
+    localAiManager.buildManifest(epoch)
+  )
+)
+
+ipcMain.handle(
+  'localAi.loadTrainingCandidatePackage',
+  withLocalAiEnabled('loadTrainingCandidatePackage', async (_event, payload) =>
+    localAiManager.loadTrainingCandidatePackage(payload)
+  )
+)
+
+ipcMain.handle(
+  'localAi.buildTrainingCandidatePackage',
+  withLocalAiEnabled('buildTrainingCandidatePackage', async (_event, payload) =>
+    localAiManager.buildTrainingCandidatePackage(payload)
+  )
+)
+
+ipcMain.handle(
+  'localAi.updateTrainingCandidatePackageReview',
+  withLocalAiEnabled(
+    'updateTrainingCandidatePackageReview',
+    async (_event, payload) =>
+      localAiManager.updateTrainingCandidatePackageReview(payload)
+  )
+)
+
+ipcMain.handle(
+  'localAi.buildBundle',
+  withLocalAiEnabled('buildBundle', async (_event, epoch) =>
+    localAiFederated.buildUpdateBundle(epoch)
+  )
+)
+
+ipcMain.handle(
+  'localAi.importBundle',
+  withLocalAiEnabled('importBundle', async (_event, filePath) =>
+    localAiFederated.importUpdateBundle(filePath)
+  )
+)
+
+ipcMain.handle(
+  'localAi.aggregate',
+  withLocalAiEnabled('aggregate', async () =>
+    localAiFederated.aggregateAcceptedBundles()
+  )
+)
+
+ipcMain.on('localAi.captureFlip', (_event, payload) => {
+  try {
+    assertLocalAiEnabled('captureFlip')
+  } catch {
+    return
+  }
+
+  Promise.resolve(localAiManager.captureFlip(payload)).catch((error) => {
+    logger.error('Local AI capture failed', {
+      error: error.toString(),
+    })
+  })
 })
 
 const KEY_VALUE = {}

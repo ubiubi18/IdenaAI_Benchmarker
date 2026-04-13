@@ -1,8 +1,19 @@
-const loadDb = global.prepareDb || {}
+import {getSharedGlobal} from './shared-global'
+
+function getLoadDb() {
+  return (
+    getSharedGlobal('prepareDb') ||
+    (() => ({
+      getState: () => ({}),
+      set: () => ({write: () => {}}),
+      setState: () => ({write: () => {}}),
+    }))
+  )
+}
 
 export function loadPersistentState(dbName) {
   try {
-    const value = loadDb(dbName).getState()
+    const value = getLoadDb()(dbName).getState()
     return Object.keys(value).length === 0 ? null : value || null
   } catch (error) {
     return null
@@ -19,17 +30,26 @@ export function loadPersistentStateValue(dbName, key) {
 
 export function persistItem(dbName, key, value) {
   try {
-    loadDb(dbName).set(key, value).write()
+    getLoadDb()(dbName).set(key, value).write()
   } catch {
-    global.logger.error('error writing to file: ', dbName, key, value)
+    getSharedGlobal('logger', console).error(
+      'error writing to file: ',
+      dbName,
+      key,
+      value
+    )
   }
 }
 
 export function persistState(name, state) {
   try {
-    loadDb(name).setState(state).write()
+    getLoadDb()(name).setState(state).write()
   } catch {
-    global.logger.error('error writing to file: ', name, state)
+    getSharedGlobal('logger', console).error(
+      'error writing to file: ',
+      name,
+      state
+    )
   }
 }
 
