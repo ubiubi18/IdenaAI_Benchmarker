@@ -787,7 +787,7 @@ export function Version({
   return (
     <Stack spacing="2">
       <Stack spacing="px" mx="2">
-        <VersionText>{`IdenaAI v${global.appVersion}`}</VersionText>
+        <VersionText>{`IdenaAI v.${global.appVersion}`}</VersionText>
         <VersionText>
           {t('Node version: {{version}}', {
             version: nodeCurrentVersion,

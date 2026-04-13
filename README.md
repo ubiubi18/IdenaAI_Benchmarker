@@ -1,10 +1,4 @@
-# IdenaAI v0.0.2 !!! NOT READY TO USE !!!
-
-Pre-release note for the source snapshot pushed on April 12-13, 2026:
-[docs/prerelease-v0.0.2.md](docs/prerelease-v0.0.2.md)
-
-This is not a formal binary release. The note exists only to document what was
-pushed to GitHub before the visible app version was bumped to `0.0.2`.
+# idena-ai-benchmark !!! NOT READY TO USE !!!
 
 This repository is WORK IN PROGRESS for a desktop benchmarking tool that connects AI API providers to the FLIP-Challenge - a human CAPTCHA-like benchmark built from human-generated and human-verified tasks collected from the Idena blockchain. It lets researchers test, compare, and stress-test models on tasks that are still easy for humans but often hard, brittle, and expensive for AI.
 
