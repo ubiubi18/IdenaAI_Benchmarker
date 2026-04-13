@@ -213,8 +213,7 @@ function buildSocialNodeBootstrap(settings, historyMode) {
 export default function SocialPage() {
   const settings = useSettingsState()
   const {offline, syncing} = useChainState()
-  const {externalApiKey, internalApiKey, internalPort, url, useExternalNode} =
-    settings
+  const {internalPort, url, useExternalNode} = settings
 
   const [iframeNonce, setIframeNonce] = React.useState(0)
   const [bootstrapReady, setBootstrapReady] = React.useState(false)
@@ -236,22 +235,13 @@ export default function SocialPage() {
     () =>
       buildSocialNodeBootstrap(
         {
-          externalApiKey,
-          internalApiKey,
           internalPort,
           url,
           useExternalNode,
         },
         historyMode === 'indexer-api' ? 'indexer-api' : 'rpc'
       ),
-    [
-      externalApiKey,
-      historyMode,
-      internalApiKey,
-      internalPort,
-      url,
-      useExternalNode,
-    ]
+    [historyMode, internalPort, url, useExternalNode]
   )
 
   React.useEffect(() => {
@@ -348,27 +338,25 @@ export default function SocialPage() {
         return
       }
 
-      const requestBody = {
-        method,
-        params: Array.isArray(params) ? params : [],
-        id: 1,
-        key: useExternalNode ? externalApiKey || '' : internalApiKey || '',
-      }
-
       let responsePayload = {}
 
       try {
-        const response = await fetch(bootstrap.nodeUrl, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(requestBody),
-        })
+        const socialBridge =
+          window.idena &&
+          window.idena.social &&
+          typeof window.idena.social.rpc === 'function'
+            ? window.idena.social
+            : null
 
-        if (!response.ok) {
-          throw new Error(`Response status: ${response.status}`)
+        if (!socialBridge) {
+          throw new Error('social_rpc_bridge_unavailable')
         }
 
-        responsePayload = await response.json()
+        responsePayload = await socialBridge.rpc({
+          requestId,
+          method,
+          params: Array.isArray(params) ? params : [],
+        })
       } catch (error) {
         responsePayload = {
           error: {
@@ -391,7 +379,7 @@ export default function SocialPage() {
 
     window.addEventListener('message', handleRpcRequest)
     return () => window.removeEventListener('message', handleRpcRequest)
-  }, [bootstrap.nodeUrl, externalApiKey, internalApiKey, useExternalNode])
+  }, [])
 
   React.useEffect(() => {
     if (postBootstrapToIframe()) {

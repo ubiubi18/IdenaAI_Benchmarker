@@ -19,7 +19,9 @@ const semver = require('semver')
 const axios = require('axios')
 const {zoomIn, zoomOut, resetZoom} = require('./utils')
 const loadRoute = require('./utils/routes')
-const DEV_SERVER_ORIGIN = loadRoute.DEV_SERVER_ORIGIN
+
+const {DEV_SERVER_ORIGIN} = loadRoute
+
 const {getI18nConfig} = require('./language')
 const appDataPath = require('./app-data-path')
 
@@ -121,6 +123,27 @@ const localAiFederated = createLocalAiFederated({
 })
 
 const IMAGE_SEARCH_SOURCE_TIMEOUT_MS = 8000
+const BASE_INTERNAL_API_PORT = 9119
+const BASE_EXTERNAL_API_URL = 'http://localhost:9009'
+const SOCIAL_RPC_MAX_REQUEST_ID_LENGTH = 128
+const SOCIAL_RPC_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
+const SOCIAL_ALLOWED_RPC_METHODS = new Set([
+  'bcn_block',
+  'bcn_blockAt',
+  'bcn_getRawTx',
+  'bcn_lastBlock',
+  'bcn_syncing',
+  'bcn_transaction',
+  'bcn_txReceipt',
+  'contract_call',
+  'dna_epoch',
+  'dna_getBalance',
+  'dna_getCoinbaseAddr',
+  'dna_identity',
+  'dna_storeToIpfs',
+  'ipfs_add',
+  'ipfs_get',
+])
 
 let mainWindow
 let node
@@ -260,6 +283,132 @@ function pickTrimmedString(values, fallback = '') {
   }
 
   return fallback
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isFiniteNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0
+}
+
+function isShortString(value, maxLength = 512) {
+  return (
+    typeof value === 'string' && value.length > 0 && value.length <= maxLength
+  )
+}
+
+function estimatePayloadBytes(value) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value))
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+}
+
+function validateSocialRpcRequest(payload = {}) {
+  const requestId = payload && payload.requestId
+  const method = payload && payload.method
+  const params = payload && payload.params
+
+  if (
+    typeof requestId !== 'string' ||
+    requestId.length < 1 ||
+    requestId.length > SOCIAL_RPC_MAX_REQUEST_ID_LENGTH
+  ) {
+    return 'invalid_rpc_request_id'
+  }
+
+  if (!SOCIAL_ALLOWED_RPC_METHODS.has(method)) {
+    return 'unsupported_rpc_method'
+  }
+
+  if (!Array.isArray(params)) {
+    return 'invalid_rpc_params'
+  }
+
+  if (estimatePayloadBytes(params) > SOCIAL_RPC_MAX_PAYLOAD_BYTES) {
+    return 'rpc_payload_too_large'
+  }
+
+  switch (method) {
+    case 'bcn_syncing':
+    case 'bcn_lastBlock':
+    case 'dna_epoch':
+    case 'dna_getCoinbaseAddr':
+      return params.length === 0 ? null : 'invalid_rpc_params'
+
+    case 'bcn_blockAt':
+      return params.length === 1 && isFiniteNonNegativeInteger(params[0])
+        ? null
+        : 'invalid_rpc_params'
+
+    case 'bcn_block':
+    case 'bcn_transaction':
+    case 'bcn_txReceipt':
+    case 'dna_getBalance':
+    case 'dna_identity':
+    case 'ipfs_get':
+      return params.length === 1 && isShortString(params[0], 256)
+        ? null
+        : 'invalid_rpc_params'
+
+    case 'ipfs_add':
+      return params.length === 2 &&
+        isShortString(params[0], SOCIAL_RPC_MAX_PAYLOAD_BYTES) &&
+        typeof params[1] === 'boolean'
+        ? null
+        : 'invalid_rpc_params'
+
+    case 'dna_storeToIpfs':
+      return params.length === 1 &&
+        isPlainObject(params[0]) &&
+        isShortString(params[0].cid, 256) &&
+        isFiniteNonNegativeInteger(params[0].nonce) &&
+        isFiniteNonNegativeInteger(params[0].epoch)
+        ? null
+        : 'invalid_rpc_params'
+
+    case 'bcn_getRawTx':
+      return params.length === 1 && isPlainObject(params[0])
+        ? null
+        : 'invalid_rpc_params'
+
+    case 'contract_call':
+      return params.length === 1 &&
+        isPlainObject(params[0]) &&
+        isShortString(params[0].from, 128) &&
+        isShortString(params[0].contract, 128) &&
+        isShortString(params[0].method, 128) &&
+        Array.isArray(params[0].args)
+        ? null
+        : 'invalid_rpc_params'
+
+    default:
+      return 'unsupported_rpc_method'
+  }
+}
+
+function getSocialRpcConnection() {
+  const settings = loadMainSettings()
+  const internalPort = Number(settings && settings.internalPort)
+
+  if (settings && settings.useExternalNode) {
+    return {
+      url: pickTrimmedString([settings.url], BASE_EXTERNAL_API_URL),
+      key: pickTrimmedString([settings.externalApiKey], ''),
+    }
+  }
+
+  return {
+    url: `http://127.0.0.1:${
+      Number.isFinite(internalPort) && internalPort > 0
+        ? Math.round(internalPort)
+        : BASE_INTERNAL_API_PORT
+    }`,
+    key: pickTrimmedString([settings && settings.internalApiKey], ''),
+  }
 }
 
 function normalizeLocalAiPayload(payload = {}) {
@@ -759,7 +908,9 @@ const createMainWindow = () => {
   mainWindow.webContents.on(
     'console-message',
     (_event, level, message, line, sourceId) => {
-      const entry = `[renderer:${level}] ${sourceId || 'unknown'}:${line} ${message}`
+      const entry = `[renderer:${level}] ${
+        sourceId || 'unknown'
+      }:${line} ${message}`
       if (level >= 2) {
         logger.error(entry)
       } else if (level === 1) {
@@ -1708,6 +1859,46 @@ onTrusted('localAi.captureFlip', (_event, payload) => {
       error: error.toString(),
     })
   })
+})
+
+handleTrusted('social.rpc', async (_event, payload) => {
+  const validationError = validateSocialRpcRequest(payload)
+
+  if (validationError) {
+    return {
+      error: {
+        message: validationError,
+      },
+    }
+  }
+
+  const {url, key} = getSocialRpcConnection()
+  const requestBody = {
+    method: payload.method,
+    params: Array.isArray(payload.params) ? payload.params : [],
+    id: 1,
+    key,
+  }
+
+  try {
+    const response = await axios.post(url, requestBody, {
+      headers: {'Content-Type': 'application/json'},
+      timeout: 15000,
+    })
+
+    return response && response.data ? response.data : {}
+  } catch (error) {
+    logger.warn('Social RPC proxy failed', {
+      method: payload && payload.method,
+      error: error.toString(),
+    })
+
+    return {
+      error: {
+        message: error?.message || 'social_rpc_proxy_failed',
+      },
+    }
+  }
 })
 
 const KEY_VALUE = {}

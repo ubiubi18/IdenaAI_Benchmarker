@@ -1,6 +1,12 @@
-// eslint-disable-next-line import/no-extraneous-dependencies
-const {contextBridge, ipcRenderer, clipboard, nativeImage, webFrame} =
-  require('electron')
+/* eslint-disable import/no-extraneous-dependencies */
+const {
+  contextBridge,
+  ipcRenderer,
+  clipboard,
+  nativeImage,
+  webFrame,
+} = require('electron')
+/* eslint-enable import/no-extraneous-dependencies */
 
 const levelup = require('levelup')
 const leveldown = require('leveldown')
@@ -171,7 +177,9 @@ function resolveTargetDb(descriptor = {}) {
 
 function sanitizeImageSize(value, fallback) {
   const nextValue = Number(value)
-  return Number.isFinite(nextValue) && nextValue > 0 ? Math.round(nextValue) : fallback
+  return Number.isFinite(nextValue) && nextValue > 0
+    ? Math.round(nextValue)
+    : fallback
 }
 
 function resizeImageDataUrl(
@@ -194,11 +202,7 @@ function resizeImageDataUrl(
 
   let resizedImage = image
 
-  if (
-    width > nextMaxWidth ||
-    height > nextMaxHeight ||
-    softResize === false
-  ) {
+  if (width > nextMaxWidth || height > nextMaxHeight || softResize === false) {
     const ratio = height > 0 ? width / height : 1
     const newWidth =
       width > height ? nextMaxWidth : Math.round(nextMaxHeight * ratio)
@@ -251,7 +255,8 @@ const bridge = {
         ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'listFlips', payload),
       clearFlips: (payload) =>
         ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'clearFlips', payload),
-      run: (payload) => ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'run', payload),
+      run: (payload) =>
+        ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'run', payload),
       onEvent(handler) {
         if (typeof handler !== 'function') {
           return () => {}
@@ -284,18 +289,21 @@ const bridge = {
       status: (payload) => ipcRenderer.invoke('localAi.status', payload),
       start: (payload) => ipcRenderer.invoke('localAi.start', payload),
       stop: () => ipcRenderer.invoke('localAi.stop'),
-      listModels: (payload) => ipcRenderer.invoke('localAi.listModels', payload),
+      listModels: (payload) =>
+        ipcRenderer.invoke('localAi.listModels', payload),
       info: (payload) => ipcRenderer.invoke('localAi.info', payload),
       chat: (payload) => ipcRenderer.invoke('localAi.chat', payload),
       flipJudge: (payload) => ipcRenderer.invoke('localAi.flipJudge', payload),
       trainHook: (payload) => ipcRenderer.invoke('localAi.trainHook', payload),
       checkFlipSequence: (payload) =>
         ipcRenderer.invoke('localAi.checkFlipSequence', payload),
-      flipToText: (payload) => ipcRenderer.invoke('localAi.flipToText', payload),
+      flipToText: (payload) =>
+        ipcRenderer.invoke('localAi.flipToText', payload),
       captionFlip: (payload) =>
         ipcRenderer.invoke('localAi.captionFlip', payload),
       ocrImage: (payload) => ipcRenderer.invoke('localAi.ocrImage', payload),
-      trainEpoch: (payload) => ipcRenderer.invoke('localAi.trainEpoch', payload),
+      trainEpoch: (payload) =>
+        ipcRenderer.invoke('localAi.trainEpoch', payload),
       loadTrainingCandidatePackage: (payload) =>
         ipcRenderer.invoke('localAi.loadTrainingCandidatePackage', payload),
       buildTrainingCandidatePackage: (payload) =>
@@ -434,6 +442,9 @@ const bridge = {
   home: {
     getIdenaBotState: () => ipcRenderer.invoke('home.idenaBot.get'),
     skipIdenaBot: () => ipcRenderer.send('home.idenaBot.skip'),
+  },
+  social: {
+    rpc: (payload) => ipcRenderer.invoke('social.rpc', payload),
   },
 }
 
