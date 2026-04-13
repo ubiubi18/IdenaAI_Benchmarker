@@ -69,7 +69,7 @@ function InfoHint({label}) {
 function buildSocialNodeBootstrap(settings, historyMode) {
   const nodeUrl = settings.useExternalNode
     ? settings.url || BASE_API_URL
-    : `http://localhost:${settings.internalPort || BASE_INTERNAL_API_PORT}`
+    : `http://127.0.0.1:${settings.internalPort || BASE_INTERNAL_API_PORT}`
 
   const nodeApiKey = settings.useExternalNode
     ? settings.externalApiKey || ''

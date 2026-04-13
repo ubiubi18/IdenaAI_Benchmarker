@@ -36,16 +36,38 @@ const {zoomIn, zoomOut, resetZoom} = require('./utils')
 const loadRoute = require('./utils/routes')
 const {getI18nConfig} = require('./language')
 const appDataPath = require('./app-data-path')
+const {prepareDb} = require('./stores/setup')
 
 const isWin = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
 const isLinux = process.platform === 'linux'
+const RUNTIME_APP_NAME = 'IdenaAI_Benchmarker'
+const RUNTIME_APP_ID = 'io.idena.benchmarker'
+const BENCHMARKER_INTERNAL_API_PORT = 9129
+const BENCHMARKER_TCP_PORT = 51505
+const BENCHMARKER_IPFS_PORT = 51506
+const BENCHMARKER_RENDERER_PORT = Number(
+  process.env.IDENA_DESKTOP_RENDERER_PORT || 8010
+)
 
 app.allowRendererProcessReuse = true
+app.setName(RUNTIME_APP_NAME)
+
+if (isWin && typeof app.setAppUserModelId === 'function') {
+  app.setAppUserModelId(RUNTIME_APP_ID)
+}
+
+const runtimeUserDataPath = join(app.getPath('appData'), RUNTIME_APP_NAME)
+app.commandLine.appendSwitch(
+  'disk-cache-dir',
+  join(runtimeUserDataPath, 'Cache')
+)
 
 if (process.env.NODE_ENV === 'e2e') {
   app.setPath('userData', join(app.getPath('userData'), 'tests'))
   fs.removeSync(app.getPath('userData'))
+} else {
+  app.setPath('userData', runtimeUserDataPath)
 }
 
 if (isWin) {
@@ -57,6 +79,38 @@ const appVersion = global.appVersion || app.getVersion()
 const logger = require('./logger')
 
 logger.info('idena started', appVersion)
+
+function migrateBenchmarkerSettings() {
+  try {
+    const settingsDb = prepareDb('settings')
+    const currentState = settingsDb.getState() || {}
+    const nextState = {...currentState}
+    let changed = false
+
+    if (!nextState.internalPort || nextState.internalPort === 9119) {
+      nextState.internalPort = BENCHMARKER_INTERNAL_API_PORT
+      changed = true
+    }
+
+    if (!nextState.tcpPort || nextState.tcpPort === 50505) {
+      nextState.tcpPort = BENCHMARKER_TCP_PORT
+      changed = true
+    }
+
+    if (!nextState.ipfsPort || nextState.ipfsPort === 50506) {
+      nextState.ipfsPort = BENCHMARKER_IPFS_PORT
+      changed = true
+    }
+
+    if (changed) {
+      settingsDb.setState(nextState).write()
+    }
+  } catch (error) {
+    logger.warn('cannot migrate benchmarker settings', error.toString())
+  }
+}
+
+migrateBenchmarkerSettings()
 
 const {
   AUTO_UPDATE_EVENT,
@@ -368,10 +422,10 @@ function handleDnaLink(url) {
 
 const createMenu = () => {
   const application = {
-    label: 'idena-desktop',
+    label: RUNTIME_APP_NAME,
     submenu: [
       {
-        label: i18next.t('About idena-desktop'),
+        label: i18next.t(`About ${RUNTIME_APP_NAME}`),
         role: 'about',
       },
       {
@@ -516,7 +570,7 @@ const createTray = () => {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: i18next.t('Open idena-desktop'),
+      label: i18next.t(`Open ${RUNTIME_APP_NAME}`),
       click: showMainWindow,
     },
     {
@@ -533,7 +587,7 @@ const createTray = () => {
 
 // Prepare the renderer once the app is ready
 app.on('ready', async () => {
-  await prepareNext('./renderer')
+  await prepareNext('./renderer', BENCHMARKER_RENDERER_PORT)
   const i18nConfig = getI18nConfig()
 
   i18next.init(i18nConfig, (err) => {
@@ -861,7 +915,7 @@ ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
 })
 
 const RELEASE_URL =
-  'https://api.github.com/repos/idena-network/idena-desktop/releases/latest'
+  'https://api.github.com/repos/ubiubi18/IdenaAI_Benchmarker/releases/latest'
 
 function checkForUpdates() {
   if (isDev) {

@@ -1,10 +1,18 @@
 /* eslint-disable import/no-extraneous-dependencies */
 const path = require('path')
-const {app, ipcRenderer} = require('electron')
+let electron = {}
+try {
+  electron = require('electron') || {}
+} catch {
+  electron = {}
+}
 const low = require('lowdb')
 const FileSync = require('lowdb/adapters/FileSync')
 const fs = require('fs')
 const {APP_PATH_COMMAND} = require('../channels')
+
+const app = electron.app || null
+const ipcRenderer = electron.ipcRenderer || null
 
 function getUserDataPath() {
   if (app) {

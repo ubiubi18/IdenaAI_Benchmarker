@@ -21,6 +21,9 @@ const randomKey = () =>
   Math.random().toString(36).substring(2, 15)
 
 const CHANGE_LANGUAGE = 'CHANGE_LANGUAGE'
+const BENCHMARKER_INTERNAL_API_PORT = 9129
+const BENCHMARKER_TCP_PORT = 51505
+const BENCHMARKER_IPFS_PORT = 51506
 
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
@@ -63,8 +66,8 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
 const initialState = {
   url: BASE_API_URL,
   internalPort: BASE_INTERNAL_API_PORT,
-  tcpPort: 50505,
-  ipfsPort: 50506,
+  tcpPort: BENCHMARKER_TCP_PORT,
+  ipfsPort: BENCHMARKER_IPFS_PORT,
   uiVersion: global.appVersion,
   useExternalNode: false,
   runInternalNode: true,
@@ -73,6 +76,24 @@ const initialState = {
   lng: AVAILABLE_LANGS[0],
   autoActivateMining: true,
   aiSolver: DEFAULT_AI_SOLVER_SETTINGS,
+}
+
+function migrateBenchmarkerNodePorts(state = {}) {
+  const nextState = {...state}
+
+  if (!nextState.internalPort || nextState.internalPort === 9119) {
+    nextState.internalPort = BENCHMARKER_INTERNAL_API_PORT
+  }
+
+  if (!nextState.tcpPort || nextState.tcpPort === 50505) {
+    nextState.tcpPort = BENCHMARKER_TCP_PORT
+  }
+
+  if (!nextState.ipfsPort || nextState.ipfsPort === 50506) {
+    nextState.ipfsPort = BENCHMARKER_IPFS_PORT
+  }
+
+  return nextState
 }
 
 if (global.env && global.env.NODE_ENV === 'e2e') {
@@ -96,7 +117,7 @@ function settingsReducer(state, action) {
     case SETTINGS_INITIALIZE:
       return {
         ...initialState,
-        ...state,
+        ...migrateBenchmarkerNodePorts(state),
         aiSolver: {
           ...DEFAULT_AI_SOLVER_SETTINGS,
           ...(state.aiSolver || {}),
@@ -155,12 +176,16 @@ const SettingsDispatchContext = React.createContext()
 
 // eslint-disable-next-line react/prop-types
 export function SettingsProvider({children}) {
+  const persistedSettings = migrateBenchmarkerNodePorts(
+    loadPersistentState('settings') || initialState
+  )
+
   const [state, dispatch] = usePersistence(
     useLogger(
       React.useReducer(settingsReducer, {
         autoActivateMining: initialState.autoActivateMining,
         aiSolver: DEFAULT_AI_SOLVER_SETTINGS,
-        ...(loadPersistentState('settings') || initialState),
+        ...persistedSettings,
       })
     ),
     'settings'
