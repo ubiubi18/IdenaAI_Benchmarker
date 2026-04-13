@@ -2208,8 +2208,7 @@ export default function NewFlipPage() {
         let didShowBadFlip
 
         try {
-          didShowBadFlip = await global
-            .sub(requestDb(), 'flips')
+          didShowBadFlip = await createSublevelDb(requestDb(), 'flips')
             .get('didShowBadFlipNew')
         } catch {
           didShowBadFlip = false
@@ -6491,7 +6490,10 @@ export default function NewFlipPage() {
             'Please read the rules carefully. You can lose all your validation rewards if any of your flips is reported.'
           )}
           onClose={async () => {
-            await global.sub(requestDb(), 'flips').put('didShowBadFlipNew', 1)
+            await createSublevelDb(requestDb(), 'flips').put(
+              'didShowBadFlipNew',
+              1
+            )
             send('SKIP_BAD_FLIP')
             onCloseBadFlipDialog()
           }}

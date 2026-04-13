@@ -8,22 +8,16 @@ import {useEpochState} from '../../shared/providers/epoch-context'
 import {useChainState} from '../../shared/providers/chain-context'
 import {apiUrl} from '../../shared/api/api-client'
 import {useRpcFetcher} from '../ads/hooks'
-import {getSharedGlobal} from '../../shared/utils/shared-global'
 
 export function useIdenaBot() {
   const [connected, setConnected] = useState(true)
 
   useEffect(() => {
-    getSharedGlobal('ipcRenderer', {
-      invoke: async () => undefined,
-    })
-      .invoke('get-data', 'idena-bot')
-      .then((data) => {
-        setConnected(
-          data || JSON.parse(localStorage.getItem('connectIdenaBot')) || false
-        )
-      })
-      .catch(() => {})
+    try {
+      setConnected(JSON.parse(localStorage.getItem('connectIdenaBot')) || false)
+    } catch {
+      setConnected(false)
+    }
   }, [])
 
   return [
@@ -34,11 +28,7 @@ export function useIdenaBot() {
         setConnected(true)
       },
       skip: () => {
-        getSharedGlobal('ipcRenderer', {send: () => {}}).send(
-          'set-data',
-          'idena-bot',
-          true
-        )
+        localStorage.setItem('connectIdenaBot', true)
         setConnected(true)
       },
     },

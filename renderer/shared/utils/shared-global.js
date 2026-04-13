@@ -2,8 +2,61 @@ const {
   version: APP_VERSION_FALLBACK = '0.0.0',
 } = require('../../../package.json')
 
+const IDENA_CONTEXT_BRIDGE_KEY = '__idenaBridge'
+
 function isFallbackBridgeValue(value) {
   return Boolean(value && value.__idenaFallback)
+}
+
+function isPlainObject(value) {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.prototype.toString.call(value) === '[object Object]'
+  )
+}
+
+function mergeBridgeValue(value, fallbackValue) {
+  if (!isPlainObject(value) || !isPlainObject(fallbackValue)) {
+    return value
+  }
+
+  const mergedValue = {...fallbackValue}
+
+  Object.entries(value).forEach(([key, nextValue]) => {
+    const fallbackEntry = fallbackValue[key]
+
+    if (typeof fallbackEntry === 'function') {
+      if (typeof nextValue === 'function') {
+        mergedValue[key] = nextValue
+      }
+      return
+    }
+
+    if (isPlainObject(nextValue) && isPlainObject(fallbackEntry)) {
+      mergedValue[key] = mergeBridgeValue(nextValue, fallbackEntry)
+      return
+    }
+
+    if (typeof nextValue !== 'undefined') {
+      mergedValue[key] = nextValue
+    }
+  })
+
+  return mergedValue
+}
+
+function getContextBridgeContainer() {
+  if (
+    typeof window !== 'undefined' &&
+    window[IDENA_CONTEXT_BRIDGE_KEY] &&
+    typeof window[IDENA_CONTEXT_BRIDGE_KEY] === 'object'
+  ) {
+    return window[IDENA_CONTEXT_BRIDGE_KEY]
+  }
+
+  return null
 }
 
 function getElectronModule() {
@@ -19,6 +72,17 @@ function getElectronModule() {
 }
 
 function getRuntimeBridgeValue(key) {
+  const contextBridge = getContextBridgeContainer()
+
+  if (
+    contextBridge &&
+    typeof contextBridge[key] !== 'undefined' &&
+    contextBridge[key] !== null &&
+    !isFallbackBridgeValue(contextBridge[key])
+  ) {
+    return contextBridge[key]
+  }
+
   const electron = getElectronModule()
 
   if (!electron) {
@@ -57,7 +121,7 @@ export function getSharedGlobal(key, fallbackValue) {
     runtimeBridgeValue !== null &&
     !isFallbackBridgeValue(runtimeBridgeValue)
   ) {
-    return runtimeBridgeValue
+    return mergeBridgeValue(runtimeBridgeValue, fallbackValue)
   }
 
   const sources = getSharedGlobalSources()
@@ -66,7 +130,7 @@ export function getSharedGlobal(key, fallbackValue) {
   for (const source of sources) {
     if (source && typeof source[key] !== 'undefined' && source[key] !== null) {
       if (!isFallbackBridgeValue(source[key])) {
-        return source[key]
+        return mergeBridgeValue(source[key], fallbackValue)
       }
 
       if (typeof fallbackBridgeValue === 'undefined') {
@@ -96,6 +160,18 @@ export function syncSharedGlobal(key, fallbackValue) {
   })
 
   return value
+}
+
+export function addSharedGlobalReadyListener(handler) {
+  if (typeof window === 'undefined' || typeof handler !== 'function') {
+    return () => {}
+  }
+
+  window.addEventListener('idena-preload-ready', handler)
+
+  return () => {
+    window.removeEventListener('idena-preload-ready', handler)
+  }
 }
 
 export {APP_VERSION_FALLBACK}

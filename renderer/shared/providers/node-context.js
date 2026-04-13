@@ -1,7 +1,10 @@
 import React, {useCallback, useEffect, useMemo} from 'react'
 import {useSettingsState} from './settings-context'
 import useLogger from '../hooks/use-logger'
-import {getSharedGlobal} from '../utils/shared-global'
+import {
+  addSharedGlobalReadyListener,
+  getSharedGlobal,
+} from '../utils/shared-global'
 
 const NODE_READY = 'NODE_READY'
 const NODE_FAILED = 'NODE_FAILED'
@@ -83,15 +86,19 @@ const NodeStateContext = React.createContext()
 const NodeDispatchContext = React.createContext()
 
 function getNodeBridge() {
-  return getSharedGlobal('node', {
-    onEvent: () => {},
-    offEvent: () => {},
-    sendCommand: () => {},
-  })
+  const bridge = getSharedGlobal('node')
+
+  return {
+    onEvent: typeof bridge?.onEvent === 'function' ? bridge.onEvent : () => {},
+    offEvent:
+      typeof bridge?.offEvent === 'function' ? bridge.offEvent : () => {},
+    sendCommand:
+      typeof bridge?.sendCommand === 'function' ? bridge.sendCommand : () => {},
+  }
 }
 
 function hasNodeBridge() {
-  const node = getNodeBridge()
+  const node = getSharedGlobal('node')
   return (
     node &&
     typeof node.onEvent === 'function' &&
@@ -103,7 +110,6 @@ function hasNodeBridge() {
 // eslint-disable-next-line react/prop-types
 export function NodeProvider({children}) {
   const settings = useSettingsState()
-  const node = useMemo(() => getNodeBridge(), [])
   const initRequestedRef = React.useRef(false)
   const startRequestedRef = React.useRef(false)
 
@@ -112,10 +118,6 @@ export function NodeProvider({children}) {
   )
 
   useEffect(() => {
-    if (!hasNodeBridge()) {
-      return undefined
-    }
-
     const onEvent = (_sender, event, data) => {
       switch (event) {
         case 'node-failed':
@@ -148,7 +150,7 @@ export function NodeProvider({children}) {
 
         case 'troubleshooting-restart-node': {
           dispatch({type: TROUBLESHOOTING_RESTART_NODE})
-          return node.sendCommand('start-local-node', {
+          return getNodeBridge().sendCommand('start-local-node', {
             rpcPort: settings.internalPort,
             tcpPort: settings.tcpPort,
             ipfsPort: settings.ipfsPort,
@@ -161,7 +163,7 @@ export function NodeProvider({children}) {
         }
         case 'troubleshooting-reset-node': {
           dispatch({type: TROUBLESHOOTING_RESET_NODE})
-          return node.sendCommand('init-local-node')
+          return getNodeBridge().sendCommand('init-local-node')
         }
 
         default:
@@ -169,14 +171,31 @@ export function NodeProvider({children}) {
       }
     }
 
-    node.onEvent(onEvent)
+    let removeReadyListener = () => {}
+    let cleanup = () => {}
+
+    const bindNodeEvents = () => {
+      if (!hasNodeBridge()) {
+        return false
+      }
+
+      const node = getNodeBridge()
+      cleanup()
+      node.onEvent(onEvent)
+      cleanup = () => node.offEvent(onEvent)
+      return true
+    }
+
+    if (!bindNodeEvents()) {
+      removeReadyListener = addSharedGlobalReadyListener(bindNodeEvents)
+    }
 
     return () => {
-      node.offEvent(onEvent)
+      removeReadyListener()
+      cleanup()
     }
   }, [
     dispatch,
-    node,
     settings.autoActivateMining,
     settings.internalApiKey,
     settings.internalPort,
@@ -191,10 +210,6 @@ export function NodeProvider({children}) {
   }, [settings.runInternalNode, dispatch])
 
   useEffect(() => {
-    if (!hasNodeBridge()) {
-      return
-    }
-
     if (
       state.nodeReady &&
       !state.nodeFailed &&
@@ -203,8 +218,11 @@ export function NodeProvider({children}) {
       settings.internalApiKey &&
       !startRequestedRef.current
     ) {
+      if (!hasNodeBridge()) {
+        return
+      }
       startRequestedRef.current = true
-      node.sendCommand('start-local-node', {
+      getNodeBridge().sendCommand('start-local-node', {
         rpcPort: settings.internalPort,
         tcpPort: settings.tcpPort,
         ipfsPort: settings.ipfsPort,
@@ -222,17 +240,18 @@ export function NodeProvider({children}) {
     state.nodeFailed,
     settings.internalApiKey,
     settings.autoActivateMining,
-    node,
   ])
 
   useEffect(() => {
+    if (state.nodeReady || state.nodeFailed || state.runningTroubleshooter) {
+      return
+    }
+
     if (!hasNodeBridge()) {
       return
     }
 
-    if (state.nodeReady || state.nodeFailed || state.runningTroubleshooter) {
-      return
-    }
+    const node = getNodeBridge()
     if (settings.runInternalNode) {
       if (!state.nodeStarted && !initRequestedRef.current) {
         initRequestedRef.current = true
@@ -244,7 +263,6 @@ export function NodeProvider({children}) {
       node.sendCommand('stop-local-node')
     }
   }, [
-    node,
     settings.runInternalNode,
     state.nodeStarted,
     state.nodeReady,
@@ -258,18 +276,17 @@ export function NodeProvider({children}) {
     dispatch({type: NODE_REINIT})
   }, [dispatch])
 
-  const importNodeKey = useCallback(
-    (shouldResetNode) => {
-      if (!hasNodeBridge()) {
-        return
-      }
+  const importNodeKey = useCallback((shouldResetNode) => {
+    if (!hasNodeBridge()) {
+      return
+    }
 
-      initRequestedRef.current = false
-      startRequestedRef.current = false
-      node.sendCommand(shouldResetNode ? 'clean-state' : 'restart-node')
-    },
-    [node]
-  )
+    initRequestedRef.current = false
+    startRequestedRef.current = false
+    getNodeBridge().sendCommand(
+      shouldResetNode ? 'clean-state' : 'restart-node'
+    )
+  }, [])
 
   return (
     <NodeStateContext.Provider value={state}>

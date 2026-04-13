@@ -31,8 +31,23 @@ import {
 } from '../../screens/settings/components'
 import SettingsLayout from '../../screens/settings/layout'
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
-import {getSharedGlobal} from '../../shared/utils/shared-global'
+import {
+  addSharedGlobalReadyListener,
+  getSharedGlobal,
+} from '../../shared/utils/shared-global'
 import {useInterval} from '../../shared/hooks/use-interval'
+
+function getNodeBridge() {
+  const bridge = getSharedGlobal('node', {})
+
+  return {
+    onEvent: typeof bridge?.onEvent === 'function' ? bridge.onEvent : () => {},
+    offEvent:
+      typeof bridge?.offEvent === 'function' ? bridge.offEvent : () => {},
+    sendCommand:
+      typeof bridge?.sendCommand === 'function' ? bridge.sendCommand : () => {},
+  }
+}
 
 function NodeSettings() {
   const {t} = useTranslation()
@@ -53,12 +68,6 @@ function NodeSettings() {
   const {tryRestartNode} = useNodeDispatch()
 
   const logsRef = useRef(null)
-  const nodeBridge = getSharedGlobal('node', {
-    onEvent: () => {},
-    offEvent: () => {},
-    sendCommand: () => {},
-  })
-
   const [state, dispatch] = useReducer(
     (prevState, action) => {
       switch (action.type) {
@@ -118,23 +127,36 @@ function NodeSettings() {
       }
     }
 
-    nodeBridge.onEvent(onEvent)
+    let removeReadyListener = () => {}
+    let cleanup = () => {}
+
+    const bindNodeEvents = () => {
+      const nodeBridge = getNodeBridge()
+      cleanup()
+      nodeBridge.onEvent(onEvent)
+      cleanup = () => nodeBridge.offEvent(onEvent)
+      return true
+    }
+
+    bindNodeEvents()
+    removeReadyListener = addSharedGlobalReadyListener(bindNodeEvents)
 
     return () => {
-      nodeBridge.offEvent(onEvent)
+      removeReadyListener()
+      cleanup()
     }
-  }, [nodeBridge, settings.useExternalNode])
+  }, [settings.useExternalNode])
 
   useEffect(() => {
     if (!settings.useExternalNode) {
-      nodeBridge.sendCommand('get-last-logs')
+      getNodeBridge().sendCommand('get-last-logs')
     }
-  }, [nodeBridge, nodeReady, nodeStarted, settings.useExternalNode])
+  }, [nodeReady, nodeStarted, settings.useExternalNode])
 
   useInterval(
     () => {
       if (!settings.useExternalNode && (nodeReady || nodeStarted)) {
-        nodeBridge.sendCommand('get-last-logs')
+        getNodeBridge().sendCommand('get-last-logs')
       }
     },
     !settings.useExternalNode && (nodeReady || nodeStarted) ? 3000 : null
@@ -195,7 +217,7 @@ function NodeSettings() {
                 isDisabled={!settings.runInternalNode}
                 onChange={() => {
                   toggleAutoActivateMining()
-                  nodeBridge.sendCommand('restart-node')
+                  getNodeBridge().sendCommand('restart-node')
                 }}
               />
             </Box>

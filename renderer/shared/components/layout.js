@@ -89,8 +89,8 @@ import {OfflineBanner} from './layout/offline'
 import {TroubleshootingScreen} from '../../screens/troubleshooting'
 import {getSharedGlobal} from '../utils/shared-global'
 
-global.getZoomLevel = getSharedGlobal('getZoomLevel', () => 0)
-global.setZoomLevel = getSharedGlobal('setZoomLevel', () => {})
+const setZoomLevelBridge = (level) =>
+  getSharedGlobal('setZoomLevel', () => {})(level)
 
 const AVAILABLE_TIMEOUT =
   getSharedGlobal('isDev', false) || getSharedGlobal('isTest', false)
@@ -139,7 +139,7 @@ export default function Layout({
     if (getSharedGlobal('isDev', false)) return
 
     if (Number.isFinite(zoomLevel)) {
-      global.setZoomLevel(zoomLevel)
+      setZoomLevelBridge(zoomLevel)
       persistItem('settings', 'zoomLevel', zoomLevel)
     }
   }, [zoomLevel])
@@ -314,7 +314,7 @@ function NormalApp({children}) {
       t('Idena validation will start soon'),
       t('Keep your app opened'),
       () => {
-        global.ipcRenderer.send('showMainWindow')
+        getSharedGlobal('ipcRenderer', {send: () => {}}).send('showMainWindow')
       }
     )
     const newEpoch = epoch.epoch + 1

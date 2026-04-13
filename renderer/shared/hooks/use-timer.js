@@ -43,6 +43,7 @@ export function useTimer(duration) {
 }
 
 const timerMachine = createMachine({
+  predictableActionArguments: true,
   context: {
     interval: 1000,
     duration: 0,

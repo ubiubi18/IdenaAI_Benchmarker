@@ -58,8 +58,52 @@ export default function App({Component, err, ...pageProps}) {
 
 function AppProviders(props) {
   if (typeof window !== 'undefined') {
+    const createFallbackBridge = (value) =>
+      Object.defineProperty(value, '__idenaFallback', {
+        value: true,
+        enumerable: false,
+      })
     const legacyGlobal =
       typeof global !== 'undefined' && global ? global : window
+    const readonlyWindowCompatKeys = new Set(['Buffer'])
+    const shouldAssignCompatValue = (target, key) => {
+      if (!target) {
+        return false
+      }
+
+      if (target === window && readonlyWindowCompatKeys.has(key)) {
+        return false
+      }
+
+      const descriptor =
+        Object.getOwnPropertyDescriptor(target, key) ||
+        Object.getOwnPropertyDescriptor(
+          Object.getPrototypeOf(target) || {},
+          key
+        )
+
+      return (
+        !descriptor ||
+        descriptor.writable ||
+        typeof descriptor.set === 'function'
+      )
+    }
+    const dnaFallback = createFallbackBridge({
+      getPendingLink: async () => undefined,
+      onLink: () => {},
+      offLink: () => {},
+    })
+    const eventBridgeFallback = createFallbackBridge({
+      onEvent: () => {},
+      offEvent: () => {},
+      sendCommand: () => {},
+    })
+    const ipcRendererFallback = createFallbackBridge({
+      on: () => {},
+      send: () => {},
+      removeListener: () => {},
+      invoke: async () => undefined,
+    })
 
     const compat = {
       appVersion: getSharedGlobal('appVersion', APP_VERSION_FALLBACK),
@@ -67,12 +111,7 @@ function AppProviders(props) {
       isDev: getSharedGlobal('isDev', false),
       isMac: getSharedGlobal('isMac', false),
       isTest: getSharedGlobal('isTest', false),
-      ipcRenderer: getSharedGlobal('ipcRenderer', {
-        on: () => {},
-        send: () => {},
-        removeListener: () => {},
-        invoke: async () => undefined,
-      }),
+      ipcRenderer: getSharedGlobal('ipcRenderer', ipcRendererFallback),
       logger: getSharedGlobal('logger', console),
       openExternal: getSharedGlobal('openExternal', () =>
         Promise.resolve(false)
@@ -83,9 +122,9 @@ function AppProviders(props) {
         Promise.resolve()
       ),
       links: getSharedGlobal('links', {}),
-      dna: getSharedGlobal('dna', {}),
-      updates: getSharedGlobal('updates', {}),
-      node: getSharedGlobal('node', {}),
+      dna: getSharedGlobal('dna', dnaFallback),
+      updates: getSharedGlobal('updates', eventBridgeFallback),
+      node: getSharedGlobal('node', eventBridgeFallback),
       search: getSharedGlobal('search', {}),
       aiSolver: getSharedGlobal('aiSolver', {}),
       aiTestUnit: getSharedGlobal('aiTestUnit', {}),
@@ -99,9 +138,18 @@ function AppProviders(props) {
       nativeImage: getSharedGlobal('nativeImage', {}),
       social: getSharedGlobal('social', {}),
       sub: createSublevelDb,
+      levelup: getSharedGlobal('levelup'),
+      leveldown: getSharedGlobal('leveldown'),
+      dbPath: getSharedGlobal('dbPath'),
+      prepareDb: getSharedGlobal('prepareDb'),
+      locale: getSharedGlobal('locale', 'en'),
     }
 
     Object.entries(compat).forEach(([key, value]) => {
+      if (!shouldAssignCompatValue(legacyGlobal, key)) {
+        return
+      }
+
       try {
         legacyGlobal[key] = value
       } catch {
@@ -111,6 +159,10 @@ function AppProviders(props) {
 
     if (legacyGlobal !== window) {
       Object.entries(compat).forEach(([key, value]) => {
+        if (!shouldAssignCompatValue(window, key)) {
+          return
+        }
+
         try {
           window[key] = value
         } catch {

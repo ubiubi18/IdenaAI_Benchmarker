@@ -2,7 +2,10 @@ import React, {useCallback, useEffect, useMemo} from 'react'
 import {useSettingsState} from './settings-context'
 import {useInterval} from '../hooks/use-interval'
 import {fetchNodeVersion} from '../api/dna'
-import {getSharedGlobal} from '../utils/shared-global'
+import {
+  addSharedGlobalReadyListener,
+  getSharedGlobal,
+} from '../utils/shared-global'
 
 export const TOGGLE_NODE_SWITCHER = 'TOGGLE_NODE_SWITCHER'
 export const SAVE_EXTERNAL_URL = 'SAVE_EXTERNAL_URL'
@@ -100,28 +103,48 @@ const AutoUpdateStateContext = React.createContext()
 const AutoUpdateDispatchContext = React.createContext()
 
 function getUpdatesBridge() {
-  return getSharedGlobal('updates', {
-    onEvent: () => {},
-    offEvent: () => {},
-    sendCommand: () => {},
-  })
+  const bridge = getSharedGlobal('updates')
+
+  return {
+    onEvent: typeof bridge?.onEvent === 'function' ? bridge.onEvent : () => {},
+    offEvent:
+      typeof bridge?.offEvent === 'function' ? bridge.offEvent : () => {},
+    sendCommand:
+      typeof bridge?.sendCommand === 'function' ? bridge.sendCommand : () => {},
+  }
 }
 
 function getNodeBridge() {
-  return getSharedGlobal('node', {
-    onEvent: () => {},
-    offEvent: () => {},
-    sendCommand: () => {},
-  })
+  const bridge = getSharedGlobal('node')
+
+  return {
+    onEvent: typeof bridge?.onEvent === 'function' ? bridge.onEvent : () => {},
+    offEvent:
+      typeof bridge?.offEvent === 'function' ? bridge.offEvent : () => {},
+    sendCommand:
+      typeof bridge?.sendCommand === 'function' ? bridge.sendCommand : () => {},
+  }
 }
 
 function hasUpdatesBridge() {
-  const updates = getUpdatesBridge()
+  const bridge = getSharedGlobal('updates')
+
   return (
-    updates &&
-    typeof updates.onEvent === 'function' &&
-    typeof updates.offEvent === 'function' &&
-    typeof updates.sendCommand === 'function'
+    bridge &&
+    typeof bridge.onEvent === 'function' &&
+    typeof bridge.offEvent === 'function' &&
+    typeof bridge.sendCommand === 'function'
+  )
+}
+
+function hasNodeBridge() {
+  const bridge = getSharedGlobal('node')
+
+  return (
+    bridge &&
+    typeof bridge.onEvent === 'function' &&
+    typeof bridge.offEvent === 'function' &&
+    typeof bridge.sendCommand === 'function'
   )
 }
 
@@ -181,8 +204,6 @@ export function AutoUpdateProvider({children}) {
   })
 
   useEffect(() => {
-    const node = getNodeBridge()
-
     const syncNodeVersion = async (fallbackVersion) => {
       try {
         const version = await fetchNodeVersion()
@@ -213,10 +234,28 @@ export function AutoUpdateProvider({children}) {
       }
     }
 
-    node.onEvent(onNodeEvent)
+    let removeReadyListener = () => {}
+    let cleanup = () => {}
+
+    const bindNodeEvents = () => {
+      if (!hasNodeBridge()) {
+        return false
+      }
+
+      const node = getNodeBridge()
+      cleanup()
+      node.onEvent(onNodeEvent)
+      cleanup = () => node.offEvent(onNodeEvent)
+      return true
+    }
+
+    if (!bindNodeEvents()) {
+      removeReadyListener = addSharedGlobalReadyListener(bindNodeEvents)
+    }
 
     return () => {
-      node.offEvent(onNodeEvent)
+      removeReadyListener()
+      cleanup()
     }
   }, [])
 

@@ -17,6 +17,7 @@ import {shuffle} from '../../shared/utils/arr'
 import {FlipType, FlipFilter} from '../../shared/types'
 import {deleteFlip} from '../../shared/api/dna'
 import {persistState} from '../../shared/utils/persist'
+import {getSharedGlobal} from '../../shared/utils/shared-global'
 
 const OFFLINE_KEYWORD_WORD_RANGE_START = 3300
 const RANDOM_KEYWORD_PAIR_COUNT = 9
@@ -1453,7 +1454,9 @@ export const imageSearchMachine = createMachine({
             )
           }
           return withImageSearchTimeout(
-            global.ipcRenderer.invoke('search-image', nextQuery),
+            getSharedGlobal('search', {
+              searchImage: async () => [],
+            }).searchImage(nextQuery),
             15000,
             'Web image search timed out. Try different words or switch to AI image search.'
           )

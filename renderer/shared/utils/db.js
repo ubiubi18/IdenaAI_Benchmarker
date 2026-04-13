@@ -2,6 +2,7 @@ import nanoid from 'nanoid'
 
 let idenaDb = null
 let fallbackDb = null
+const SUBLEVEL_SEPARATOR = '\x00'
 
 function createNotFoundError() {
   const error = new Error('NotFound')
@@ -50,11 +51,99 @@ function createInMemoryDb() {
       store.clear()
       return undefined
     },
+    async clearByPrefix(prefix) {
+      Array.from(store.keys()).forEach((key) => {
+        if (String(key).startsWith(prefix)) {
+          store.delete(key)
+        }
+      })
+      return undefined
+    },
     isOpen() {
       return true
     },
     async close() {
       return undefined
+    },
+  }
+}
+
+function isUsableDb(value) {
+  return (
+    value &&
+    typeof value.get === 'function' &&
+    typeof value.put === 'function' &&
+    typeof value.batch === 'function' &&
+    typeof value.clear === 'function' &&
+    (!value._db || typeof value._db.open === 'function')
+  )
+}
+
+function getFallbackDb() {
+  if (fallbackDb === null) {
+    fallbackDb = createInMemoryDb()
+  }
+
+  return fallbackDb
+}
+
+export function createSublevelDb(db, prefix, options = {}) {
+  const valueEncoding = options.valueEncoding || undefined
+  const prefixKey = `${String(prefix)}${SUBLEVEL_SEPARATOR}`
+  const withPrefix = (key) => `${prefixKey}${String(key)}`
+
+  const encodeValue = (value) => {
+    if (valueEncoding === 'json') {
+      return JSON.stringify(value)
+    }
+
+    return value
+  }
+
+  const decodeValue = (value) => {
+    if (valueEncoding === 'json' && typeof value === 'string') {
+      return JSON.parse(value)
+    }
+
+    return value
+  }
+
+  return {
+    async get(key) {
+      return decodeValue(await db.get(withPrefix(key)))
+    },
+    async put(key, value) {
+      return db.put(withPrefix(key), encodeValue(value))
+    },
+    batch() {
+      const batch = db.batch()
+
+      return {
+        put(key, value) {
+          batch.put(withPrefix(key), encodeValue(value))
+          return this
+        },
+        del(key) {
+          batch.del(withPrefix(key))
+          return this
+        },
+        write() {
+          return batch.write()
+        },
+      }
+    },
+    async clear() {
+      if (typeof db.clearByPrefix === 'function') {
+        return db.clearByPrefix(prefixKey)
+      }
+
+      return undefined
+    },
+    isOpen() {
+      return typeof db.isOpen === 'function' ? db.isOpen() : true
+    },
+    close() {
+      return typeof db.close === 'function' ? db.close() : Promise.resolve()
     },
   }
 }
@@ -67,12 +156,14 @@ export function requestDb(name = 'db') {
       typeof global.dbPath === 'function'
 
     if (hasNativeDb) {
-      idenaDb = global.levelup(global.leveldown(global.dbPath(name)))
-    } else {
-      if (fallbackDb === null) {
-        fallbackDb = createInMemoryDb()
+      try {
+        const nextDb = global.levelup(global.leveldown(global.dbPath(name)))
+        idenaDb = isUsableDb(nextDb) ? nextDb : getFallbackDb()
+      } catch {
+        idenaDb = getFallbackDb()
       }
-      idenaDb = fallbackDb
+    } else {
+      idenaDb = getFallbackDb()
     }
 
     if (typeof window !== 'undefined') {
@@ -85,7 +176,7 @@ export function requestDb(name = 'db') {
 }
 
 export const epochDb = (db, epoch = -1, options = {}) => {
-  const sub = typeof global.sub === 'function' ? global.sub : (value) => value
+  const sub = typeof global.sub === 'function' ? global.sub : createSublevelDb
   const epochPrefix = `epoch${epoch}`
 
   const nextOptions = {

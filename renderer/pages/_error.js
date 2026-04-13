@@ -6,6 +6,7 @@ import {FillCenter} from '../screens/oracles/components'
 import Layout from '../shared/components/layout'
 import {PrimaryButton} from '../shared/components/button'
 import {Page} from '../shared/components/components'
+import {getSharedGlobal} from '../shared/utils/shared-global'
 
 global.logger = global.logger || {
   error() {},
@@ -13,6 +14,8 @@ global.logger = global.logger || {
 
 // eslint-disable-next-line react/prop-types
 function MyError({statusCode, hasGetInitialPropsRun, err}) {
+  const ipcRenderer = getSharedGlobal('ipcRenderer', {send: () => {}})
+
   if (!hasGetInitialPropsRun && err) {
     // getInitialProps is not called in case of
     // https://github.com/zeit/next.js/issues/8592. As a workaround, we pass
@@ -43,9 +46,7 @@ function MyError({statusCode, hasGetInitialPropsRun, err}) {
                   : t('An error occurred on client')}
               </Heading>
               <Box>
-                <PrimaryButton
-                  onClick={() => global.ipcRenderer.send('reload')}
-                >
+                <PrimaryButton onClick={() => ipcRenderer.send('reload')}>
                   {t('Go to My Idena')}
                 </PrimaryButton>
               </Box>

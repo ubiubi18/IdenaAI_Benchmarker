@@ -5,6 +5,7 @@ import {NodeType} from '../../shared/types'
 
 export const activateMiningMachine = createMachine({
   id: 'mining',
+  predictableActionArguments: true,
   context: {
     mode: NodeType.Miner,
   },

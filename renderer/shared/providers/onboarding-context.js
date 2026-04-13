@@ -5,7 +5,7 @@ import {createMachine} from 'xstate'
 import {assign, choose} from 'xstate/lib/actions'
 import {canValidate} from '../../screens/validation/utils'
 import {IdentityStatus, OnboardingStep} from '../types'
-import {requestDb} from '../utils/db'
+import {createSublevelDb, requestDb} from '../utils/db'
 import {rewardWithConfetti, shouldCreateFlips} from '../utils/onboarding'
 import {useEpochState} from './epoch-context'
 import {useIdentity} from './identity-context'
@@ -17,37 +17,36 @@ export function OnboardingProvider({children}) {
 
   const [identity] = useIdentity()
 
-  const createStep = (step, config) => ({
-    [step]: {
-      entry: ['setCurrentStep', 'setIdentity'],
-      initial: 'unknown',
-      states: {
-        unknown: {
-          on: {
-            '': [
+  const onboardingMachine = useMemo(() => {
+    const createStep = (step, config) => ({
+      [step]: {
+        entry: ['setCurrentStep', 'setIdentity'],
+        initial: 'unknown',
+        states: {
+          unknown: {
+            always: [
               {target: 'dismissed', cond: 'didDismissStep'},
               {target: 'promoting', cond: 'shouldPromoteStep'},
             ],
+            invoke: {
+              src: 'restoreDismissedSteps',
+              onDone: {actions: ['setDismissedSteps']},
+              onError: 'promoting',
+            },
           },
-          invoke: {
-            src: 'restoreDismissedSteps',
-            onDone: {actions: ['setDismissedSteps']},
-            onError: 'promoting',
+          promoting: {on: {SHOW: 'showing'}},
+          showing: {on: {DISMISS: 'dismissed'}},
+          dismissed: {
+            entry: ['addDismissedStep', 'persistDismissedSteps'],
           },
         },
-        promoting: {on: {SHOW: 'showing'}},
-        showing: {on: {DISMISS: 'dismissed'}},
-        dismissed: {
-          entry: ['addDismissedStep', 'persistDismissedSteps'],
-        },
+        ...config,
       },
-      ...config,
-    },
-  })
+    })
 
-  const [current, send] = useMachine(
-    createMachine(
+    return createMachine(
       {
+        predictableActionArguments: true,
         context: {currentStep: null, dismissedSteps: null},
         initial: 'unknown',
         states: {
@@ -117,9 +116,9 @@ export function OnboardingProvider({children}) {
               dismissedSteps.add(currentStep),
           }),
           persistDismissedSteps: ({dismissedSteps}) =>
-            global
-              .sub(requestDb(), 'onboarding', {valueEncoding: 'json'})
-              .put('onboardingDismissedSteps', [...dismissedSteps]),
+            createSublevelDb(requestDb(), 'onboarding', {
+              valueEncoding: 'json',
+            }).put('onboardingDismissedSteps', [...dismissedSteps]),
           setIdentity: assign({
             // eslint-disable-next-line no-shadow
             identity: (_, {identity}) => identity,
@@ -129,9 +128,9 @@ export function OnboardingProvider({children}) {
         services: {
           restoreDismissedSteps: async () => {
             try {
-              return await global
-                .sub(requestDb(), 'onboarding', {valueEncoding: 'json'})
-                .get('onboardingDismissedSteps')
+              return await createSublevelDb(requestDb(), 'onboarding', {
+                valueEncoding: 'json',
+              }).get('onboardingDismissedSteps')
             } catch {
               return null
             }
@@ -145,7 +144,9 @@ export function OnboardingProvider({children}) {
         },
       }
     )
-  )
+  }, [])
+
+  const [current, send] = useMachine(onboardingMachine)
 
   React.useEffect(() => {
     if (identity.address) send('RESET')

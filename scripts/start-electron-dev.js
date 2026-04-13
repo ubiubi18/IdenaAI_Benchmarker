@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // eslint-disable-next-line import/no-extraneous-dependencies
-const http = require('http')
+const net = require('net')
 const path = require('path')
 const {spawn} = require('child_process')
 
@@ -45,24 +45,22 @@ function wait(ms) {
 
 function isRendererReady() {
   return new Promise((resolve) => {
-    const request = http.get(
-      `${DEV_SERVER_URL}/home`,
+    const socket = net.connect(
       {
-        headers: {
-          Connection: 'close',
-        },
+        host: DEV_HOST,
+        port: DEV_PORT,
       },
-      (response) => {
-        response.resume()
-        resolve(response.statusCode >= 200 && response.statusCode < 500)
+      () => {
+        socket.end()
+        resolve(true)
       }
     )
 
-    request.on('error', () => {
+    socket.on('error', () => {
       resolve(false)
     })
-    request.setTimeout(1000, () => {
-      request.destroy()
+    socket.setTimeout(1000, () => {
+      socket.destroy()
       resolve(false)
     })
   })

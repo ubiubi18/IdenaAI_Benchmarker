@@ -4,12 +4,12 @@ import {useMachine} from '@xstate/react'
 import {log} from 'xstate/lib/actions'
 import {eitherState, skipSSR} from '../../shared/utils/utils'
 import {useAutoUpdateState} from '../../shared/providers/update-context'
-import {requestDb} from '../../shared/utils/db'
+import {createSublevelDb, requestDb} from '../../shared/utils/db'
 import {isFork} from '../../shared/utils/node'
 import {apiUrl} from '../../shared/api/api-client'
 
 function createVotingStatusDb(version) {
-  const db = global.sub(requestDb(), 'updates')
+  const db = createSublevelDb(requestDb(), 'updates')
   const key = `hardForkVoting!!${version}`
 
   return {
@@ -41,91 +41,96 @@ export function useHardFork() {
     [nodeRemoteVersion]
   )
 
-  const [current, send] = useMachine(
-    createMachine(
-      {
-        context: {
-          changes: [],
-          didActivate: undefined,
-          startActivationDate: undefined,
-          endActivationDate: undefined,
-          votingStatus: HardforkVotingStatus.Unknown,
-          isReady: false,
-          isAvailable: false,
-        },
-        initial: 'idle',
-        states: {
-          idle: {
-            on: {FETCH: 'fetching'},
+  const hardforkMachine = React.useMemo(
+    () =>
+      createMachine(
+        {
+          predictableActionArguments: true,
+          context: {
+            changes: [],
+            didActivate: undefined,
+            startActivationDate: undefined,
+            endActivationDate: undefined,
+            votingStatus: HardforkVotingStatus.Unknown,
+            isReady: false,
+            isAvailable: false,
           },
-          fetching: {
-            invoke: {
-              src: async (_, {version}) => {
-                const fetchJsonResult = async (path) =>
-                  (await (await fetch(apiUrl(path))).json()).result
-
-                const forkChangelog = await fetchJsonResult(
-                  `node/${version}/forkchangelog`
-                )
-
-                const [{upgrade: highestUpgrade}] = await fetchJsonResult(
-                  'upgrades?limit=1'
-                )
-
-                const nextTiming =
-                  forkChangelog &&
-                  (await fetchJsonResult(`upgrade/${forkChangelog.Upgrade}`))
-
-                return {
-                  changes: forkChangelog?.Changes ?? [],
-                  didActivate:
-                    forkChangelog === null ||
-                    highestUpgrade >= forkChangelog.Upgrade,
-                  votingStatus: await statusDb.get(),
-                  ...nextTiming,
-                }
-              },
-              onDone: {
-                target: 'fetched',
-                actions: [
-                  assign((context, {data}) => ({
-                    ...context,
-                    ...data,
-                  })),
-                  log(),
-                ],
-              },
-              onError: 'failed',
+          initial: 'idle',
+          states: {
+            idle: {
+              on: {FETCH: 'fetching'},
             },
-          },
-          fetched: {
-            entry: [assign({isReady: true})],
-            on: {
-              REJECT: {
-                actions: [
-                  assign({votingStatus: HardforkVotingStatus.Reject}),
-                  'persist',
-                ],
-              },
-              RESET: {
-                actions: [
-                  assign({votingStatus: HardforkVotingStatus.Unknown}),
-                  'persist',
-                ],
+            fetching: {
+              invoke: {
+                src: async (_, {version}) => {
+                  const fetchJsonResult = async (path) =>
+                    (await (await fetch(apiUrl(path))).json()).result
+
+                  const forkChangelog = await fetchJsonResult(
+                    `node/${version}/forkchangelog`
+                  )
+
+                  const [{upgrade: highestUpgrade}] = await fetchJsonResult(
+                    'upgrades?limit=1'
+                  )
+
+                  const nextTiming =
+                    forkChangelog &&
+                    (await fetchJsonResult(`upgrade/${forkChangelog.Upgrade}`))
+
+                  return {
+                    changes: forkChangelog?.Changes ?? [],
+                    didActivate:
+                      forkChangelog === null ||
+                      highestUpgrade >= forkChangelog.Upgrade,
+                    votingStatus: await statusDb.get(),
+                    ...nextTiming,
+                  }
+                },
+                onDone: {
+                  target: 'fetched',
+                  actions: [
+                    assign((context, {data}) => ({
+                      ...context,
+                      ...data,
+                    })),
+                    log(),
+                  ],
+                },
+                onError: 'failed',
               },
             },
+            fetched: {
+              entry: [assign({isReady: true})],
+              on: {
+                REJECT: {
+                  actions: [
+                    assign({votingStatus: HardforkVotingStatus.Reject}),
+                    'persist',
+                  ],
+                },
+                RESET: {
+                  actions: [
+                    assign({votingStatus: HardforkVotingStatus.Unknown}),
+                    'persist',
+                  ],
+                },
+              },
+            },
+            failed: {entry: [log()]},
           },
-          failed: {entry: [log()]},
         },
-      },
-      {
-        actions: {
-          // eslint-disable-next-line no-shadow
-          persist: ({votingStatus}) => statusDb.set(votingStatus),
-        },
-      }
-    )
+        {
+          actions: {
+            // eslint-disable-next-line no-shadow
+            persist: ({votingStatus}) => statusDb.set(votingStatus),
+          },
+        }
+      ),
+    [statusDb]
   )
+
+  const [current, send] = useMachine(hardforkMachine)
 
   React.useEffect(() => {
     if (isFork(nodeCurrentVersion, nodeRemoteVersion)) {

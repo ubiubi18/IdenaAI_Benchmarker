@@ -2,7 +2,10 @@ import {useRouter} from 'next/router'
 import * as React from 'react'
 import {areSameCaseInsensitive} from '../oracles/utils'
 import {dnaLinkMethod, extractQueryParams, isValidDnaUrl} from './utils'
-import {getSharedGlobal} from '../../shared/utils/shared-global'
+import {
+  addSharedGlobalReadyListener,
+  getSharedGlobal,
+} from '../../shared/utils/shared-global'
 
 export const DnaLinkMethod = {
   SignIn: 'signin',
@@ -12,31 +15,69 @@ export const DnaLinkMethod = {
   Invite: 'invite',
 }
 
+function getDnaBridge() {
+  const bridge = getSharedGlobal('dna', {})
+
+  return {
+    getPendingLink:
+      typeof bridge?.getPendingLink === 'function'
+        ? bridge.getPendingLink
+        : async () => undefined,
+    onLink: typeof bridge?.onLink === 'function' ? bridge.onLink : () => {},
+    offLink: typeof bridge?.offLink === 'function' ? bridge.offLink : () => {},
+  }
+}
+
 export function useDnaLink({onInvalidLink}) {
   const [url, setUrl] = React.useState()
-  const dnaBridge = getSharedGlobal('dna', {
-    getPendingLink: async () => undefined,
-    onLink: () => {},
-    offLink: () => {},
-  })
   const logger = getSharedGlobal('logger', console)
 
   React.useEffect(() => {
-    if (!sessionStorage.getItem('didCheckDnaLink')) {
-      dnaBridge.getPendingLink().then(setUrl)
-      sessionStorage.setItem('didCheckDnaLink', 1)
+    let didCancel = false
+
+    const syncPendingLink = async () => {
+      if (sessionStorage.getItem('didCheckDnaLink')) {
+        return
+      }
+
+      const bridge = getDnaBridge()
+      const nextUrl = await bridge.getPendingLink()
+
+      if (!didCancel) {
+        setUrl(nextUrl)
+        sessionStorage.setItem('didCheckDnaLink', 1)
+      }
     }
-  }, [dnaBridge])
 
-  React.useEffect(() => {
-    const handleDnaLink = (_, e) => setUrl(e)
+    syncPendingLink()
 
-    dnaBridge.onLink(handleDnaLink)
+    const removeReadyListener = addSharedGlobalReadyListener(syncPendingLink)
 
     return () => {
-      dnaBridge.offLink(handleDnaLink)
+      didCancel = true
+      removeReadyListener()
     }
-  }, [dnaBridge])
+  }, [])
+
+  React.useEffect(() => {
+    const bridge = getDnaBridge()
+    const handleDnaLink = (_, e) => setUrl(e)
+    const unsubscribe = bridge.onLink(handleDnaLink)
+
+    const removeReadyListener = addSharedGlobalReadyListener(() => {
+      const nextBridge = getDnaBridge()
+      nextBridge.offLink(handleDnaLink)
+      nextBridge.onLink(handleDnaLink)
+    })
+
+    return () => {
+      removeReadyListener()
+      if (typeof unsubscribe === 'function') {
+        unsubscribe()
+      }
+      bridge.offLink(handleDnaLink)
+    }
+  }, [])
 
   const [method, setMethod] = React.useState()
 

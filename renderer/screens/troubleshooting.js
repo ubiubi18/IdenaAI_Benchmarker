@@ -11,7 +11,6 @@ import {
 } from '@chakra-ui/react'
 import React from 'react'
 import {useTranslation} from 'react-i18next'
-import {NODE_COMMAND, NODE_EVENT} from '../../main/channels'
 import {PrimaryButton, SecondaryButton} from '../shared/components/button'
 import {
   Dialog,
@@ -19,6 +18,10 @@ import {
   DialogFooter,
   HDivider,
 } from '../shared/components/components'
+import {
+  addSharedGlobalReadyListener,
+  getSharedGlobal,
+} from '../shared/utils/shared-global'
 
 export function TroubleshootingScreen() {
   const {t} = useTranslation()
@@ -127,10 +130,28 @@ function ResetNodeConfirmationDialog(props) {
       }
     }
 
-    global.ipcRenderer.on(NODE_EVENT, handleNodeEvent)
+    let removeReadyListener = () => {}
+    let cleanup = () => {}
+
+    const bindNodeEvents = () => {
+      const nodeBridge = getSharedGlobal('node', {
+        onEvent: () => {},
+        offEvent: () => {},
+        sendCommand: () => {},
+      })
+
+      cleanup()
+      nodeBridge.onEvent(handleNodeEvent)
+      cleanup = () => nodeBridge.offEvent(handleNodeEvent)
+      return true
+    }
+
+    bindNodeEvents()
+    removeReadyListener = addSharedGlobalReadyListener(bindNodeEvents)
 
     return () => {
-      global.ipcRenderer.removeListener(NODE_EVENT, handleNodeEvent)
+      removeReadyListener()
+      cleanup()
     }
   }, [setIsPendingOff])
 
@@ -158,15 +179,27 @@ function ResetNodeConfirmationDialog(props) {
 
 function useTroubleshooting() {
   const restart = () => {
-    global.ipcRenderer.send(NODE_COMMAND, 'troubleshooting-restart-node')
+    getSharedGlobal('node', {
+      onEvent: () => {},
+      offEvent: () => {},
+      sendCommand: () => {},
+    }).sendCommand('troubleshooting-restart-node')
   }
 
   const update = () => {
-    global.ipcRenderer.send(NODE_COMMAND, 'troubleshooting-update-node')
+    getSharedGlobal('node', {
+      onEvent: () => {},
+      offEvent: () => {},
+      sendCommand: () => {},
+    }).sendCommand('troubleshooting-update-node')
   }
 
   const reset = () => {
-    global.ipcRenderer.send(NODE_COMMAND, 'troubleshooting-reset-node')
+    getSharedGlobal('node', {
+      onEvent: () => {},
+      offEvent: () => {},
+      sendCommand: () => {},
+    }).sendCommand('troubleshooting-reset-node')
   }
 
   return {
