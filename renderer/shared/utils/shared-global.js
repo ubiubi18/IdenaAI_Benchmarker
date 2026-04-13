@@ -1,4 +1,6 @@
-const {version: APP_VERSION_FALLBACK = '0.0.0'} = require('../../../package.json')
+const {
+  version: APP_VERSION_FALLBACK = '0.0.0',
+} = require('../../../package.json')
 
 function isFallbackBridgeValue(value) {
   return Boolean(value && value.__idenaFallback)
@@ -41,10 +43,6 @@ function getSharedGlobalSources() {
     sources.push(global)
   }
 
-  if (typeof globalThis !== 'undefined' && !sources.includes(globalThis)) {
-    sources.push(globalThis)
-  }
-
   if (typeof window !== 'undefined' && !sources.includes(window)) {
     sources.push(window)
   }
@@ -66,16 +64,14 @@ export function getSharedGlobal(key, fallbackValue) {
   let fallbackBridgeValue
 
   for (const source of sources) {
-    if (!source || typeof source[key] === 'undefined' || source[key] === null) {
-      continue
-    }
+    if (source && typeof source[key] !== 'undefined' && source[key] !== null) {
+      if (!isFallbackBridgeValue(source[key])) {
+        return source[key]
+      }
 
-    if (!isFallbackBridgeValue(source[key])) {
-      return source[key]
-    }
-
-    if (typeof fallbackBridgeValue === 'undefined') {
-      fallbackBridgeValue = source[key]
+      if (typeof fallbackBridgeValue === 'undefined') {
+        fallbackBridgeValue = source[key]
+      }
     }
   }
 

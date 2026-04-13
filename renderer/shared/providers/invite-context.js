@@ -36,7 +36,7 @@ export function InviteProvider({children}) {
     let ignore = false
 
     async function fetchData(savedInvites) {
-      const db = getInviteDb()
+      const inviteDb = getInviteDb()
       const txs = (
         await Promise.all(
           savedInvites
@@ -106,7 +106,7 @@ export function InviteProvider({children}) {
 
         if (isNewInviteActivated) {
           // save changes once invitee is found
-          db.updateInvite(invite.id, nextInvite)
+          inviteDb.updateInvite(invite.id, nextInvite)
         }
 
         return {

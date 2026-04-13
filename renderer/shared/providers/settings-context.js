@@ -112,7 +112,10 @@ function buildAiSolverSettings(settings = {}) {
     ...(settings || {}),
   }
 
-  if (nextSettings.provider === 'openai' && nextSettings.model === 'gpt-4o-mini') {
+  if (
+    nextSettings.provider === 'openai' &&
+    nextSettings.model === 'gpt-4o-mini'
+  ) {
     nextSettings.model = 'gpt-5.4'
   }
 
