@@ -215,8 +215,9 @@ export const votingListMachine = createMachine(
         showAll: (_, {value}) => value !== 'owned',
       }),
       persistFilter: ({filter, statuses, showAll}) => {
-        createSublevelDb(requestDb(), 'votings', {valueEncoding: 'json'})
-          .put('filter', {filter, statuses, showAll})
+        createSublevelDb(requestDb(), 'votings', {
+          valueEncoding: 'json',
+        }).put('filter', {filter, statuses, showAll})
       },
       setError: assign({
         errorMessage: (_, {data}) => data?.message,

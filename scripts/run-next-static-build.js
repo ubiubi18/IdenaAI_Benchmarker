@@ -20,6 +20,7 @@ const needsLegacyProvider =
 
 const env = {
   ...process.env,
+  BROWSERSLIST_IGNORE_OLD_DATA: '1',
   NODE_OPTIONS: needsLegacyProvider
     ? `${baseNodeOptions} --openssl-legacy-provider`.trim()
     : baseNodeOptions,

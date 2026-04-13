@@ -50,6 +50,12 @@ const getNodeLogsFile = () => path.join(getNodeDataDir(), 'logs', 'output.log')
 
 const getNodeErrorFile = () => path.join(getNodeDataDir(), 'logs', 'error.log')
 
+const getNodeSubscriptionsDir = () =>
+  path.join(getNodeDataDir(), 'subscriptions')
+
+const getNodeSubscriptionsFile = () =>
+  path.join(getNodeSubscriptionsDir(), 'subscriptions.json')
+
 function isCompatibleAssetName(assetName) {
   if (!assetName) return false
   if (process.platform === 'win32') {
@@ -345,6 +351,47 @@ function writeError(err) {
   }
 }
 
+async function ensureNodeSubscriptionsFile() {
+  const subscriptionsFile = getNodeSubscriptionsFile()
+  await fs.ensureDir(path.dirname(subscriptionsFile))
+
+  const defaultContent = '[]\n'
+
+  try {
+    if (!(await fs.pathExists(subscriptionsFile))) {
+      await fs.writeFile(subscriptionsFile, defaultContent, 'utf8')
+      return
+    }
+
+    const content = await fs.readFile(subscriptionsFile, 'utf8')
+
+    if (!content.trim()) {
+      logger.info(
+        {subscriptionsFile},
+        'repairing empty node subscriptions file with default content'
+      )
+      await fs.writeFile(subscriptionsFile, defaultContent, 'utf8')
+      return
+    }
+
+    const parsed = JSON.parse(content)
+
+    if (!Array.isArray(parsed)) {
+      logger.warn(
+        {subscriptionsFile},
+        'repairing invalid node subscriptions file with default content'
+      )
+      await fs.writeFile(subscriptionsFile, defaultContent, 'utf8')
+    }
+  } catch (error) {
+    logger.warn(
+      {error: error.message, subscriptionsFile},
+      'repairing unreadable node subscriptions file with default content'
+    )
+    await fs.writeFile(subscriptionsFile, defaultContent, 'utf8')
+  }
+}
+
 async function startNode(
   port,
   tcpPort,
@@ -380,6 +427,8 @@ async function startNode(
     parameters.push('--config')
     parameters.push(configFile)
   }
+
+  await ensureNodeSubscriptionsFile()
 
   const idenaNode = spawn(getNodeFile(), parameters)
 

@@ -68,7 +68,7 @@ import {
   useSettingsState,
 } from '../../shared/providers/settings-context'
 import {BadFlipDialog} from '../../screens/validation/components'
-import {requestDb} from '../../shared/utils/db'
+import {createSublevelDb, requestDb} from '../../shared/utils/db'
 import {useFailToast} from '../../shared/hooks/use-toast'
 import {InfoIcon, RefreshIcon} from '../../shared/components/icons'
 import {useRpc, useTrackTx} from '../../screens/ads/hooks'
@@ -2208,8 +2208,9 @@ export default function NewFlipPage() {
         let didShowBadFlip
 
         try {
-          didShowBadFlip = await createSublevelDb(requestDb(), 'flips')
-            .get('didShowBadFlipNew')
+          didShowBadFlip = await createSublevelDb(requestDb(), 'flips').get(
+            'didShowBadFlipNew'
+          )
         } catch {
           didShowBadFlip = false
         }

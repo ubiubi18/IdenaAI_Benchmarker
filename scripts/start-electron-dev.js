@@ -121,6 +121,7 @@ async function main() {
       cwd: ROOT,
       env: {
         ...withLegacyOpenSsl(process.env),
+        BROWSERSLIST_IGNORE_OLD_DATA: '1',
         NEXT_TELEMETRY_DISABLED: '1',
       },
       stdio: 'inherit',
