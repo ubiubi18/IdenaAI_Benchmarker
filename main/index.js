@@ -31,8 +31,10 @@ const isLinux = process.platform === 'linux'
 const isDev = !app.isPackaged
 const RUNTIME_APP_NAME = 'IdenaAI'
 const RUNTIME_APP_ID = 'io.idena.ai'
+const appVersion = global.appVersion || app.getVersion()
+const DISPLAY_APP_NAME = `${RUNTIME_APP_NAME} v${appVersion}`
 
-app.setName(RUNTIME_APP_NAME)
+app.setName(DISPLAY_APP_NAME)
 
 if (isWin && typeof app.setAppUserModelId === 'function') {
   app.setAppUserModelId(RUNTIME_APP_ID)
@@ -54,8 +56,6 @@ if (process.env.NODE_ENV === 'e2e') {
 if (isWin) {
   app.setAppLogsPath(join(app.getPath('userData'), 'logs'))
 }
-
-const appVersion = global.appVersion || app.getVersion()
 
 const logger = require('./logger')
 
@@ -1081,10 +1081,10 @@ function handleDnaLink(url) {
 
 const createMenu = () => {
   const application = {
-    label: RUNTIME_APP_NAME,
+    label: DISPLAY_APP_NAME,
     submenu: [
       {
-        label: i18next.t(`About ${RUNTIME_APP_NAME}`),
+        label: i18next.t(`About ${DISPLAY_APP_NAME}`),
         role: 'about',
       },
       {
@@ -1231,7 +1231,7 @@ const createTray = () => {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: i18next.t(`Open ${RUNTIME_APP_NAME}`),
+      label: i18next.t(`Open ${DISPLAY_APP_NAME}`),
       click: showMainWindow,
     },
     {
