@@ -10,17 +10,32 @@ import {strip} from '../utils/obj'
 import {canKill} from '../../screens/contacts/utils'
 import {getSharedGlobal} from '../utils/shared-global'
 
+const fallbackInviteDb = {
+  getInvites: () => [],
+  getActivationTx: () => '',
+  updateInvite: () => {},
+  clearActivationTx: () => {},
+  addInvite: () => null,
+  setActivationTx: () => {},
+  clearInvites: () => {},
+  removeInvite: () => {},
+  getActivationCode: () => '',
+  setActivationCode: () => {},
+  clearActivationCode: () => {},
+}
+
+function hasInviteDbMethod(value, method) {
+  return value && typeof value[method] === 'function'
+}
+
 function getInviteDb() {
-  return (
-    getSharedGlobal('invitesDb') || {
-      getInvites: () => [],
-      getActivationTx: () => '',
-      updateInvite: () => {},
-      clearActivationTx: () => {},
-      addInvite: () => null,
-      setActivationTx: () => {},
-    }
-  )
+  const inviteDb = getSharedGlobal('invitesDb')
+
+  return hasInviteDbMethod(inviteDb, 'getInvites') &&
+    hasInviteDbMethod(inviteDb, 'getActivationTx') &&
+    hasInviteDbMethod(inviteDb, 'updateInvite')
+    ? inviteDb
+    : fallbackInviteDb
 }
 
 const InviteStateContext = React.createContext()

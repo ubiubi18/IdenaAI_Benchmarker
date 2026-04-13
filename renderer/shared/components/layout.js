@@ -27,10 +27,11 @@ import {
 } from '@chakra-ui/react'
 import {useMachine} from '@xstate/react'
 import semver from 'semver'
-import {assign, createMachine} from 'xstate'
 import NextLink from 'next/link'
 import Sidebar from './sidebar'
 import {useDebounce} from '../hooks/use-debounce'
+import useRpc from '../hooks/use-rpc'
+import {usePoll} from '../hooks/use-interval'
 import {useEpochState} from '../providers/epoch-context'
 import {loadPersistentStateValue, persistItem} from '../utils/persist'
 import {
@@ -519,31 +520,8 @@ function SyncingApp() {
 
   const {address} = useIdentityState()
 
-  const [current] = useMachine(
-    createMachine({
-      context: {
-        peers: [],
-      },
-      initial: 'loading',
-      states: {
-        loading: {
-          invoke: {
-            src: () => callRpc('net_peers'),
-            onDone: {
-              target: 'done',
-              actions: [assign({peers: (_, {data}) => data})],
-            },
-          },
-        },
-        done: {
-          after: {
-            5000: 'loading',
-          },
-        },
-      },
-    })
-  )
-  const {peers} = current.context
+  const [{result: peersResult}] = usePoll(useRpc('net_peers'), 5000)
+  const peers = Array.isArray(peersResult) ? peersResult : []
 
   const {runInternalNode, useExternalNode} = useSettingsState()
 

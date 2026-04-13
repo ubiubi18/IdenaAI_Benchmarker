@@ -23,7 +23,6 @@ import {
   useNodeState,
   useNodeDispatch,
 } from '../../shared/providers/node-context'
-import {NODE_EVENT, NODE_COMMAND} from '../../../main/channels'
 import {HDivider, Input, Toast} from '../../shared/components/components'
 import {
   SettingsFormControl,
@@ -32,6 +31,8 @@ import {
 } from '../../screens/settings/components'
 import SettingsLayout from '../../screens/settings/layout'
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
+import {getSharedGlobal} from '../../shared/utils/shared-global'
+import {useInterval} from '../../shared/hooks/use-interval'
 
 function NodeSettings() {
   const {t} = useTranslation()
@@ -47,11 +48,16 @@ function NodeSettings() {
     toggleAutoActivateMining,
   } = useSettingsDispatch()
 
-  const {nodeFailed} = useNodeState()
+  const {nodeFailed, nodeReady, nodeStarted} = useNodeState()
 
   const {tryRestartNode} = useNodeDispatch()
 
   const logsRef = useRef(null)
+  const nodeBridge = getSharedGlobal('node', {
+    onEvent: () => {},
+    offEvent: () => {},
+    sendCommand: () => {},
+  })
 
   const [state, dispatch] = useReducer(
     (prevState, action) => {
@@ -112,18 +118,27 @@ function NodeSettings() {
       }
     }
 
-    global.ipcRenderer.on(NODE_EVENT, onEvent)
+    nodeBridge.onEvent(onEvent)
 
     return () => {
-      global.ipcRenderer.removeListener(NODE_EVENT, onEvent)
+      nodeBridge.offEvent(onEvent)
     }
-  })
+  }, [nodeBridge, settings.useExternalNode])
 
   useEffect(() => {
     if (!settings.useExternalNode) {
-      global.ipcRenderer.send(NODE_COMMAND, 'get-last-logs')
+      nodeBridge.sendCommand('get-last-logs')
     }
-  }, [settings.useExternalNode])
+  }, [nodeBridge, nodeReady, nodeStarted, settings.useExternalNode])
+
+  useInterval(
+    () => {
+      if (!settings.useExternalNode && (nodeReady || nodeStarted)) {
+        nodeBridge.sendCommand('get-last-logs')
+      }
+    },
+    !settings.useExternalNode && (nodeReady || nodeStarted) ? 3000 : null
+  )
 
   useEffect(() => {
     if (logsRef.current) {
@@ -180,7 +195,7 @@ function NodeSettings() {
                 isDisabled={!settings.runInternalNode}
                 onChange={() => {
                   toggleAutoActivateMining()
-                  global.ipcRenderer.send(NODE_COMMAND, 'restart-node')
+                  nodeBridge.sendCommand('restart-node')
                 }}
               />
             </Box>

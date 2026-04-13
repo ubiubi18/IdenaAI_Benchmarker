@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useMemo} from 'react'
-import {NODE_EVENT, NODE_COMMAND} from '../../../main/channels'
 import {useSettingsState} from './settings-context'
 import useLogger from '../hooks/use-logger'
+import {getSharedGlobal} from '../utils/shared-global'
 
 const NODE_READY = 'NODE_READY'
 const NODE_FAILED = 'NODE_FAILED'
@@ -82,44 +82,64 @@ function nodeReducer(state, action) {
 const NodeStateContext = React.createContext()
 const NodeDispatchContext = React.createContext()
 
-function hasIpcRenderer() {
+function getNodeBridge() {
+  return getSharedGlobal('node', {
+    onEvent: () => {},
+    offEvent: () => {},
+    sendCommand: () => {},
+  })
+}
+
+function hasNodeBridge() {
+  const node = getNodeBridge()
   return (
-    global.ipcRenderer &&
-    typeof global.ipcRenderer.on === 'function' &&
-    typeof global.ipcRenderer.send === 'function' &&
-    typeof global.ipcRenderer.removeListener === 'function'
+    node &&
+    typeof node.onEvent === 'function' &&
+    typeof node.offEvent === 'function' &&
+    typeof node.sendCommand === 'function'
   )
 }
 
 // eslint-disable-next-line react/prop-types
 export function NodeProvider({children}) {
   const settings = useSettingsState()
+  const node = useMemo(() => getNodeBridge(), [])
+  const initRequestedRef = React.useRef(false)
+  const startRequestedRef = React.useRef(false)
 
   const [state, dispatch] = useLogger(
     React.useReducer(nodeReducer, initialState)
   )
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasNodeBridge()) {
       return undefined
     }
 
     const onEvent = (_sender, event, data) => {
       switch (event) {
         case 'node-failed':
+          initRequestedRef.current = false
+          startRequestedRef.current = false
           dispatch({type: NODE_FAILED})
           break
         case 'node-started':
+          startRequestedRef.current = false
           dispatch({type: NODE_START})
           break
         case 'node-stopped':
+          initRequestedRef.current = false
+          startRequestedRef.current = false
           dispatch({type: NODE_STOP})
           break
         case 'node-ready':
+          initRequestedRef.current = false
           dispatch({type: NODE_READY, data})
           break
         case 'restart-node':
         case 'state-cleaned':
+          initRequestedRef.current = false
+          startRequestedRef.current = false
           dispatch({type: NODE_REINIT, data})
           break
         case 'unsupported-macos-version':
@@ -128,7 +148,7 @@ export function NodeProvider({children}) {
 
         case 'troubleshooting-restart-node': {
           dispatch({type: TROUBLESHOOTING_RESTART_NODE})
-          return global.ipcRenderer.send(NODE_COMMAND, 'start-local-node', {
+          return node.sendCommand('start-local-node', {
             rpcPort: settings.internalPort,
             tcpPort: settings.tcpPort,
             ipfsPort: settings.ipfsPort,
@@ -141,7 +161,7 @@ export function NodeProvider({children}) {
         }
         case 'troubleshooting-reset-node': {
           dispatch({type: TROUBLESHOOTING_RESET_NODE})
-          return global.ipcRenderer.send(NODE_COMMAND, 'init-local-node')
+          return node.sendCommand('init-local-node')
         }
 
         default:
@@ -149,19 +169,29 @@ export function NodeProvider({children}) {
       }
     }
 
-    global.ipcRenderer.on(NODE_EVENT, onEvent)
+    node.onEvent(onEvent)
 
     return () => {
-      global.ipcRenderer.removeListener(NODE_EVENT, onEvent)
+      node.offEvent(onEvent)
     }
-  })
+  }, [
+    dispatch,
+    node,
+    settings.autoActivateMining,
+    settings.internalApiKey,
+    settings.internalPort,
+    settings.ipfsPort,
+    settings.tcpPort,
+  ])
 
   useEffect(() => {
+    initRequestedRef.current = false
+    startRequestedRef.current = false
     dispatch({type: NODE_REINIT})
   }, [settings.runInternalNode, dispatch])
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasNodeBridge()) {
       return
     }
 
@@ -170,9 +200,11 @@ export function NodeProvider({children}) {
       !state.nodeFailed &&
       !state.nodeStarted &&
       settings.runInternalNode &&
-      settings.internalApiKey
+      settings.internalApiKey &&
+      !startRequestedRef.current
     ) {
-      global.ipcRenderer.send(NODE_COMMAND, 'start-local-node', {
+      startRequestedRef.current = true
+      node.sendCommand('start-local-node', {
         rpcPort: settings.internalPort,
         tcpPort: settings.tcpPort,
         ipfsPort: settings.ipfsPort,
@@ -190,10 +222,11 @@ export function NodeProvider({children}) {
     state.nodeFailed,
     settings.internalApiKey,
     settings.autoActivateMining,
+    node,
   ])
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasNodeBridge()) {
       return
     }
 
@@ -201,13 +234,17 @@ export function NodeProvider({children}) {
       return
     }
     if (settings.runInternalNode) {
-      if (!state.nodeStarted) {
-        global.ipcRenderer.send(NODE_COMMAND, 'init-local-node')
+      if (!state.nodeStarted && !initRequestedRef.current) {
+        initRequestedRef.current = true
+        node.sendCommand('init-local-node')
       }
     } else if (state.nodeStarted) {
-      global.ipcRenderer.send(NODE_COMMAND, 'stop-local-node')
+      initRequestedRef.current = false
+      startRequestedRef.current = false
+      node.sendCommand('stop-local-node')
     }
   }, [
+    node,
     settings.runInternalNode,
     state.nodeStarted,
     state.nodeReady,
@@ -216,26 +253,30 @@ export function NodeProvider({children}) {
   ])
 
   const tryRestartNode = useCallback(() => {
+    initRequestedRef.current = false
+    startRequestedRef.current = false
     dispatch({type: NODE_REINIT})
   }, [dispatch])
 
-  const importNodeKey = (shouldResetNode) => {
-    if (!hasIpcRenderer()) {
-      return
-    }
+  const importNodeKey = useCallback(
+    (shouldResetNode) => {
+      if (!hasNodeBridge()) {
+        return
+      }
 
-    global.ipcRenderer.send(
-      NODE_COMMAND,
-      shouldResetNode ? 'clean-state' : 'restart-node'
-    )
-  }
+      initRequestedRef.current = false
+      startRequestedRef.current = false
+      node.sendCommand(shouldResetNode ? 'clean-state' : 'restart-node')
+    },
+    [node]
+  )
 
   return (
     <NodeStateContext.Provider value={state}>
       <NodeDispatchContext.Provider
         value={useMemo(
           () => ({tryRestartNode, importNodeKey}),
-          [tryRestartNode]
+          [importNodeKey, tryRestartNode]
         )}
       >
         {children}

@@ -10,7 +10,6 @@ const {
   shell,
   // eslint-disable-next-line import/no-extraneous-dependencies
 } = require('electron')
-const {autoUpdater} = require('electron-updater')
 const fs = require('fs-extra')
 const i18next = require('i18next')
 const {image_search: imageSearch} = require('duckduckgo-images-api')
@@ -31,6 +30,48 @@ const RUNTIME_APP_ID = 'io.idena.benchmarker'
 const BENCHMARKER_INTERNAL_API_PORT = 9129
 const BENCHMARKER_TCP_PORT = 51505
 const BENCHMARKER_IPFS_PORT = 51506
+
+function resolveDevServerUrl() {
+  const fallback = 'http://127.0.0.1:8010'
+  const rawValue = process.env.IDENA_DESKTOP_RENDERER_DEV_SERVER_URL || fallback
+
+  let parsed
+
+  try {
+    parsed = new URL(rawValue)
+  } catch {
+    throw new Error(`Invalid dev renderer URL: ${rawValue}`)
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`Unsupported dev renderer protocol: ${parsed.protocol}`)
+  }
+
+  if (!['127.0.0.1', 'localhost'].includes(parsed.hostname)) {
+    throw new Error(
+      `Dev renderer URL must use a loopback host: ${parsed.hostname}`
+    )
+  }
+
+  return parsed.toString().replace(/\/+$/, '')
+}
+
+const DEV_SERVER_URL = resolveDevServerUrl()
+const TRUSTED_DEV_ORIGIN = isDev ? new URL(DEV_SERVER_URL).origin : null
+
+// electron-updater is disabled in dev because the renderer loads from a local
+// dev server and the updater is production-only runtime behavior.
+let autoUpdater = null
+
+if (!isDev) {
+  try {
+    // eslint-disable-next-line global-require
+    ;({autoUpdater} = require('electron-updater'))
+  } catch (error) {
+    // The packaged app should remain bootable even when updater loading fails.
+    // Update checks are skipped in that case.
+  }
+}
 
 app.setName(RUNTIME_APP_NAME)
 
@@ -60,6 +101,10 @@ const appVersion = global.appVersion || app.getVersion()
 const logger = require('./logger')
 
 logger.info('idena started', appVersion)
+
+if (!isDev && !autoUpdater) {
+  logger.warn('electron-updater could not be loaded; UI update checks disabled')
+}
 
 const {
   AUTO_UPDATE_EVENT,
@@ -181,14 +226,87 @@ function loadMainSettings() {
   }
 }
 
-ipcMain.on(APP_INFO_COMMAND, (event) => {
+function getSenderUrl(event) {
+  if (event && event.senderFrame && typeof event.senderFrame.url === 'string') {
+    return event.senderFrame.url
+  }
+
+  if (event && event.sender && typeof event.sender.getURL === 'function') {
+    return event.sender.getURL()
+  }
+
+  return ''
+}
+
+function isTrustedSenderUrl(url) {
+  const value = String(url || '').trim()
+
+  if (!value) {
+    return false
+  }
+
+  if (!isDev) {
+    return value.startsWith('file://')
+  }
+
+  try {
+    return new URL(value).origin === TRUSTED_DEV_ORIGIN
+  } catch {
+    return false
+  }
+}
+
+function assertTrustedSender(event) {
+  const senderUrl = getSenderUrl(event)
+
+  if (
+    !senderUrl &&
+    mainWindow &&
+    event &&
+    event.sender &&
+    event.sender === mainWindow.webContents
+  ) {
+    return
+  }
+
+  if (!isTrustedSenderUrl(senderUrl)) {
+    throw new Error(`Blocked IPC sender: ${senderUrl || 'unknown'}`)
+  }
+}
+
+function onTrusted(channel, listener) {
+  ipcMain.on(channel, (event, ...args) => {
+    assertTrustedSender(event)
+    return listener(event, ...args)
+  })
+}
+
+function handleTrusted(channel, listener) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event)
+    return listener(event, ...args)
+  })
+}
+
+function handleOnceTrusted(channel, listener) {
+  ipcMain.handleOnce(channel, (event, ...args) => {
+    assertTrustedSender(event)
+    return listener(event, ...args)
+  })
+}
+
+function isNodeProcessRunning() {
+  return Boolean(node && node.pid && node.exitCode == null && !node.killed)
+}
+
+onTrusted(APP_INFO_COMMAND, (event) => {
   event.returnValue = {
     version: appVersion,
     locale: app.getLocale(),
   }
 })
 
-ipcMain.on(APP_PATH_COMMAND, (event, folder) => {
+onTrusted(APP_PATH_COMMAND, (event, folder) => {
   event.returnValue = appDataPath(folder)
 })
 
@@ -689,8 +807,9 @@ const createMainWindow = () => {
     height: responsiveHeight,
     webPreferences: {
       nodeIntegration: false,
-      contextIsolation: false,
+      contextIsolation: true,
       sandbox: false,
+      webSecurity: true,
       preload: join(__dirname, 'preload.js'),
     },
     icon: resolve(__dirname, 'static', 'icon-128@2x.png'),
@@ -698,6 +817,71 @@ const createMainWindow = () => {
   })
 
   loadRoute(mainWindow, 'home')
+
+  const safeOpenExternal = (url) => {
+    const value = String(url || '').trim()
+    if (!value) {
+      return
+    }
+    try {
+      const parsed = new URL(value)
+      const allowHttpLoopback =
+        parsed.protocol === 'http:' &&
+        ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname)
+      const allowByProtocol = ['dna:', 'https:', 'mailto:'].includes(
+        parsed.protocol
+      )
+
+      if (!allowByProtocol && !allowHttpLoopback) {
+        throw new Error(`Blocked protocol: ${parsed.protocol}`)
+      }
+      shell.openExternal(parsed.toString()).catch((error) => {
+        logger.warn('Unable to open external URL', {
+          url: parsed.toString(),
+          error: error.toString(),
+        })
+      })
+    } catch (error) {
+      logger.warn('Blocked renderer navigation to external URL', {
+        url: value,
+        error: error.toString(),
+      })
+    }
+  }
+
+  const isAllowedAppUrl = (url) => {
+    const value = String(url || '').trim()
+    if (!value) return false
+    if (!isDev) {
+      return value.startsWith('file://')
+    }
+    try {
+      return new URL(value).origin === new URL(DEV_SERVER_URL).origin
+    } catch {
+      return false
+    }
+  }
+
+  if (
+    mainWindow.webContents &&
+    typeof mainWindow.webContents.setWindowOpenHandler === 'function'
+  ) {
+    mainWindow.webContents.setWindowOpenHandler(({url}) => {
+      if (isAllowedAppUrl(url)) {
+        return {action: 'allow'}
+      }
+      safeOpenExternal(url)
+      return {action: 'deny'}
+    })
+  }
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedAppUrl(url)) {
+      return
+    }
+    event.preventDefault()
+    safeOpenExternal(url)
+  })
 
   mainWindow.webContents.on(
     'console-message',
@@ -996,7 +1180,7 @@ app.on('before-quit', (e) => {
   }
 })
 
-ipcMain.on('confirm-quit', () => {
+onTrusted('confirm-quit', () => {
   didConfirmQuit = true
   app.quit()
 })
@@ -1016,9 +1200,9 @@ app.on('window-all-closed', () => {
   }
 })
 
-ipcMain.handleOnce('CHECK_DNA_LINK', () => dnaUrl)
+handleOnceTrusted('CHECK_DNA_LINK', () => dnaUrl)
 
-ipcMain.on(NODE_COMMAND, async (_event, command, data) => {
+onTrusted(NODE_COMMAND, async (_event, command, data) => {
   logger.info(`new node command`, command, data)
   switch (command) {
     case 'init-local-node': {
@@ -1029,6 +1213,9 @@ ipcMain.on(NODE_COMMAND, async (_event, command, data) => {
       getCurrentVersion()
         .then((version) => {
           sendMainWindowMsg(NODE_EVENT, 'node-ready', version)
+          if (isNodeProcessRunning()) {
+            sendMainWindowMsg(NODE_EVENT, 'node-started')
+          }
         })
         .catch((e) => {
           logger.error('error while getting current node version', e.toString())
@@ -1058,6 +1245,14 @@ ipcMain.on(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'start-local-node': {
+      if (isNodeProcessRunning()) {
+        logger.info(`node start skipped, process already running`, {
+          pid: node.pid,
+        })
+        sendMainWindowMsg(NODE_EVENT, 'node-started')
+        break
+      }
+
       startNode(
         data.rpcPort,
         data.tcpPort,
@@ -1230,19 +1425,21 @@ nodeUpdater.on('update-downloaded', (info) => {
   sendMainWindowMsg(AUTO_UPDATE_EVENT, 'node-update-ready', info)
 })
 
-autoUpdater.on('download-progress', (info) => {
-  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
-})
+if (autoUpdater) {
+  autoUpdater.on('download-progress', (info) => {
+    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
+  })
 
-autoUpdater.on('update-downloaded', (info) => {
-  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
-})
+  autoUpdater.on('update-downloaded', (info) => {
+    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
+  })
 
-autoUpdater.on('error', (error) => {
-  logger.error('error while checking UI update', error.toString())
-})
+  autoUpdater.on('error', (error) => {
+    logger.error('error while checking UI update', error.toString())
+  })
+}
 
-ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
+onTrusted(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   logger.info(`new autoupdate command`, command, data)
   switch (command) {
     case 'start-checking': {
@@ -1250,7 +1447,7 @@ ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
       break
     }
     case 'update-ui': {
-      if (isWin && app.isPackaged) {
+      if (isWin && app.isPackaged && autoUpdater) {
         didConfirmQuit = true
         autoUpdater.quitAndInstall()
       } else {
@@ -1299,7 +1496,7 @@ function checkForUpdates() {
             })
           }, 30000)
         }
-      } else {
+      } else if (autoUpdater) {
         await autoUpdater.checkForUpdates()
       }
     } catch (e) {
@@ -1313,19 +1510,19 @@ function checkForUpdates() {
 }
 
 // listen specific `node` messages
-ipcMain.on('node-log', ({sender}, message) => {
+onTrusted('node-log', ({sender}, message) => {
   sender.send('node-log', message)
 })
 
-ipcMain.on('reload', () => {
+onTrusted('reload', () => {
   loadRoute(mainWindow, 'home')
 })
 
-ipcMain.on('showMainWindow', () => {
+onTrusted('showMainWindow', () => {
   showMainWindow()
 })
 
-ipcMain.handle(WINDOW_COMMAND, (event, command) => {
+handleTrusted(WINDOW_COMMAND, (event, command) => {
   const targetWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow
   if (!targetWindow) {
     throw new Error('No window is available')
@@ -1351,9 +1548,9 @@ function sendMainWindowMsg(channel, message, data) {
   }
 }
 
-ipcMain.handle('search-image', async (_, query) => searchImages(query))
+handleTrusted('search-image', async (_event, query) => searchImages(query))
 
-ipcMain.handle(AI_SOLVER_COMMAND, async (_event, command, payload) => {
+handleTrusted(AI_SOLVER_COMMAND, async (_event, command, payload) => {
   logger.info(`new ai solver command`, command, {
     provider: payload && payload.provider,
     model: payload && payload.model,
@@ -1394,7 +1591,7 @@ ipcMain.handle(AI_SOLVER_COMMAND, async (_event, command, payload) => {
   }
 })
 
-ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
+handleTrusted(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
   logger.info(`new ai test unit command`, command, {
     provider: payload && payload.provider,
     model: payload && payload.model,
@@ -1448,7 +1645,7 @@ ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
   }
 })
 
-ipcMain.handle('localAi.status', async (_event, payload) => {
+handleTrusted('localAi.status', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiStatus(payload)
   }
@@ -1456,26 +1653,26 @@ ipcMain.handle('localAi.status', async (_event, payload) => {
   return buildLocalAiStatusResponse(await localAiManager.status(payload))
 })
 
-ipcMain.handle(
+handleTrusted(
   'localAi.start',
   withLocalAiEnabled('start', async (_event, payload) =>
     localAiManager.start(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.stop',
   withLocalAiEnabled('stop', async () => localAiManager.stop())
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.listModels',
   withLocalAiEnabled('listModels', async (_event, payload) =>
     localAiManager.listModels(payload)
   )
 )
 
-ipcMain.handle('localAi.info', async (_event, payload) => {
+handleTrusted('localAi.info', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiInfoResponse(payload)
   }
@@ -1486,7 +1683,7 @@ ipcMain.handle('localAi.info', async (_event, payload) => {
   }
 })
 
-ipcMain.handle('localAi.chat', async (_event, payload) => {
+handleTrusted('localAi.chat', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiChatResponse(payload)
   }
@@ -1497,7 +1694,7 @@ ipcMain.handle('localAi.chat', async (_event, payload) => {
   }
 })
 
-ipcMain.handle('localAi.flipJudge', async (_event, payload) => {
+handleTrusted('localAi.flipJudge', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
@@ -1508,7 +1705,7 @@ ipcMain.handle('localAi.flipJudge', async (_event, payload) => {
   }
 })
 
-ipcMain.handle('localAi.checkFlipSequence', async (_event, payload) => {
+handleTrusted('localAi.checkFlipSequence', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
@@ -1521,7 +1718,7 @@ ipcMain.handle('localAi.checkFlipSequence', async (_event, payload) => {
   }
 })
 
-ipcMain.handle('localAi.flipToText', async (_event, payload) => {
+handleTrusted('localAi.flipToText', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiFlipToTextResponse(payload)
   }
@@ -1532,56 +1729,56 @@ ipcMain.handle('localAi.flipToText', async (_event, payload) => {
   }
 })
 
-ipcMain.handle(
+handleTrusted(
   'localAi.captionFlip',
   withLocalAiEnabled('captionFlip', async (_event, payload) =>
     localAiManager.captionFlip(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.ocrImage',
   withLocalAiEnabled('ocrImage', async (_event, payload) =>
     localAiManager.ocrImage(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.trainHook',
   withLocalAiEnabled('trainHook', async (_event, payload) =>
     localAiManager.trainHook(buildLocalAiTrainHookPayload(payload))
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.trainEpoch',
   withLocalAiEnabled('trainEpoch', async (_event, payload) =>
     localAiManager.trainEpoch(buildLocalAiTrainHookPayload(payload))
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.buildManifest',
   withLocalAiEnabled('buildManifest', async (_event, epoch) =>
     localAiManager.buildManifest(epoch)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.loadTrainingCandidatePackage',
   withLocalAiEnabled('loadTrainingCandidatePackage', async (_event, payload) =>
     localAiManager.loadTrainingCandidatePackage(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.buildTrainingCandidatePackage',
   withLocalAiEnabled('buildTrainingCandidatePackage', async (_event, payload) =>
     localAiManager.buildTrainingCandidatePackage(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.updateTrainingCandidatePackageReview',
   withLocalAiEnabled(
     'updateTrainingCandidatePackageReview',
@@ -1590,28 +1787,28 @@ ipcMain.handle(
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.buildBundle',
   withLocalAiEnabled('buildBundle', async (_event, epoch) =>
     localAiFederated.buildUpdateBundle(epoch)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.importBundle',
   withLocalAiEnabled('importBundle', async (_event, filePath) =>
     localAiFederated.importUpdateBundle(filePath)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.aggregate',
   withLocalAiEnabled('aggregate', async () =>
     localAiFederated.aggregateAcceptedBundles()
   )
 )
 
-ipcMain.on('localAi.captureFlip', (_event, payload) => {
+onTrusted('localAi.captureFlip', (_event, payload) => {
   try {
     assertLocalAiEnabled('captureFlip')
   } catch {
@@ -1624,8 +1821,3 @@ ipcMain.on('localAi.captureFlip', (_event, payload) => {
     })
   })
 })
-
-const KEY_VALUE = {}
-
-ipcMain.handle('get-data', async (_, key) => KEY_VALUE[key])
-ipcMain.on('set-data', (_, key, value) => (KEY_VALUE[key] = value))

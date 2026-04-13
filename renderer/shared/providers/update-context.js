@@ -1,8 +1,8 @@
 import React, {useCallback, useEffect, useMemo} from 'react'
-import {AUTO_UPDATE_EVENT, AUTO_UPDATE_COMMAND} from '../../../main/channels'
 import {useSettingsState} from './settings-context'
 import {useInterval} from '../hooks/use-interval'
 import {fetchNodeVersion} from '../api/dna'
+import {getSharedGlobal} from '../utils/shared-global'
 
 export const TOGGLE_NODE_SWITCHER = 'TOGGLE_NODE_SWITCHER'
 export const SAVE_EXTERNAL_URL = 'SAVE_EXTERNAL_URL'
@@ -19,7 +19,7 @@ const NODE_UPDATE_FAIL = 'NODE_UPDATE_FAIL'
 
 const initialState = {
   checkStarted: false,
-  uiCurrentVersion: global.appVersion,
+  uiCurrentVersion: getSharedGlobal('appVersion', '0.0.0'),
   nodeCurrentVersion: '0.0.0',
   showExternalUpdateModal: false,
 }
@@ -99,12 +99,29 @@ function updateReducer(state, action) {
 const AutoUpdateStateContext = React.createContext()
 const AutoUpdateDispatchContext = React.createContext()
 
-function hasIpcRenderer() {
+function getUpdatesBridge() {
+  return getSharedGlobal('updates', {
+    onEvent: () => {},
+    offEvent: () => {},
+    sendCommand: () => {},
+  })
+}
+
+function getNodeBridge() {
+  return getSharedGlobal('node', {
+    onEvent: () => {},
+    offEvent: () => {},
+    sendCommand: () => {},
+  })
+}
+
+function hasUpdatesBridge() {
+  const updates = getUpdatesBridge()
   return (
-    global.ipcRenderer &&
-    typeof global.ipcRenderer.on === 'function' &&
-    typeof global.ipcRenderer.send === 'function' &&
-    typeof global.ipcRenderer.removeListener === 'function'
+    updates &&
+    typeof updates.onEvent === 'function' &&
+    typeof updates.offEvent === 'function' &&
+    typeof updates.sendCommand === 'function'
   )
 }
 
@@ -113,11 +130,17 @@ export function AutoUpdateProvider({children}) {
   const settings = useSettingsState()
 
   const [state, dispatch] = React.useReducer(updateReducer, initialState)
+  let nodeVersionPollDelay = 10000
+  if (settings.runInternalNode && !settings.useExternalNode) {
+    nodeVersionPollDelay = state.nodeCurrentVersion === '0.0.0' ? 1000 : 10000
+  }
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasUpdatesBridge()) {
       return undefined
     }
+
+    const updates = getUpdatesBridge()
 
     const onEvent = (_sender, event, data) => {
       switch (event) {
@@ -150,20 +173,60 @@ export function AutoUpdateProvider({children}) {
       }
     }
 
-    global.ipcRenderer.on(AUTO_UPDATE_EVENT, onEvent)
+    updates.onEvent(onEvent)
 
     return () => {
-      global.ipcRenderer.removeListener(AUTO_UPDATE_EVENT, onEvent)
+      updates.offEvent(onEvent)
     }
   })
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    const node = getNodeBridge()
+
+    const syncNodeVersion = async (fallbackVersion) => {
+      try {
+        const version = await fetchNodeVersion()
+        if (version) {
+          dispatch({type: NEW_NODE_VERSION, data: version})
+          return
+        }
+      } catch {
+        // Ignore transient startup RPC errors here. The interval below retries.
+      }
+
+      if (fallbackVersion) {
+        dispatch({type: NEW_NODE_VERSION, data: fallbackVersion})
+      }
+    }
+
+    const onNodeEvent = (_sender, event, data) => {
+      if (event === 'node-ready') {
+        syncNodeVersion(data)
+      }
+
+      if (event === 'node-started') {
+        syncNodeVersion()
+      }
+
+      if (event === 'node-stopped') {
+        dispatch({type: NEW_NODE_VERSION, data: '0.0.0'})
+      }
+    }
+
+    node.onEvent(onNodeEvent)
+
+    return () => {
+      node.offEvent(onNodeEvent)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasUpdatesBridge()) {
       return
     }
 
     if (state.nodeCurrentVersion !== '0.0.0') {
-      global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'start-checking', {
+      getUpdatesBridge().sendCommand('start-checking', {
         nodeCurrentVersion: state.nodeCurrentVersion,
         isInternalNode: !settings.useExternalNode,
       })
@@ -179,10 +242,16 @@ export function AutoUpdateProvider({children}) {
           dispatch({type: NEW_NODE_VERSION, data: version})
         }
       } catch (error) {
-        global.logger.error('Error fetching node version', error, state)
+        if (state.nodeCurrentVersion !== '0.0.0') {
+          getSharedGlobal('logger', console).error(
+            'Error fetching node version',
+            error,
+            state
+          )
+        }
       }
     },
-    10000,
+    nodeVersionPollDelay,
     true
   )
 
@@ -196,20 +265,20 @@ export function AutoUpdateProvider({children}) {
       (settings.useExternalNode && state.nodeUpdateAvailable))
 
   const updateClient = () => {
-    if (!hasIpcRenderer()) {
+    if (!hasUpdatesBridge()) {
       return
     }
-    global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'update-ui')
+    getUpdatesBridge().sendCommand('update-ui')
   }
 
   const updateNode = useCallback(() => {
     if (settings.useExternalNode) {
       dispatch({type: SHOW_EXTERNAL_UPDATE_MODAL})
     } else {
-      if (!hasIpcRenderer()) {
+      if (!hasUpdatesBridge()) {
         return
       }
-      global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'update-node')
+      getUpdatesBridge().sendCommand('update-node')
       dispatch({type: NODE_UPDATE_START})
     }
   }, [settings.useExternalNode])

@@ -21,8 +21,9 @@ import {OnboardingProvider} from '../shared/providers/onboarding-context'
 import {queryClient} from '../shared/utils/utils'
 import {
   APP_VERSION_FALLBACK,
-  syncSharedGlobal,
+  getSharedGlobal,
 } from '../shared/utils/shared-global'
+import {createSublevelDb} from '../shared/utils/db'
 
 // err is a workaround for https://github.com/zeit/next.js/issues/8592
 export default function App({Component, err, ...pageProps}) {
@@ -57,110 +58,66 @@ export default function App({Component, err, ...pageProps}) {
 
 function AppProviders(props) {
   if (typeof window !== 'undefined') {
-    if (!window.global) {
-      window.global = window
-    }
+    const legacyGlobal =
+      typeof global !== 'undefined' && global ? global : window
 
-    if (!global.env) {
-      global.env = {}
-    }
-
-    if (!global.logger) {
-      const noop = () => {}
-      global.logger = {
-        debug: noop,
-        info: noop,
-        warn: noop,
-        error: noop,
-      }
-    }
-
-    if (!global.ipcRenderer) {
-      const noop = () => {}
-      global.ipcRenderer = {
-        __idenaFallback: true,
-        on: noop,
-        send: noop,
-        removeListener: noop,
+    const compat = {
+      appVersion: getSharedGlobal('appVersion', APP_VERSION_FALLBACK),
+      env: getSharedGlobal('env', {}),
+      isDev: getSharedGlobal('isDev', false),
+      isMac: getSharedGlobal('isMac', false),
+      isTest: getSharedGlobal('isTest', false),
+      ipcRenderer: getSharedGlobal('ipcRenderer', {
+        on: () => {},
+        send: () => {},
+        removeListener: () => {},
         invoke: async () => undefined,
+      }),
+      logger: getSharedGlobal('logger', console),
+      openExternal: getSharedGlobal('openExternal', () =>
+        Promise.resolve(false)
+      ),
+      getZoomLevel: getSharedGlobal('getZoomLevel', () => 0),
+      setZoomLevel: getSharedGlobal('setZoomLevel', () => {}),
+      toggleFullScreen: getSharedGlobal('toggleFullScreen', () =>
+        Promise.resolve()
+      ),
+      links: getSharedGlobal('links', {}),
+      dna: getSharedGlobal('dna', {}),
+      updates: getSharedGlobal('updates', {}),
+      node: getSharedGlobal('node', {}),
+      search: getSharedGlobal('search', {}),
+      aiSolver: getSharedGlobal('aiSolver', {}),
+      aiTestUnit: getSharedGlobal('aiTestUnit', {}),
+      localAi: getSharedGlobal('localAi', {}),
+      flipStore: getSharedGlobal('flipStore', {}),
+      invitesDb: getSharedGlobal('invitesDb', {}),
+      contactsDb: getSharedGlobal('contactsDb', {}),
+      storage: getSharedGlobal('storage', {}),
+      db: getSharedGlobal('db', {}),
+      clipboard: getSharedGlobal('clipboard', {}),
+      nativeImage: getSharedGlobal('nativeImage', {}),
+      social: getSharedGlobal('social', {}),
+      sub: createSublevelDb,
+    }
+
+    Object.entries(compat).forEach(([key, value]) => {
+      try {
+        legacyGlobal[key] = value
+      } catch {
+        // Ignore read-only globals while preserving legacy compat keys.
       }
-    }
+    })
 
-    if (!global.sub) {
-      global.sub = (db) => db
+    if (legacyGlobal !== window) {
+      Object.entries(compat).forEach(([key, value]) => {
+        try {
+          window[key] = value
+        } catch {
+          // Ignore read-only browser globals as well.
+        }
+      })
     }
-
-    if (!global.aiSolver) {
-      const empty = async () => ({})
-      global.aiSolver = {
-        setProviderKey: empty,
-        clearProviderKey: empty,
-        hasProviderKey: async () => ({
-          ok: true,
-          provider: 'openai',
-          hasKey: false,
-        }),
-        testProvider: empty,
-        listModels: async () => ({
-          ok: true,
-          provider: 'openai',
-          total: 0,
-          models: [],
-        }),
-        solveFlipBatch: empty,
-      }
-    }
-
-    if (!global.aiTestUnit) {
-      const empty = async () => ({ok: true})
-      global.aiTestUnit = {
-        addFlips: empty,
-        listFlips: async () => ({ok: true, total: 0, flips: []}),
-        clearFlips: empty,
-        run: empty,
-      }
-    }
-
-    if (!global.localAi) {
-      const empty = async () => ({ok: false, status: 'unavailable'})
-      global.localAi = {
-        status: async () => ({
-          available: false,
-          running: false,
-          sidecarReachable: false,
-          sidecarModelCount: 0,
-          lastError: 'Local AI bridge is not available in this build',
-        }),
-        start: empty,
-        stop: async () => ({ok: true}),
-        listModels: async () => ({ok: false, models: [], total: 0}),
-        chat: empty,
-        captionFlip: async () => ({ok: false, status: 'not_implemented'}),
-        ocrImage: async () => ({ok: false, status: 'not_implemented'}),
-        trainEpoch: async () => ({ok: false, status: 'not_implemented'}),
-      }
-    }
-
-    if (!global.toggleFullScreen) {
-      global.toggleFullScreen = () => {}
-    }
-
-    if (!global.getZoomLevel) {
-      global.getZoomLevel = () => 0
-    }
-
-    if (!global.setZoomLevel) {
-      global.setZoomLevel = () => {}
-    }
-
-    syncSharedGlobal('env', global.env)
-    syncSharedGlobal('logger', global.logger)
-    syncSharedGlobal('ipcRenderer', global.ipcRenderer)
-    syncSharedGlobal('prepareDb')
-    syncSharedGlobal('sub', global.sub)
-    syncSharedGlobal('appVersion', APP_VERSION_FALLBACK)
-    syncSharedGlobal('isDev', false)
-    syncSharedGlobal('isTest', false)
   }
 
   return (

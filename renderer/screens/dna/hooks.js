@@ -2,6 +2,7 @@ import {useRouter} from 'next/router'
 import * as React from 'react'
 import {areSameCaseInsensitive} from '../oracles/utils'
 import {dnaLinkMethod, extractQueryParams, isValidDnaUrl} from './utils'
+import {getSharedGlobal} from '../../shared/utils/shared-global'
 
 export const DnaLinkMethod = {
   SignIn: 'signin',
@@ -13,23 +14,29 @@ export const DnaLinkMethod = {
 
 export function useDnaLink({onInvalidLink}) {
   const [url, setUrl] = React.useState()
+  const dnaBridge = getSharedGlobal('dna', {
+    getPendingLink: async () => undefined,
+    onLink: () => {},
+    offLink: () => {},
+  })
+  const logger = getSharedGlobal('logger', console)
 
   React.useEffect(() => {
     if (!sessionStorage.getItem('didCheckDnaLink')) {
-      global.ipcRenderer.invoke('CHECK_DNA_LINK').then(setUrl)
+      dnaBridge.getPendingLink().then(setUrl)
       sessionStorage.setItem('didCheckDnaLink', 1)
     }
-  }, [])
+  }, [dnaBridge])
 
   React.useEffect(() => {
     const handleDnaLink = (_, e) => setUrl(e)
 
-    global.ipcRenderer.on('DNA_LINK', handleDnaLink)
+    dnaBridge.onLink(handleDnaLink)
 
     return () => {
-      global.ipcRenderer.removeListener('DNA_LINK', handleDnaLink)
+      dnaBridge.offLink(handleDnaLink)
     }
-  }, [])
+  }, [dnaBridge])
 
   const [method, setMethod] = React.useState()
 
@@ -55,10 +62,10 @@ export function useDnaLink({onInvalidLink}) {
 
   React.useEffect(() => {
     if (url && !isValidDnaUrl(url)) {
-      global.logger.error('Receieved invalid dna url', url)
+      logger.error('Receieved invalid dna url', url)
       if (onInvalidLink) onInvalidLink(url)
     }
-  }, [onInvalidLink, url])
+  }, [logger, onInvalidLink, url])
 
   return {url, method, params}
 }

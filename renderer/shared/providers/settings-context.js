@@ -5,6 +5,7 @@ import {loadPersistentState} from '../utils/persist'
 import {BASE_API_URL, BASE_INTERNAL_API_PORT} from '../api/api-client'
 import useLogger from '../hooks/use-logger'
 import {AVAILABLE_LANGS} from '../../i18n'
+import {getSharedGlobal} from '../utils/shared-global'
 
 const SETTINGS_INITIALIZE = 'SETTINGS_INITIALIZE'
 const TOGGLE_USE_EXTERNAL_NODE = 'TOGGLE_USE_EXTERNAL_NODE'
@@ -160,7 +161,7 @@ const initialState = {
   internalPort: BASE_INTERNAL_API_PORT,
   tcpPort: 51505,
   ipfsPort: 51506,
-  uiVersion: global.appVersion,
+  uiVersion: getSharedGlobal('appVersion', '0.0.0'),
   useExternalNode: false,
   runInternalNode: true,
   internalApiKey: randomKey(),
@@ -171,8 +172,10 @@ const initialState = {
   localAi: buildLocalAiSettings(),
 }
 
-if (global.env && global.env.NODE_ENV === 'e2e') {
-  initialState.url = global.env.NODE_MOCK
+const env = getSharedGlobal('env', {})
+
+if (env && env.NODE_ENV === 'e2e') {
+  initialState.url = env.NODE_MOCK
   initialState.runInternalNode = false
   initialState.useExternalNode = true
 }
@@ -283,12 +286,13 @@ export function SettingsProvider({children}) {
   })
 
   useEffect(() => {
+    const appVersion = getSharedGlobal('appVersion', '0.0.0')
     if (
       state.uiVersion &&
-      global.appVersion &&
-      semver.lt(state.uiVersion, global.appVersion)
+      appVersion &&
+      semver.lt(state.uiVersion, appVersion)
     ) {
-      dispatch({type: UPDATE_UI_VERSION, data: global.appVersion})
+      dispatch({type: UPDATE_UI_VERSION, data: appVersion})
     }
   })
 

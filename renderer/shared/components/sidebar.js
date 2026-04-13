@@ -50,6 +50,7 @@ import {
   eitherState,
   formatValidationDate,
 } from '../utils/utils'
+import {getSharedGlobal} from '../utils/shared-global'
 import {ExternalLink, Tooltip} from './components'
 import {useTimingState} from '../providers/timing-context'
 import {TodoVotingCountBadge} from '../../screens/oracles/components'
@@ -768,6 +769,7 @@ export function Version({
   onResetForkVoting,
 }) {
   const {t} = useTranslation()
+  const appVersion = getSharedGlobal('appVersion', '0.0.0')
 
   const [
     {
@@ -787,7 +789,7 @@ export function Version({
   return (
     <Stack spacing="2">
       <Stack spacing="px" mx="2">
-        <VersionText>{`IdenaAI_Benchmarker v.${global.appVersion}`}</VersionText>
+        <VersionText>{`IdenaAI_Benchmarker v.${appVersion}`}</VersionText>
         <VersionText>
           {t('Node version: {{version}}', {
             version: nodeCurrentVersion,
