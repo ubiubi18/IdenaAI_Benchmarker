@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const fs = require('fs')
 const path = require('path')
 const {spawnSync} = require('child_process')
 // eslint-disable-next-line import/no-extraneous-dependencies
@@ -22,6 +23,39 @@ function detectRebuildArch() {
   return machineArch === 'arm64' ? 'arm64' : undefined
 }
 
+function ensureNativeModuleBuild(moduleName, artifactRelativePath) {
+  const moduleRoot = path.join(ROOT, 'node_modules', moduleName)
+  const artifactPath = path.join(moduleRoot, artifactRelativePath)
+
+  if (fs.existsSync(artifactPath)) {
+    return
+  }
+
+  const args = [
+    require.resolve('node-gyp/bin/node-gyp.js'),
+    'rebuild',
+    `--target=${pkg.devDependencies.electron}`,
+    '--runtime=electron',
+    '--dist-url=https://electronjs.org/headers',
+  ]
+
+  const arch = detectRebuildArch()
+  if (arch) {
+    args.push(`--arch=${arch}`)
+  }
+
+  const result = spawnSync(process.execPath, args, {
+    cwd: moduleRoot,
+    stdio: 'inherit',
+  })
+
+  if (result.status !== 0 || !fs.existsSync(artifactPath)) {
+    throw new Error(
+      `Failed to build ${moduleName} for Electron runtime (missing ${artifactRelativePath})`
+    )
+  }
+}
+
 async function main() {
   await rebuild({
     buildPath: ROOT,
@@ -31,6 +65,16 @@ async function main() {
     mode: 'sequential',
     onlyModules: RUNTIME_NATIVE_MODULES,
   })
+
+  // Some old native addons still need an explicit node-gyp fallback on Apple Silicon.
+  ensureNativeModuleBuild(
+    'leveldown',
+    path.join('build', 'Release', 'leveldown.node')
+  )
+  ensureNativeModuleBuild(
+    'secp256k1',
+    path.join('build', 'Release', 'addon.node')
+  )
 }
 
 main().catch((error) => {

@@ -1423,7 +1423,7 @@ export const imageSearchMachine = createMachine({
     query: '',
     searchMode: 'web',
     aiProvider: 'openai',
-    aiModel: 'gpt-4o-mini',
+    aiModel: 'gpt-5.4',
     aiProviderConfig: null,
   },
   initial: 'idle',

@@ -457,7 +457,7 @@ export async function solveValidationSessionWithAi({
 
   const profile = normalizeProfile(aiSolver)
   const provider = aiSolver.provider || 'openai'
-  const model = aiSolver.model || 'gpt-4o-mini'
+  const model = aiSolver.model || 'gpt-5.4'
   const providerConfig = buildProviderConfig(aiSolver)
   const consultProviders = buildConsultProviders(aiSolver, providerConfig)
 

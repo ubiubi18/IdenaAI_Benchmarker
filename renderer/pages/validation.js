@@ -81,7 +81,7 @@ import {solveValidationSessionWithAi} from '../screens/validation/ai/solver-orch
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
   provider: 'openai',
-  model: 'gpt-4o-mini',
+  model: 'gpt-5.4',
   mode: 'manual',
   benchmarkProfile: 'strict',
   deadlineMs: 60 * 1000,

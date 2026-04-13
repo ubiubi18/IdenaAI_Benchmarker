@@ -40,7 +40,7 @@ import {
 import {AiEnableDialog} from '../../shared/components/ai-enable-dialog'
 
 const DEFAULT_MODELS = {
-  openai: 'gpt-4o-mini',
+  openai: 'gpt-5.4',
   'openai-compatible': 'gpt-4o-mini',
   gemini: 'gemini-2.0-flash',
   anthropic: 'claude-3-7-sonnet-latest',

@@ -26,7 +26,7 @@ const CHANGE_LANGUAGE = 'CHANGE_LANGUAGE'
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
   provider: 'openai',
-  model: 'gpt-4o-mini',
+  model: 'gpt-5.4',
   mode: 'manual',
   benchmarkProfile: 'strict',
   deadlineMs: 60 * 1000,
@@ -88,25 +88,51 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   },
 }
 
+function normalizeLocalAiSettings(settings = {}) {
+  const nextSettings = {...(settings || {})}
+
+  if (nextSettings.runtimeType && nextSettings.runtimeType !== 'phi-sidecar') {
+    nextSettings.runtimeType = DEFAULT_LOCAL_AI_SETTINGS.runtimeType
+    nextSettings.runtimeFamily = DEFAULT_LOCAL_AI_SETTINGS.runtimeFamily
+    nextSettings.baseUrl = DEFAULT_LOCAL_AI_SETTINGS.baseUrl
+    nextSettings.endpoint = DEFAULT_LOCAL_AI_SETTINGS.endpoint
+    nextSettings.model = DEFAULT_LOCAL_AI_SETTINGS.model
+    nextSettings.visionModel = DEFAULT_LOCAL_AI_SETTINGS.visionModel
+    nextSettings.adapterStrategy = DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy
+    nextSettings.trainingPolicy = DEFAULT_LOCAL_AI_SETTINGS.trainingPolicy
+    nextSettings.contractVersion = DEFAULT_LOCAL_AI_SETTINGS.contractVersion
+  }
+
+  return nextSettings
+}
+
 function buildAiSolverSettings(settings = {}) {
-  return {
+  const nextSettings = {
     ...DEFAULT_AI_SOLVER_SETTINGS,
     ...(settings || {}),
   }
+
+  if (nextSettings.provider === 'openai' && nextSettings.model === 'gpt-4o-mini') {
+    nextSettings.model = 'gpt-5.4'
+  }
+
+  return nextSettings
 }
 
 // localAi includes nested settings, so it needs structured hydration.
 function buildLocalAiSettings(settings = {}) {
+  const normalizedSettings = normalizeLocalAiSettings(settings)
+
   return {
     ...DEFAULT_LOCAL_AI_SETTINGS,
-    ...(settings || {}),
+    ...(normalizedSettings || {}),
     federated: {
       ...DEFAULT_LOCAL_AI_SETTINGS.federated,
-      ...((settings && settings.federated) || {}),
+      ...((normalizedSettings && normalizedSettings.federated) || {}),
     },
     eligibilityGate: {
       ...DEFAULT_LOCAL_AI_SETTINGS.eligibilityGate,
-      ...((settings && settings.eligibilityGate) || {}),
+      ...((normalizedSettings && normalizedSettings.eligibilityGate) || {}),
     },
   }
 }

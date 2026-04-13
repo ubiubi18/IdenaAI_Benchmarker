@@ -44,7 +44,10 @@ without enabling AI or adding API keys.
 
 ## Status
 
-This is a research fork, not an official Idena release. It has been tested mainly on macOS. Linux and Windows support are best-effort for now. Use it carefully:
+This is a research fork, not an official Idena release. The desktop runtime has
+been updated to Electron 30.x and tested mainly on current macOS, including
+Apple Silicon. Linux and Windows support are still best-effort and may require
+local native rebuilds. Use it carefully:
 
 - You must use your own API keys.
 - AI provider calls do cost money.
@@ -56,6 +59,9 @@ This is a research fork, not an official Idena release. It has been tested mainl
   text and images before publishing.
 
 For cost control, prefer prepaid API budgets or provider-side spending limits.
+
+This fork uses its own app-support directory, so it no longer collides with
+`IdenaAI_Benchmarker`.
 
 ## Community Build Warning
 
@@ -136,7 +142,8 @@ cp .env.example .env.local
 
 Edit only the values you need. Do not commit `.env.local` or provider keys.
 
-`npm start` now launches the Next.js renderer dev server and Electron together.
+`npm start` launches the Next.js renderer dev server on `127.0.0.1:8000` and
+then starts Electron.
 
 If Electron or a native addon needs to be rebuilt for the current runtime:
 
@@ -197,7 +204,7 @@ npm start
 ### Windows
 
 Recommended Windows path: use WSL2 with Ubuntu and follow the Linux instructions
-above. That is usually simpler than native Windows builds for older Electron
+above. That is usually simpler than native Windows builds for current Electron
 projects with native dependencies.
 
 Native Windows source build path is experimental and may require extra debugging:
@@ -239,8 +246,23 @@ npm run clean
 npm start
 ```
 
-If the native Windows build fails on old Electron/native modules, use the WSL2
+If the native Windows build fails on current Electron/native modules, use the WSL2
 Ubuntu path instead.
+
+## Updating The Electron Runtime
+
+If you update the desktop runtime, keep `electron`, `electron-builder`, and
+`electron-updater` aligned in [`package.json`](package.json), then reinstall so
+native modules are rebuilt for the matching Electron ABI:
+
+```bash
+npm install
+npm run release:check
+node scripts/rebuild-electron-runtime-deps.js
+```
+
+If a native addon is still missing after that, remove `node_modules`,
+reinstall, and rerun the rebuild helper before starting the app again.
 
 ## Optional AI Setup
 

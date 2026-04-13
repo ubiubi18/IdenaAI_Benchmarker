@@ -57,7 +57,7 @@ export function ImageSearchDialog({
   const aiSolverSettings = React.useMemo(
     () => ({
       provider: 'openai',
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.4',
       ...(settings && settings.aiSolver ? settings.aiSolver : {}),
     }),
     [settings]
