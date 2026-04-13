@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, {useEffect} from 'react'
+import React, {useCallback, useEffect, useState} from 'react'
 import Head from 'next/head'
 import {useRouter} from 'next/router'
 import {ChakraProvider, extendTheme} from '@chakra-ui/react'
@@ -23,6 +23,202 @@ import {
   APP_VERSION_FALLBACK,
   syncSharedGlobal,
 } from '../shared/utils/shared-global'
+
+function hasRealBridge(bridge = {}) {
+  return Boolean(
+    bridge &&
+      bridge.globals &&
+      bridge.globals.ipcRenderer &&
+      typeof bridge.globals.ipcRenderer.send === 'function' &&
+      !bridge.globals.ipcRenderer.__idenaFallback
+  )
+}
+
+function syncLegacyBridgeGlobals(bridge = {}) {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  const bridgeGlobals =
+    bridge && bridge.globals && typeof bridge.globals === 'object'
+      ? bridge.globals
+      : {}
+
+  if (!window.global) {
+    window.global = window
+  }
+
+  if (!global.env) {
+    global.env = {}
+  }
+
+  if (!global.logger) {
+    const noop = () => {}
+    global.logger = {
+      debug: noop,
+      info: noop,
+      warn: noop,
+      error: noop,
+    }
+  }
+
+  if (!global.ipcRenderer) {
+    const noop = () => {}
+    global.ipcRenderer = {
+      __idenaFallback: true,
+      on: noop,
+      send: noop,
+      removeListener: noop,
+      invoke: async () => undefined,
+    }
+  }
+
+  if (!global.sub) {
+    global.sub = (db) => db
+  }
+
+  if (!global.aiSolver) {
+    const empty = async () => ({})
+    global.aiSolver = {
+      setProviderKey: empty,
+      clearProviderKey: empty,
+      hasProviderKey: async () => ({
+        ok: true,
+        provider: 'openai',
+        hasKey: false,
+      }),
+      testProvider: empty,
+      listModels: async () => ({
+        ok: true,
+        provider: 'openai',
+        total: 0,
+        models: [],
+      }),
+      solveFlipBatch: empty,
+    }
+  }
+
+  if (!global.aiTestUnit) {
+    const empty = async () => ({ok: true})
+    global.aiTestUnit = {
+      addFlips: empty,
+      listFlips: async () => ({ok: true, total: 0, flips: []}),
+      clearFlips: empty,
+      run: empty,
+    }
+  }
+
+  if (!global.localAi) {
+    const empty = async () => ({ok: false, status: 'unavailable'})
+    global.localAi = {
+      status: async () => ({
+        available: false,
+        running: false,
+        sidecarReachable: false,
+        sidecarModelCount: 0,
+        lastError: 'Local AI bridge is not available in this build',
+      }),
+      start: empty,
+      stop: async () => ({ok: true}),
+      listModels: async () => ({ok: false, models: [], total: 0}),
+      chat: empty,
+      captionFlip: async () => ({ok: false, status: 'not_implemented'}),
+      ocrImage: async () => ({ok: false, status: 'not_implemented'}),
+      trainEpoch: async () => ({ok: false, status: 'not_implemented'}),
+    }
+  }
+
+  if (!global.openExternal) {
+    global.openExternal = () => Promise.resolve(false)
+  }
+
+  if (!global.clipboard) {
+    global.clipboard = {
+      readText: () => '',
+      readImageDataUrl: () => null,
+      writeImageDataUrl: () => false,
+    }
+  }
+
+  if (!global.imageTools) {
+    global.imageTools = {
+      resizeDataUrl: () => null,
+      createBlankDataUrl: () => null,
+    }
+  }
+
+  if (!global.toggleFullScreen) {
+    global.toggleFullScreen = () => {}
+  }
+
+  if (!global.getZoomLevel) {
+    global.getZoomLevel = () => 0
+  }
+
+  if (!global.setZoomLevel) {
+    global.setZoomLevel = () => {}
+  }
+
+  if (bridgeGlobals.env) {
+    global.env = bridgeGlobals.env
+  }
+
+  if (bridgeGlobals.logger) {
+    global.logger = bridgeGlobals.logger
+  }
+
+  if (bridgeGlobals.ipcRenderer) {
+    global.ipcRenderer = bridgeGlobals.ipcRenderer
+  }
+
+  if (bridgeGlobals.openExternal) {
+    global.openExternal = bridgeGlobals.openExternal
+  }
+
+  if (bridgeGlobals.aiSolver) {
+    global.aiSolver = bridgeGlobals.aiSolver
+  }
+
+  if (bridgeGlobals.aiTestUnit) {
+    global.aiTestUnit = bridgeGlobals.aiTestUnit
+  }
+
+  if (bridgeGlobals.localAi) {
+    global.localAi = bridgeGlobals.localAi
+  }
+
+  syncSharedGlobal('env', global.env)
+  syncSharedGlobal('logger', global.logger)
+  syncSharedGlobal('ipcRenderer', global.ipcRenderer)
+  syncSharedGlobal('openExternal', global.openExternal)
+  syncSharedGlobal('aiSolver', global.aiSolver)
+  syncSharedGlobal('aiTestUnit', global.aiTestUnit)
+  syncSharedGlobal('localAi', global.localAi)
+  syncSharedGlobal('flipStore')
+  syncSharedGlobal('invitesDb')
+  syncSharedGlobal('contactsDb')
+  syncSharedGlobal('appVersion', APP_VERSION_FALLBACK)
+  syncSharedGlobal('isDev', false)
+  syncSharedGlobal('isTest', false)
+  syncSharedGlobal('isMac', false)
+  syncSharedGlobal('locale', 'en')
+  syncSharedGlobal('toggleFullScreen', global.toggleFullScreen)
+  syncSharedGlobal('getZoomLevel', global.getZoomLevel)
+  syncSharedGlobal('setZoomLevel', global.setZoomLevel)
+
+  global.sub = (db, prefix, options) =>
+    db && typeof db.sub === 'function' ? db.sub(prefix, options) : db
+
+  if (bridge.clipboard) {
+    global.clipboard = bridge.clipboard
+  }
+
+  if (bridge.image) {
+    global.imageTools = bridge.image
+  }
+
+  return hasRealBridge(bridge)
+}
 
 // err is a workaround for https://github.com/zeit/next.js/issues/8592
 export default function App({Component, err, ...pageProps}) {
@@ -56,157 +252,42 @@ export default function App({Component, err, ...pageProps}) {
 }
 
 function AppProviders(props) {
+  const [bridgeEpoch, setBridgeEpoch] = useState(0)
+
   if (typeof window !== 'undefined') {
-    const bridge = window.idena || {}
-
-    if (!window.global) {
-      window.global = window
-    }
-
-    if (!global.env) {
-      global.env = {}
-    }
-
-    if (!global.logger) {
-      const noop = () => {}
-      global.logger = {
-        debug: noop,
-        info: noop,
-        warn: noop,
-        error: noop,
-      }
-    }
-
-    if (!global.ipcRenderer) {
-      const noop = () => {}
-      global.ipcRenderer = {
-        __idenaFallback: true,
-        on: noop,
-        send: noop,
-        removeListener: noop,
-        invoke: async () => undefined,
-      }
-    }
-
-    if (!global.sub) {
-      global.sub = (db) => db
-    }
-
-    if (!global.aiSolver) {
-      const empty = async () => ({})
-      global.aiSolver = {
-        setProviderKey: empty,
-        clearProviderKey: empty,
-        hasProviderKey: async () => ({
-          ok: true,
-          provider: 'openai',
-          hasKey: false,
-        }),
-        testProvider: empty,
-        listModels: async () => ({
-          ok: true,
-          provider: 'openai',
-          total: 0,
-          models: [],
-        }),
-        solveFlipBatch: empty,
-      }
-    }
-
-    if (!global.aiTestUnit) {
-      const empty = async () => ({ok: true})
-      global.aiTestUnit = {
-        addFlips: empty,
-        listFlips: async () => ({ok: true, total: 0, flips: []}),
-        clearFlips: empty,
-        run: empty,
-      }
-    }
-
-    if (!global.localAi) {
-      const empty = async () => ({ok: false, status: 'unavailable'})
-      global.localAi = {
-        status: async () => ({
-          available: false,
-          running: false,
-          sidecarReachable: false,
-          sidecarModelCount: 0,
-          lastError: 'Local AI bridge is not available in this build',
-        }),
-        start: empty,
-        stop: async () => ({ok: true}),
-        listModels: async () => ({ok: false, models: [], total: 0}),
-        chat: empty,
-        captionFlip: async () => ({ok: false, status: 'not_implemented'}),
-        ocrImage: async () => ({ok: false, status: 'not_implemented'}),
-        trainEpoch: async () => ({ok: false, status: 'not_implemented'}),
-      }
-    }
-
-    if (!global.openExternal) {
-      global.openExternal = () => Promise.resolve(false)
-    }
-
-    if (!global.clipboard) {
-      global.clipboard = {
-        readText: () => '',
-        readImageDataUrl: () => null,
-        writeImageDataUrl: () => false,
-      }
-    }
-
-    if (!global.imageTools) {
-      global.imageTools = {
-        resizeDataUrl: () => null,
-        createBlankDataUrl: () => null,
-      }
-    }
-
-    if (!global.toggleFullScreen) {
-      global.toggleFullScreen = () => {}
-    }
-
-    if (!global.getZoomLevel) {
-      global.getZoomLevel = () => 0
-    }
-
-    if (!global.setZoomLevel) {
-      global.setZoomLevel = () => {}
-    }
-
-    syncSharedGlobal('env', global.env)
-    syncSharedGlobal('logger', global.logger)
-    syncSharedGlobal('ipcRenderer', global.ipcRenderer)
-    syncSharedGlobal('openExternal', global.openExternal)
-    syncSharedGlobal('aiSolver', global.aiSolver)
-    syncSharedGlobal('aiTestUnit', global.aiTestUnit)
-    syncSharedGlobal('localAi', global.localAi)
-    syncSharedGlobal('flipStore')
-    syncSharedGlobal('invitesDb')
-    syncSharedGlobal('contactsDb')
-    syncSharedGlobal('appVersion', APP_VERSION_FALLBACK)
-    syncSharedGlobal('isDev', false)
-    syncSharedGlobal('isTest', false)
-    syncSharedGlobal('isMac', false)
-    syncSharedGlobal('locale', 'en')
-    syncSharedGlobal('toggleFullScreen', global.toggleFullScreen)
-    syncSharedGlobal('getZoomLevel', global.getZoomLevel)
-    syncSharedGlobal('setZoomLevel', global.setZoomLevel)
-
-    global.sub = (db, prefix, options) =>
-      db && typeof db.sub === 'function' ? db.sub(prefix, options) : db
-
-    if (bridge.clipboard) {
-      global.clipboard = bridge.clipboard
-    }
-
-    if (bridge.image) {
-      global.imageTools = bridge.image
-    }
+    syncLegacyBridgeGlobals(window.idena || {})
   }
 
+  const handleBridgeReady = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const hadFallbackBridge = Boolean(
+      global.ipcRenderer && global.ipcRenderer.__idenaFallback
+    )
+    const isBridgeReady = syncLegacyBridgeGlobals(window.idena || {})
+
+    if (hadFallbackBridge && isBridgeReady) {
+      setBridgeEpoch((value) => value + 1)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    handleBridgeReady()
+    window.addEventListener('idena-preload-ready', handleBridgeReady)
+
+    return () => {
+      window.removeEventListener('idena-preload-ready', handleBridgeReady)
+    }
+  }, [handleBridgeReady])
+
   return (
-    <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={queryClient} key={bridgeEpoch}>
       <SettingsProvider>
         <AutoUpdateProvider>
           <NodeProvider>

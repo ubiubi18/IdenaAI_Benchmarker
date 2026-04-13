@@ -967,7 +967,10 @@ const createMainWindow = () => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      // Keep the preload outside Chromium sandbox for now. The current bridge
+      // still depends on local DB/native modules (levelup stores) that are not
+      // available from a sandboxed preload on Electron 30.
+      sandbox: false,
       webSecurity: true,
       preload: join(__dirname, 'preload.js'),
     },

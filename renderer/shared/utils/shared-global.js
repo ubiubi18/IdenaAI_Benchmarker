@@ -1,4 +1,6 @@
-const {version: APP_VERSION_FALLBACK = '0.0.0'} = require('../../../package.json')
+const {
+  version: APP_VERSION_FALLBACK = '0.0.0',
+} = require('../../../package.json')
 
 function isFallbackBridgeValue(value) {
   return Boolean(value && value.__idenaFallback)
@@ -29,8 +31,16 @@ function getSharedGlobalSources() {
     sources.push(global)
   }
 
-  if (typeof globalThis !== 'undefined' && !sources.includes(globalThis)) {
-    sources.push(globalThis)
+  let fallbackGlobal
+
+  if (typeof window !== 'undefined') {
+    fallbackGlobal = window
+  } else if (typeof global !== 'undefined') {
+    fallbackGlobal = global
+  }
+
+  if (fallbackGlobal && !sources.includes(fallbackGlobal)) {
+    sources.push(fallbackGlobal)
   }
 
   if (typeof window !== 'undefined' && !sources.includes(window)) {
@@ -45,16 +55,14 @@ export function getSharedGlobal(key, fallbackValue) {
   let fallbackBridgeValue
 
   for (const source of sources) {
-    if (!source || typeof source[key] === 'undefined' || source[key] === null) {
-      continue
-    }
+    if (source && typeof source[key] !== 'undefined' && source[key] !== null) {
+      if (!isFallbackBridgeValue(source[key])) {
+        return source[key]
+      }
 
-    if (!isFallbackBridgeValue(source[key])) {
-      return source[key]
-    }
-
-    if (typeof fallbackBridgeValue === 'undefined') {
-      fallbackBridgeValue = source[key]
+      if (typeof fallbackBridgeValue === 'undefined') {
+        fallbackBridgeValue = source[key]
+      }
     }
   }
 
@@ -74,7 +82,12 @@ export function syncSharedGlobal(key, fallbackValue) {
 
   getSharedGlobalSources().forEach((source) => {
     if (source) {
-      source[key] = value
+      try {
+        source[key] = value
+      } catch {
+        // contextBridge-exposed globals are read-only in the renderer; sync the
+        // mutable globals and ignore read-only bridge mirrors.
+      }
     }
   })
 
