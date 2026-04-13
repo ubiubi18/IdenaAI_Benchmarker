@@ -4,7 +4,20 @@ import {loadPersistentState} from '../utils/persist'
 export const BASE_INTERNAL_API_PORT = 9119
 export const BASE_API_URL = 'http://localhost:9009'
 
-export function getRpcParams() {
+function getRpcBridge() {
+  if (
+    typeof window !== 'undefined' &&
+    window.idena &&
+    window.idena.rpc &&
+    typeof window.idena.rpc.call === 'function'
+  ) {
+    return window.idena.rpc
+  }
+
+  return null
+}
+
+function getRpcFallbackParams() {
   const state = loadPersistentState('settings')
   if (!state) {
     return {
@@ -24,6 +37,11 @@ export function getRpcParams() {
   }
 }
 
+export function getRpcParams() {
+  const {url} = getRpcFallbackParams()
+  return {url}
+}
+
 export const apiUrl = (path) => {
   const state = loadPersistentState('settings')
   if (state?.apiUrl) return new URL(path, state?.apiUrl)
@@ -31,7 +49,23 @@ export const apiUrl = (path) => {
 }
 
 export default function createApiClient() {
-  const params = getRpcParams()
+  const rpcBridge = getRpcBridge()
+
+  if (rpcBridge) {
+    return {
+      async post(path, body) {
+        if (path !== '/') {
+          throw new Error(`Unsupported RPC path: ${path}`)
+        }
+
+        return {
+          data: await rpcBridge.call(body),
+        }
+      },
+    }
+  }
+
+  const params = getRpcFallbackParams()
   const instance = axios.create({
     baseURL: params.url,
   })

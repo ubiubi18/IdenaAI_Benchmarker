@@ -125,6 +125,7 @@ const localAiFederated = createLocalAiFederated({
 const IMAGE_SEARCH_SOURCE_TIMEOUT_MS = 8000
 const BASE_INTERNAL_API_PORT = 9119
 const BASE_EXTERNAL_API_URL = 'http://localhost:9009'
+const RPC_MAX_METHOD_LENGTH = 128
 const SOCIAL_RPC_MAX_REQUEST_ID_LENGTH = 128
 const SOCIAL_RPC_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
 const SOCIAL_ALLOWED_RPC_METHODS = new Set([
@@ -390,7 +391,30 @@ function validateSocialRpcRequest(payload = {}) {
   }
 }
 
-function getSocialRpcConnection() {
+function validateNodeRpcPayload(payload = {}) {
+  const method = payload && payload.method
+  const params = payload && payload.params
+
+  if (
+    typeof method !== 'string' ||
+    method.trim().length < 1 ||
+    method.trim().length > RPC_MAX_METHOD_LENGTH
+  ) {
+    return 'invalid_rpc_method'
+  }
+
+  if (!Array.isArray(params)) {
+    return 'invalid_rpc_params'
+  }
+
+  if (estimatePayloadBytes(payload) > SOCIAL_RPC_MAX_PAYLOAD_BYTES) {
+    return 'rpc_payload_too_large'
+  }
+
+  return null
+}
+
+function getNodeRpcConnection() {
   const settings = loadMainSettings()
   const internalPort = Number(settings && settings.internalPort)
 
@@ -408,6 +432,49 @@ function getSocialRpcConnection() {
         : BASE_INTERNAL_API_PORT
     }`,
     key: pickTrimmedString([settings && settings.internalApiKey], ''),
+  }
+}
+
+async function performNodeRpc(payload = {}) {
+  const validationError = validateNodeRpcPayload(payload)
+
+  if (validationError) {
+    return {
+      error: {
+        message: validationError,
+      },
+    }
+  }
+
+  const {url, key} = getNodeRpcConnection()
+  const requestBody = {
+    method: String(payload.method || '').trim(),
+    params: Array.isArray(payload.params) ? payload.params : [],
+    id:
+      typeof payload.id === 'number' || typeof payload.id === 'string'
+        ? payload.id
+        : 1,
+    key,
+  }
+
+  try {
+    const response = await axios.post(url, requestBody, {
+      headers: {'Content-Type': 'application/json'},
+      timeout: 15000,
+    })
+
+    return response && response.data ? response.data : {}
+  } catch (error) {
+    logger.warn('Node RPC proxy failed', {
+      method: payload && payload.method,
+      error: error.toString(),
+    })
+
+    return {
+      error: {
+        message: error?.message || 'rpc_proxy_failed',
+      },
+    }
   }
 }
 
@@ -1589,6 +1656,8 @@ function sendMainWindowMsg(channel, message, data) {
 
 handleTrusted('search-image', async (_, query) => searchImages(query))
 
+handleTrusted('rpc.call', async (_event, payload) => performNodeRpc(payload))
+
 handleTrusted(AI_SOLVER_COMMAND, async (_event, command, payload) => {
   logger.info(`new ai solver command`, command, {
     provider: payload && payload.provider,
@@ -1872,33 +1941,7 @@ handleTrusted('social.rpc', async (_event, payload) => {
     }
   }
 
-  const {url, key} = getSocialRpcConnection()
-  const requestBody = {
-    method: payload.method,
-    params: Array.isArray(payload.params) ? payload.params : [],
-    id: 1,
-    key,
-  }
-
-  try {
-    const response = await axios.post(url, requestBody, {
-      headers: {'Content-Type': 'application/json'},
-      timeout: 15000,
-    })
-
-    return response && response.data ? response.data : {}
-  } catch (error) {
-    logger.warn('Social RPC proxy failed', {
-      method: payload && payload.method,
-      error: error.toString(),
-    })
-
-    return {
-      error: {
-        message: error?.message || 'social_rpc_proxy_failed',
-      },
-    }
-  }
+  return performNodeRpc(payload)
 })
 
 const KEY_VALUE = {}

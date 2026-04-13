@@ -446,6 +446,9 @@ const bridge = {
   social: {
     rpc: (payload) => ipcRenderer.invoke('social.rpc', payload),
   },
+  rpc: {
+    call: (payload) => ipcRenderer.invoke('rpc.call', payload),
+  },
 }
 
 contextBridge.exposeInMainWorld('idena', bridge)

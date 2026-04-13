@@ -3,7 +3,6 @@ import duration from 'dayjs/plugin/duration'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import {QueryClient} from 'react-query'
 import i18n from '../../i18n'
-import {getRpcParams} from '../api/api-client'
 import {EpochPeriod} from '../types'
 
 dayjs.extend(duration)
@@ -19,30 +18,52 @@ const LEGACY_KEYWORDS_URL =
 
 let legacyKeywordsPromise = null
 
-export function createRpcCaller({url, key}) {
+function getRpcBridge() {
+  if (
+    typeof window !== 'undefined' &&
+    window.idena &&
+    window.idena.rpc &&
+    typeof window.idena.rpc.call === 'function'
+  ) {
+    return window.idena.rpc
+  }
+
+  return null
+}
+
+export function createRpcCaller({url, key} = {}) {
   return async function (method, ...params) {
-    const {result, error} = await (
-      await fetch(url, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+    const rpcBridge = getRpcBridge()
+    const response = rpcBridge
+      ? await rpcBridge.call({
           method,
           params,
           id: 1,
-          key,
-        }),
-      })
-    ).json()
+        })
+      : await (
+          await fetch(url, {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              method,
+              params,
+              id: 1,
+              key,
+            }),
+          })
+        ).json()
+
+    const {result, error} = response
     if (error) throw new Error(error.message)
     return result
   }
 }
 
 export function callRpc(method, ...params) {
-  return createRpcCaller(getRpcParams())(method, ...params)
+  return createRpcCaller()(method, ...params)
 }
 
 export function toPercent(value, locale) {
