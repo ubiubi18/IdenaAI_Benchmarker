@@ -435,6 +435,11 @@ function getNodeRpcConnection() {
   }
 }
 
+function getInternalNodeApiKey() {
+  const settings = loadMainSettings()
+  return pickTrimmedString([settings && settings.internalApiKey], '')
+}
+
 async function performNodeRpc(payload = {}) {
   const validationError = validateNodeRpcPayload(payload)
 
@@ -1365,7 +1370,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
         data.rpcPort,
         data.tcpPort,
         data.ipfsPort,
-        data.apiKey,
+        getInternalNodeApiKey(),
         data.autoActivateMining,
         isDev,
         (log) => {
