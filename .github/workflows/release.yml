@@ -53,6 +53,8 @@ jobs:
 
       - name: Build & release
         uses: samuelmeuli/action-electron-builder@v1.6.0
+        env:
+          EP_PRE_RELEASE: true
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           release: true

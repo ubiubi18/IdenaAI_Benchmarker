@@ -20,11 +20,12 @@
     "build:social": "npm ci --prefix vendor/idena.social-ui && npm run build --prefix vendor/idena.social-ui && node scripts/sync-idena-social-ui.js",
     "build:renderer": "node scripts/run-next-static-build.js",
     "build": "npm run build:social && npm run build:renderer",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win --publish onTag",
-    "dist:mac": "npm run build && electron-builder --mac --publish onTag",
-    "dist:linux": "npm run build && electron-builder --linux --publish onTag",
-    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && node scripts/run-electron-builder.js --publish never",
+    "dist:win": "npm run build && node scripts/run-electron-builder.js --win --publish never",
+    "dist:mac": "npm run build && node scripts/run-electron-builder.js --mac zip --publish never",
+    "dist:mac:dmg": "npm run build && node scripts/run-electron-builder.js --mac dmg zip --publish never",
+    "dist:linux": "npm run build && node scripts/run-electron-builder.js --linux --publish never",
+    "pack": "npm run build && node scripts/run-electron-builder.js --dir",
     "clean": "node scripts/clean-paths.js renderer/out renderer/.next dist",
     "audit:privacy": "node scripts/check-release-privacy.js",
     "audit:metadata": "node scripts/check-release-metadata.js",
@@ -43,11 +44,13 @@
   "build": {
     "appId": "io.idena.benchmarker",
     "artifactName": "idena-ai-benchmarker-${os}-${version}.${ext}",
+    "npmRebuild": false,
     "publish": [
       {
         "provider": "github",
         "owner": "ubiubi18",
-        "repo": "IdenaAI_Benchmarker"
+        "repo": "IdenaAI_Benchmarker",
+        "releaseType": "prerelease"
       }
     ],
     "files": [
@@ -83,7 +86,6 @@
     },
     "mac": {
       "target": [
-        "dmg",
         "zip"
       ],
       "icon": "main/static/icons/icon-512@2x.icns"

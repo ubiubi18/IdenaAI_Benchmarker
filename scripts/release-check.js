@@ -14,6 +14,7 @@ const syntaxCheckedFiles = [
   'scripts/sync-idena-social-ui.js',
   'scripts/run-next-static-build.js',
   'scripts/release-check.js',
+  'scripts/run-electron-builder.js',
   'main/channels.js',
   'main/index.js',
   'main/preload.js',
