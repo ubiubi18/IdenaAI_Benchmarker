@@ -3,7 +3,7 @@ import Modal from 'react-modal';
 import { IdenaApprovedAds, type ApprovedAd } from 'idena-approved-ads';
 import { type Post, type Poster, type Tip, type RpcPostCostEstimate, breakingChanges, estimateRpcPostCost, getNewPosterAndPost, getReplyPosts, deOrphanReplyPosts, getTransactionDetails, getBlockHeightFromTxHash, submitPost, processTip, submitSendTip, supportedImageTypes, storeFileToIpfs, getPastTxsWithIdenaIndexerApi, getRpcClient, type RpcClient, copyPostTx } from './logic/asyncUtils';
 import { getDisplayAddress, getTextAndMediaForPost, isObjectEmpty, str2bytes } from './logic/utils';
-import { installDesktopBootstrapListener, isEmbeddedDesktopFrame, readDesktopBootstrap, type DesktopBootstrap } from './logic/desktopBootstrap';
+import { createDesktopRpcClient, installDesktopBootstrapListener, isEmbeddedDesktopFrame, readDesktopBootstrap, type DesktopBootstrap } from './logic/desktopBootstrap';
 import WhatIsIdenaPng from './assets/whatisidena.png';
 import { Link, Outlet } from 'react-router';
 import type { MouseEventLocal, PostDomSettingsCollection, PostMediaAttachment } from './App.exports';
@@ -93,7 +93,7 @@ function App() {
     const [inputPostersAddress, setInputPostersAddress] = useState<string>(zeroAddress);
     const [inputPostersAddressApplied, setInputPostersAddressApplied] = useState<boolean>(true);
     const [inputNodeUrl, setInputNodeUrl] = useState<string>(desktopBootstrap.nodeUrl || defaultNodeUrl);
-    const [inputNodeKey, setInputNodeKey] = useState<string>(desktopBootstrap.nodeApiKey || defaultNodeApiKey);
+    const [inputNodeKey, setInputNodeKey] = useState<string>(defaultNodeApiKey);
     const [postersAddress, setPostersAddress] = useState<string>(zeroAddress);
     const postersAddressRef = useRef<string>(postersAddress);
     const [postersAddressInvalid, setPostersAddressInvalid] = useState<boolean>(false);
@@ -159,7 +159,7 @@ function App() {
         }
 
         setInputNodeUrl(desktopBootstrap.nodeUrl || defaultNodeUrl);
-        setInputNodeKey(desktopBootstrap.nodeApiKey || defaultNodeApiKey);
+        setInputNodeKey(defaultNodeApiKey);
         setInputSendingTxs(desktopBootstrap.sendingTxs || 'rpc');
         setInputFindingPastPosts(desktopBootstrap.findingPastPosts || 'rpc');
         setInputIdenaIndexerApiUrl(desktopBootstrap.indexerApiUrl || officialIndexerApiUrl);
@@ -169,7 +169,9 @@ function App() {
 
 
     const setRpcClient = (idenaNodeUrl: string, idenaNodeApiKey: string, setNodeAvailable: React.Dispatch<React.SetStateAction<boolean>>) => {
-        rpcClientRef.current = getRpcClient({ idenaNodeUrl, idenaNodeApiKey }, setNodeAvailable);
+        rpcClientRef.current = isDesktopOnchainMode
+            ? createDesktopRpcClient(setNodeAvailable)
+            : getRpcClient({ idenaNodeUrl, idenaNodeApiKey }, setNodeAvailable);
 
         (async function() {
             const { result: syncingResult } = await rpcClientRef.current!('bcn_syncing', []);

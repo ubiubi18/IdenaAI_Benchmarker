@@ -17,6 +17,8 @@ const SOCIAL_BOOTSTRAP_STORAGE_KEY = 'idenaSocialDesktopBootstrap'
 const SOCIAL_HISTORY_MODE_STORAGE_KEY = 'idenaSocialDesktopHistoryModeV2'
 const SOCIAL_BOOTSTRAP_MESSAGE_TYPE = 'IDENA_SOCIAL_BOOTSTRAP'
 const SOCIAL_BOOTSTRAP_READY_MESSAGE_TYPE = 'IDENA_SOCIAL_READY'
+const SOCIAL_RPC_REQUEST_MESSAGE_TYPE = 'IDENA_SOCIAL_RPC_REQUEST'
+const SOCIAL_RPC_RESPONSE_MESSAGE_TYPE = 'IDENA_SOCIAL_RPC_RESPONSE'
 const SOCIAL_CONTRACT_ADDRESS = '0xa1c5c1A8c6a1Af596078A5c9653F24c216fE1cb2'
 const SOCIAL_OFFICIAL_INDEXER_URL = 'https://api.idena.io'
 const SOCIAL_MAX_IMAGE_BYTES = 1024 * 1024
@@ -73,14 +75,9 @@ function buildSocialNodeBootstrap(settings, historyMode) {
     ? settings.url || BASE_API_URL
     : `http://127.0.0.1:${settings.internalPort || BASE_INTERNAL_API_PORT}`
 
-  const nodeApiKey = settings.useExternalNode
-    ? settings.externalApiKey || ''
-    : settings.internalApiKey || ''
-
   return {
     embeddedMode: 'desktop-onchain',
     nodeUrl,
-    nodeApiKey,
     indexerApiUrl: SOCIAL_OFFICIAL_INDEXER_URL,
     sendingTxs: 'rpc',
     findingPastPosts: historyMode,
@@ -178,6 +175,75 @@ export default function SocialPage() {
   }, [postBootstrapToIframe, iframeNonce])
 
   React.useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const handleRpcRequest = async (event) => {
+      if (event.source !== iframeRef.current?.contentWindow) {
+        return
+      }
+
+      const nextPayload =
+        event.data && typeof event.data === 'object' ? event.data : null
+
+      if (nextPayload?.type !== SOCIAL_RPC_REQUEST_MESSAGE_TYPE) {
+        return
+      }
+
+      const {requestId, method, params} =
+        nextPayload.payload && typeof nextPayload.payload === 'object'
+          ? nextPayload.payload
+          : {}
+
+      if (typeof requestId !== 'string' || typeof method !== 'string') {
+        return
+      }
+
+      const requestBody = {
+        method,
+        params: Array.isArray(params) ? params : [],
+        id: 1,
+        key: useExternalNode ? externalApiKey || '' : internalApiKey || '',
+      }
+
+      let responsePayload = {}
+
+      try {
+        const response = await fetch(bootstrap.nodeUrl, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(requestBody),
+        })
+
+        if (!response.ok) {
+          throw new Error(`Response status: ${response.status}`)
+        }
+
+        responsePayload = await response.json()
+      } catch (error) {
+        responsePayload = {
+          error: {
+            message: error?.message || 'social_rpc_proxy_failed',
+          },
+        }
+      }
+
+      iframeRef.current?.contentWindow?.postMessage(
+        {
+          type: SOCIAL_RPC_RESPONSE_MESSAGE_TYPE,
+          payload: {
+            requestId,
+            response: responsePayload,
+          },
+        },
+        '*'
+      )
+    }
+
+    window.addEventListener('message', handleRpcRequest)
+    return () => window.removeEventListener('message', handleRpcRequest)
+  }, [bootstrap.nodeUrl, externalApiKey, internalApiKey, useExternalNode])
+
+  React.useEffect(() => {
     if (postBootstrapToIframe()) {
       setBootstrapReady(true)
     }
@@ -202,7 +268,7 @@ export default function SocialPage() {
                 <Text>
                   Node: <strong>{bootstrap.nodeUrl}</strong>
                 </Text>
-                <InfoHint label="This embedded social view reads your current idena-desktop node URL and API key. The key stays local to this desktop app session." />
+                <InfoHint label="This embedded social view uses your current idena-desktop node endpoint. RPC authentication stays in the parent desktop app and is proxied to the embedded view instead of being injected into the iframe." />
               </HStack>
               <HStack spacing={2}>
                 <Text>
