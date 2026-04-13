@@ -39,6 +39,31 @@ function normalizeFilePath(filePath) {
   return nextPath ? path.resolve(nextPath) : null
 }
 
+function assertBundlePath(storage, filePath) {
+  const sourcePath = normalizeFilePath(filePath)
+
+  if (!sourcePath) {
+    return null
+  }
+
+  const allowedRoots = [
+    storage.resolveLocalAiPath('incoming'),
+    storage.resolveLocalAiPath('bundles'),
+  ]
+    .map((rootPath) => path.resolve(rootPath))
+    .filter(Boolean)
+
+  for (const allowedRoot of allowedRoots) {
+    const allowedPrefix = `${allowedRoot}${path.sep}`
+
+    if (sourcePath === allowedRoot || sourcePath.startsWith(allowedPrefix)) {
+      return sourcePath
+    }
+  }
+
+  throw new Error('bundle_path_outside_incoming')
+}
+
 function normalizeSignature(signature) {
   if (!signature || typeof signature !== 'object' || Array.isArray(signature)) {
     return null
@@ -619,7 +644,22 @@ function createLocalAiFederated({
   }
 
   async function importUpdateBundle(filePath) {
-    const sourcePath = normalizeFilePath(filePath)
+    let sourcePath = null
+
+    try {
+      sourcePath = assertBundlePath(localAiStorage, filePath)
+    } catch {
+      const result = buildImportResult({
+        accepted: false,
+        reason: 'bundle_path_outside_incoming',
+      })
+
+      if (isDev) {
+        logImportResult(logger, result)
+      }
+
+      return result
+    }
 
     if (!sourcePath) {
       const result = buildImportResult({

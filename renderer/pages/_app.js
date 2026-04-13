@@ -57,6 +57,8 @@ export default function App({Component, err, ...pageProps}) {
 
 function AppProviders(props) {
   if (typeof window !== 'undefined') {
+    const bridge = window.idena || {}
+
     if (!window.global) {
       window.global = window
     }
@@ -141,6 +143,25 @@ function AppProviders(props) {
       }
     }
 
+    if (!global.openExternal) {
+      global.openExternal = () => Promise.resolve(false)
+    }
+
+    if (!global.clipboard) {
+      global.clipboard = {
+        readText: () => '',
+        readImageDataUrl: () => null,
+        writeImageDataUrl: () => false,
+      }
+    }
+
+    if (!global.imageTools) {
+      global.imageTools = {
+        resizeDataUrl: () => null,
+        createBlankDataUrl: () => null,
+      }
+    }
+
     if (!global.toggleFullScreen) {
       global.toggleFullScreen = () => {}
     }
@@ -156,11 +177,32 @@ function AppProviders(props) {
     syncSharedGlobal('env', global.env)
     syncSharedGlobal('logger', global.logger)
     syncSharedGlobal('ipcRenderer', global.ipcRenderer)
-    syncSharedGlobal('prepareDb')
-    syncSharedGlobal('sub', global.sub)
+    syncSharedGlobal('openExternal', global.openExternal)
+    syncSharedGlobal('aiSolver', global.aiSolver)
+    syncSharedGlobal('aiTestUnit', global.aiTestUnit)
+    syncSharedGlobal('localAi', global.localAi)
+    syncSharedGlobal('flipStore')
+    syncSharedGlobal('invitesDb')
+    syncSharedGlobal('contactsDb')
     syncSharedGlobal('appVersion', APP_VERSION_FALLBACK)
     syncSharedGlobal('isDev', false)
     syncSharedGlobal('isTest', false)
+    syncSharedGlobal('isMac', false)
+    syncSharedGlobal('locale', 'en')
+    syncSharedGlobal('toggleFullScreen', global.toggleFullScreen)
+    syncSharedGlobal('getZoomLevel', global.getZoomLevel)
+    syncSharedGlobal('setZoomLevel', global.setZoomLevel)
+
+    global.sub = (db, prefix, options) =>
+      db && typeof db.sub === 'function' ? db.sub(prefix, options) : db
+
+    if (bridge.clipboard) {
+      global.clipboard = bridge.clipboard
+    }
+
+    if (bridge.image) {
+      global.imageTools = bridge.image
+    }
   }
 
   return (

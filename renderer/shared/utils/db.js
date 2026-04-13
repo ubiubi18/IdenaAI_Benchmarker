@@ -1,7 +1,6 @@
 import nanoid from 'nanoid'
 
-let idenaDb = null
-let fallbackDb = null
+const rootDbRegistry = new Map()
 
 function createNotFoundError() {
   const error = new Error('NotFound')
@@ -12,19 +11,159 @@ function createNotFoundError() {
 function createInMemoryDb() {
   const store = new Map()
 
+  function createSubDb(prefix = '') {
+    const nextPrefix = String(prefix || '')
+
+    const withPrefix = (key) =>
+      nextPrefix ? `${nextPrefix}:${String(key || '')}` : String(key || '')
+
+    return {
+      async get(key) {
+        const nextKey = withPrefix(key)
+
+        if (!store.has(nextKey)) {
+          throw createNotFoundError()
+        }
+
+        return store.get(nextKey)
+      },
+      async put(key, value) {
+        store.set(withPrefix(key), value)
+        return undefined
+      },
+      batch() {
+        const ops = []
+        return {
+          put(key, value) {
+            ops.push({type: 'put', key, value})
+            return this
+          },
+          del(key) {
+            ops.push({type: 'del', key})
+            return this
+          },
+          async write() {
+            ops.forEach(({type, key, value}) => {
+              const nextKey = withPrefix(key)
+
+              if (type === 'put') {
+                store.set(nextKey, value)
+              } else if (type === 'del') {
+                store.delete(nextKey)
+              }
+            })
+
+            return undefined
+          },
+        }
+      },
+      async clear() {
+        for (const key of Array.from(store.keys())) {
+          if (!nextPrefix || key.startsWith(`${nextPrefix}:`) || key === nextPrefix) {
+            store.delete(key)
+          }
+        }
+
+        return undefined
+      },
+      isOpen() {
+        return true
+      },
+      async close() {
+        return undefined
+      },
+      sub(childPrefix = '') {
+        return createSubDb(
+          nextPrefix
+            ? `${nextPrefix}:${String(childPrefix || '')}`
+            : String(childPrefix || '')
+        )
+      },
+    }
+  }
+
+  return createSubDb('')
+}
+
+function getDbBridge() {
+  if (
+    typeof window !== 'undefined' &&
+    window.idena &&
+    window.idena.db &&
+    typeof window.idena.db === 'object'
+  ) {
+    return window.idena.db
+  }
+
+  return null
+}
+
+function normalizeOptions(options) {
+  return options && typeof options === 'object' ? options : {}
+}
+
+function normalizeDescriptor(descriptor = {}) {
+  const nextDescriptor =
+    descriptor && typeof descriptor === 'object' ? descriptor : {}
+
+  return {
+    name:
+      typeof nextDescriptor.name === 'string' && nextDescriptor.name.trim()
+        ? nextDescriptor.name.trim()
+        : 'db',
+    sublevels: Array.isArray(nextDescriptor.sublevels)
+      ? nextDescriptor.sublevels
+          .map((entry) => {
+            const nextEntry = entry && typeof entry === 'object' ? entry : {}
+            const prefix =
+              typeof nextEntry.prefix === 'string' ? nextEntry.prefix.trim() : ''
+
+            if (!prefix) {
+              return null
+            }
+
+            return {
+              prefix,
+              options: normalizeOptions(nextEntry.options),
+            }
+          })
+          .filter(Boolean)
+      : [],
+  }
+}
+
+function createBridgeDb(descriptor = {}) {
+  const dbBridge = getDbBridge()
+
+  if (!dbBridge) {
+    return createInMemoryDb()
+  }
+
+  const nextDescriptor = normalizeDescriptor(descriptor)
+
   return {
     async get(key) {
-      if (!store.has(key)) {
-        throw createNotFoundError()
+      try {
+        return await dbBridge.get(nextDescriptor, key)
+      } catch (error) {
+        if (
+          error &&
+          (error.notFound ||
+            error.message === 'NotFound' ||
+            String(error).includes('NotFound'))
+        ) {
+          throw createNotFoundError()
+        }
+
+        throw error
       }
-      return store.get(key)
     },
     async put(key, value) {
-      store.set(key, value)
-      return undefined
+      return dbBridge.put(nextDescriptor, key, value)
     },
     batch() {
       const ops = []
+
       return {
         put(key, value) {
           ops.push({type: 'put', key, value})
@@ -35,20 +174,12 @@ function createInMemoryDb() {
           return this
         },
         async write() {
-          ops.forEach(({type, key, value}) => {
-            if (type === 'put') {
-              store.set(key, value)
-            } else if (type === 'del') {
-              store.delete(key)
-            }
-          })
-          return undefined
+          return dbBridge.batchWrite(nextDescriptor, ops)
         },
       }
     },
     async clear() {
-      store.clear()
-      return undefined
+      return dbBridge.clear(nextDescriptor)
     },
     isOpen() {
       return true
@@ -56,38 +187,34 @@ function createInMemoryDb() {
     async close() {
       return undefined
     },
+    sub(prefix, options = {}) {
+      return createBridgeDb({
+        ...nextDescriptor,
+        sublevels: [
+          ...nextDescriptor.sublevels,
+          {
+            prefix: String(prefix || ''),
+            options: normalizeOptions(options),
+          },
+        ],
+      })
+    },
   }
 }
 
 export function requestDb(name = 'db') {
-  if (idenaDb === null) {
-    const hasNativeDb =
-      typeof global.levelup === 'function' &&
-      typeof global.leveldown === 'function' &&
-      typeof global.dbPath === 'function'
+  const normalizedName =
+    typeof name === 'string' && name.trim() ? name.trim() : 'db'
 
-    if (hasNativeDb) {
-      idenaDb = global.levelup(global.leveldown(global.dbPath(name)))
-    } else {
-      if (fallbackDb === null) {
-        fallbackDb = createInMemoryDb()
-      }
-      idenaDb = fallbackDb
-    }
-
-    if (typeof window !== 'undefined') {
-      window.addEventListener('beforeunload', async () => {
-        if (idenaDb?.isOpen()) await idenaDb.close()
-      })
-    }
+  if (!rootDbRegistry.has(normalizedName)) {
+    rootDbRegistry.set(normalizedName, createBridgeDb({name: normalizedName}))
   }
-  return idenaDb
+
+  return rootDbRegistry.get(normalizedName)
 }
 
 export const epochDb = (db, epoch = -1, options = {}) => {
-  const sub = typeof global.sub === 'function' ? global.sub : (value) => value
   const epochPrefix = `epoch${epoch}`
-
   const nextOptions = {
     valueEncoding: 'json',
     ...options,
@@ -97,10 +224,13 @@ export const epochDb = (db, epoch = -1, options = {}) => {
 
   switch (typeof db) {
     case 'string':
-      targetDb = sub(sub(requestDb(), db), epochPrefix, nextOptions)
+      targetDb = requestDb().sub(db).sub(epochPrefix, nextOptions)
       break
     case 'object':
-      targetDb = sub(db, epochPrefix, nextOptions)
+      if (!db || typeof db.sub !== 'function') {
+        throw new Error('db should provide a sub() method')
+      }
+      targetDb = db.sub(epochPrefix, nextOptions)
       break
     default:
       throw new Error('db should be either string or Level instance')
@@ -127,7 +257,6 @@ export const epochDb = (db, epoch = -1, options = {}) => {
       const ids = await safeReadIds(targetDb)
 
       const newItems = items.filter(({id}) => !ids.includes(normalizeId(id)))
-
       const newIds = []
 
       let batch = targetDb.batch()
@@ -200,7 +329,7 @@ export async function updatePersistedItem(db, id, item) {
 export async function deletePersistedItem(db, id) {
   return db
     .batch()
-    .put('ids', await safeReadIds(db).filter((x) => x !== id))
+    .put('ids', (await safeReadIds(db)).filter((x) => x !== id))
     .del(id)
     .write()
 }

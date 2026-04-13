@@ -399,9 +399,16 @@ function normalizeProviderImageSize(value, fallback = '1536x1024') {
 
 function normalizeKeywordValue(item) {
   if (item == null) return ''
-  if (typeof item === 'string') return item.trim()
+  if (typeof item === 'string') {
+    return item
+      .replace(/[\r\n\t]/g, ' ')
+      .replace(/[{}<>\\`$]/g, '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 80)
+      .trim()
+  }
   if (typeof item === 'object') {
-    return String(item.name || item.keyword || item.word || '').trim()
+    return normalizeKeywordValue(item.name || item.keyword || item.word || '')
   }
   return ''
 }

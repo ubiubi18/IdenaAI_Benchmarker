@@ -19,6 +19,7 @@ const semver = require('semver')
 const axios = require('axios')
 const {zoomIn, zoomOut, resetZoom} = require('./utils')
 const loadRoute = require('./utils/routes')
+const DEV_SERVER_ORIGIN = loadRoute.DEV_SERVER_ORIGIN
 const {getI18nConfig} = require('./language')
 const appDataPath = require('./app-data-path')
 
@@ -146,14 +147,104 @@ function loadMainSettings() {
   }
 }
 
-ipcMain.on(APP_INFO_COMMAND, (event) => {
+function isTrustedRendererUrl(url) {
+  if (!url) {
+    return false
+  }
+
+  if (app.isPackaged) {
+    return url.startsWith('file://')
+  }
+
+  try {
+    return new URL(url).origin === DEV_SERVER_ORIGIN
+  } catch {
+    return false
+  }
+}
+
+function assertTrustedSender(event) {
+  const senderUrl = String(
+    (event && event.senderFrame && event.senderFrame.url) ||
+      (event && event.sender && typeof event.sender.getURL === 'function'
+        ? event.sender.getURL()
+        : '') ||
+      ''
+  ).trim()
+
+  const isBootFrame =
+    (senderUrl === '' || senderUrl === 'about:blank') &&
+    mainWindow &&
+    event &&
+    event.sender === mainWindow.webContents
+
+  if (isBootFrame || isTrustedRendererUrl(senderUrl)) {
+    return
+  }
+
+  throw new Error(`Blocked IPC sender: ${senderUrl || 'unknown'}`)
+}
+
+function handleTrusted(channel, listener) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event)
+    return listener(event, ...args)
+  })
+}
+
+function handleOnceTrusted(channel, listener) {
+  ipcMain.handleOnce(channel, (event, ...args) => {
+    assertTrustedSender(event)
+    return listener(event, ...args)
+  })
+}
+
+function onTrusted(channel, listener) {
+  ipcMain.on(channel, (event, ...args) => {
+    assertTrustedSender(event)
+    return listener(event, ...args)
+  })
+}
+
+function normalizeExternalUrl(value) {
+  try {
+    const nextUrl = new URL(String(value || '').trim())
+
+    if (
+      nextUrl.protocol === 'http:' &&
+      ['127.0.0.1', 'localhost'].includes(nextUrl.hostname)
+    ) {
+      return nextUrl.toString()
+    }
+
+    if (['https:', 'mailto:', 'dna:'].includes(nextUrl.protocol)) {
+      return nextUrl.toString()
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+async function openExternalSafely(url) {
+  const safeUrl = normalizeExternalUrl(url)
+
+  if (!safeUrl) {
+    throw new Error('Unsupported external URL')
+  }
+
+  return shell.openExternal(safeUrl)
+}
+
+onTrusted(APP_INFO_COMMAND, (event) => {
   event.returnValue = {
     version: appVersion,
     locale: app.getLocale(),
   }
 })
 
-ipcMain.on(APP_PATH_COMMAND, (event, folder) => {
+onTrusted(APP_PATH_COMMAND, (event, folder) => {
   event.returnValue = appDataPath(folder)
 })
 
@@ -654,8 +745,9 @@ const createMainWindow = () => {
     height: responsiveHeight,
     webPreferences: {
       nodeIntegration: false,
-      contextIsolation: false,
-      sandbox: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
       preload: join(__dirname, 'preload.js'),
     },
     icon: resolve(__dirname, 'static', 'icon-128@2x.png'),
@@ -677,6 +769,36 @@ const createMainWindow = () => {
       }
     }
   )
+
+  mainWindow.webContents.setWindowOpenHandler(({url}) => {
+    if (isTrustedRendererUrl(url)) {
+      return {action: 'allow'}
+    }
+
+    Promise.resolve(openExternalSafely(url)).catch((error) => {
+      logger.warn('Blocked external window open', {
+        url,
+        error: error.toString(),
+      })
+    })
+
+    return {action: 'deny'}
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isTrustedRendererUrl(url)) {
+      return
+    }
+
+    event.preventDefault()
+
+    Promise.resolve(openExternalSafely(url)).catch((error) => {
+      logger.warn('Blocked navigation', {
+        url,
+        error: error.toString(),
+      })
+    })
+  })
 
   mainWindow.webContents.on(
     'did-fail-load',
@@ -959,7 +1081,7 @@ app.on('before-quit', (e) => {
   }
 })
 
-ipcMain.on('confirm-quit', () => {
+onTrusted('confirm-quit', () => {
   didConfirmQuit = true
   app.quit()
 })
@@ -979,9 +1101,9 @@ app.on('window-all-closed', () => {
   }
 })
 
-ipcMain.handleOnce('CHECK_DNA_LINK', () => dnaUrl)
+handleOnceTrusted('CHECK_DNA_LINK', () => dnaUrl)
 
-ipcMain.on(NODE_COMMAND, async (_event, command, data) => {
+onTrusted(NODE_COMMAND, async (_event, command, data) => {
   logger.info(`new node command`, command, data)
   switch (command) {
     case 'init-local-node': {
@@ -1205,7 +1327,7 @@ autoUpdater.on('error', (error) => {
   logger.error('error while checking UI update', error.toString())
 })
 
-ipcMain.on(AUTO_UPDATE_COMMAND, async (event, command, data) => {
+onTrusted(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   logger.info(`new autoupdate command`, command, data)
   switch (command) {
     case 'start-checking': {
@@ -1276,19 +1398,19 @@ function checkForUpdates() {
 }
 
 // listen specific `node` messages
-ipcMain.on('node-log', ({sender}, message) => {
+onTrusted('node-log', ({sender}, message) => {
   sender.send('node-log', message)
 })
 
-ipcMain.on('reload', () => {
+onTrusted('reload', () => {
   loadRoute(mainWindow, 'home')
 })
 
-ipcMain.on('showMainWindow', () => {
+onTrusted('showMainWindow', () => {
   showMainWindow()
 })
 
-ipcMain.handle(WINDOW_COMMAND, (event, command) => {
+handleTrusted(WINDOW_COMMAND, (event, command) => {
   const targetWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow
   if (!targetWindow) {
     throw new Error('No window is available')
@@ -1314,9 +1436,9 @@ function sendMainWindowMsg(channel, message, data) {
   }
 }
 
-ipcMain.handle('search-image', async (_, query) => searchImages(query))
+handleTrusted('search-image', async (_, query) => searchImages(query))
 
-ipcMain.handle(AI_SOLVER_COMMAND, async (_event, command, payload) => {
+handleTrusted(AI_SOLVER_COMMAND, async (_event, command, payload) => {
   logger.info(`new ai solver command`, command, {
     provider: payload && payload.provider,
     model: payload && payload.model,
@@ -1357,7 +1479,7 @@ ipcMain.handle(AI_SOLVER_COMMAND, async (_event, command, payload) => {
   }
 })
 
-ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
+handleTrusted(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
   logger.info(`new ai test unit command`, command, {
     provider: payload && payload.provider,
     model: payload && payload.model,
@@ -1411,7 +1533,7 @@ ipcMain.handle(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
   }
 })
 
-ipcMain.handle('localAi.status', async (_event, payload) => {
+handleTrusted('localAi.status', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiStatus(payload)
   }
@@ -1419,26 +1541,26 @@ ipcMain.handle('localAi.status', async (_event, payload) => {
   return buildLocalAiStatusResponse(await localAiManager.status(payload))
 })
 
-ipcMain.handle(
+handleTrusted(
   'localAi.start',
   withLocalAiEnabled('start', async (_event, payload) =>
     localAiManager.start(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.stop',
   withLocalAiEnabled('stop', async () => localAiManager.stop())
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.listModels',
   withLocalAiEnabled('listModels', async (_event, payload) =>
     localAiManager.listModels(payload)
   )
 )
 
-ipcMain.handle('localAi.info', async (_event, payload) => {
+handleTrusted('localAi.info', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiInfoResponse(payload)
   }
@@ -1449,7 +1571,7 @@ ipcMain.handle('localAi.info', async (_event, payload) => {
   }
 })
 
-ipcMain.handle('localAi.chat', async (_event, payload) => {
+handleTrusted('localAi.chat', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiChatResponse(payload)
   }
@@ -1460,7 +1582,7 @@ ipcMain.handle('localAi.chat', async (_event, payload) => {
   }
 })
 
-ipcMain.handle('localAi.flipJudge', async (_event, payload) => {
+handleTrusted('localAi.flipJudge', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
@@ -1471,7 +1593,7 @@ ipcMain.handle('localAi.flipJudge', async (_event, payload) => {
   }
 })
 
-ipcMain.handle('localAi.checkFlipSequence', async (_event, payload) => {
+handleTrusted('localAi.checkFlipSequence', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
@@ -1484,7 +1606,7 @@ ipcMain.handle('localAi.checkFlipSequence', async (_event, payload) => {
   }
 })
 
-ipcMain.handle('localAi.flipToText', async (_event, payload) => {
+handleTrusted('localAi.flipToText', async (_event, payload) => {
   if (!isLocalAiEnabled(loadMainSettings())) {
     return buildDisabledLocalAiFlipToTextResponse(payload)
   }
@@ -1495,56 +1617,56 @@ ipcMain.handle('localAi.flipToText', async (_event, payload) => {
   }
 })
 
-ipcMain.handle(
+handleTrusted(
   'localAi.captionFlip',
   withLocalAiEnabled('captionFlip', async (_event, payload) =>
     localAiManager.captionFlip(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.ocrImage',
   withLocalAiEnabled('ocrImage', async (_event, payload) =>
     localAiManager.ocrImage(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.trainHook',
   withLocalAiEnabled('trainHook', async (_event, payload) =>
     localAiManager.trainHook(buildLocalAiTrainHookPayload(payload))
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.trainEpoch',
   withLocalAiEnabled('trainEpoch', async (_event, payload) =>
     localAiManager.trainEpoch(buildLocalAiTrainHookPayload(payload))
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.buildManifest',
   withLocalAiEnabled('buildManifest', async (_event, epoch) =>
     localAiManager.buildManifest(epoch)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.loadTrainingCandidatePackage',
   withLocalAiEnabled('loadTrainingCandidatePackage', async (_event, payload) =>
     localAiManager.loadTrainingCandidatePackage(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.buildTrainingCandidatePackage',
   withLocalAiEnabled('buildTrainingCandidatePackage', async (_event, payload) =>
     localAiManager.buildTrainingCandidatePackage(payload)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.updateTrainingCandidatePackageReview',
   withLocalAiEnabled(
     'updateTrainingCandidatePackageReview',
@@ -1553,28 +1675,28 @@ ipcMain.handle(
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.buildBundle',
   withLocalAiEnabled('buildBundle', async (_event, epoch) =>
     localAiFederated.buildUpdateBundle(epoch)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.importBundle',
   withLocalAiEnabled('importBundle', async (_event, filePath) =>
     localAiFederated.importUpdateBundle(filePath)
   )
 )
 
-ipcMain.handle(
+handleTrusted(
   'localAi.aggregate',
   withLocalAiEnabled('aggregate', async () =>
     localAiFederated.aggregateAcceptedBundles()
   )
 )
 
-ipcMain.on('localAi.captureFlip', (_event, payload) => {
+onTrusted('localAi.captureFlip', (_event, payload) => {
   try {
     assertLocalAiEnabled('captureFlip')
   } catch {
@@ -1590,5 +1712,11 @@ ipcMain.on('localAi.captureFlip', (_event, payload) => {
 
 const KEY_VALUE = {}
 
-ipcMain.handle('get-data', async (_, key) => KEY_VALUE[key])
-ipcMain.on('set-data', (_, key, value) => (KEY_VALUE[key] = value))
+handleTrusted('home.idenaBot.get', async () => KEY_VALUE['idena-bot'])
+onTrusted('home.idenaBot.skip', () => {
+  KEY_VALUE['idena-bot'] = true
+})
+
+handleTrusted('shell.openExternal.safe', async (_event, payload) =>
+  openExternalSafely(payload && payload.url)
+)

@@ -1,5 +1,3 @@
-const fs = require('fs')
-
 const axios = require('axios')
 
 const DEFAULT_BASE_URL = 'http://localhost:5000'
@@ -169,14 +167,6 @@ function toBase64Image(value) {
     return nextValue.replace(/\s+/g, '')
   }
 
-  if (fs.existsSync(nextValue)) {
-    try {
-      return fs.readFileSync(nextValue).toString('base64')
-    } catch {
-      return null
-    }
-  }
-
   return null
 }
 
@@ -197,8 +187,6 @@ function normalizeFlipImageItem(item) {
     item.imageDataUrl ||
       item.image ||
       item.src ||
-      item.path ||
-      item.filePath ||
       item.base64
   )
 }
@@ -218,9 +206,7 @@ function normalizeFlipImages(input) {
     } else if (
       input.imageDataUrl ||
       input.image ||
-      input.src ||
-      input.path ||
-      input.filePath
+      input.src
     ) {
       source = [input]
     } else {

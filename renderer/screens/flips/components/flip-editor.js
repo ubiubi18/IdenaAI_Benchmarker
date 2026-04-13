@@ -34,7 +34,7 @@ import {
   VDivider,
 } from '../../../shared/components/components'
 import {rem} from '../../../shared/theme'
-import {resizing, imageResize} from '../../../shared/utils/img'
+import {resizing} from '../../../shared/utils/img'
 import {
   getImageURLFromClipboard,
   writeImageURLToClipboard,
@@ -84,11 +84,27 @@ const INSERT_BACKGROUND_IMAGE = 2
 const BLANK_IMAGE_DATAURL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQYlWP4//8/AAX+Av5e8BQ1AAAAAElFTkSuQmCC'
 const BLANK_IMAGE =
-  global.nativeImage &&
-  global.nativeImage
-    .createFromDataURL(BLANK_IMAGE_DATAURL)
-    .resize({width: IMAGE_WIDTH, height: IMAGE_HEIGHT})
-    .toDataURL()
+  global.imageTools &&
+  typeof global.imageTools.createBlankDataUrl === 'function'
+    ? global.imageTools.createBlankDataUrl({
+        width: IMAGE_WIDTH,
+        height: IMAGE_HEIGHT,
+      })
+    : BLANK_IMAGE_DATAURL
+
+function resizeImageDataUrl(url, maxWidth = IMAGE_WIDTH, maxHeight = IMAGE_HEIGHT) {
+  if (global.imageTools && typeof global.imageTools.resizeDataUrl === 'function') {
+    return (
+      global.imageTools.resizeDataUrl(url, {
+        maxWidth,
+        maxHeight,
+        softResize: true,
+      }) || url
+    )
+  }
+
+  return url
+}
 
 export default function FlipEditor({
   idx = 0,
@@ -198,8 +214,8 @@ export default function FlipEditor({
 
         Jimp.read(url).then((image) => {
           image.getBase64Async('image/png').then((nextUrl) => {
-            const resizedNextUrl = imageResize(
-              global.nativeImage.createFromDataURL(nextUrl),
+            const resizedNextUrl = resizeImageDataUrl(
+              nextUrl,
               IMAGE_WIDTH,
               IMAGE_HEIGHT
             )
@@ -293,8 +309,7 @@ export default function FlipEditor({
     }
     const reader = new FileReader()
     reader.addEventListener('loadend', (re) => {
-      const img = global.nativeImage.createFromDataURL(re.target.result)
-      const url = imageResize(img, IMAGE_WIDTH, IMAGE_HEIGHT)
+      const url = resizeImageDataUrl(re.target.result, IMAGE_WIDTH, IMAGE_HEIGHT)
       setImageUrl({url})
       setInsertImageMode(0)
     })

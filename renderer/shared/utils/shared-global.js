@@ -4,38 +4,26 @@ function isFallbackBridgeValue(value) {
   return Boolean(value && value.__idenaFallback)
 }
 
-function getElectronModule() {
-  if (typeof window === 'undefined' || typeof window.require !== 'function') {
-    return null
+function getBridgeGlobals() {
+  if (
+    typeof window !== 'undefined' &&
+    window.idena &&
+    window.idena.globals &&
+    typeof window.idena.globals === 'object'
+  ) {
+    return window.idena.globals
   }
 
-  try {
-    return window.require('electron')
-  } catch {
-    return null
-  }
-}
-
-function getRuntimeBridgeValue(key) {
-  const electron = getElectronModule()
-
-  if (!electron) {
-    return undefined
-  }
-
-  if (key === 'ipcRenderer' && electron.ipcRenderer) {
-    return electron.ipcRenderer
-  }
-
-  if (key === 'openExternal' && electron.shell) {
-    return electron.shell.openExternal
-  }
-
-  return undefined
+  return null
 }
 
 function getSharedGlobalSources() {
   const sources = []
+  const bridgeGlobals = getBridgeGlobals()
+
+  if (bridgeGlobals) {
+    sources.push(bridgeGlobals)
+  }
 
   if (typeof global !== 'undefined') {
     sources.push(global)
@@ -53,15 +41,6 @@ function getSharedGlobalSources() {
 }
 
 export function getSharedGlobal(key, fallbackValue) {
-  const runtimeBridgeValue = getRuntimeBridgeValue(key)
-  if (
-    typeof runtimeBridgeValue !== 'undefined' &&
-    runtimeBridgeValue !== null &&
-    !isFallbackBridgeValue(runtimeBridgeValue)
-  ) {
-    return runtimeBridgeValue
-  }
-
   const sources = getSharedGlobalSources()
   let fallbackBridgeValue
 

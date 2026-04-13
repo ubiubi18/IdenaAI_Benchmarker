@@ -1,16 +1,26 @@
-import {imageResize} from './img'
-
 export function getImageURLFromClipboard(
   maxWidth = 147 * 2,
   maxHeight = 110 * 2
 ) {
-  const img = global.clipboard.readImage()
-  if (!img || img.isEmpty()) return
+  if (
+    !global.clipboard ||
+    typeof global.clipboard.readImageDataUrl !== 'function'
+  ) {
+    return null
+  }
 
-  return imageResize(img, maxWidth, maxHeight)
+  return global.clipboard.readImageDataUrl({
+    maxWidth,
+    maxHeight,
+    softResize: true,
+  })
 }
 
 export function writeImageURLToClipboard(url) {
-  const img = global.nativeImage.createFromDataURL(url)
-  global.clipboard.writeImage(img)
+  if (
+    global.clipboard &&
+    typeof global.clipboard.writeImageDataUrl === 'function'
+  ) {
+    global.clipboard.writeImageDataUrl(url)
+  }
 }

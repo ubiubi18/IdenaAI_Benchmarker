@@ -13,8 +13,14 @@ export function useIdenaBot() {
   const [connected, setConnected] = useState(true)
 
   useEffect(() => {
-    global.ipcRenderer
-      .invoke('get-data', 'idena-bot')
+    const bridge =
+      typeof window !== 'undefined' && window.idena ? window.idena.home : null
+
+    Promise.resolve(
+      bridge && typeof bridge.getIdenaBotState === 'function'
+        ? bridge.getIdenaBotState()
+        : undefined
+    )
       .then((data) => {
         setConnected(
           data || JSON.parse(localStorage.getItem('connectIdenaBot')) || false
@@ -31,7 +37,14 @@ export function useIdenaBot() {
         setConnected(true)
       },
       skip: () => {
-        global.ipcRenderer.send('set-data', 'idena-bot', true)
+        const bridge =
+          typeof window !== 'undefined' && window.idena
+            ? window.idena.home
+            : null
+
+        if (bridge && typeof bridge.skipIdenaBot === 'function') {
+          bridge.skipIdenaBot()
+        }
         setConnected(true)
       },
     },
