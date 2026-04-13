@@ -1,5 +1,6 @@
-/* eslint-disable import/no-extraneous-dependencies */
+/* eslint-disable import/no-extraneous-dependencies, global-require */
 const path = require('path')
+
 let electron = {}
 try {
   electron = require('electron') || {}

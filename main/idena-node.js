@@ -158,10 +158,14 @@ async function buildLocalArm64PinnedNode(tempNodeFile, onProgress) {
   }
 
   if (fs.existsSync(buildScript)) {
-    await runCommand('/usr/bin/arch', ['-arm64', '/bin/bash', buildScript, tempNodeFile], {
-      cwd: repoDir,
-      env,
-    })
+    await runCommand(
+      '/usr/bin/arch',
+      ['-arm64', '/bin/bash', buildScript, tempNodeFile],
+      {
+        cwd: repoDir,
+        env,
+      }
+    )
   } else {
     const wasmBindingDir = path.resolve(repoDir, '..', 'idena-wasm-binding')
     const wasmBindingGoMod = path.join(wasmBindingDir, 'go.mod')

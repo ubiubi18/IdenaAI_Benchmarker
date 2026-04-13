@@ -33,8 +33,9 @@ function getAppInfo() {
 }
 
 function setSharedGlobal(key, value) {
-  global[key] = value
-  globalThis[key] = value
+  if (typeof global !== 'undefined') {
+    global[key] = value
+  }
   if (typeof window !== 'undefined') {
     window[key] = value
   }

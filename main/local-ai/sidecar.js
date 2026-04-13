@@ -27,7 +27,9 @@ function normalizeBaseUrl(value, fallback = DEFAULT_BASE_URL) {
 }
 
 function normalizeRuntimeType(value, fallback = DEFAULT_RUNTIME_TYPE) {
-  const runtimeType = String(value || fallback).trim().toLowerCase()
+  const runtimeType = String(value || fallback)
+    .trim()
+    .toLowerCase()
   return runtimeType || fallback
 }
 
@@ -43,7 +45,10 @@ function buildEndpoint(baseUrl, endpointPath) {
   return `${normalizeBaseUrl(baseUrl)}${normalizePath(endpointPath)}`
 }
 
-function createErrorMessage(error, fallback = 'Local AI sidecar request failed') {
+function createErrorMessage(
+  error,
+  fallback = 'Local AI sidecar request failed'
+) {
   const status = error && error.response && error.response.status
   const data = error && error.response && error.response.data
   const remoteMessage = String(
@@ -57,11 +62,13 @@ function createErrorMessage(error, fallback = 'Local AI sidecar request failed')
 }
 
 function normalizeModelList(data) {
-  const items = Array.isArray(data && data.data)
-    ? data.data
-    : Array.isArray(data && data.models)
-    ? data.models
-    : []
+  let items = []
+
+  if (Array.isArray(data && data.data)) {
+    items = data.data
+  } else if (Array.isArray(data && data.models)) {
+    items = data.models
+  }
 
   return items
     .map((item) => {
@@ -84,24 +91,28 @@ function isNotFoundError(error) {
 
 function normalizeChatMessage(item) {
   if (typeof item === 'string') {
-    const content = item.trim()
+    const textContent = item.trim()
 
-    return content ? {role: 'user', content} : null
+    return textContent ? {role: 'user', content: textContent} : null
   }
 
   if (!item || typeof item !== 'object' || Array.isArray(item)) {
     return null
   }
 
-  const role = String(item.role || 'user').trim().toLowerCase() || 'user'
-  const content =
-    typeof item.content === 'string'
-      ? item.content.trim()
-      : typeof item.message === 'string'
-      ? item.message.trim()
-      : typeof item.text === 'string'
-      ? item.text.trim()
-      : ''
+  const role =
+    String(item.role || 'user')
+      .trim()
+      .toLowerCase() || 'user'
+  let content = ''
+
+  if (typeof item.content === 'string') {
+    content = item.content.trim()
+  } else if (typeof item.message === 'string') {
+    content = item.message.trim()
+  } else if (typeof item.text === 'string') {
+    content = item.text.trim()
+  }
 
   return content ? {role, content} : null
 }
@@ -123,7 +134,7 @@ function normalizeChatMessages({messages, message, prompt, input} = {}) {
 }
 
 function normalizeOllamaContent(data) {
-  const content =
+  const messageContent =
     data &&
     data.message &&
     typeof data.message === 'object' &&
@@ -131,7 +142,7 @@ function normalizeOllamaContent(data) {
       ? data.message.content.trim()
       : ''
 
-  return content || null
+  return messageContent || null
 }
 
 function normalizeVisionModel(value, fallback = DEFAULT_VISION_MODEL) {
@@ -243,7 +254,9 @@ function buildPanelCaptionMessages(image, index) {
     },
     {
       role: 'user',
-      content: `Describe panel ${index + 1} in one concise plain-text sentence.`,
+      content: `Describe panel ${
+        index + 1
+      } in one concise plain-text sentence.`,
       images: [image],
     },
   ]
@@ -303,21 +316,28 @@ function stripMarkdownCodeFence(value) {
 function parseFlipSequenceCheckerText(value) {
   const text = stripMarkdownCodeFence(value)
   const parsed = JSON.parse(text)
-  const classification = String(parsed && parsed.classification ? parsed.classification : '')
+  const classification = String(
+    parsed && parsed.classification ? parsed.classification : ''
+  )
     .trim()
     .toLowerCase()
-  const confidence = String(parsed && parsed.confidence ? parsed.confidence : '')
+  const confidence = String(
+    parsed && parsed.confidence ? parsed.confidence : ''
+  )
     .trim()
     .toLowerCase()
-  const reason = String(parsed && parsed.reason ? parsed.reason : '')
-    .trim()
+  const reason = String(parsed && parsed.reason ? parsed.reason : '').trim()
 
   if (!CHECKER_CLASSIFICATIONS.has(classification)) {
-    throw new Error('Local AI checker response included an unsupported classification')
+    throw new Error(
+      'Local AI checker response included an unsupported classification'
+    )
   }
 
   if (!CHECKER_CONFIDENCES.has(confidence)) {
-    throw new Error('Local AI checker response included an unsupported confidence')
+    throw new Error(
+      'Local AI checker response included an unsupported confidence'
+    )
   }
 
   if (!reason) {
@@ -372,7 +392,11 @@ async function requestWithFallback(candidates, request) {
   throw lastError || new Error('No sidecar endpoint candidates succeeded')
 }
 
-function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) {
+function createLocalAiSidecar({
+  httpClient = axios,
+  logger,
+  isDev = false,
+} = {}) {
   async function captionFlipPanels({
     baseUrl,
     runtimeType,
@@ -391,7 +415,8 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         visionModel: '',
         model: '',
         error: 'vision_model_required',
-        lastError: 'Local AI vision model is required for Ollama panel captioning',
+        lastError:
+          'Local AI vision model is required for Ollama panel captioning',
       })
     }
 
@@ -468,7 +493,8 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         visionModel: nextVisionModel,
         model: '',
         error: 'model_required',
-        lastError: 'Local AI text model is required for flip sequence reduction',
+        lastError:
+          'Local AI text model is required for flip sequence reduction',
       })
     }
 
@@ -655,7 +681,9 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         status: 'ok',
         provider: 'local-ai',
         runtimeType: nextRuntimeType,
-        model: String(data && data.model ? data.model : nextModel).trim() || nextModel,
+        model:
+          String(data && data.model ? data.model : nextModel).trim() ||
+          nextModel,
         baseUrl: normalizeBaseUrl(nextBaseUrl, DEFAULT_OLLAMA_ENDPOINT),
         endpoint: response && response.config && response.config.url,
         text,
@@ -672,10 +700,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         endpoint,
         text: null,
         error: 'unavailable',
-        lastError: createErrorMessage(
-          error,
-          'Local AI Ollama request failed'
-        ),
+        lastError: createErrorMessage(error, 'Local AI Ollama request failed'),
       }
     }
   }

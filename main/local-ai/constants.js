@@ -7,8 +7,7 @@ const LOCAL_AI_DEFAULT_MODEL = 'phi-3.5-vision-instruct'
 const LOCAL_AI_ADAPTER_STRATEGY = 'lora-first'
 const LOCAL_AI_TRAINING_POLICY = 'approved-post-consensus-only'
 const LOCAL_AI_CONTRACT_VERSION = 'phi-sidecar/v1'
-const LOCAL_AI_BASE_MODEL_ID =
-  'local-ai:phi-3.5-vision:adapter-lora-first-v1'
+const LOCAL_AI_BASE_MODEL_ID = 'local-ai:phi-3.5-vision:adapter-lora-first-v1'
 
 module.exports = {
   LOCAL_AI_PROVIDER,

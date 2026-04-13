@@ -184,7 +184,10 @@ describe('local-ai manager', () => {
   })
 
   it('builds a local post-consensus training-candidate package conservatively', async () => {
-    const captureIndexPath = storage.resolveLocalAiPath('captures', 'index.json')
+    const captureIndexPath = storage.resolveLocalAiPath(
+      'captures',
+      'index.json'
+    )
 
     await storage.writeJsonAtomic(captureIndexPath, {
       version: 1,
@@ -288,7 +291,10 @@ describe('local-ai manager', () => {
 
   it('skips malformed eligible items without crashing training-candidate packaging', async () => {
     const logger = mockLogger()
-    const captureIndexPath = storage.resolveLocalAiPath('captures', 'index.json')
+    const captureIndexPath = storage.resolveLocalAiPath(
+      'captures',
+      'index.json'
+    )
 
     await storage.writeJsonAtomic(captureIndexPath, {
       version: 1,
@@ -413,7 +419,9 @@ describe('local-ai manager', () => {
         federatedReady: true,
       }),
     })
-    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+    await expect(
+      storage.readTrainingCandidatePackage(filePath)
+    ).resolves.toEqual(
       expect.objectContaining({
         reviewStatus: 'approved',
         reviewedAt: expect.any(String),
@@ -524,10 +532,7 @@ describe('local-ai manager', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -546,10 +551,7 @@ describe('local-ai manager', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     )
@@ -591,10 +593,7 @@ describe('local-ai manager', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -616,10 +615,7 @@ describe('local-ai manager', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     )

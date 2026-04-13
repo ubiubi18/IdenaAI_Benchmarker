@@ -103,7 +103,10 @@ describe('local-ai sidecar', () => {
     const sidecar = createLocalAiSidecar({httpClient})
 
     await expect(
-      sidecar.captionFlip({baseUrl: 'http://localhost:5000', flipHash: 'flip-a'})
+      sidecar.captionFlip({
+        baseUrl: 'http://localhost:5000',
+        flipHash: 'flip-a',
+      })
     ).resolves.toMatchObject({
       ok: false,
       status: 'not_implemented',
@@ -342,10 +345,7 @@ describe('local-ai sidecar', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -435,7 +435,9 @@ describe('local-ai sidecar', () => {
     const reductionBody = httpClient.post.mock.calls[2][1]
     const serializedPrompt = JSON.stringify(reductionBody.messages)
 
-    expect(httpClient.post.mock.calls[0][1].messages[1].images).toEqual(['LEFT='])
+    expect(httpClient.post.mock.calls[0][1].messages[1].images).toEqual([
+      'LEFT=',
+    ])
     expect(httpClient.post.mock.calls[1][1].messages[1].images).toEqual([
       'RIGHT=',
     ])
@@ -481,9 +483,11 @@ describe('local-ai sidecar', () => {
 
   it('returns a structured config error when the text reducer model is missing for flipToText', async () => {
     const httpClient = {
-      post: jest.fn().mockResolvedValueOnce(
-        mockOllamaChatResponse('A person holds a cup.', 'moondream')
-      ),
+      post: jest
+        .fn()
+        .mockResolvedValueOnce(
+          mockOllamaChatResponse('A person holds a cup.', 'moondream')
+        ),
     }
     const sidecar = createLocalAiSidecar({httpClient})
 
@@ -656,10 +660,7 @@ describe('local-ai sidecar', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -705,10 +706,7 @@ describe('local-ai sidecar', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -725,8 +723,12 @@ describe('local-ai sidecar', () => {
     })
 
     expect(httpClient.post).toHaveBeenCalledTimes(4)
-    expect(httpClient.post.mock.calls[0][1].messages[1].images).toEqual(['AAA='])
-    expect(httpClient.post.mock.calls[1][1].messages[1].images).toEqual(['BBB='])
+    expect(httpClient.post.mock.calls[0][1].messages[1].images).toEqual([
+      'AAA=',
+    ])
+    expect(httpClient.post.mock.calls[1][1].messages[1].images).toEqual([
+      'BBB=',
+    ])
     expect(httpClient.post.mock.calls[2][1].messages[1].content).toContain(
       'Panel 1: A child picks up a ball.'
     )
@@ -746,7 +748,10 @@ describe('local-ai sidecar', () => {
           mockOllamaChatResponse('A person stands near a door.', 'moondream')
         )
         .mockResolvedValueOnce(
-          mockOllamaChatResponse('The person is still near the door.', 'moondream')
+          mockOllamaChatResponse(
+            'The person is still near the door.',
+            'moondream'
+          )
         )
         .mockResolvedValueOnce(
           mockOllamaChatResponse(
@@ -770,10 +775,7 @@ describe('local-ai sidecar', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -818,10 +820,7 @@ describe('local-ai sidecar', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -860,10 +859,7 @@ describe('local-ai sidecar', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -894,12 +890,9 @@ describe('local-ai sidecar', () => {
           )
         )
         .mockRejectedValueOnce(
-          Object.assign(
-            new Error('connect ECONNREFUSED 127.0.0.1:11434'),
-            {
-              code: 'ECONNREFUSED',
-            }
-          )
+          Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:11434'), {
+            code: 'ECONNREFUSED',
+          })
         ),
     }
     const sidecar = createLocalAiSidecar({httpClient})
@@ -911,10 +904,7 @@ describe('local-ai sidecar', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({

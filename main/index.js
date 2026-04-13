@@ -61,6 +61,22 @@ const logger = require('./logger')
 
 logger.info('idena started', appVersion)
 
+const {
+  AUTO_UPDATE_EVENT,
+  AUTO_UPDATE_COMMAND,
+  NODE_COMMAND,
+  NODE_EVENT,
+  APP_INFO_COMMAND,
+  APP_PATH_COMMAND,
+  AI_SOLVER_COMMAND,
+  AI_TEST_UNIT_COMMAND,
+  AI_TEST_UNIT_EVENT,
+  WINDOW_COMMAND,
+} = require('./channels')
+const {createAiProviderBridge} = require('./ai-providers')
+const {createAiTestUnitBridge} = require('./ai-test-unit')
+const {prepareDb} = require('./stores/setup')
+
 function migrateBenchmarkerSettings() {
   try {
     const settingsDb = prepareDb('settings')
@@ -91,21 +107,6 @@ function migrateBenchmarkerSettings() {
   }
 }
 
-const {
-  AUTO_UPDATE_EVENT,
-  AUTO_UPDATE_COMMAND,
-  NODE_COMMAND,
-  NODE_EVENT,
-  APP_INFO_COMMAND,
-  APP_PATH_COMMAND,
-  AI_SOLVER_COMMAND,
-  AI_TEST_UNIT_COMMAND,
-  AI_TEST_UNIT_EVENT,
-  WINDOW_COMMAND,
-} = require('./channels')
-const {createAiProviderBridge} = require('./ai-providers')
-const {createAiTestUnitBridge} = require('./ai-test-unit')
-const {prepareDb} = require('./stores/setup')
 migrateBenchmarkerSettings()
 const {createLocalAiFederated} = require('./local-ai/federated')
 const {createLocalAiManager} = require('./local-ai/manager')
@@ -701,7 +702,9 @@ const createMainWindow = () => {
   mainWindow.webContents.on(
     'console-message',
     (_event, level, message, line, sourceId) => {
-      const entry = `[renderer:${level}] ${sourceId || 'unknown'}:${line} ${message}`
+      const entry = `[renderer:${level}] ${
+        sourceId || 'unknown'
+      }:${line} ${message}`
       if (level >= 2) {
         logger.error(entry)
       } else if (level === 1) {
