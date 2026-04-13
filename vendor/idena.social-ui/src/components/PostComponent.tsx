@@ -9,26 +9,12 @@ import heartGraySvg from '../assets/heart-gray.svg';
 import heartRedSvg from '../assets/heart-red.svg';
 import cashGraySvg from '../assets/cash-gray.svg';
 import cashGreenSvg from '../assets/cash-green.svg';
+import { readDesktopBootstrap } from '../logic/desktopBootstrap';
 
 const likeEmoji = '❤️';
-const bootstrapStorageKey = 'idenaSocialDesktopBootstrap';
 
 function isEmbeddedDesktopOnchainMode() {
-    if (typeof window === 'undefined') {
-        return false;
-    }
-
-    try {
-        const raw = window.localStorage.getItem(bootstrapStorageKey);
-        if (!raw) {
-            return false;
-        }
-
-        const parsed = JSON.parse(raw);
-        return parsed?.embeddedMode === 'desktop-onchain';
-    } catch {
-        return false;
-    }
+    return readDesktopBootstrap().embeddedMode === 'desktop-onchain';
 }
 
 type PostComponentProps = {

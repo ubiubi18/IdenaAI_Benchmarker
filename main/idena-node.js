@@ -19,6 +19,19 @@ const idenaNodePinnedReleaseUrl = `https://api.github.com/repos/idena-network/id
 const idenaChainDbFolder = 'idenachain.db'
 const minNodeBinarySize = 1024 * 1024
 const localNodeBuildToolchain = 'go1.19.13'
+const defaultNodeVerbosity = 3
+const devNodeVerbosity = 4
+const peerAssistInitialDelayMs = 12 * 1000
+const peerAssistRetryIntervalMs = 30 * 1000
+const peerAssistRetryCooldownMs = 2 * 60 * 1000
+const maxPersistedPeerHints = 32
+
+const defaultIpfsBootstrapNodes = [
+  '/ip4/135.181.40.10/tcp/40405/ipfs/QmNYWtiwM1UfeCmHfWSdefrMuQdg6nycY5yS64HYqWCUhD',
+  '/ip4/157.230.61.115/tcp/40403/ipfs/QmQHYY49pWWFeXXdR9rKd31bHRqRi2E4tk4CXDgYJZq5ry',
+  '/ip4/124.71.148.124/tcp/40405/ipfs/QmWH9D4DjSvQyWyRUw76AopCfRS5CPR2gRnRoxP3QFaefx',
+  '/ip4/139.59.42.4/tcp/40405/ipfs/QmNagyEFFNMdkFT7W6HivNjJAmYB6zjrr7ussnC8ys9b7f',
+]
 
 const getBinarySuffix = () => (process.platform === 'win32' ? '.exe' : '')
 
@@ -37,6 +50,7 @@ const getNodeDataDir = () => path.join(getNodeDir(), 'datadir')
 const getNodeFile = () => path.join(getNodeDir(), idenaBin + getBinarySuffix())
 
 const getNodeConfigFile = () => path.join(getNodeDir(), 'config.json')
+const getNodePeerHintsFile = () => path.join(getNodeDir(), 'peer-hints.json')
 
 const getTempNodeFile = () =>
   path.join(getNodeDir(), `new-${idenaBin}${getBinarySuffix()}`)
@@ -49,6 +63,276 @@ const getNodeIpfsDir = () => path.join(getNodeDataDir(), 'ipfs')
 const getNodeLogsFile = () => path.join(getNodeDataDir(), 'logs', 'output.log')
 
 const getNodeErrorFile = () => path.join(getNodeDataDir(), 'logs', 'error.log')
+
+function uniqStrings(values) {
+  return [...new Set(values.filter(Boolean))]
+}
+
+function toArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function normalizePeerAddr(value) {
+  if (typeof value !== 'string') return ''
+  const text = value.trim()
+  if (!text) return ''
+  return text.replace('/p2p/', '/ipfs/')
+}
+
+function parsePeerHintList(value) {
+  if (typeof value !== 'string') return []
+  return uniqStrings(
+    value
+      .split(/[\n,]/)
+      .map(normalizePeerAddr)
+      .filter((item) => item.includes('/ipfs/'))
+  )
+}
+
+function getConfiguredBootstrapNodes(existingConfig = {}) {
+  const existingBootNodes = toArray(existingConfig?.IpfsConf?.BootNodes).map(
+    normalizePeerAddr
+  )
+  const extraBootNodes = parsePeerHintList(
+    process.env.IDENA_NODE_EXTRA_IPFS_BOOTNODES
+  )
+
+  return uniqStrings([
+    ...existingBootNodes,
+    ...defaultIpfsBootstrapNodes,
+    ...extraBootNodes,
+  ])
+}
+
+async function ensureNodeConfig() {
+  await fs.ensureDir(getNodeDir())
+
+  const configFile = getNodeConfigFile()
+  let currentConfig = {}
+
+  try {
+    if (await fs.pathExists(configFile)) {
+      currentConfig = (await fs.readJson(configFile)) || {}
+    }
+  } catch (error) {
+    logger.warn('cannot parse node config, recreating managed config', {
+      error: error.toString(),
+    })
+  }
+
+  const nextConfig = {
+    ...currentConfig,
+    IpfsConf: {
+      ...((currentConfig && currentConfig.IpfsConf) || {}),
+      BootNodes: getConfiguredBootstrapNodes(currentConfig),
+    },
+  }
+
+  await fs.writeJson(configFile, nextConfig, {spaces: 2})
+  return nextConfig
+}
+
+async function readPeerHints() {
+  const peerHintsFile = getNodePeerHintsFile()
+
+  try {
+    if (!(await fs.pathExists(peerHintsFile))) {
+      return []
+    }
+
+    const data = (await fs.readJson(peerHintsFile)) || {}
+    return toArray(data.peers)
+      .map(({addr, lastSeenAt, source}) => ({
+        addr: normalizePeerAddr(addr),
+        lastSeenAt,
+        source: source || 'cache',
+      }))
+      .filter(({addr}) => addr.includes('/ipfs/'))
+  } catch (error) {
+    logger.warn('cannot read node peer hints', {error: error.toString()})
+    return []
+  }
+}
+
+async function writePeerHints(peers) {
+  const dedupedPeers = uniqStrings(
+    peers.map((peer) => normalizePeerAddr(peer && peer.addr))
+  )
+    .slice(0, maxPersistedPeerHints)
+    .map((addr, index) => ({
+      addr,
+      lastSeenAt:
+        peers.find((peer) => normalizePeerAddr(peer && peer.addr) === addr)
+          ?.lastSeenAt || new Date().toISOString(),
+      source: (() => {
+        const matchedPeer = peers.find(
+          (peer) => normalizePeerAddr(peer && peer.addr) === addr
+        )
+
+        if (matchedPeer && matchedPeer.source) {
+          return matchedPeer.source
+        }
+
+        return index < defaultIpfsBootstrapNodes.length ? 'bootstrap' : 'cache'
+      })(),
+    }))
+
+  await fs.ensureDir(getNodeDir())
+  await fs.writeJson(
+    getNodePeerHintsFile(),
+    {
+      version: 1,
+      peers: dedupedPeers,
+      updatedAt: new Date().toISOString(),
+    },
+    {spaces: 2}
+  )
+}
+
+async function rememberPeers(peers) {
+  const now = new Date().toISOString()
+  const persistedPeers = await readPeerHints()
+  const nextPeers = [
+    ...peers
+      .map((peer) => ({
+        addr: normalizePeerAddr(peer && (peer.addr || peer)),
+        lastSeenAt: now,
+        source: 'runtime',
+      }))
+      .filter(({addr}) => addr.includes('/ipfs/')),
+    ...persistedPeers,
+  ]
+
+  if (nextPeers.length > 0) {
+    await writePeerHints(nextPeers)
+  }
+}
+
+function createRpcClient(port) {
+  return axios.create({
+    baseURL: `http://127.0.0.1:${port}`,
+    timeout: 10 * 1000,
+    validateStatus: (status) => status >= 200 && status < 500,
+    headers: {'Content-Type': 'application/json'},
+    transformRequest: [(data) => JSON.stringify(data)],
+    transformResponse: [(data) => JSON.parse(data)],
+  })
+}
+
+async function callNodeRpc(rpcClient, apiKey, method, params = []) {
+  const {data} = await rpcClient.post('/', {
+    jsonrpc: '2.0',
+    method,
+    params,
+    id: Date.now(),
+    key: apiKey,
+  })
+
+  if (data && data.error) {
+    throw new Error(data.error.message || `rpc error for ${method}`)
+  }
+
+  return data ? data.result : undefined
+}
+
+function getNodeVerbosity() {
+  const explicitVerbosity = Number.parseInt(
+    process.env.IDENA_NODE_VERBOSITY,
+    10
+  )
+
+  if (Number.isInteger(explicitVerbosity) && explicitVerbosity >= 0) {
+    return explicitVerbosity
+  }
+
+  return process.env.NODE_ENV === 'development'
+    ? devNodeVerbosity
+    : defaultNodeVerbosity
+}
+
+function startPeerAssist({port, apiKey, onLog, bootstrapNodes = []}) {
+  const rpcClient = createRpcClient(port)
+  const attemptTimestamps = new Map()
+  let timer = null
+  let stopped = false
+  let running = false
+
+  const emitLog = (message) => {
+    logger.info(message)
+    if (onLog) {
+      onLog([`[peer-assist] ${message}`])
+    }
+  }
+
+  const run = async () => {
+    if (stopped || running) {
+      return
+    }
+    running = true
+
+    try {
+      const peers = toArray(await callNodeRpc(rpcClient, apiKey, 'net_peers'))
+
+      if (peers.length > 0) {
+        await rememberPeers(peers)
+        schedule()
+        return
+      }
+
+      const persistedPeerHints = await readPeerHints()
+      const candidateHints = uniqStrings([
+        ...persistedPeerHints.map(({addr}) => addr),
+        ...bootstrapNodes,
+      ])
+
+      const retryCandidates = candidateHints.filter((addr) => {
+        const lastAttemptAt = attemptTimestamps.get(addr)
+        return (
+          !lastAttemptAt ||
+          Date.now() - lastAttemptAt >= peerAssistRetryCooldownMs
+        )
+      })
+
+      if (retryCandidates.length === 0) {
+        schedule()
+        return
+      }
+
+      emitLog(`retrying ${retryCandidates.length} peer hint(s)`)
+
+      await Promise.all(
+        retryCandidates.slice(0, 8).map(async (addr) => {
+          attemptTimestamps.set(addr, Date.now())
+          try {
+            await callNodeRpc(rpcClient, apiKey, 'net_addPeer', [addr])
+          } catch (error) {
+            emitLog(`peer hint failed: ${addr} (${error.message})`)
+          }
+        })
+      )
+    } catch (error) {
+      emitLog(`peer assist rpc probe failed (${error.message})`)
+    } finally {
+      running = false
+      schedule()
+    }
+  }
+
+  function schedule(delay = peerAssistRetryIntervalMs) {
+    if (stopped) return
+    clearTimeout(timer)
+    timer = setTimeout(run, delay)
+  }
+
+  schedule(peerAssistInitialDelayMs)
+
+  return {
+    stop() {
+      stopped = true
+      clearTimeout(timer)
+    },
+  }
+}
 
 function isCompatibleAssetName(assetName) {
   if (!assetName) return false
@@ -158,10 +442,14 @@ async function buildLocalArm64PinnedNode(tempNodeFile, onProgress) {
   }
 
   if (fs.existsSync(buildScript)) {
-    await runCommand('/usr/bin/arch', ['-arm64', '/bin/bash', buildScript, tempNodeFile], {
-      cwd: repoDir,
-      env,
-    })
+    await runCommand(
+      '/usr/bin/arch',
+      ['-arm64', '/bin/bash', buildScript, tempNodeFile],
+      {
+        cwd: repoDir,
+        env,
+      }
+    )
   } else {
     const wasmBindingDir = path.resolve(repoDir, '..', 'idena-wasm-binding')
     const wasmBindingGoMod = path.join(wasmBindingDir, 'go.mod')
@@ -352,6 +640,8 @@ async function startNode(
   onLog,
   onExit
 ) {
+  const managedNodeConfig = await ensureNodeConfig()
+
   const parameters = [
     '--datadir',
     getNodeDataDir(),
@@ -363,6 +653,8 @@ async function startNode(
     ipfsPort,
     '--apikey',
     apiKey,
+    '--verbosity',
+    String(getNodeVerbosity()),
   ]
 
   const version = await getCurrentVersion(false)
@@ -371,13 +663,16 @@ async function startNode(
     parameters.push('--autoonline')
   }
 
-  const configFile = getNodeConfigFile()
-  if (fs.existsSync(configFile)) {
-    parameters.push('--config')
-    parameters.push(configFile)
-  }
+  parameters.push('--config')
+  parameters.push(getNodeConfigFile())
 
   const idenaNode = spawn(getNodeFile(), parameters)
+  idenaNode.peerAssist = startPeerAssist({
+    port,
+    apiKey,
+    onLog,
+    bootstrapNodes: getConfiguredBootstrapNodes(managedNodeConfig),
+  })
 
   idenaNode.stdout.on('data', (data) => {
     const str = data.toString()
@@ -397,6 +692,9 @@ async function startNode(
   })
 
   idenaNode.on('exit', (code) => {
+    if (idenaNode.peerAssist) {
+      idenaNode.peerAssist.stop()
+    }
     if (useLogging) {
       console.info(`child process exited with code ${code}`)
     }
@@ -413,9 +711,14 @@ async function stopNode(node) {
     try {
       if (!node) {
         resolve('node process not found')
+        return
+      }
+      if (node && node.peerAssist) {
+        node.peerAssist.stop()
       }
       if (node.exitCode != null) {
         resolve(`node already exited with code ${node.exitCode}`)
+        return
       }
       if (process.platform !== 'win32') {
         kill(node.pid, 'SIGINT', (err) => {

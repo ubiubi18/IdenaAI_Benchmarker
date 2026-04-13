@@ -3,50 +3,19 @@ import Modal from 'react-modal';
 import { IdenaApprovedAds, type ApprovedAd } from 'idena-approved-ads';
 import { type Post, type Poster, type Tip, type RpcPostCostEstimate, breakingChanges, estimateRpcPostCost, getNewPosterAndPost, getReplyPosts, deOrphanReplyPosts, getTransactionDetails, getBlockHeightFromTxHash, submitPost, processTip, submitSendTip, supportedImageTypes, storeFileToIpfs, getPastTxsWithIdenaIndexerApi, getRpcClient, type RpcClient, copyPostTx } from './logic/asyncUtils';
 import { getDisplayAddress, getTextAndMediaForPost, isObjectEmpty, str2bytes } from './logic/utils';
+import { installDesktopBootstrapListener, isEmbeddedDesktopFrame, readDesktopBootstrap, type DesktopBootstrap } from './logic/desktopBootstrap';
 import WhatIsIdenaPng from './assets/whatisidena.png';
 import { Link, Outlet } from 'react-router';
 import type { MouseEventLocal, PostDomSettingsCollection, PostMediaAttachment } from './App.exports';
 import ModalLikesTipsComponent from './components/ModalLikesTipsComponent';
 import ModalSendTipComponent from './components/ModalSendTipComponent';
-
-type DesktopBootstrap = {
-    embeddedMode?: string;
-    nodeUrl?: string;
-    nodeApiKey?: string;
-    indexerApiUrl?: string;
-    sendingTxs?: string;
-    findingPastPosts?: string;
-};
-
-const bootstrapStorageKey = 'idenaSocialDesktopBootstrap';
-
-const readDesktopBootstrap = (): DesktopBootstrap => {
-    if (typeof window === 'undefined') {
-        return {};
-    }
-
-    try {
-        const raw = window.localStorage.getItem(bootstrapStorageKey);
-        if (!raw) {
-            return {};
-        }
-
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch (error) {
-        console.error(error);
-        return {};
-    }
-};
-
-const desktopBootstrap = readDesktopBootstrap();
-const isDesktopOnchainMode = desktopBootstrap.embeddedMode === 'desktop-onchain';
 const socialBaseUrl = new URL('./', window.location.href);
 const officialIndexerApiUrl = 'https://api.idena.io';
 
-const defaultNodeUrl = desktopBootstrap.nodeUrl || 'http://localhost:9119';
-const defaultNodeApiKey = desktopBootstrap.nodeApiKey || '';
-const initIndexerApiUrl = desktopBootstrap.indexerApiUrl || officialIndexerApiUrl;
+const initialDesktopBootstrap = readDesktopBootstrap();
+const defaultNodeUrl = 'http://localhost:9119';
+const defaultNodeApiKey = '';
+const initIndexerApiUrl = officialIndexerApiUrl;
 const contractAddressCurrent = '0xa1c5c1A8c6a1Af596078A5c9653F24c216fE1cb2';
 const contractAddress3 = '0xc0324f3Cf8158D6E27dc0A07c221636056174718';
 const contractAddress2 = '0xC5B35B4Dc4359Cc050D502564E789A374f634fA9';
@@ -111,15 +80,20 @@ const customModalStyles = {
 Modal.setAppElement('#root');
 
 function App() {
+    const [desktopBootstrap, setDesktopBootstrap] = useState<DesktopBootstrap>(initialDesktopBootstrap);
+    const [desktopBootstrapReady, setDesktopBootstrapReady] = useState<boolean>(
+        !isEmbeddedDesktopFrame() || Object.keys(initialDesktopBootstrap).length > 0,
+    );
+    const isDesktopOnchainMode = desktopBootstrap.embeddedMode === 'desktop-onchain';
     const [nodeAvailable, setNodeAvailable] = useState<boolean>(true);
     const nodeAvailableRef = useRef(nodeAvailable);
     const rpcClientRef = useRef(undefined as undefined | RpcClient);
     const [viewOnlyNode, setViewOnlyNode] = useState<boolean>(false);
-    const [inputNodeApplied, setInputNodeApplied] = useState<boolean>(true);
+    const [inputNodeApplied, setInputNodeApplied] = useState<boolean>(desktopBootstrapReady);
     const [inputPostersAddress, setInputPostersAddress] = useState<string>(zeroAddress);
     const [inputPostersAddressApplied, setInputPostersAddressApplied] = useState<boolean>(true);
-    const [inputNodeUrl, setInputNodeUrl] = useState<string>(defaultNodeUrl);
-    const [inputNodeKey, setInputNodeKey] = useState<string>(defaultNodeApiKey);
+    const [inputNodeUrl, setInputNodeUrl] = useState<string>(desktopBootstrap.nodeUrl || defaultNodeUrl);
+    const [inputNodeKey, setInputNodeKey] = useState<string>(desktopBootstrap.nodeApiKey || defaultNodeApiKey);
     const [postersAddress, setPostersAddress] = useState<string>(zeroAddress);
     const postersAddressRef = useRef<string>(postersAddress);
     const [postersAddressInvalid, setPostersAddressInvalid] = useState<boolean>(false);
@@ -142,11 +116,11 @@ function App() {
     const [inputFindingPastPosts, setInputFindingPastPosts] = useState<string>(desktopBootstrap.findingPastPosts || 'rpc');
     const inputFindingPastPostsRef = useRef(inputFindingPastPosts);
     const [noMorePastBlocks, setNoMorePastBlocks] = useState<boolean>(false);
-    const [indexerApiUrl, setIdenaIndexerApiUrl] = useState<string>(initIndexerApiUrl);
+    const [indexerApiUrl, setIdenaIndexerApiUrl] = useState<string>(desktopBootstrap.indexerApiUrl || initIndexerApiUrl);
     const indexerApiUrlRef = useRef(indexerApiUrl);
     const [indexerApiUrlInvalid, setIdenaIndexerApiUrlInvalid] = useState<boolean>(false);
     const indexerApiUrlInvalidRef = useRef(indexerApiUrlInvalid);
-    const [inputIdenaIndexerApiUrl, setInputIdenaIndexerApiUrl] = useState<string>(initIndexerApiUrl);
+    const [inputIdenaIndexerApiUrl, setInputIdenaIndexerApiUrl] = useState<string>(desktopBootstrap.indexerApiUrl || initIndexerApiUrl);
     const [inputIdenaIndexerApiUrlApplied, setInputIdenaIndexerApiUrlApplied] = useState<boolean>(true);
     const replyPostsTreeRef = useRef({} as Record<string, string>);
     const deOrphanedReplyPostsTreeRef = useRef({} as Record<string, string>);
@@ -171,6 +145,27 @@ function App() {
     const [mainComposerCostEstimateLoading, setMainComposerCostEstimateLoading] = useState<boolean>(false);
     const copyTxHandlerEnabledRef = useRef<boolean>(true);
     const lastUsedNonceSavedRef = useRef<number>(0);
+
+    useEffect(() => {
+        return installDesktopBootstrapListener((nextBootstrap) => {
+            setDesktopBootstrap(nextBootstrap);
+            setDesktopBootstrapReady(true);
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!desktopBootstrapReady || !isDesktopOnchainMode) {
+            return;
+        }
+
+        setInputNodeUrl(desktopBootstrap.nodeUrl || defaultNodeUrl);
+        setInputNodeKey(desktopBootstrap.nodeApiKey || defaultNodeApiKey);
+        setInputSendingTxs(desktopBootstrap.sendingTxs || 'rpc');
+        setInputFindingPastPosts(desktopBootstrap.findingPastPosts || 'rpc');
+        setInputIdenaIndexerApiUrl(desktopBootstrap.indexerApiUrl || officialIndexerApiUrl);
+        setInputIdenaIndexerApiUrlApplied(true);
+        setInputNodeApplied(true);
+    }, [desktopBootstrap, desktopBootstrapReady, isDesktopOnchainMode]);
 
 
     const setRpcClient = (idenaNodeUrl: string, idenaNodeApiKey: string, setNodeAvailable: React.Dispatch<React.SetStateAction<boolean>>) => {
@@ -503,7 +498,13 @@ function App() {
                     throw 'this should not happen';
                 }
 
-                const transactionsWithDetails = await getTransactionDetails(transactions, contractAddress, allMethods, rpcClientRef.current!);
+                const transactionsWithDetails = await getTransactionDetails(
+                    transactions,
+                    contractAddress,
+                    allMethods,
+                    rpcClientRef.current!,
+                    isRecurseBackwardWithIndexerApi ? indexerApiUrlRef.current : undefined,
+                );
 
                 let lastValidTransaction;
 
