@@ -14,7 +14,7 @@ export function VotingNotificationProvider(props) {
   const {address} = useIdentityState()
   const {epoch} = useEpochState() ?? {epoch: -1}
 
-  const [current, send] = useMachine(
+  const [votingNotificationMachine] = React.useState(() =>
     Machine(
       {
         context: {
@@ -93,6 +93,7 @@ export function VotingNotificationProvider(props) {
       }
     )
   )
+  const [current, send] = useMachine(votingNotificationMachine)
 
   React.useEffect(() => {
     if (epoch && address) send('START', {epoch, address})

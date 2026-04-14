@@ -40,8 +40,13 @@ export function useHardFork() {
     () => skipSSR(() => createVotingStatusDb(nodeRemoteVersion)),
     [nodeRemoteVersion]
   )
+  const statusDbRef = React.useRef(statusDb)
 
-  const [current, send] = useMachine(
+  React.useEffect(() => {
+    statusDbRef.current = statusDb
+  }, [statusDb])
+
+  const [hardForkMachine] = React.useState(() =>
     createMachine(
       {
         context: {
@@ -81,7 +86,7 @@ export function useHardFork() {
                   didActivate:
                     forkChangelog === null ||
                     highestUpgrade >= forkChangelog.Upgrade,
-                  votingStatus: await statusDb.get(),
+                  votingStatus: await statusDbRef.current?.get(),
                   ...nextTiming,
                 }
               },
@@ -121,11 +126,12 @@ export function useHardFork() {
       {
         actions: {
           // eslint-disable-next-line no-shadow
-          persist: ({votingStatus}) => statusDb.set(votingStatus),
+          persist: ({votingStatus}) => statusDbRef.current?.set(votingStatus),
         },
       }
     )
   )
+  const [current, send] = useMachine(hardForkMachine)
 
   React.useEffect(() => {
     if (isFork(nodeCurrentVersion, nodeRemoteVersion)) {

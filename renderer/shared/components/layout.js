@@ -509,7 +509,7 @@ function SyncingApp() {
 
   const {address} = useIdentityState()
 
-  const [current] = useMachine(
+  const [peerSyncMachine] = React.useState(() =>
     createMachine({
       context: {
         peers: [],
@@ -539,6 +539,7 @@ function SyncingApp() {
       },
     })
   )
+  const [current] = useMachine(peerSyncMachine)
   const {peers} = current.context
 
   const {runInternalNode, useExternalNode} = useSettingsState()
