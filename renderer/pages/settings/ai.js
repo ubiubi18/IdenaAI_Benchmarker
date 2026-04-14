@@ -322,6 +322,24 @@ function formatLocalAiTrainingPackageTimestamp(value) {
   return nextDate.toLocaleString()
 }
 
+function formatLocalAiArtifactSize(value) {
+  const sizeBytes = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(sizeBytes) || sizeBytes < 0) {
+    return '-'
+  }
+
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`
+  }
+
+  if (sizeBytes < 1024 * 1024) {
+    return `${(sizeBytes / 1024).toFixed(1)} KB`
+  }
+
+  return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
 function normalizeLocalAiTrainingPackageReviewStatus(value) {
   const reviewStatus = String(value || '')
     .trim()
@@ -375,6 +393,41 @@ function describeLocalAiTrainingPackageFederatedReady(value, t) {
   return {
     label: t('No'),
     color: 'muted',
+  }
+}
+
+function normalizeLocalAiAdapterDeltaType(value) {
+  const deltaType = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  if (!deltaType) {
+    return 'pending_adapter'
+  }
+
+  return deltaType
+}
+
+function describeLocalAiAdapterDeltaType(value, t) {
+  switch (normalizeLocalAiAdapterDeltaType(value)) {
+    case 'lora_adapter':
+      return {
+        label: t('Concrete LoRA adapter'),
+        color: 'green.500',
+      }
+    case 'pending_adapter':
+      return {
+        label: t('Pending adapter'),
+        color: 'orange.500',
+      }
+    default: {
+      const label = String(value || '').trim() || 'pending_adapter'
+
+      return {
+        label,
+        color: 'blue.500',
+      }
+    }
   }
 }
 
@@ -524,6 +577,12 @@ export default function AiSettingsPage() {
   const [localAiPackagePreview, setLocalAiPackagePreview] = useState(null)
   const [localAiPackageExportPath, setLocalAiPackageExportPath] = useState('')
   const [localAiPackageError, setLocalAiPackageError] = useState('')
+  const [localAiAdapterSourcePath, setLocalAiAdapterSourcePath] = useState('')
+  const [isRegisteringLocalAiAdapter, setIsRegisteringLocalAiAdapter] =
+    useState(false)
+  const [isLoadingLocalAiAdapter, setIsLoadingLocalAiAdapter] = useState(false)
+  const [localAiAdapterManifest, setLocalAiAdapterManifest] = useState(null)
+  const [localAiAdapterError, setLocalAiAdapterError] = useState('')
   const [providerKeyStatus, setProviderKeyStatus] = useState({
     checked: false,
     checking: true,
@@ -968,6 +1027,83 @@ export default function AiSettingsPage() {
     [localAiPackageEpoch, t]
   )
 
+  const runLocalAiRegisterAdapterArtifact = useCallback(async () => {
+    const epoch = String(localAiPackageEpoch || '').trim()
+    const sourcePath = String(localAiAdapterSourcePath || '').trim()
+
+    if (!epoch) {
+      setLocalAiAdapterError(
+        t('Enter an epoch before registering a local adapter artifact.')
+      )
+      return
+    }
+
+    if (!sourcePath) {
+      setLocalAiAdapterError(
+        t('Provide an absolute adapter file path before registering it.')
+      )
+      return
+    }
+
+    setIsRegisteringLocalAiAdapter(true)
+    setLocalAiAdapterError('')
+
+    try {
+      const result = await ensureLocalAiBridge().registerAdapterArtifact({
+        ...buildLocalAiRuntimePayload(),
+        epoch,
+        sourcePath,
+      })
+
+      setLocalAiAdapterManifest(result)
+    } catch (error) {
+      setLocalAiAdapterManifest(null)
+      setLocalAiAdapterError(formatErrorForToast(error))
+    } finally {
+      setIsRegisteringLocalAiAdapter(false)
+    }
+  }, [
+    buildLocalAiRuntimePayload,
+    localAiAdapterSourcePath,
+    localAiPackageEpoch,
+    t,
+  ])
+
+  const runLocalAiLoadAdapterArtifact = useCallback(async () => {
+    const epoch = String(localAiPackageEpoch || '').trim()
+
+    if (!epoch) {
+      setLocalAiAdapterError(
+        t('Enter an epoch before loading a registered adapter artifact.')
+      )
+      return
+    }
+
+    setIsLoadingLocalAiAdapter(true)
+    setLocalAiAdapterError('')
+
+    try {
+      const result = await ensureLocalAiBridge().loadAdapterArtifact({
+        ...buildLocalAiRuntimePayload(),
+        epoch,
+      })
+
+      setLocalAiAdapterManifest(result)
+      setLocalAiAdapterSourcePath(
+        String(
+          result && result.adapterArtifact && result.adapterArtifact.sourcePath
+            ? result.adapterArtifact.sourcePath
+            : ''
+        ).trim()
+      )
+    } catch (error) {
+      setLocalAiAdapterManifest(null)
+      setLocalAiAdapterError(formatErrorForToast(error))
+    } finally {
+      setIsLoadingLocalAiAdapter(false)
+    }
+  }, [buildLocalAiRuntimePayload, localAiPackageEpoch, t])
+
   const hasSessionKeyForProvider = async (provider) => {
     const bridge = ensureBridge()
     const result = await bridge.hasProviderKey({provider})
@@ -1187,6 +1323,50 @@ export default function AiSettingsPage() {
       ),
     [localAiPackagePreview, t]
   )
+  const localAiPackageContractUi = useMemo(
+    () =>
+      describeLocalAiAdapterDeltaType(
+        localAiPackagePreview &&
+          localAiPackagePreview.package &&
+          localAiPackagePreview.package.deltaType,
+        t
+      ),
+    [localAiPackagePreview, t]
+  )
+  const localAiAdapterContractUi = useMemo(
+    () =>
+      describeLocalAiAdapterDeltaType(
+        localAiAdapterManifest ? localAiAdapterManifest.deltaType : '',
+        t
+      ),
+    [localAiAdapterManifest, t]
+  )
+  const localAiPackageNeedsRefreshAfterAdapterRegistration = useMemo(() => {
+    if (
+      !localAiPackagePreview ||
+      !localAiPackagePreview.package ||
+      !localAiAdapterManifest
+    ) {
+      return false
+    }
+
+    const previewEpoch = Number.parseInt(
+      localAiPackagePreview.package.epoch || localAiPackagePreview.epoch,
+      10
+    )
+    const adapterEpoch = Number.parseInt(localAiAdapterManifest.epoch, 10)
+
+    if (!Number.isFinite(previewEpoch) || !Number.isFinite(adapterEpoch)) {
+      return false
+    }
+
+    return (
+      previewEpoch === adapterEpoch &&
+      normalizeLocalAiAdapterDeltaType(
+        localAiPackagePreview.package.deltaType
+      ) !== 'lora_adapter'
+    )
+  }, [localAiAdapterManifest, localAiPackagePreview])
 
   return (
     <SettingsLayout>
@@ -2840,6 +3020,135 @@ export default function AiSettingsPage() {
                           </Stack>
                         </Box>
                       ) : null}
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        p={3}
+                      >
+                        <Stack spacing={3}>
+                          <Stack spacing={1}>
+                            <Text fontWeight={500}>
+                              {t('Adapter artifact registration')}
+                            </Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'Register one local adapter file for this epoch to promote federated exports from pending metadata to a concrete adapter contract.'
+                              )}
+                            </Text>
+                          </Stack>
+                          <SettingsFormControl>
+                            <SettingsFormLabel>
+                              {t('Local adapter file path')}
+                            </SettingsFormLabel>
+                            <Input
+                              value={localAiAdapterSourcePath}
+                              onChange={(e) =>
+                                setLocalAiAdapterSourcePath(e.target.value)
+                              }
+                              placeholder="/absolute/path/to/epoch-12-lora.safetensors"
+                            />
+                          </SettingsFormControl>
+                          <Stack isInline spacing={2}>
+                            <SecondaryButton
+                              isLoading={isRegisteringLocalAiAdapter}
+                              onClick={runLocalAiRegisterAdapterArtifact}
+                            >
+                              {t('Register Adapter')}
+                            </SecondaryButton>
+                            <SecondaryButton
+                              isLoading={isLoadingLocalAiAdapter}
+                              onClick={runLocalAiLoadAdapterArtifact}
+                            >
+                              {t('Load Registered Adapter')}
+                            </SecondaryButton>
+                          </Stack>
+                          {localAiAdapterError ? (
+                            <Text color="orange.500" fontSize="sm">
+                              {localAiAdapterError}
+                            </Text>
+                          ) : null}
+                          {localAiAdapterManifest ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.50"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text
+                                  color={localAiAdapterContractUi.color}
+                                  fontSize="sm"
+                                  fontWeight={600}
+                                >
+                                  {t('Stored contract')}:{' '}
+                                  {localAiAdapterContractUi.label}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Registered at')}:{' '}
+                                  {formatLocalAiTrainingPackageTimestamp(
+                                    localAiAdapterManifest.registeredAt
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Adapter manifest path')}:{' '}
+                                  {localAiAdapterManifest.adapterManifestPath}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Public model')}:{' '}
+                                  {localAiAdapterManifest.publicModelId || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Base model')}:{' '}
+                                  {localAiAdapterManifest.baseModelId || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Adapter format')}:{' '}
+                                  {localAiAdapterManifest.adapterFormat || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Adapter SHA-256')}:{' '}
+                                  {localAiAdapterManifest.adapterSha256 || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Training config hash')}:{' '}
+                                  {localAiAdapterManifest.trainingConfigHash ||
+                                    '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact file')}:{' '}
+                                  {(localAiAdapterManifest.adapterArtifact &&
+                                    localAiAdapterManifest.adapterArtifact
+                                      .file) ||
+                                    '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact size')}:{' '}
+                                  {formatLocalAiArtifactSize(
+                                    localAiAdapterManifest.adapterArtifact &&
+                                      localAiAdapterManifest.adapterArtifact
+                                        .sizeBytes
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Source path')}:{' '}
+                                  {(localAiAdapterManifest.adapterArtifact &&
+                                    localAiAdapterManifest.adapterArtifact
+                                      .sourcePath) ||
+                                    '-'}
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : null}
+                          {localAiPackageNeedsRefreshAfterAdapterRegistration ? (
+                            <Text color="blue.500" fontSize="xs">
+                              {t(
+                                'A package preview for this epoch still shows a pending adapter contract. Regenerate the package preview to refresh it to the stored adapter registration.'
+                              )}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                      </Box>
                       {localAiPackagePreview &&
                       localAiPackagePreview.package ? (
                         <Box
@@ -2875,6 +3184,14 @@ export default function AiSettingsPage() {
                                 {t('Federated-ready')}:{' '}
                                 {localAiPackageFederatedReadyUi.label}
                               </Text>
+                              <Text
+                                color={localAiPackageContractUi.color}
+                                fontSize="sm"
+                                fontWeight={500}
+                              >
+                                {t('Contract state')}:{' '}
+                                {localAiPackageContractUi.label}
+                              </Text>
                               <Text color="muted" fontSize="sm">
                                 {t('Schema version')}:{' '}
                                 {localAiPackagePreview.package.schemaVersion}
@@ -2900,6 +3217,38 @@ export default function AiSettingsPage() {
                               <Text color="muted" fontSize="sm">
                                 {t('Package path')}:{' '}
                                 {localAiPackagePreview.packagePath}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Adapter format')}:{' '}
+                                {localAiPackagePreview.package.adapterFormat ||
+                                  '-'}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Adapter SHA-256')}:{' '}
+                                {localAiPackagePreview.package.adapterSha256 ||
+                                  '-'}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Training config hash')}:{' '}
+                                {localAiPackagePreview.package
+                                  .trainingConfigHash || '-'}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Artifact file')}:{' '}
+                                {(localAiPackagePreview.package
+                                  .adapterArtifact &&
+                                  localAiPackagePreview.package.adapterArtifact
+                                    .file) ||
+                                  '-'}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Artifact size')}:{' '}
+                                {formatLocalAiArtifactSize(
+                                  localAiPackagePreview.package
+                                    .adapterArtifact &&
+                                    localAiPackagePreview.package
+                                      .adapterArtifact.sizeBytes
+                                )}
                               </Text>
                               <Text color="muted" fontSize="xs">
                                 {t(

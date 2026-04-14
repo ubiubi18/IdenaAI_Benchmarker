@@ -274,6 +274,7 @@ describe('local-ai manager', () => {
         'epoch-12.json'
       ),
       baseModelId: LOCAL_AI_BASE_MODEL_ID,
+      deltaType: 'lora_adapter',
       adapterFormat: 'peft_lora_v1',
       adapterSha256: storage.sha256(adapterBuffer),
       adapterArtifact: {
@@ -288,6 +289,7 @@ describe('local-ai manager', () => {
         'adapters',
         'epoch-12.json'
       ),
+      deltaType: 'lora_adapter',
       adapterSha256: storage.sha256(adapterBuffer),
       adapterArtifact: {
         file: 'epoch-12-registration.safetensors',

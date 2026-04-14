@@ -24,7 +24,6 @@ import duration from 'dayjs/plugin/duration'
 import {useQuery} from 'react-query'
 import {
   Avatar,
-  FloatDebug,
   GoogleTranslateButton,
   Toast,
   Tooltip,
@@ -1137,18 +1136,14 @@ export default function ViewVotingPage() {
       />
 
       {global.isDev && (
-        <>
-          <FloatDebug>{current.value}</FloatDebug>
-
-          <Box position="absolute" bottom={6} right={6}>
-            <VotingInspector
-              onTerminate={() => {
-                send('TERMINATE')
-              }}
-              {...current.context}
-            />
-          </Box>
-        </>
+        <Box position="absolute" bottom={6} right={6}>
+          <VotingInspector
+            onTerminate={() => {
+              send('TERMINATE')
+            }}
+            {...current.context}
+          />
+        </Box>
       )}
     </>
   )

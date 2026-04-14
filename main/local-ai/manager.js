@@ -985,6 +985,7 @@ function createLocalAiManager({
       contractVersion: modelReference.contractVersion,
       baseModelId: modelReference.baseModelId,
       baseModelHash: modelReference.baseModelHash,
+      deltaType: adapterContract.deltaType,
       adapterFormat: adapterContract.adapterFormat,
       adapterSha256: adapterContract.adapterSha256,
       trainingConfigHash: adapterContract.trainingConfigHash,
