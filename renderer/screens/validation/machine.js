@@ -107,6 +107,10 @@ export const createValidationMachine = ({
                                 log(),
                               ],
                             },
+                            onError: {
+                              target: 'check',
+                              actions: log(),
+                            },
                           },
                         },
                         check: {
