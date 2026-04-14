@@ -4,6 +4,7 @@ import {HASH_IN_MEMPOOL, callRpc} from '../../shared/utils/utils'
 import {NodeType} from '../../shared/types'
 
 export const activateMiningMachine = createMachine({
+  predictableActionArguments: true,
   id: 'mining',
   context: {
     mode: NodeType.Miner,

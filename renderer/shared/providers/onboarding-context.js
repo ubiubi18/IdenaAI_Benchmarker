@@ -46,6 +46,7 @@ export function OnboardingProvider({children}) {
   const [onboardingMachine] = React.useState(() =>
     createMachine(
       {
+        predictableActionArguments: true,
         context: {currentStep: null, dismissedSteps: null},
         initial: 'unknown',
         states: {

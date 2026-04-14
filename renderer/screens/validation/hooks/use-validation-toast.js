@@ -188,6 +188,7 @@ export function useTrackEpochPeriod({
 
 const trackEpochPeriodMachine = createMachine(
   {
+    predictableActionArguments: true,
     initial: 'idle',
     states: {
       idle: {

@@ -32,6 +32,7 @@ import {fetchNetworkSize} from '../../shared/api/dna'
 
 export const votingListMachine = createMachine(
   {
+    predictableActionArguments: true,
     context: {
       votings: [],
       filter: VotingListFilter.Todo,
@@ -296,6 +297,7 @@ export const votingListMachine = createMachine(
 
 export const votingMachine = createMachine(
   {
+    predictableActionArguments: true,
     id: 'voting',
     initial: 'unknown',
     states: {
@@ -481,6 +483,7 @@ export const votingMachine = createMachine(
 export const createNewVotingMachine = (epoch, address) =>
   createMachine(
     {
+      predictableActionArguments: true,
       context: {
         epoch,
         address,
@@ -965,6 +968,7 @@ export const createNewVotingMachine = (epoch, address) =>
 export const createViewVotingMachine = (id, epoch, address) =>
   createMachine(
     {
+      predictableActionArguments: true,
       id: 'viewVoting',
       context: {
         id,

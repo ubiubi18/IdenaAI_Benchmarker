@@ -830,7 +830,7 @@ i18n.use(initReactI18next).init({
     ja: {translation: ja_translation, error: ja_error},
     el: {translation: el_translation, error: el_error},
   },
-  lng: loadPersistentStateValue('settings', 'lng'),
+  lng: loadPersistentStateValue('settings', 'lng') || 'en',
   fallbackLng: 'en',
   keySeparator: false,
   interpolation: {

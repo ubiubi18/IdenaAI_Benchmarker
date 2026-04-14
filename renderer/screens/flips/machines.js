@@ -1418,6 +1418,7 @@ function withImageSearchTimeout(promise, timeoutMs, message) {
 }
 
 export const imageSearchMachine = createMachine({
+  predictableActionArguments: true,
   context: {
     images: [],
     query: '',

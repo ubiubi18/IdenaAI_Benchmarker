@@ -46,6 +46,7 @@ export function ExportPrivateKeyDialog({onClose, ...props}) {
 
   const [current, send] = useMachine(
     createMachine({
+      predictableActionArguments: true,
       initial: 'password',
       states: {
         password: {

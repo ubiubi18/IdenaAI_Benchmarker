@@ -35,6 +35,7 @@ import {loadValidationState} from '../../screens/validation/utils'
 import {IdentityStatus, EpochPeriod, OnboardingStep} from '../types'
 import {useVotingNotification} from '../providers/voting-notification-context'
 import {useOnboarding} from '../providers/onboarding-context'
+import {APP_VERSION_FALLBACK, getSharedGlobal} from '../utils/shared-global'
 import {
   onboardingPromotingStep,
   onboardingShowingStep,
@@ -768,6 +769,7 @@ export function Version({
   onResetForkVoting,
 }) {
   const {t} = useTranslation()
+  const appVersion = getSharedGlobal('appVersion', APP_VERSION_FALLBACK)
 
   const [
     {
@@ -787,7 +789,7 @@ export function Version({
   return (
     <Stack spacing="2">
       <Stack spacing="px" mx="2">
-        <VersionText>{`IdenaAI v.${global.appVersion}`}</VersionText>
+        <VersionText>{`IdenaAI v.${appVersion}`}</VersionText>
         <VersionText>
           {t('Node version: {{version}}', {
             version: nodeCurrentVersion,
