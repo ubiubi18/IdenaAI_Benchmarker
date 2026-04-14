@@ -512,6 +512,39 @@ async function verifyBundleSignature({
   return {ok: false, reason: 'signature_invalid'}
 }
 
+function normalizeFlipHashList(value) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .sort()
+    : []
+}
+
+function normalizePackageEligibleFlipHashes(candidatePackage = {}) {
+  return normalizeFlipHashList(
+    Array.isArray(candidatePackage.items)
+      ? candidatePackage.items.map((item) =>
+          item && typeof item === 'object' ? item.flipHash : null
+        )
+      : []
+  )
+}
+
+function normalizeManifestEligibleFlipHashes(manifest = {}) {
+  return normalizeFlipHashList(manifest.eligibleFlipHashes)
+}
+
+function resolveExcludedCount(value, fallbackCollection) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed
+  }
+
+  return Array.isArray(fallbackCollection) ? fallbackCollection.length : 0
+}
+
 async function loadApprovedTrainingCandidatePackage(storage, epoch) {
   const nextPackagePath = trainingCandidatePackagePath(storage, epoch)
   const candidatePackage =
@@ -535,6 +568,37 @@ async function loadApprovedTrainingCandidatePackage(storage, epoch) {
   }
 
   return candidatePackage
+}
+
+function assertApprovedPackageMatchesManifest(
+  epoch,
+  candidatePackage,
+  manifest
+) {
+  const packageEligibleFlipHashes =
+    normalizePackageEligibleFlipHashes(candidatePackage)
+  const manifestEligibleFlipHashes =
+    normalizeManifestEligibleFlipHashes(manifest)
+  const packageExcludedCount = resolveExcludedCount(
+    candidatePackage && candidatePackage.excludedCount,
+    candidatePackage && candidatePackage.excluded
+  )
+  const manifestExcludedCount = resolveExcludedCount(
+    manifest && manifest.excludedCount,
+    manifest && manifest.excluded
+  )
+
+  if (
+    packageEligibleFlipHashes.length !== manifestEligibleFlipHashes.length ||
+    packageEligibleFlipHashes.some(
+      (flipHash, index) => flipHash !== manifestEligibleFlipHashes[index]
+    ) ||
+    packageExcludedCount !== manifestExcludedCount
+  ) {
+    throw new Error(
+      `Local AI manifest for epoch ${epoch} is out of sync with approved training package`
+    )
+  }
 }
 
 function buildAggregationSummary({
@@ -811,7 +875,11 @@ function createLocalAiFederated({
     }
 
     const manifest = await localAiStorage.readJson(nextManifestPath)
-    await loadApprovedTrainingCandidatePackage(localAiStorage, epoch)
+    const approvedPackage = await loadApprovedTrainingCandidatePackage(
+      localAiStorage,
+      epoch
+    )
+    assertApprovedPackageMatchesManifest(epoch, approvedPackage, manifest)
     const eligibleFlipHashes = Array.isArray(manifest.eligibleFlipHashes)
       ? manifest.eligibleFlipHashes.filter(Boolean)
       : []

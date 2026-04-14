@@ -122,8 +122,8 @@ describe('local-ai federated bundle helper', () => {
       federatedReady: true,
       eligibleCount: 2,
       excludedCount: 1,
-      items: [],
-      excluded: [],
+      items: [{flipHash: 'flip-a'}, {flipHash: 'flip-b'}],
+      excluded: [{flipHash: 'flip-c', reasons: ['missing_consensus']}],
       ...overrides,
     })
 
@@ -229,6 +229,33 @@ describe('local-ai federated bundle helper', () => {
 
     await expect(federated.buildUpdateBundle(7)).rejects.toThrow(
       'Concrete adapter artifact for epoch 7 is required before building a federated bundle'
+    )
+  })
+
+  it('rejects bundle export when the approved package no longer matches the manifest', async () => {
+    await writeManifest(7)
+    await writeTrainingCandidatePackage(7, {
+      eligibleCount: 1,
+      items: [{flipHash: 'flip-a'}],
+      excludedCount: 2,
+      excluded: [
+        {flipHash: 'flip-b', reasons: ['missing_consensus']},
+        {flipHash: 'flip-c', reasons: ['missing_consensus']},
+      ],
+    })
+    await writeAdapterRegistration(7, {
+      fileName: 'epoch-7-out-of-sync.safetensors',
+      buffer: Buffer.from('adapter-bytes-out-of-sync'),
+      trainingConfigHash: 'training-config-out-of-sync',
+    })
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+    })
+
+    await expect(federated.buildUpdateBundle(7)).rejects.toThrow(
+      'Local AI manifest for epoch 7 is out of sync with approved training package'
     )
   })
 
