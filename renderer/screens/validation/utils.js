@@ -85,14 +85,29 @@ export function exponentialBackoff(retry) {
   return Math.min(2 ** retry + Math.random(), 32)
 }
 
-export function persistValidationState(state) {
-  persistState('validation2', {
-    ...state,
+function toPersistableValidationState(state) {
+  if (!state) return null
+
+  const snapshot =
+    typeof state.toJSON === 'function' ? state.toJSON() : {...state}
+
+  return {
+    ...snapshot,
     context: {
-      ...state.context,
-      reports: [...state.context.reports],
+      ...snapshot.context,
+      reports: Array.isArray(state.context?.reports)
+        ? state.context.reports
+        : [...(state.context?.reports ?? [])],
     },
-  })
+  }
+}
+
+export function persistValidationState(state) {
+  const persistableState = toPersistableValidationState(state)
+
+  if (persistableState) {
+    persistState('validation2', persistableState)
+  }
 }
 
 export function loadValidationStateDefinition() {
@@ -103,24 +118,22 @@ export function loadValidationState() {
   const stateDef = loadValidationStateDefinition()
 
   if (stateDef) {
-    const state = State.create(stateDef)
-
     let reports
     try {
-      reports = Array.isArray(state.context.reports)
-        ? new Set([...state.context.reports])
+      reports = Array.isArray(stateDef.context?.reports)
+        ? new Set([...stateDef.context.reports])
         : new Set()
     } catch {
       reports = new Set()
     }
 
-    return {
-      ...state,
+    return State.create({
+      ...stateDef,
       context: {
-        ...state.context,
+        ...stateDef.context,
         reports,
       },
-    }
+    })
   }
 }
 

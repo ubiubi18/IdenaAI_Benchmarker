@@ -537,6 +537,7 @@ export default function ValidationPage() {
   if (previewAi) {
     return (
       <ValidationSession
+        key="preview-ai-validation"
         epoch={999}
         validationStart={Date.now() + 60 * 1000}
         shortSessionDuration={60}
@@ -549,6 +550,9 @@ export default function ValidationPage() {
   if (epoch && timing && timing.shortSession)
     return (
       <ValidationSession
+        key={`validation-${epoch.epoch}-${new Date(
+          epoch.nextValidation
+        ).getTime()}`}
         epoch={epoch.epoch}
         validationStart={new Date(epoch.nextValidation).getTime()}
         shortSessionDuration={timing.shortSession}
@@ -619,55 +623,40 @@ function ValidationSession({
     onClose: onCloseReportDialog,
   } = useDisclosure()
 
-  const validationMachine = useMemo(
-    () =>
-      createValidationMachine({
-        epoch,
-        validationStart,
-        shortSessionDuration,
-        longSessionDuration,
-        locale: i18n.language || 'en',
-        onDecodedFlip: ({
-          flipHash,
-          epoch: epochNumber,
-          sessionType,
-          images,
-        }) => {
-          if (
-            !localAiCaptureEnabled ||
-            !global.ipcRenderer ||
-            typeof global.ipcRenderer.send !== 'function'
-          ) {
-            return
-          }
-
-          try {
-            global.ipcRenderer.send('localAi.captureFlip', {
-              flipHash,
-              epoch: epochNumber,
-              sessionType,
-              images,
-            })
-          } catch (error) {
-            if (global.isDev) {
-              global.logger.debug(
-                'localAi.captureFlip failed',
-                error && error.message
-              )
-            }
-          }
-        },
-        initialShortFlips: previewShortFlips,
-      }),
-    [
+  const [validationMachine] = useState(() =>
+    createValidationMachine({
       epoch,
-      previewShortFlips,
-      i18n.language,
-      localAiCaptureEnabled,
-      longSessionDuration,
-      shortSessionDuration,
       validationStart,
-    ]
+      shortSessionDuration,
+      longSessionDuration,
+      locale: i18n.language || 'en',
+      onDecodedFlip: ({flipHash, epoch: epochNumber, sessionType, images}) => {
+        if (
+          !localAiCaptureEnabled ||
+          !global.ipcRenderer ||
+          typeof global.ipcRenderer.send !== 'function'
+        ) {
+          return
+        }
+
+        try {
+          global.ipcRenderer.send('localAi.captureFlip', {
+            flipHash,
+            epoch: epochNumber,
+            sessionType,
+            images,
+          })
+        } catch (error) {
+          if (global.isDev) {
+            global.logger.debug(
+              'localAi.captureFlip failed',
+              error && error.message
+            )
+          }
+        }
+      },
+      initialShortFlips: previewShortFlips,
+    })
   )
 
   const [state, send] = useMachine(validationMachine, {

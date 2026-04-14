@@ -932,7 +932,7 @@ function App() {
         }
 
         (async function() {
-            const { result: getBalanceResult } = await rpcClientRef.current!('dna_getBalance', [inputPostersAddress]);
+            const { result: getBalanceResult } = await rpcClientRef.current!('dna_getBalance', [postersAddress]);
             if (!getBalanceResult) {
                 return;
             }
