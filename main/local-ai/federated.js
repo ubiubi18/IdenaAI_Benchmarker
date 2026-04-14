@@ -96,6 +96,13 @@ function manifestPath(storage, epoch) {
   return storage.resolveLocalAiPath('manifests', `epoch-${epoch}-manifest.json`)
 }
 
+function trainingCandidatePackagePath(storage, epoch) {
+  return storage.resolveLocalAiPath(
+    'training-candidates',
+    `epoch-${epoch}-candidates.json`
+  )
+}
+
 function bundlePath(storage, epoch, identity) {
   const safeIdentity =
     String(identity || PLACEHOLDER_IDENTITY)
@@ -505,6 +512,31 @@ async function verifyBundleSignature({
   return {ok: false, reason: 'signature_invalid'}
 }
 
+async function loadApprovedTrainingCandidatePackage(storage, epoch) {
+  const nextPackagePath = trainingCandidatePackagePath(storage, epoch)
+  const candidatePackage =
+    typeof storage.readTrainingCandidatePackage === 'function'
+      ? await storage.readTrainingCandidatePackage(nextPackagePath, null)
+      : await storage.readJson(nextPackagePath, null)
+
+  if (!candidatePackage) {
+    throw new Error(
+      `Local AI training package for epoch ${epoch} is unavailable`
+    )
+  }
+
+  if (
+    !candidatePackage.federatedReady ||
+    candidatePackage.reviewStatus !== 'approved'
+  ) {
+    throw new Error(
+      `Local AI training package for epoch ${epoch} is not approved for federated export`
+    )
+  }
+
+  return candidatePackage
+}
+
 function buildAggregationSummary({
   baseModelId,
   baseModelHash,
@@ -779,6 +811,7 @@ function createLocalAiFederated({
     }
 
     const manifest = await localAiStorage.readJson(nextManifestPath)
+    await loadApprovedTrainingCandidatePackage(localAiStorage, epoch)
     const eligibleFlipHashes = Array.isArray(manifest.eligibleFlipHashes)
       ? manifest.eligibleFlipHashes.filter(Boolean)
       : []
@@ -789,6 +822,16 @@ function createLocalAiFederated({
       manifest,
       modelReference
     )
+
+    if (
+      !hasConcreteAdapterDelta(adapterContract) ||
+      !adapterContract.adapterArtifactSourcePath
+    ) {
+      throw new Error(
+        `Concrete adapter artifact for epoch ${epoch} is required before building a federated bundle`
+      )
+    }
+
     const manifestSha256 = localAiStorage.sha256(JSON.stringify(manifest))
     const generatedAt = new Date().toISOString()
     const nonce = crypto.randomBytes(16).toString('hex')

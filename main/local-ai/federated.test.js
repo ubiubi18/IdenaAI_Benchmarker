@@ -4,14 +4,6 @@ const fs = require('fs-extra')
 
 const {createLocalAiStorage} = require('./storage')
 const {
-  LOCAL_AI_CONTRACT_VERSION,
-  LOCAL_AI_PUBLIC_MODEL_ID,
-  LOCAL_AI_PUBLIC_VISION_ID,
-  LOCAL_AI_REASONER_BACKEND,
-  LOCAL_AI_RUNTIME_BACKEND,
-  LOCAL_AI_VISION_BACKEND,
-} = require('./constants')
-const {
   DEFAULT_BASE_MODEL_ID,
   PLACEHOLDER_IDENTITY,
   PLACEHOLDER_SIGNATURE_REASON,
@@ -114,6 +106,67 @@ describe('local-ai federated bundle helper', () => {
     return manifestFilePath
   }
 
+  async function writeTrainingCandidatePackage(epoch = 7, overrides = {}) {
+    const packageFilePath = storage.resolveLocalAiPath(
+      'training-candidates',
+      `epoch-${epoch}-candidates.json`
+    )
+
+    await storage.writeJsonAtomic(packageFilePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-training-candidates',
+      epoch,
+      createdAt: '2026-04-11T00:00:00.000Z',
+      reviewStatus: 'approved',
+      reviewedAt: '2026-04-11T00:05:00.000Z',
+      federatedReady: true,
+      eligibleCount: 2,
+      excludedCount: 1,
+      items: [],
+      excluded: [],
+      ...overrides,
+    })
+
+    return packageFilePath
+  }
+
+  async function writeAdapterRegistration(
+    epoch = 7,
+    {
+      fileName = `epoch-${epoch}-lora.safetensors`,
+      buffer = Buffer.from(`adapter-bytes-epoch-${epoch}`),
+      trainingConfigHash = `training-config-epoch-${epoch}`,
+    } = {}
+  ) {
+    const adapterSourcePath = storage.resolveLocalAiPath('artifacts', fileName)
+
+    await storage.writeBuffer(adapterSourcePath, buffer)
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('adapters', `epoch-${epoch}.json`),
+      {
+        epoch,
+        baseModelId: DEFAULT_BASE_MODEL_ID,
+        baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
+        deltaType: 'lora_adapter',
+        adapterFormat: 'peft_lora_v1',
+        adapterSha256: storage.sha256(buffer),
+        trainingConfigHash,
+        adapterArtifact: {
+          file: fileName,
+          sourcePath: adapterSourcePath,
+        },
+      }
+    )
+
+    return {adapterSourcePath, adapterBuffer: buffer}
+  }
+
+  async function writeIncomingBundle(fileName, bundle) {
+    const bundleFilePath = storage.resolveLocalAiPath('incoming', fileName)
+    await storage.writeJsonAtomic(bundleFilePath, bundle)
+    return bundleFilePath
+  }
+
   it('fails clearly when the manifest is missing', async () => {
     const federated = createLocalAiFederated({
       logger: mockLogger(),
@@ -125,7 +178,7 @@ describe('local-ai federated bundle helper', () => {
     )
   })
 
-  it('builds a metadata-only bundle with an honest placeholder signature', async () => {
+  it('requires an approved training package before building a federated bundle', async () => {
     await writeManifest(7)
 
     const federated = createLocalAiFederated({
@@ -133,70 +186,43 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    const summary = await federated.buildUpdateBundle(7)
-    const bundle = await storage.readJson(summary.bundlePath)
+    await expect(federated.buildUpdateBundle(7)).rejects.toThrow(
+      'Local AI training package for epoch 7 is unavailable'
+    )
+  })
 
-    expect(summary).toMatchObject({
-      epoch: 7,
-      identity: PLACEHOLDER_IDENTITY,
-      signed: false,
-      deltaType: 'pending_adapter',
-      eligibleCount: 2,
+  it('requires package approval before building a federated bundle', async () => {
+    await writeManifest(7)
+    await writeTrainingCandidatePackage(7, {reviewStatus: 'reviewed'})
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
     })
-    expect(bundle.payload).toMatchObject({
-      epoch: 7,
-      identity: PLACEHOLDER_IDENTITY,
-      publicModelId: LOCAL_AI_PUBLIC_MODEL_ID,
-      publicVisionId: LOCAL_AI_PUBLIC_VISION_ID,
-      runtimeBackend: LOCAL_AI_RUNTIME_BACKEND,
-      reasonerBackend: LOCAL_AI_REASONER_BACKEND,
-      visionBackend: LOCAL_AI_VISION_BACKEND,
-      contractVersion: LOCAL_AI_CONTRACT_VERSION,
-      baseModelId: DEFAULT_BASE_MODEL_ID,
-      baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
-      eligibleFlipHashes: ['flip-a', 'flip-b'],
-      deltaType: 'pending_adapter',
-      adapterFormat: 'peft_lora_v1',
-      adapterSha256: null,
-      trainingConfigHash: expect.any(String),
-      metrics: {
-        eligibleCount: 2,
-        excludedCount: 1,
-      },
+
+    await expect(federated.buildUpdateBundle(7)).rejects.toThrow(
+      'Local AI training package for epoch 7 is not approved for federated export'
+    )
+  })
+
+  it('requires a concrete adapter artifact before building a federated bundle', async () => {
+    await writeManifest(7)
+    await writeTrainingCandidatePackage(7)
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
     })
-    expect(bundle.payload.nonce).toMatch(/^[a-f0-9]{32}$/)
-    expect(bundle.signature).toMatchObject({
-      type: 'placeholder_sha256',
-      signed: false,
-      reason: PLACEHOLDER_SIGNATURE_REASON,
-    })
-    expect(JSON.stringify(bundle)).not.toContain('"images"')
+
+    await expect(federated.buildUpdateBundle(7)).rejects.toThrow(
+      'Concrete adapter artifact for epoch 7 is required before building a federated bundle'
+    )
   })
 
   it('builds a concrete adapter bundle when a local adapter artifact manifest exists', async () => {
     await writeManifest(7)
-    const adapterSourcePath = storage.resolveLocalAiPath(
-      'artifacts',
-      'epoch-7-lora.safetensors'
-    )
-    const adapterBuffer = Buffer.from('adapter-bytes-epoch-7')
-
-    await storage.writeBuffer(adapterSourcePath, adapterBuffer)
-    await storage.writeJsonAtomic(
-      storage.resolveLocalAiPath('adapters', 'epoch-7.json'),
-      {
-        epoch: 7,
-        baseModelId: DEFAULT_BASE_MODEL_ID,
-        baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
-        adapterFormat: 'peft_lora_v1',
-        adapterSha256: storage.sha256(adapterBuffer),
-        trainingConfigHash: 'training-config-epoch-7',
-        adapterArtifact: {
-          file: 'epoch-7-lora.safetensors',
-          sourcePath: adapterSourcePath,
-        },
-      }
-    )
+    await writeTrainingCandidatePackage(7)
+    const {adapterBuffer} = await writeAdapterRegistration(7)
 
     const federated = createLocalAiFederated({
       logger: mockLogger(),
@@ -229,28 +255,12 @@ describe('local-ai federated bundle helper', () => {
 
   it('imports a concrete adapter bundle and stores the adapter artifact locally', async () => {
     await writeManifest(7)
-    const adapterSourcePath = storage.resolveLocalAiPath(
-      'artifacts',
-      'epoch-7-import.safetensors'
-    )
-    const adapterBuffer = Buffer.from('adapter-import-bytes')
-
-    await storage.writeBuffer(adapterSourcePath, adapterBuffer)
-    await storage.writeJsonAtomic(
-      storage.resolveLocalAiPath('adapters', 'epoch-7.json'),
-      {
-        epoch: 7,
-        baseModelId: DEFAULT_BASE_MODEL_ID,
-        baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
-        adapterFormat: 'peft_lora_v1',
-        adapterSha256: storage.sha256(adapterBuffer),
-        trainingConfigHash: 'training-config-epoch-7-import',
-        adapterArtifact: {
-          file: 'epoch-7-import.safetensors',
-          sourcePath: adapterSourcePath,
-        },
-      }
-    )
+    await writeTrainingCandidatePackage(7)
+    const {adapterBuffer} = await writeAdapterRegistration(7, {
+      fileName: 'epoch-7-import.safetensors',
+      buffer: Buffer.from('adapter-import-bytes'),
+      trainingConfigHash: 'training-config-epoch-7-import',
+    })
 
     const federated = createLocalAiFederated({
       logger: mockLogger(),
@@ -278,14 +288,19 @@ describe('local-ai federated bundle helper', () => {
   })
 
   it('imports a valid placeholder bundle and stores a replay index entry', async () => {
-    await writeManifest(7)
+    const built = createPlaceholderBundle(storage, {
+      nonce: 'bundle-nonce-placeholder-import',
+    })
+    const bundlePath = await writeIncomingBundle(
+      'placeholder-import.json',
+      built
+    )
 
     const federated = createLocalAiFederated({
       logger: mockLogger(),
       storage,
     })
-    const built = await federated.buildUpdateBundle(7)
-    const imported = await federated.importUpdateBundle(built.bundlePath)
+    const imported = await federated.importUpdateBundle(bundlePath)
     const index = await storage.readJson(
       storage.resolveLocalAiPath('received', 'index.json')
     )
@@ -296,7 +311,7 @@ describe('local-ai federated bundle helper', () => {
       reason: null,
       identity: PLACEHOLDER_IDENTITY,
       epoch: 7,
-      bundlePath: built.bundlePath,
+      bundlePath,
       acceptedCount: 1,
       rejectedCount: 0,
       signed: false,
@@ -314,18 +329,20 @@ describe('local-ai federated bundle helper', () => {
   })
 
   it('rejects duplicate nonces', async () => {
-    await writeManifest(7)
+    const bundle = createPlaceholderBundle(storage, {
+      nonce: 'bundle-nonce-duplicate',
+    })
+    const bundlePath = await writeIncomingBundle('duplicate-nonce.json', bundle)
 
     const federated = createLocalAiFederated({
       logger: mockLogger(),
       storage,
     })
-    const built = await federated.buildUpdateBundle(7)
 
-    await federated.importUpdateBundle(built.bundlePath)
+    await federated.importUpdateBundle(bundlePath)
 
     await expect(
-      federated.importUpdateBundle(built.bundlePath)
+      federated.importUpdateBundle(bundlePath)
     ).resolves.toMatchObject({
       accepted: false,
       reason: 'duplicate_nonce',
@@ -430,7 +447,10 @@ describe('local-ai federated bundle helper', () => {
   })
 
   it('fails safely when accepted bundle storage update throws unexpectedly', async () => {
-    await writeManifest(7)
+    const bundle = createPlaceholderBundle(storage, {
+      nonce: 'bundle-nonce-import-failure',
+    })
+    const bundlePath = await writeIncomingBundle('import-failure.json', bundle)
 
     const logger = mockLogger()
     const failingStorage = {
@@ -450,23 +470,22 @@ describe('local-ai federated bundle helper', () => {
       isDev: true,
       storage: failingStorage,
     })
-    const built = await federated.buildUpdateBundle(7)
 
     await expect(
-      federated.importUpdateBundle(built.bundlePath)
+      federated.importUpdateBundle(bundlePath)
     ).resolves.toMatchObject({
       accepted: false,
       reason: 'import_failed',
       identity: PLACEHOLDER_IDENTITY,
       epoch: 7,
-      bundlePath: built.bundlePath,
+      bundlePath,
       acceptedCount: 0,
       rejectedCount: 1,
     })
     expect(logger.error).toHaveBeenCalledWith(
       'Local AI update bundle import failed',
       expect.objectContaining({
-        fileName: path.basename(built.bundlePath),
+        fileName: path.basename(bundlePath),
       })
     )
   })
@@ -538,8 +557,23 @@ describe('local-ai federated bundle helper', () => {
     })
   })
 
-  it('aggregates accepted metadata-only bundles as an honest no-op result', async () => {
-    await writeManifest(7)
+  it('aggregates accepted pending-adapter bundles as an honest no-op result', async () => {
+    const firstBundle = createPlaceholderBundle(storage, {
+      nonce: 'bundle-nonce-aggregate-a',
+      deltaType: 'pending_adapter',
+    })
+    const secondBundle = createPlaceholderBundle(storage, {
+      nonce: 'bundle-nonce-aggregate-b',
+      deltaType: 'pending_adapter',
+    })
+    const firstBundlePath = await writeIncomingBundle(
+      'aggregate-a.json',
+      firstBundle
+    )
+    const secondBundlePath = await writeIncomingBundle(
+      'aggregate-b.json',
+      secondBundle
+    )
 
     const logger = mockLogger()
     const federated = createLocalAiFederated({
@@ -548,11 +582,8 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    const firstBundle = await federated.buildUpdateBundle(7)
-    await federated.importUpdateBundle(firstBundle.bundlePath)
-
-    const secondBundle = await federated.buildUpdateBundle(7)
-    await federated.importUpdateBundle(secondBundle.bundlePath)
+    await federated.importUpdateBundle(firstBundlePath)
+    await federated.importUpdateBundle(secondBundlePath)
 
     const summary = await federated.aggregateAcceptedBundles()
     const result = await storage.readJson(summary.outputPath)
