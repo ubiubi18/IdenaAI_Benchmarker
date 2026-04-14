@@ -23,12 +23,10 @@ export function OnboardingProvider({children}) {
       initial: 'unknown',
       states: {
         unknown: {
-          on: {
-            '': [
-              {target: 'dismissed', cond: 'didDismissStep'},
-              {target: 'promoting', cond: 'shouldPromoteStep'},
-            ],
-          },
+          always: [
+            {target: 'dismissed', cond: 'didDismissStep'},
+            {target: 'promoting', cond: 'shouldPromoteStep'},
+          ],
           invoke: {
             src: 'restoreDismissedSteps',
             onDone: {actions: ['setDismissedSteps']},

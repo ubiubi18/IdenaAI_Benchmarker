@@ -464,13 +464,11 @@ function BenchmarkResearchBanner() {
                 }}
               />
             </Stack>
-            <Link
-              as={NextLink}
-              href="/settings/ai"
-              color={aiEnabled ? 'orange.800' : 'blue.800'}
-            >
-              {t('AI settings')}
-            </Link>
+            <NextLink href="/settings/ai" passHref>
+              <Link color={aiEnabled ? 'orange.800' : 'blue.800'}>
+                {t('AI settings')}
+              </Link>
+            </NextLink>
           </Stack>
         </Flex>
       </Alert>
