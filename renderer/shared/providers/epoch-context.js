@@ -2,6 +2,7 @@ import React from 'react'
 import deepEqual from 'dequal'
 import {useInterval} from '../hooks/use-interval'
 import {fetchEpoch} from '../api/dna'
+import {useChainState} from './chain-context'
 import {didValidate} from '../../screens/validation/utils'
 import {
   didArchiveFlips,
@@ -30,8 +31,14 @@ function logError(...args) {
 export function EpochProvider({children}) {
   const [epoch, setEpoch] = React.useState(null)
   const [interval, setInterval] = React.useState(1000 * 3)
+  const {loading, offline, syncing} = useChainState()
+  const isRpcUsable = !loading && !offline && !syncing
 
   React.useEffect(() => {
+    if (!isRpcUsable) {
+      return undefined
+    }
+
     let ignore = false
 
     async function fetchData() {
@@ -51,18 +58,21 @@ export function EpochProvider({children}) {
     return () => {
       ignore = true
     }
-  }, [])
+  }, [isRpcUsable])
 
-  useInterval(async () => {
-    try {
-      const nextEpoch = await fetchEpoch()
-      if (!deepEqual(epoch, nextEpoch)) {
-        setEpoch(nextEpoch)
+  useInterval(
+    async () => {
+      try {
+        const nextEpoch = await fetchEpoch()
+        if (!deepEqual(epoch, nextEpoch)) {
+          setEpoch(nextEpoch)
+        }
+      } catch (error) {
+        logError('An error occured while fetching epoch', error.message)
       }
-    } catch (error) {
-      logError('An error occured while fetching epoch', error.message)
-    }
-  }, interval)
+    },
+    isRpcUsable ? interval : null
+  )
 
   React.useEffect(() => {
     if (epoch && didValidate(epoch.epoch) && !didArchiveFlips(epoch.epoch)) {

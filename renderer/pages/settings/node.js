@@ -33,6 +33,30 @@ import {
 import SettingsLayout from '../../screens/settings/layout'
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
 
+function hasIpcRenderer() {
+  return (
+    global.ipcRenderer &&
+    typeof global.ipcRenderer.on === 'function' &&
+    typeof global.ipcRenderer.send === 'function' &&
+    typeof global.ipcRenderer.removeListener === 'function'
+  )
+}
+
+function normalizeLogs(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || '').trimEnd()).filter(Boolean)
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split('\n')
+      .map((entry) => entry.trimEnd())
+      .filter(Boolean)
+  }
+
+  return []
+}
+
 function NodeSettings() {
   const {t} = useTranslation()
 
@@ -52,6 +76,7 @@ function NodeSettings() {
   const {tryRestartNode} = useNodeDispatch()
 
   const logsRef = useRef(null)
+  const canUseIpcRenderer = hasIpcRenderer()
 
   const [state, dispatch] = useReducer(
     (prevState, action) => {
@@ -74,19 +99,20 @@ function NodeSettings() {
           }
         }
         case 'NEW_LOG': {
+          const nextLogs = normalizeLogs(action.data)
           const prevLogs =
             prevState.logs.length > 200
               ? prevState.logs.slice(-100)
               : prevState.logs
           return {
             ...prevState,
-            logs: [...prevLogs, ...action.data],
+            logs: [...prevLogs, ...nextLogs],
           }
         }
         case 'SET_LAST_LOGS': {
           return {
             ...prevState,
-            logs: action.data,
+            logs: normalizeLogs(action.data),
           }
         }
         default:
@@ -100,6 +126,10 @@ function NodeSettings() {
   )
 
   useEffect(() => {
+    if (!canUseIpcRenderer) {
+      return undefined
+    }
+
     const onEvent = (_sender, event, data) => {
       switch (event) {
         case 'node-log':
@@ -117,19 +147,19 @@ function NodeSettings() {
     return () => {
       global.ipcRenderer.removeListener(NODE_EVENT, onEvent)
     }
-  })
+  }, [canUseIpcRenderer, settings.useExternalNode])
 
   useEffect(() => {
-    if (!settings.useExternalNode) {
+    if (canUseIpcRenderer && !settings.useExternalNode) {
       global.ipcRenderer.send(NODE_COMMAND, 'get-last-logs')
     }
-  }, [settings.useExternalNode])
+  }, [canUseIpcRenderer, settings.useExternalNode])
 
   useEffect(() => {
     if (logsRef.current) {
-      logsRef.current.scrollTop = 9999
+      logsRef.current.scrollTop = logsRef.current.scrollHeight
     }
-  })
+  }, [state.logs])
 
   const notify = () =>
     toast({
@@ -143,6 +173,21 @@ function NodeSettings() {
     })
 
   const [revealApiKey, setRevealApiKey] = useState(false)
+  const emptyLogMessage = (() => {
+    if (!canUseIpcRenderer) {
+      return t(
+        'The built-in node log is unavailable because the desktop bridge is not ready.'
+      )
+    }
+
+    if (nodeFailed) {
+      return t(
+        'No node log was captured yet. The last startup failed before the live log stream was ready.'
+      )
+    }
+
+    return t('Node output will appear here after the built-in node starts.')
+  })()
 
   return (
     <SettingsLayout>
@@ -297,10 +342,16 @@ function NodeSettings() {
               wordBreak="break-word"
               borderColor="muted"
               borderWidth="px"
+              fontSize="sm"
+              fontFamily="mono"
+              px={3}
+              py={2}
             >
-              {state.logs.map((log, idx) => (
-                <Ansi key={idx}>{log}</Ansi>
-              ))}
+              {state.logs.length > 0 ? (
+                state.logs.map((log, idx) => <Ansi key={idx}>{log}</Ansi>)
+              ) : (
+                <Text color="muted">{emptyLogMessage}</Text>
+              )}
             </Flex>
           </Box>
         )}
