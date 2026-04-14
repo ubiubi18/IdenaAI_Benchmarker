@@ -2016,6 +2016,22 @@ handleTrusted(
 )
 
 handleTrusted(
+  'localAi.registerAdapterArtifact',
+  withLocalAiEnabled('registerAdapterArtifact', async (_event, payload) =>
+    localAiManager.registerAdapterArtifact(
+      buildLocalAiTrainHookPayload(payload)
+    )
+  )
+)
+
+handleTrusted(
+  'localAi.loadAdapterArtifact',
+  withLocalAiEnabled('loadAdapterArtifact', async (_event, payload) =>
+    localAiManager.loadAdapterArtifact(buildLocalAiEpochPayload(payload))
+  )
+)
+
+handleTrusted(
   'localAi.loadTrainingCandidatePackage',
   withLocalAiEnabled('loadTrainingCandidatePackage', async (_event, payload) =>
     localAiManager.loadTrainingCandidatePackage(payload)

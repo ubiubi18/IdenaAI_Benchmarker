@@ -1,3 +1,5 @@
+const path = require('path')
+
 const {createLocalAiStorage} = require('./storage')
 const {resolveAdapterContract} = require('./adapter-contract')
 const {createLocalAiSidecar} = require('./sidecar')
@@ -54,6 +56,11 @@ function pickRuntimeInput(payload) {
 function normalizeEpoch(value) {
   const epoch = Number.parseInt(value, 10)
   return Number.isFinite(epoch) ? epoch : null
+}
+
+function normalizeFilePath(value) {
+  const filePath = String(value || '').trim()
+  return filePath ? path.resolve(filePath) : null
 }
 
 function normalizeSessionType(value) {
@@ -191,6 +198,10 @@ function captureIndexPath(storage) {
 
 function manifestPath(storage, epoch) {
   return storage.resolveLocalAiPath('manifests', `epoch-${epoch}-manifest.json`)
+}
+
+function adapterArtifactManifestPath(storage, epoch) {
+  return storage.resolveLocalAiPath('adapters', `epoch-${epoch}.json`)
 }
 
 function trainingCandidatePackagePath(storage, epoch) {
@@ -909,6 +920,121 @@ function createLocalAiManager({
     }
   }
 
+  async function registerAdapterArtifact(payload = {}) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const sourcePath = normalizeFilePath(
+      next.sourcePath ||
+        next.artifactPath ||
+        (next.adapterArtifact &&
+        typeof next.adapterArtifact === 'object' &&
+        !Array.isArray(next.adapterArtifact)
+          ? next.adapterArtifact.sourcePath ||
+            next.adapterArtifact.path ||
+            next.adapterArtifact.filePath
+          : '')
+    )
+
+    if (!sourcePath) {
+      throw new Error('Adapter source path is required')
+    }
+
+    if (!(await localAiStorage.exists(sourcePath))) {
+      throw new Error('Adapter source file is unavailable')
+    }
+
+    const modelReference = await resolveModelReference(
+      localAiStorage,
+      getModelReference,
+      next
+    )
+    const adapterFile = path.basename(sourcePath)
+    const sizeBytes = await localAiStorage.fileSize(sourcePath)
+    const adapterSha256 = await localAiStorage.sha256File(sourcePath)
+    const adapterContract = await resolveAdapterContract(
+      localAiStorage,
+      {
+        ...next,
+        epoch,
+        deltaType: 'lora_adapter',
+        adapterSha256,
+        adapterArtifact: {
+          file: adapterFile,
+          sourcePath,
+          sizeBytes,
+        },
+      },
+      modelReference
+    )
+    const adapterManifest = {
+      epoch,
+      publicModelId: modelReference.publicModelId,
+      publicVisionId: modelReference.publicVisionId,
+      runtimeBackend: modelReference.runtimeBackend,
+      reasonerBackend: modelReference.reasonerBackend,
+      visionBackend: modelReference.visionBackend,
+      contractVersion: modelReference.contractVersion,
+      baseModelId: modelReference.baseModelId,
+      baseModelHash: modelReference.baseModelHash,
+      adapterFormat: adapterContract.adapterFormat,
+      adapterSha256: adapterContract.adapterSha256,
+      trainingConfigHash: adapterContract.trainingConfigHash,
+      adapterArtifact: {
+        file: adapterFile,
+        sourcePath,
+        sizeBytes,
+      },
+      registeredAt: new Date().toISOString(),
+    }
+    const nextManifestPath = adapterArtifactManifestPath(localAiStorage, epoch)
+
+    await localAiStorage.writeJsonAtomic(nextManifestPath, adapterManifest)
+
+    return {
+      epoch,
+      adapterManifestPath: nextManifestPath,
+      ...adapterManifest,
+    }
+  }
+
+  async function loadAdapterArtifact(payload = {}) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const nextManifestPath = adapterArtifactManifestPath(localAiStorage, epoch)
+    const adapterManifest = await localAiStorage.readJson(
+      nextManifestPath,
+      null
+    )
+
+    if (!adapterManifest) {
+      throw new Error('Adapter artifact is unavailable')
+    }
+
+    return {
+      epoch,
+      adapterManifestPath: nextManifestPath,
+      ...adapterManifest,
+    }
+  }
+
   async function buildTrainingCandidatePackage(payload) {
     await hydrate()
 
@@ -1103,6 +1229,8 @@ function createLocalAiManager({
     ocrImage,
     trainEpoch,
     captureFlip,
+    registerAdapterArtifact,
+    loadAdapterArtifact,
     buildManifest,
     buildTrainingCandidatePackage,
     loadTrainingCandidatePackage,

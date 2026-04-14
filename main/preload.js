@@ -307,6 +307,10 @@ const bridge = {
       captionFlip: (payload) => invokeCloneable('localAi.captionFlip', payload),
       ocrImage: (payload) => invokeCloneable('localAi.ocrImage', payload),
       trainEpoch: (payload) => invokeCloneable('localAi.trainEpoch', payload),
+      registerAdapterArtifact: (payload) =>
+        invokeCloneable('localAi.registerAdapterArtifact', payload),
+      loadAdapterArtifact: (payload) =>
+        invokeCloneable('localAi.loadAdapterArtifact', payload),
       loadTrainingCandidatePackage: (payload) =>
         invokeCloneable('localAi.loadTrainingCandidatePackage', payload),
       buildTrainingCandidatePackage: (payload) =>

@@ -250,6 +250,53 @@ describe('local-ai manager', () => {
     })
   })
 
+  it('registers and reloads adapter artifacts from a local file', async () => {
+    const logger = mockLogger()
+    const manager = createLocalAiManager({logger, storage})
+    const sourcePath = storage.resolveLocalAiPath(
+      'artifacts',
+      'epoch-12-registration.safetensors'
+    )
+    const adapterBuffer = Buffer.from('registered-adapter-bytes')
+
+    await storage.writeBuffer(sourcePath, adapterBuffer)
+
+    const registered = await manager.registerAdapterArtifact({
+      epoch: 12,
+      sourcePath,
+    })
+    const reloaded = await manager.loadAdapterArtifact({epoch: 12})
+
+    expect(registered).toMatchObject({
+      epoch: 12,
+      adapterManifestPath: storage.resolveLocalAiPath(
+        'adapters',
+        'epoch-12.json'
+      ),
+      baseModelId: LOCAL_AI_BASE_MODEL_ID,
+      adapterFormat: 'peft_lora_v1',
+      adapterSha256: storage.sha256(adapterBuffer),
+      adapterArtifact: {
+        file: 'epoch-12-registration.safetensors',
+        sourcePath,
+        sizeBytes: adapterBuffer.length,
+      },
+    })
+    expect(reloaded).toMatchObject({
+      epoch: 12,
+      adapterManifestPath: storage.resolveLocalAiPath(
+        'adapters',
+        'epoch-12.json'
+      ),
+      adapterSha256: storage.sha256(adapterBuffer),
+      adapterArtifact: {
+        file: 'epoch-12-registration.safetensors',
+        sourcePath,
+        sizeBytes: adapterBuffer.length,
+      },
+    })
+  })
+
   it('builds a local post-consensus training-candidate package conservatively', async () => {
     const captureIndexPath = storage.resolveLocalAiPath(
       'captures',
