@@ -58,6 +58,7 @@ if (isWin) {
 const appVersion = global.appVersion || app.getVersion()
 
 const logger = require('./logger')
+const {toIpcCloneable} = require('./utils/ipc-cloneable')
 
 logger.info('idena started', appVersion)
 
@@ -218,16 +219,16 @@ function assertTrustedSender(event) {
 }
 
 function handleTrusted(channel, listener) {
-  ipcMain.handle(channel, (event, ...args) => {
+  ipcMain.handle(channel, async (event, ...args) => {
     assertTrustedSender(event)
-    return listener(event, ...args)
+    return toIpcCloneable(await listener(event, ...args))
   })
 }
 
 function handleOnceTrusted(channel, listener) {
-  ipcMain.handleOnce(channel, (event, ...args) => {
+  ipcMain.handleOnce(channel, async (event, ...args) => {
     assertTrustedSender(event)
-    return listener(event, ...args)
+    return toIpcCloneable(await listener(event, ...args))
   })
 }
 
