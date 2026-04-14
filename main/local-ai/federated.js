@@ -334,6 +334,12 @@ function validateBundleShape(bundle) {
   const adapterFormat = String(payload.adapterFormat || '').trim()
   const adapterSha256 = String(payload.adapterSha256 || '').trim()
   const trainingConfigHash = String(payload.trainingConfigHash || '').trim()
+  const adapterArtifact =
+    payload.adapterArtifact &&
+    typeof payload.adapterArtifact === 'object' &&
+    !Array.isArray(payload.adapterArtifact)
+      ? payload.adapterArtifact
+      : null
   const manifest =
     payload.manifest && typeof payload.manifest === 'object'
       ? payload.manifest
@@ -401,6 +407,17 @@ function validateBundleShape(bundle) {
     baseModelHash,
     adapterFormat: adapterFormat || null,
     adapterSha256: adapterSha256 || null,
+    adapterArtifact:
+      adapterArtifact &&
+      (String(adapterArtifact.file || '').trim() ||
+        Number.isFinite(Number(adapterArtifact.sizeBytes)))
+        ? {
+            file: String(adapterArtifact.file || '').trim() || null,
+            sizeBytes: Number.isFinite(Number(adapterArtifact.sizeBytes))
+              ? Number(adapterArtifact.sizeBytes)
+              : null,
+          }
+        : null,
     trainingConfigHash: trainingConfigHash || null,
     nonce,
     eligibleFlipHashes,
@@ -485,6 +502,11 @@ function buildAggregationSummary({
         String(validation.payload.adapterFormat || '').trim() || null,
       adapterSha256:
         String(validation.payload.adapterSha256 || '').trim() || null,
+      adapterArtifact:
+        validation.payload.adapterArtifact &&
+        typeof validation.payload.adapterArtifact === 'object'
+          ? validation.payload.adapterArtifact
+          : null,
       trainingConfigHash:
         String(validation.payload.trainingConfigHash || '').trim() || null,
       storedPath: entry.storedPath,
@@ -617,7 +639,7 @@ function createLocalAiFederated({
       : []
     const excluded = Array.isArray(manifest.excluded) ? manifest.excluded : []
     const modelReference = normalizeModelReference(localAiStorage, manifest)
-    const adapterContract = resolveAdapterContract(
+    const adapterContract = await resolveAdapterContract(
       localAiStorage,
       manifest,
       modelReference
@@ -646,6 +668,7 @@ function createLocalAiFederated({
       deltaType: adapterContract.deltaType,
       adapterFormat: adapterContract.adapterFormat,
       adapterSha256: adapterContract.adapterSha256,
+      adapterArtifact: adapterContract.adapterArtifact || null,
       trainingConfigHash: adapterContract.trainingConfigHash,
       metrics: {
         eligibleCount: eligibleFlipHashes.length,

@@ -477,6 +477,10 @@ export default function AiSettingsPage() {
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
   const [latestModelsByProvider, setLatestModelsByProvider] = useState({})
   const [showAdvancedAiSettings, setShowAdvancedAiSettings] = useState(false)
+  const [
+    showLocalAiCompatibilityOverrides,
+    setShowLocalAiCompatibilityOverrides,
+  ] = useState(false)
   const setupSectionRef = React.useRef(null)
   const [isEnableDialogOpen, setIsEnableDialogOpen] = useState(false)
   const [isCheckingLocalAi, setIsCheckingLocalAi] = useState(false)
@@ -2372,79 +2376,106 @@ export default function AiSettingsPage() {
               />
             </SettingsFormControl>
 
-            <SettingsFormControl>
-              <SettingsFormLabel>
-                {t('Reasoner model override')}
-              </SettingsFormLabel>
-              <Input
-                value={localAi.model || ''}
-                onChange={(e) => updateLocalAiSettings({model: e.target.value})}
-                placeholder={t('Leave blank to use the runtime default')}
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
+            <Stack spacing={2} align="flex-start">
+              <SecondaryButton
+                onClick={() =>
+                  setShowLocalAiCompatibilityOverrides((value) => !value)
+                }
+              >
+                {showLocalAiCompatibilityOverrides
+                  ? t('Hide runtime compatibility overrides')
+                  : t('Show runtime compatibility overrides')}
+              </SecondaryButton>
+              <Text color="muted" fontSize="sm">
                 {t(
-                  'Compatibility override for the current local runtime wire contract. This is not the product identity.'
+                  'These legacy override fields are only for wire/runtime compatibility. They are not the public Idena product identity.'
                 )}
               </Text>
-            </SettingsFormControl>
+            </Stack>
 
-            <SettingsFormControl>
-              <SettingsFormLabel>
-                {t('Vision model override')}
-              </SettingsFormLabel>
-              <Input
-                value={
-                  typeof localAi.visionModel === 'string'
-                    ? localAi.visionModel
-                    : ''
-                }
-                onChange={(e) =>
-                  updateLocalAiSettings({visionModel: e.target.value})
-                }
-                placeholder={t('Leave blank to use the runtime default')}
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'Compatibility override for the current image-aware runtime path.'
-                )}
-              </Text>
-            </SettingsFormControl>
+            {showLocalAiCompatibilityOverrides ? (
+              <>
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Reasoner model override')}
+                  </SettingsFormLabel>
+                  <Input
+                    value={localAi.model || ''}
+                    onChange={(e) =>
+                      updateLocalAiSettings({model: e.target.value})
+                    }
+                    placeholder={t('Leave blank to use the runtime default')}
+                    w="xl"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Compatibility override for the current local runtime wire contract. This is not the product identity.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
 
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Wire runtime type')}</SettingsFormLabel>
-              <Input
-                value={localAi.runtimeType || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({runtimeType: e.target.value})
-                }
-                placeholder={localAiWireRuntimeType}
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'Legacy compatibility field for the current runtime bridge. Leave blank unless you need to force a wire-level runtime.'
-                )}
-              </Text>
-            </SettingsFormControl>
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Vision model override')}
+                  </SettingsFormLabel>
+                  <Input
+                    value={
+                      typeof localAi.visionModel === 'string'
+                        ? localAi.visionModel
+                        : ''
+                    }
+                    onChange={(e) =>
+                      updateLocalAiSettings({visionModel: e.target.value})
+                    }
+                    placeholder={t('Leave blank to use the runtime default')}
+                    w="xl"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Compatibility override for the current image-aware runtime path.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
 
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Wire runtime family')}</SettingsFormLabel>
-              <Input
-                value={localAi.runtimeFamily || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({runtimeFamily: e.target.value})
-                }
-                placeholder={localAi.reasonerBackend || 'local-reasoner'}
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'Legacy compatibility label retained for old payloads and persisted settings.'
-                )}
-              </Text>
-            </SettingsFormControl>
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Wire runtime type')}
+                  </SettingsFormLabel>
+                  <Input
+                    value={localAi.runtimeType || ''}
+                    onChange={(e) =>
+                      updateLocalAiSettings({runtimeType: e.target.value})
+                    }
+                    placeholder={localAiWireRuntimeType}
+                    w="xl"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Legacy compatibility field for the current runtime bridge. Leave blank unless you need to force a wire-level runtime.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
+
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Wire runtime family')}
+                  </SettingsFormLabel>
+                  <Input
+                    value={localAi.runtimeFamily || ''}
+                    onChange={(e) =>
+                      updateLocalAiSettings({runtimeFamily: e.target.value})
+                    }
+                    placeholder={localAi.reasonerBackend || 'local-reasoner'}
+                    w="xl"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Legacy compatibility label retained for old payloads and persisted settings.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
+              </>
+            ) : null}
 
             <Flex align="center" justify="space-between">
               <Box>

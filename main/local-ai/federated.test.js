@@ -173,6 +173,49 @@ describe('local-ai federated bundle helper', () => {
     expect(JSON.stringify(bundle)).not.toContain('"images"')
   })
 
+  it('builds a concrete adapter bundle when a local adapter artifact manifest exists', async () => {
+    await writeManifest(7)
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('adapters', 'epoch-7.json'),
+      {
+        epoch: 7,
+        baseModelId: DEFAULT_BASE_MODEL_ID,
+        baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
+        adapterFormat: 'peft_lora_v1',
+        adapterSha256: 'adapter-sha-epoch-7',
+        trainingConfigHash: 'training-config-epoch-7',
+        adapterArtifact: {
+          file: 'epoch-7-lora.safetensors',
+          sizeBytes: 8192,
+        },
+      }
+    )
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+    })
+
+    const summary = await federated.buildUpdateBundle(7)
+    const bundle = await storage.readJson(summary.bundlePath)
+
+    expect(summary).toMatchObject({
+      epoch: 7,
+      deltaType: 'lora_adapter',
+      eligibleCount: 2,
+    })
+    expect(bundle.payload).toMatchObject({
+      deltaType: 'lora_adapter',
+      adapterFormat: 'peft_lora_v1',
+      adapterSha256: 'adapter-sha-epoch-7',
+      trainingConfigHash: 'training-config-epoch-7',
+      adapterArtifact: {
+        file: 'epoch-7-lora.safetensors',
+        sizeBytes: 8192,
+      },
+    })
+  })
+
   it('imports a valid placeholder bundle and stores a replay index entry', async () => {
     await writeManifest(7)
 

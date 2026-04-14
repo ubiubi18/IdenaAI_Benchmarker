@@ -839,9 +839,9 @@ function createLocalAiManager({
       getModelReference,
       next
     )
-    const adapterContract = resolveAdapterContract(
+    const adapterContract = await resolveAdapterContract(
       localAiStorage,
-      next,
+      {...next, epoch},
       modelReference
     )
 
@@ -879,6 +879,7 @@ function createLocalAiManager({
       deltaType: adapterContract.deltaType,
       adapterFormat: adapterContract.adapterFormat,
       adapterSha256: adapterContract.adapterSha256,
+      adapterArtifact: adapterContract.adapterArtifact || null,
       trainingConfigHash: adapterContract.trainingConfigHash,
       eligibleFlipHashes,
       flipCount: eligibleFlipHashes.length,
@@ -929,9 +930,9 @@ function createLocalAiManager({
       getModelReference,
       next
     )
-    const adapterContract = resolveAdapterContract(
+    const adapterContract = await resolveAdapterContract(
       localAiStorage,
-      next,
+      {...next, epoch},
       modelReference
     )
 
@@ -987,6 +988,7 @@ function createLocalAiManager({
       deltaType: adapterContract.deltaType,
       adapterFormat: adapterContract.adapterFormat,
       adapterSha256: adapterContract.adapterSha256,
+      adapterArtifact: adapterContract.adapterArtifact || null,
       trainingConfigHash: adapterContract.trainingConfigHash,
       reviewStatus: 'draft',
       reviewedAt: null,

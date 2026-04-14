@@ -203,6 +203,53 @@ describe('local-ai manager', () => {
     expect(JSON.stringify(captureIndex)).not.toContain('"images"')
   })
 
+  it('promotes manifests to a concrete adapter contract when a local adapter artifact is registered', async () => {
+    const logger = mockLogger()
+    const manager = createLocalAiManager({logger, storage})
+
+    await manager.captureFlip({
+      flipHash: 'flip-a',
+      epoch: 12,
+      sessionType: 'short',
+      images: ['left', 'right'],
+      consensus: {
+        finalAnswer: 'left',
+        reported: false,
+      },
+    })
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('adapters', 'epoch-12.json'),
+      {
+        epoch: 12,
+        baseModelId: LOCAL_AI_BASE_MODEL_ID,
+        baseModelHash: storage.sha256(LOCAL_AI_BASE_MODEL_ID),
+        adapterFormat: 'peft_lora_v1',
+        adapterSha256: 'adapter-sha-epoch-12',
+        trainingConfigHash: 'training-config-epoch-12',
+        adapterArtifact: {
+          file: 'epoch-12-lora.safetensors',
+          sizeBytes: 2048,
+        },
+      }
+    )
+
+    const summary = await manager.buildManifest(12)
+    const manifest = await storage.readJson(summary.manifestPath)
+
+    expect(manifest).toMatchObject({
+      epoch: 12,
+      deltaType: 'lora_adapter',
+      adapterFormat: 'peft_lora_v1',
+      adapterSha256: 'adapter-sha-epoch-12',
+      trainingConfigHash: 'training-config-epoch-12',
+      adapterArtifact: {
+        file: 'epoch-12-lora.safetensors',
+        sizeBytes: 2048,
+      },
+    })
+  })
+
   it('builds a local post-consensus training-candidate package conservatively', async () => {
     const captureIndexPath = storage.resolveLocalAiPath(
       'captures',
