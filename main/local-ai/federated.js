@@ -1048,6 +1048,38 @@ function createLocalAiFederated({
         return rejectionResult
       }
 
+      if (!hasConcreteAdapterDelta(validation.payload)) {
+        const rejectionResult = buildImportResult({
+          accepted: false,
+          reason: 'concrete_adapter_required',
+          identity: validation.identity,
+          epoch: validation.epoch,
+          sourceBundlePath: sourcePath,
+        })
+
+        if (isDev) {
+          logImportResult(logger, rejectionResult)
+        }
+
+        return rejectionResult
+      }
+
+      if (!validation.adapterArtifact || !validation.adapterArtifact.file) {
+        const rejectionResult = buildImportResult({
+          accepted: false,
+          reason: 'adapter_artifact_required',
+          identity: validation.identity,
+          epoch: validation.epoch,
+          sourceBundlePath: sourcePath,
+        })
+
+        if (isDev) {
+          logImportResult(logger, rejectionResult)
+        }
+
+        return rejectionResult
+      }
+
       bundleId = computeBundleId(localAiStorage, bundle)
       const nextReceivedIndex = normalizeReceivedIndex(
         await localAiStorage.readJson(

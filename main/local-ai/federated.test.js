@@ -167,6 +167,19 @@ describe('local-ai federated bundle helper', () => {
     return bundleFilePath
   }
 
+  async function buildConcreteBundle(epoch = 7, adapterOptions = {}) {
+    await writeManifest(epoch)
+    await writeTrainingCandidatePackage(epoch)
+    await writeAdapterRegistration(epoch, adapterOptions)
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+    })
+
+    return federated.buildUpdateBundle(epoch)
+  }
+
   it('fails clearly when the manifest is missing', async () => {
     const federated = createLocalAiFederated({
       logger: mockLogger(),
@@ -287,7 +300,7 @@ describe('local-ai federated bundle helper', () => {
     )
   })
 
-  it('imports a valid placeholder bundle and stores a replay index entry', async () => {
+  it('rejects placeholder bundles without a concrete adapter payload', async () => {
     const built = createPlaceholderBundle(storage, {
       nonce: 'bundle-nonce-placeholder-import',
     })
@@ -302,50 +315,69 @@ describe('local-ai federated bundle helper', () => {
     })
     const imported = await federated.importUpdateBundle(bundlePath)
     const index = await storage.readJson(
-      storage.resolveLocalAiPath('received', 'index.json')
+      storage.resolveLocalAiPath('received', 'index.json'),
+      {bundles: []}
     )
-    const storedBundle = await storage.readJson(imported.storedPath)
 
     expect(imported).toMatchObject({
-      accepted: true,
-      reason: null,
+      accepted: false,
+      reason: 'concrete_adapter_required',
       identity: PLACEHOLDER_IDENTITY,
       epoch: 7,
       bundlePath,
-      acceptedCount: 1,
-      rejectedCount: 0,
-      signed: false,
-      signatureType: 'placeholder_sha256',
+      acceptedCount: 0,
+      rejectedCount: 1,
     })
-    expect(index.bundles).toHaveLength(1)
-    expect(index.bundles[0]).toMatchObject({
-      epoch: 7,
-      identity: PLACEHOLDER_IDENTITY,
-      nonce: storedBundle.payload.nonce,
-      signatureType: 'placeholder_sha256',
-      signed: false,
-    })
-    expect(JSON.stringify(storedBundle)).not.toContain('"images"')
+    expect(index.bundles).toHaveLength(0)
   })
 
   it('rejects duplicate nonces', async () => {
-    const bundle = createPlaceholderBundle(storage, {
-      nonce: 'bundle-nonce-duplicate',
+    const built = await buildConcreteBundle(7, {
+      fileName: 'epoch-7-duplicate.safetensors',
+      buffer: Buffer.from('adapter-bytes-duplicate'),
+      trainingConfigHash: 'training-config-duplicate',
     })
-    const bundlePath = await writeIncomingBundle('duplicate-nonce.json', bundle)
 
     const federated = createLocalAiFederated({
       logger: mockLogger(),
       storage,
     })
 
-    await federated.importUpdateBundle(bundlePath)
+    await federated.importUpdateBundle(built.bundlePath)
+
+    await expect(
+      federated.importUpdateBundle(built.bundlePath)
+    ).resolves.toMatchObject({
+      accepted: false,
+      reason: 'duplicate_nonce',
+      identity: PLACEHOLDER_IDENTITY,
+      epoch: 7,
+      acceptedCount: 0,
+      rejectedCount: 1,
+    })
+  })
+
+  it('rejects concrete adapter bundles that omit the artifact file metadata', async () => {
+    const bundle = createPlaceholderBundle(storage, {
+      nonce: 'bundle-nonce-missing-artifact',
+      deltaType: 'lora_adapter',
+      adapterSha256: storage.sha256('missing-artifact-adapter'),
+    })
+    const bundlePath = await writeIncomingBundle(
+      'missing-artifact.json',
+      bundle
+    )
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+    })
 
     await expect(
       federated.importUpdateBundle(bundlePath)
     ).resolves.toMatchObject({
       accepted: false,
-      reason: 'duplicate_nonce',
+      reason: 'adapter_artifact_required',
       identity: PLACEHOLDER_IDENTITY,
       epoch: 7,
       acceptedCount: 0,
@@ -447,10 +479,11 @@ describe('local-ai federated bundle helper', () => {
   })
 
   it('fails safely when accepted bundle storage update throws unexpectedly', async () => {
-    const bundle = createPlaceholderBundle(storage, {
-      nonce: 'bundle-nonce-import-failure',
+    const {bundlePath} = await buildConcreteBundle(7, {
+      fileName: 'epoch-7-import-failure.safetensors',
+      buffer: Buffer.from('adapter-bytes-import-failure'),
+      trainingConfigHash: 'training-config-import-failure',
     })
-    const bundlePath = await writeIncomingBundle('import-failure.json', bundle)
 
     const logger = mockLogger()
     const failingStorage = {
@@ -557,7 +590,7 @@ describe('local-ai federated bundle helper', () => {
     })
   })
 
-  it('aggregates accepted pending-adapter bundles as an honest no-op result', async () => {
+  it('aggregates previously accepted pending-adapter bundles as an honest no-op result', async () => {
     const firstBundle = createPlaceholderBundle(storage, {
       nonce: 'bundle-nonce-aggregate-a',
       deltaType: 'pending_adapter',
@@ -566,14 +599,6 @@ describe('local-ai federated bundle helper', () => {
       nonce: 'bundle-nonce-aggregate-b',
       deltaType: 'pending_adapter',
     })
-    const firstBundlePath = await writeIncomingBundle(
-      'aggregate-a.json',
-      firstBundle
-    )
-    const secondBundlePath = await writeIncomingBundle(
-      'aggregate-b.json',
-      secondBundle
-    )
 
     const logger = mockLogger()
     const federated = createLocalAiFederated({
@@ -582,8 +607,39 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    await federated.importUpdateBundle(firstBundlePath)
-    await federated.importUpdateBundle(secondBundlePath)
+    const firstBundleId = storage.sha256(JSON.stringify(firstBundle))
+    const secondBundleId = storage.sha256(JSON.stringify(secondBundle))
+    const firstStoredPath = storage.resolveLocalAiPath(
+      'received',
+      '7',
+      `${firstBundleId}.json`
+    )
+    const secondStoredPath = storage.resolveLocalAiPath(
+      'received',
+      '7',
+      `${secondBundleId}.json`
+    )
+
+    await storage.writeJsonAtomic(firstStoredPath, firstBundle)
+    await storage.writeJsonAtomic(secondStoredPath, secondBundle)
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('received', 'index.json'),
+      {
+        version: 1,
+        bundles: [
+          createReceivedEntry({
+            bundle: firstBundle,
+            bundleId: firstBundleId,
+            storedPath: firstStoredPath,
+          }),
+          createReceivedEntry({
+            bundle: secondBundle,
+            bundleId: secondBundleId,
+            storedPath: secondStoredPath,
+          }),
+        ],
+      }
+    )
 
     const summary = await federated.aggregateAcceptedBundles()
     const result = await storage.readJson(summary.outputPath)
@@ -668,7 +724,7 @@ describe('local-ai federated bundle helper', () => {
     ).toHaveLength(0)
   })
 
-  it('keeps aggregation honest when bundles advertise unsupported delta payloads', async () => {
+  it('keeps aggregation honest for previously accepted unsupported delta payloads', async () => {
     const firstBundlePath = storage.resolveLocalAiPath(
       'incoming',
       'delta-a.json'
@@ -701,8 +757,39 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    await federated.importUpdateBundle(firstBundlePath)
-    await federated.importUpdateBundle(secondBundlePath)
+    const firstBundleId = storage.sha256(JSON.stringify(firstBundle))
+    const secondBundleId = storage.sha256(JSON.stringify(secondBundle))
+    const firstStoredPath = storage.resolveLocalAiPath(
+      'received',
+      '7',
+      `${firstBundleId}.json`
+    )
+    const secondStoredPath = storage.resolveLocalAiPath(
+      'received',
+      '7',
+      `${secondBundleId}.json`
+    )
+
+    await storage.writeJsonAtomic(firstStoredPath, firstBundle)
+    await storage.writeJsonAtomic(secondStoredPath, secondBundle)
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('received', 'index.json'),
+      {
+        version: 1,
+        bundles: [
+          createReceivedEntry({
+            bundle: firstBundle,
+            bundleId: firstBundleId,
+            storedPath: firstStoredPath,
+          }),
+          createReceivedEntry({
+            bundle: secondBundle,
+            bundleId: secondBundleId,
+            storedPath: secondStoredPath,
+          }),
+        ],
+      }
+    )
 
     const summary = await federated.aggregateAcceptedBundles()
     const result = await storage.readJson(summary.outputPath)
