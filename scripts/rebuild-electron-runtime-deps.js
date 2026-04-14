@@ -10,15 +10,30 @@ const pkg = require('../package.json')
 const ROOT = path.join(__dirname, '..')
 const RUNTIME_NATIVE_MODULES = ['leveldown', 'secp256k1']
 
+function readCommandOutput(command, args) {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+  })
+
+  return String(result.stdout || '').trim()
+}
+
 function detectRebuildArch() {
   if (process.platform !== 'darwin') {
     return undefined
   }
 
-  const result = spawnSync('/usr/bin/uname', ['-m'], {
-    encoding: 'utf8',
-  })
-  const machineArch = String(result.stdout || '').trim()
+  // When Node runs under Rosetta, `process.arch` and `uname -m` can both report
+  // x64 even though Electron launches natively as arm64 on Apple Silicon.
+  const supportsArm64 = readCommandOutput(
+    '/usr/sbin/sysctl',
+    ['-in', 'hw.optional.arm64']
+  )
+  if (supportsArm64 === '1') {
+    return 'arm64'
+  }
+
+  const machineArch = readCommandOutput('/usr/bin/uname', ['-m'])
 
   return machineArch === 'arm64' ? 'arm64' : undefined
 }
