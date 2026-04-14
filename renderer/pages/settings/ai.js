@@ -38,6 +38,11 @@ import {
   formatMissingAiProviders,
 } from '../../shared/utils/ai-provider-readiness'
 import {AiEnableDialog} from '../../shared/components/ai-enable-dialog'
+import {
+  DEFAULT_LOCAL_AI_SETTINGS,
+  buildLocalAiSettings,
+  resolveLocalAiWireRuntimeType,
+} from '../../shared/utils/local-ai-settings'
 
 const DEFAULT_MODELS = {
   openai: 'gpt-5.4',
@@ -147,33 +152,6 @@ const DEFAULT_AI_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
-const DEFAULT_LOCAL_AI_SETTINGS = {
-  enabled: false,
-  runtimeMode: 'sidecar',
-  runtimeType: 'phi-sidecar',
-  runtimeFamily: 'phi-3.5-vision',
-  baseUrl: 'http://127.0.0.1:5000',
-  endpoint: 'http://127.0.0.1:5000',
-  model: 'phi-3.5-vision-instruct',
-  visionModel: 'phi-3.5-vision',
-  adapterStrategy: 'lora-first',
-  trainingPolicy: 'approved-post-consensus-only',
-  contractVersion: 'phi-sidecar/v1',
-  captureEnabled: false,
-  trainEnabled: false,
-  federated: {
-    enabled: false,
-    relays: [],
-    minExamples: 5,
-    clipNorm: 1.0,
-    dpNoise: 0.01,
-  },
-  eligibilityGate: {
-    requireValidatedIdentity: true,
-    requireLocalNode: true,
-  },
-}
-
 const DEFAULT_LOCAL_AI_DEBUG_CHAT_PROMPT =
   'Reply with one short sentence confirming local chat works.'
 
@@ -183,21 +161,6 @@ const DEFAULT_LOCAL_AI_DEBUG_FLIP_INPUT = `{
     "/absolute/path/to/panel-2.png"
   ]
 }`
-
-function buildLocalAiSettings(settings = {}) {
-  return {
-    ...DEFAULT_LOCAL_AI_SETTINGS,
-    ...(settings || {}),
-    federated: {
-      ...DEFAULT_LOCAL_AI_SETTINGS.federated,
-      ...((settings && settings.federated) || {}),
-    },
-    eligibilityGate: {
-      ...DEFAULT_LOCAL_AI_SETTINGS.eligibilityGate,
-      ...((settings && settings.eligibilityGate) || {}),
-    },
-  }
-}
 
 function numberOrFallback(value, fallback) {
   const parsed = Number.parseInt(value, 10)
@@ -281,10 +244,11 @@ function normalizeLocalAiStatusResult(result, fallbackBaseUrl) {
       (reachable === true ? 'ok' : 'error'),
     runtime:
       String(
-        result && (result.runtime || result.runtimeType)
-          ? result.runtime || result.runtimeType
-          : 'ollama'
-      ).trim() || 'ollama',
+        result &&
+          (result.runtimeBackend || result.runtime || result.runtimeType)
+          ? result.runtimeBackend || result.runtime || result.runtimeType
+          : DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
+      ).trim() || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
     baseUrl:
       String(
         result && result.baseUrl ? result.baseUrl : fallbackBaseUrl || ''
@@ -489,6 +453,10 @@ export default function AiSettingsPage() {
     () => buildLocalAiSettings(settings.localAi),
     [settings.localAi]
   )
+  const localAiWireRuntimeType = useMemo(
+    () => resolveLocalAiWireRuntimeType(localAi),
+    [localAi]
+  )
   const localAiRuntimeUrl = useMemo(() => {
     if (typeof localAi.endpoint === 'string') {
       return localAi.endpoint.trim()
@@ -519,7 +487,8 @@ export default function AiSettingsPage() {
       {
         enabled: !!localAi.enabled,
         status: localAi.enabled ? 'error' : 'disabled',
-        runtime: localAi.runtimeType || 'ollama',
+        runtime:
+          localAi.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
         baseUrl: localAiRuntimeUrl,
         error: localAi.enabled
           ? 'Check the local runtime URL and try again.'
@@ -624,7 +593,13 @@ export default function AiSettingsPage() {
   const buildLocalAiRuntimePayload = useCallback(
     () => ({
       mode: localAi.runtimeMode,
-      runtimeType: localAi.runtimeType || 'ollama',
+      runtimeType: localAiWireRuntimeType,
+      runtimeBackend: localAi.runtimeBackend,
+      reasonerBackend: localAi.reasonerBackend,
+      visionBackend: localAi.visionBackend,
+      publicModelId: localAi.publicModelId,
+      publicVisionId: localAi.publicVisionId,
+      contractVersion: localAi.contractVersion,
       baseUrl: localAiRuntimeUrl,
       endpoint: localAiRuntimeUrl,
       model: String(localAi.model || '').trim(),
@@ -634,9 +609,15 @@ export default function AiSettingsPage() {
     }),
     [
       localAi.model,
+      localAi.contractVersion,
+      localAi.publicModelId,
+      localAi.publicVisionId,
+      localAi.reasonerBackend,
       localAi.runtimeMode,
-      localAi.runtimeType,
+      localAi.runtimeBackend,
+      localAiWireRuntimeType,
       localAi.visionModel,
+      localAi.visionBackend,
       localAiRuntimeUrl,
     ]
   )
@@ -647,7 +628,8 @@ export default function AiSettingsPage() {
         {
           enabled: false,
           status: 'disabled',
-          runtime: localAi.runtimeType || 'ollama',
+          runtime:
+            localAi.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
           baseUrl: localAiRuntimeUrl,
           error: null,
           lastError: null,
@@ -675,7 +657,8 @@ export default function AiSettingsPage() {
         {
           enabled: true,
           status: 'error',
-          runtime: localAi.runtimeType || 'ollama',
+          runtime:
+            localAi.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
           baseUrl: localAiRuntimeUrl,
           error: formatErrorForToast(error),
           lastError: formatErrorForToast(error),
@@ -690,7 +673,7 @@ export default function AiSettingsPage() {
   }, [
     buildLocalAiRuntimePayload,
     localAi.enabled,
-    localAi.runtimeType,
+    localAi.runtimeBackend,
     localAiRuntimeUrl,
   ])
 
@@ -701,7 +684,9 @@ export default function AiSettingsPage() {
           {
             enabled: false,
             status: 'disabled',
-            runtime: localAi.runtimeType || 'ollama',
+            runtime:
+              localAi.runtimeBackend ||
+              DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
             baseUrl: localAiRuntimeUrl,
             error: null,
             lastError: null,
@@ -721,7 +706,8 @@ export default function AiSettingsPage() {
         {
           enabled: true,
           status: 'error',
-          runtime: localAi.runtimeType || 'ollama',
+          runtime:
+            localAi.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
           baseUrl: localAiRuntimeUrl,
           error: 'Check the local runtime URL and try again.',
           lastError: 'Check the local runtime URL and try again.',
@@ -729,7 +715,7 @@ export default function AiSettingsPage() {
         localAiRuntimeUrl
       )
     })
-  }, [localAi.enabled, localAi.runtimeType, localAiRuntimeUrl])
+  }, [localAi.enabled, localAi.runtimeBackend, localAiRuntimeUrl])
 
   const localAiRuntimeStatus = useMemo(
     () =>
@@ -2293,16 +2279,80 @@ export default function AiSettingsPage() {
             </SettingsFormControl>
 
             <SettingsFormControl>
-              <SettingsFormLabel>{t('Runtime type')}</SettingsFormLabel>
-              <Select
-                value={localAi.runtimeType || 'ollama'}
+              <SettingsFormLabel>{t('Runtime backend')}</SettingsFormLabel>
+              <Input
+                value={localAi.runtimeBackend || ''}
                 onChange={(e) =>
-                  updateLocalAiSettings({runtimeType: e.target.value})
+                  updateLocalAiSettings({runtimeBackend: e.target.value})
                 }
-                w="xs"
-              >
-                <option value="ollama">{t('Ollama')}</option>
-              </Select>
+                placeholder="sidecar-http"
+                w="xl"
+              />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {t(
+                  'Neutral product-side backend identifier. This is separate from any current wire/runtime compatibility override.'
+                )}
+              </Text>
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Reasoner backend')}</SettingsFormLabel>
+              <Input
+                value={localAi.reasonerBackend || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({reasonerBackend: e.target.value})
+                }
+                placeholder="local-reasoner"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Vision backend')}</SettingsFormLabel>
+              <Input
+                value={localAi.visionBackend || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({visionBackend: e.target.value})
+                }
+                placeholder="local-vision"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Public model ID')}</SettingsFormLabel>
+              <Input
+                value={localAi.publicModelId || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({publicModelId: e.target.value})
+                }
+                placeholder="idena-core-v1"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Public vision ID')}</SettingsFormLabel>
+              <Input
+                value={localAi.publicVisionId || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({publicVisionId: e.target.value})
+                }
+                placeholder="idena-vision-v1"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Contract version')}</SettingsFormLabel>
+              <Input
+                value={localAi.contractVersion || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({contractVersion: e.target.value})
+                }
+                placeholder="idena-local/v1"
+                w="xl"
+              />
             </SettingsFormControl>
 
             <SettingsFormControl>
@@ -2323,31 +2373,76 @@ export default function AiSettingsPage() {
             </SettingsFormControl>
 
             <SettingsFormControl>
-              <SettingsFormLabel>{t('Local runtime model')}</SettingsFormLabel>
+              <SettingsFormLabel>
+                {t('Reasoner model override')}
+              </SettingsFormLabel>
               <Input
                 value={localAi.model || ''}
                 onChange={(e) => updateLocalAiSettings({model: e.target.value})}
-                placeholder="llama3.1:8b"
+                placeholder={t('Leave blank to use the runtime default')}
                 w="xl"
               />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {t(
+                  'Compatibility override for the current local runtime wire contract. This is not the product identity.'
+                )}
+              </Text>
             </SettingsFormControl>
 
             <SettingsFormControl>
-              <SettingsFormLabel>{t('Local vision model')}</SettingsFormLabel>
+              <SettingsFormLabel>
+                {t('Vision model override')}
+              </SettingsFormLabel>
               <Input
                 value={
                   typeof localAi.visionModel === 'string'
                     ? localAi.visionModel
-                    : DEFAULT_LOCAL_AI_SETTINGS.visionModel
+                    : ''
                 }
                 onChange={(e) =>
                   updateLocalAiSettings({visionModel: e.target.value})
                 }
-                placeholder="moondream"
+                placeholder={t('Leave blank to use the runtime default')}
                 w="xl"
               />
               <Text color="muted" fontSize="sm" mt={1}>
-                {t('Used for local image-aware flip-to-text.')}
+                {t(
+                  'Compatibility override for the current image-aware runtime path.'
+                )}
+              </Text>
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Wire runtime type')}</SettingsFormLabel>
+              <Input
+                value={localAi.runtimeType || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({runtimeType: e.target.value})
+                }
+                placeholder={localAiWireRuntimeType}
+                w="xl"
+              />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {t(
+                  'Legacy compatibility field for the current runtime bridge. Leave blank unless you need to force a wire-level runtime.'
+                )}
+              </Text>
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Wire runtime family')}</SettingsFormLabel>
+              <Input
+                value={localAi.runtimeFamily || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({runtimeFamily: e.target.value})
+                }
+                placeholder={localAi.reasonerBackend || 'local-reasoner'}
+                w="xl"
+              />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {t(
+                  'Legacy compatibility label retained for old payloads and persisted settings.'
+                )}
               </Text>
             </SettingsFormControl>
 
@@ -2463,7 +2558,9 @@ export default function AiSettingsPage() {
                             {
                               enabled: true,
                               status: 'error',
-                              runtime: localAi.runtimeType || 'ollama',
+                              runtime:
+                                localAi.runtimeBackend ||
+                                DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
                               baseUrl: localAiRuntimeUrl,
                               error: t('Local AI runtime is idle.'),
                               lastError: t('Local AI runtime is idle.'),

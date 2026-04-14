@@ -1,5 +1,6 @@
 const {createLocalAiStorage} = require('./storage')
 const {createLocalAiSidecar} = require('./sidecar')
+const {resolveModelReference} = require('./model-reference')
 
 const CAPTURE_INDEX_VERSION = 1
 const TRAINING_CANDIDATE_PACKAGE_VERSION = 1
@@ -184,10 +185,6 @@ function trainingCandidatePackagePath(storage, epoch) {
   )
 }
 
-function createBaseModelId(mode) {
-  return `local-ai:${normalizeMode(mode)}:mvp-placeholder-v1`
-}
-
 function reduceLatestCaptures(captures) {
   const uniqueCaptures = new Map()
 
@@ -311,7 +308,13 @@ function buildTrainingCandidateItem(capture) {
   }
 }
 
-function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
+function createLocalAiManager({
+  logger,
+  isDev = false,
+  storage,
+  sidecar,
+  getModelReference,
+} = {}) {
   const localAiStorage = storage || createLocalAiStorage()
   const localAiSidecar =
     sidecar ||
@@ -788,11 +791,20 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       throw new Error('Local AI capture index is unavailable')
     }
 
-    const epoch = normalizeEpoch(epochValue)
+    const next = normalizeRuntimePayload(epochValue)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : epochValue
+    )
 
     if (epoch === null) {
       throw new Error('Epoch is required')
     }
+
+    const modelReference = await resolveModelReference(
+      localAiStorage,
+      getModelReference,
+      next
+    )
 
     const eligibleFlipHashes = []
     const excluded = []
@@ -815,7 +827,14 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
 
     const manifest = {
       epoch,
-      baseModelId: createBaseModelId(state.mode),
+      publicModelId: modelReference.publicModelId,
+      publicVisionId: modelReference.publicVisionId,
+      runtimeBackend: modelReference.runtimeBackend,
+      reasonerBackend: modelReference.reasonerBackend,
+      visionBackend: modelReference.visionBackend,
+      contractVersion: modelReference.contractVersion,
+      baseModelId: modelReference.baseModelId,
+      baseModelHash: modelReference.baseModelHash,
       eligibleFlipHashes,
       flipCount: eligibleFlipHashes.length,
       excluded,
@@ -860,6 +879,12 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       throw new Error('Epoch is required')
     }
 
+    const modelReference = await resolveModelReference(
+      localAiStorage,
+      getModelReference,
+      next
+    )
+
     const items = []
     const excluded = []
 
@@ -899,6 +924,14 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       packageType: 'local-ai-training-candidates',
       epoch,
       createdAt: new Date().toISOString(),
+      publicModelId: modelReference.publicModelId,
+      publicVisionId: modelReference.publicVisionId,
+      runtimeBackend: modelReference.runtimeBackend,
+      reasonerBackend: modelReference.reasonerBackend,
+      visionBackend: modelReference.visionBackend,
+      contractVersion: modelReference.contractVersion,
+      baseModelId: modelReference.baseModelId,
+      baseModelHash: modelReference.baseModelHash,
       reviewStatus: 'draft',
       reviewedAt: null,
       federatedReady: false,

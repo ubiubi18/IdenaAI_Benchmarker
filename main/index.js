@@ -85,9 +85,15 @@ const {
 const {
   LOCAL_AI_RUNTIME_MODE,
   LOCAL_AI_RUNTIME,
+  LOCAL_AI_RUNTIME_BACKEND,
+  LOCAL_AI_REASONER_BACKEND,
+  LOCAL_AI_VISION_BACKEND,
   LOCAL_AI_RUNTIME_FAMILY,
   LOCAL_AI_DEFAULT_BASE_URL,
   LOCAL_AI_DEFAULT_MODEL,
+  LOCAL_AI_DEFAULT_VISION_MODEL,
+  LOCAL_AI_PUBLIC_MODEL_ID,
+  LOCAL_AI_PUBLIC_VISION_ID,
   LOCAL_AI_ADAPTER_STRATEGY,
   LOCAL_AI_TRAINING_POLICY,
   LOCAL_AI_CONTRACT_VERSION,
@@ -116,10 +122,12 @@ const aiTestUnitBridge = createAiTestUnitBridge({
 const localAiManager = createLocalAiManager({
   logger,
   isDev,
+  getModelReference: getMainLocalAiSettings,
 })
 const localAiFederated = createLocalAiFederated({
   logger,
   isDev,
+  getBaseModelReference: getMainLocalAiSettings,
 })
 
 const IMAGE_SEARCH_SOURCE_TIMEOUT_MS = 8000
@@ -528,10 +536,51 @@ function getMainLocalAiSettings(payload = {}) {
       [localAi.model, nextPayload.model],
       LOCAL_AI_DEFAULT_MODEL
     ),
-    runtime: LOCAL_AI_RUNTIME,
+    visionModel: pickTrimmedString(
+      [localAi.visionModel, nextPayload.visionModel],
+      LOCAL_AI_DEFAULT_VISION_MODEL
+    ),
+    runtime: pickTrimmedString(
+      [
+        nextPayload.runtime,
+        localAi.runtime,
+        nextPayload.runtimeBackend,
+        localAi.runtimeBackend,
+      ],
+      LOCAL_AI_RUNTIME
+    ),
+    runtimeBackend: pickTrimmedString(
+      [localAi.runtimeBackend, nextPayload.runtimeBackend],
+      LOCAL_AI_RUNTIME_BACKEND
+    ),
+    reasonerBackend: pickTrimmedString(
+      [localAi.reasonerBackend, nextPayload.reasonerBackend],
+      LOCAL_AI_REASONER_BACKEND
+    ),
+    visionBackend: pickTrimmedString(
+      [localAi.visionBackend, nextPayload.visionBackend],
+      LOCAL_AI_VISION_BACKEND
+    ),
+    publicModelId: pickTrimmedString(
+      [localAi.publicModelId, nextPayload.publicModelId],
+      LOCAL_AI_PUBLIC_MODEL_ID
+    ),
+    publicVisionId: pickTrimmedString(
+      [localAi.publicVisionId, nextPayload.publicVisionId],
+      LOCAL_AI_PUBLIC_VISION_ID
+    ),
     runtimeFamily: pickTrimmedString(
-      [localAi.runtimeFamily, nextPayload.runtimeFamily],
+      [
+        localAi.runtimeFamily,
+        nextPayload.runtimeFamily,
+        localAi.reasonerBackend,
+        nextPayload.reasonerBackend,
+      ],
       LOCAL_AI_RUNTIME_FAMILY
+    ),
+    runtimeType: pickTrimmedString(
+      [localAi.runtimeType, nextPayload.runtimeType],
+      ''
     ),
     adapterStrategy: pickTrimmedString(
       [localAi.adapterStrategy, nextPayload.adapterStrategy],
@@ -541,6 +590,21 @@ function getMainLocalAiSettings(payload = {}) {
       [localAi.trainingPolicy, nextPayload.trainingPolicy],
       LOCAL_AI_TRAINING_POLICY
     ),
+    contractVersion: pickTrimmedString(
+      [localAi.contractVersion, nextPayload.contractVersion],
+      LOCAL_AI_CONTRACT_VERSION
+    ),
+  }
+}
+
+function buildLocalAiAdapterState(localAi = {}) {
+  return {
+    runtimeBackend: localAi.runtimeBackend,
+    reasonerBackend: localAi.reasonerBackend,
+    visionBackend: localAi.visionBackend,
+    publicModelId: localAi.publicModelId,
+    publicVisionId: localAi.publicVisionId,
+    contractVersion: localAi.contractVersion,
   }
 }
 
@@ -571,8 +635,8 @@ function buildDisabledLocalAiStatus(payload = {}) {
     enabled: false,
     status: 'disabled',
     runtime: localAi.runtime,
+    ...buildLocalAiAdapterState(localAi),
     runtimeFamily: localAi.runtimeFamily,
-    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     sidecarReachable: false,
@@ -603,6 +667,28 @@ function buildLocalAiStatusResponse(result = {}) {
           result.runtime ||
           LOCAL_AI_RUNTIME
       ).trim() || LOCAL_AI_RUNTIME,
+    runtimeBackend:
+      String(
+        result.runtimeBackend ||
+          result.runtime ||
+          result.runtimeType ||
+          LOCAL_AI_RUNTIME_BACKEND
+      ).trim() || LOCAL_AI_RUNTIME_BACKEND,
+    reasonerBackend:
+      String(
+        result.reasonerBackend ||
+          result.runtimeFamily ||
+          LOCAL_AI_REASONER_BACKEND
+      ).trim() || LOCAL_AI_REASONER_BACKEND,
+    visionBackend:
+      String(result.visionBackend || LOCAL_AI_VISION_BACKEND).trim() ||
+      LOCAL_AI_VISION_BACKEND,
+    publicModelId:
+      String(result.publicModelId || LOCAL_AI_PUBLIC_MODEL_ID).trim() ||
+      LOCAL_AI_PUBLIC_MODEL_ID,
+    publicVisionId:
+      String(result.publicVisionId || LOCAL_AI_PUBLIC_VISION_ID).trim() ||
+      LOCAL_AI_PUBLIC_VISION_ID,
     runtimeFamily:
       String(result.runtimeFamily || LOCAL_AI_RUNTIME_FAMILY).trim() ||
       LOCAL_AI_RUNTIME_FAMILY,
@@ -625,11 +711,12 @@ function buildDisabledLocalAiChatResponse(payload = {}) {
     status: 'disabled',
     provider: 'local-ai',
     runtime: localAi.runtime,
+    ...buildLocalAiAdapterState(localAi),
     runtimeFamily: localAi.runtimeFamily,
-    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     model: localAi.model,
+    visionModel: localAi.visionModel,
     content: null,
     error: 'local_ai_disabled',
     lastError: 'Local AI is disabled',
@@ -645,11 +732,12 @@ function buildDisabledLocalAiFlipToTextResponse(payload = {}) {
     status: 'disabled',
     provider: 'local-ai',
     runtime: localAi.runtime,
+    ...buildLocalAiAdapterState(localAi),
     runtimeFamily: localAi.runtimeFamily,
-    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     model: localAi.model,
+    visionModel: localAi.visionModel,
     text: null,
     error: 'local_ai_disabled',
     lastError: 'Local AI is disabled',
@@ -665,11 +753,12 @@ function buildDisabledLocalAiFlipJudgeResponse(payload = {}) {
     status: 'disabled',
     provider: 'local-ai',
     runtime: localAi.runtime,
+    ...buildLocalAiAdapterState(localAi),
     runtimeFamily: localAi.runtimeFamily,
-    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     model: localAi.model,
+    visionModel: localAi.visionModel,
     decision: null,
     classification: null,
     confidence: null,
@@ -692,11 +781,12 @@ function buildDisabledLocalAiInfoResponse(payload = {}) {
     status: 'disabled',
     provider: 'local-ai',
     runtime: localAi.runtime,
+    ...buildLocalAiAdapterState(localAi),
     runtimeFamily: localAi.runtimeFamily,
-    contractVersion: LOCAL_AI_CONTRACT_VERSION,
     adapterStrategy: localAi.adapterStrategy,
     trainingPolicy: localAi.trainingPolicy,
     model: localAi.model,
+    visionModel: localAi.visionModel,
     models: [],
     error: 'local_ai_disabled',
     lastError: 'Local AI is disabled',
@@ -712,7 +802,15 @@ function buildLocalAiChatPayload(payload = {}) {
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     endpoint: localAi.baseUrl,
+    runtimeType: localAi.runtimeType,
+    runtimeBackend: localAi.runtimeBackend,
+    reasonerBackend: localAi.reasonerBackend,
+    visionBackend: localAi.visionBackend,
+    publicModelId: localAi.publicModelId,
+    publicVisionId: localAi.publicVisionId,
+    contractVersion: localAi.contractVersion,
     model: localAi.model,
+    visionModel: localAi.visionModel,
     runtimeFamily: localAi.runtimeFamily,
     adapterStrategy: localAi.adapterStrategy,
     trainingPolicy: localAi.trainingPolicy,
@@ -728,7 +826,15 @@ function buildLocalAiInfoPayload(payload = {}) {
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     endpoint: localAi.baseUrl,
+    runtimeType: localAi.runtimeType,
+    runtimeBackend: localAi.runtimeBackend,
+    reasonerBackend: localAi.reasonerBackend,
+    visionBackend: localAi.visionBackend,
+    publicModelId: localAi.publicModelId,
+    publicVisionId: localAi.publicVisionId,
+    contractVersion: localAi.contractVersion,
     model: localAi.model,
+    visionModel: localAi.visionModel,
     runtimeFamily: localAi.runtimeFamily,
     adapterStrategy: localAi.adapterStrategy,
     trainingPolicy: localAi.trainingPolicy,
@@ -744,7 +850,15 @@ function buildLocalAiFlipJudgePayload(payload = {}) {
     mode: localAi.mode,
     baseUrl: localAi.baseUrl,
     endpoint: localAi.baseUrl,
+    runtimeType: localAi.runtimeType,
+    runtimeBackend: localAi.runtimeBackend,
+    reasonerBackend: localAi.reasonerBackend,
+    visionBackend: localAi.visionBackend,
+    publicModelId: localAi.publicModelId,
+    publicVisionId: localAi.publicVisionId,
+    contractVersion: localAi.contractVersion,
     model: localAi.model,
+    visionModel: localAi.visionModel,
     runtimeFamily: localAi.runtimeFamily,
     adapterStrategy: localAi.adapterStrategy,
     trainingPolicy: localAi.trainingPolicy,
@@ -754,6 +868,14 @@ function buildLocalAiFlipJudgePayload(payload = {}) {
 
 function buildLocalAiTrainHookPayload(payload = {}) {
   return buildLocalAiInfoPayload(payload)
+}
+
+function buildLocalAiEpochPayload(payload = {}) {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    return buildLocalAiTrainHookPayload(payload)
+  }
+
+  return buildLocalAiTrainHookPayload({epoch: payload})
 }
 
 function normalizeImageSearchResult(item) {
@@ -1883,8 +2005,8 @@ handleTrusted(
 
 handleTrusted(
   'localAi.buildManifest',
-  withLocalAiEnabled('buildManifest', async (_event, epoch) =>
-    localAiManager.buildManifest(epoch)
+  withLocalAiEnabled('buildManifest', async (_event, payload) =>
+    localAiManager.buildManifest(buildLocalAiEpochPayload(payload))
   )
 )
 
@@ -1898,7 +2020,9 @@ handleTrusted(
 handleTrusted(
   'localAi.buildTrainingCandidatePackage',
   withLocalAiEnabled('buildTrainingCandidatePackage', async (_event, payload) =>
-    localAiManager.buildTrainingCandidatePackage(payload)
+    localAiManager.buildTrainingCandidatePackage(
+      buildLocalAiTrainHookPayload(payload)
+    )
   )
 )
 

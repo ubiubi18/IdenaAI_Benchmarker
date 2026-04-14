@@ -4,6 +4,14 @@ const fs = require('fs-extra')
 
 const {createLocalAiStorage} = require('./storage')
 const {
+  LOCAL_AI_CONTRACT_VERSION,
+  LOCAL_AI_PUBLIC_MODEL_ID,
+  LOCAL_AI_PUBLIC_VISION_ID,
+  LOCAL_AI_REASONER_BACKEND,
+  LOCAL_AI_RUNTIME_BACKEND,
+  LOCAL_AI_VISION_BACKEND,
+} = require('./constants')
+const {
   DEFAULT_BASE_MODEL_ID,
   PLACEHOLDER_IDENTITY,
   PLACEHOLDER_SIGNATURE_REASON,
@@ -52,7 +60,6 @@ function createPlaceholderBundle(storage, overrides = {}) {
 }
 
 function createReceivedEntry({
-  storage,
   bundle,
   bundleId,
   storedPath,
@@ -137,6 +144,12 @@ describe('local-ai federated bundle helper', () => {
     expect(bundle.payload).toMatchObject({
       epoch: 7,
       identity: PLACEHOLDER_IDENTITY,
+      publicModelId: LOCAL_AI_PUBLIC_MODEL_ID,
+      publicVisionId: LOCAL_AI_PUBLIC_VISION_ID,
+      runtimeBackend: LOCAL_AI_RUNTIME_BACKEND,
+      reasonerBackend: LOCAL_AI_REASONER_BACKEND,
+      visionBackend: LOCAL_AI_VISION_BACKEND,
+      contractVersion: LOCAL_AI_CONTRACT_VERSION,
       baseModelId: DEFAULT_BASE_MODEL_ID,
       baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
       eligibleFlipHashes: ['flip-a', 'flip-b'],
@@ -164,7 +177,9 @@ describe('local-ai federated bundle helper', () => {
     })
     const built = await federated.buildUpdateBundle(7)
     const imported = await federated.importUpdateBundle(built.bundlePath)
-    const index = await storage.readJson(storage.resolveLocalAiPath('received', 'index.json'))
+    const index = await storage.readJson(
+      storage.resolveLocalAiPath('received', 'index.json')
+    )
     const storedBundle = await storage.readJson(imported.storedPath)
 
     expect(imported).toMatchObject({
@@ -200,7 +215,9 @@ describe('local-ai federated bundle helper', () => {
 
     await federated.importUpdateBundle(built.bundlePath)
 
-    await expect(federated.importUpdateBundle(built.bundlePath)).resolves.toMatchObject({
+    await expect(
+      federated.importUpdateBundle(built.bundlePath)
+    ).resolves.toMatchObject({
       accepted: false,
       reason: 'duplicate_nonce',
       identity: PLACEHOLDER_IDENTITY,
@@ -211,7 +228,10 @@ describe('local-ai federated bundle helper', () => {
   })
 
   it('rejects base-model mismatches', async () => {
-    const bundleFilePath = storage.resolveLocalAiPath('incoming', 'mismatch.json')
+    const bundleFilePath = storage.resolveLocalAiPath(
+      'incoming',
+      'mismatch.json'
+    )
     const bundle = createPlaceholderBundle(storage, {
       baseModelId: 'local-ai:other:mvp-placeholder-v1',
       baseModelHash: storage.sha256('local-ai:other:mvp-placeholder-v1'),
@@ -227,7 +247,9 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    await expect(federated.importUpdateBundle(bundleFilePath)).resolves.toMatchObject({
+    await expect(
+      federated.importUpdateBundle(bundleFilePath)
+    ).resolves.toMatchObject({
       accepted: false,
       reason: 'base_model_mismatch',
       identity: PLACEHOLDER_IDENTITY,
@@ -238,7 +260,10 @@ describe('local-ai federated bundle helper', () => {
   })
 
   it('rejects malformed bundles with schema_invalid', async () => {
-    const bundleFilePath = storage.resolveLocalAiPath('incoming', 'invalid.json')
+    const bundleFilePath = storage.resolveLocalAiPath(
+      'incoming',
+      'invalid.json'
+    )
 
     await storage.writeJsonAtomic(bundleFilePath, {
       version: 1,
@@ -253,7 +278,9 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    await expect(federated.importUpdateBundle(bundleFilePath)).resolves.toMatchObject({
+    await expect(
+      federated.importUpdateBundle(bundleFilePath)
+    ).resolves.toMatchObject({
       accepted: false,
       reason: 'schema_invalid',
       identity: null,
@@ -276,7 +303,9 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    await expect(federated.importUpdateBundle(bundleFilePath)).resolves.toMatchObject({
+    await expect(
+      federated.importUpdateBundle(bundleFilePath)
+    ).resolves.toMatchObject({
       accepted: false,
       reason: 'schema_invalid',
       bundlePath: bundleFilePath,
@@ -298,7 +327,9 @@ describe('local-ai federated bundle helper', () => {
     const failingStorage = {
       ...storage,
       writeJsonAtomic: jest.fn(async (filePath, obj) => {
-        if (String(filePath).endsWith(`${path.sep}received${path.sep}index.json`)) {
+        if (
+          String(filePath).endsWith(`${path.sep}received${path.sep}index.json`)
+        ) {
           throw new Error('disk full')
         }
 
@@ -312,7 +343,9 @@ describe('local-ai federated bundle helper', () => {
     })
     const built = await federated.buildUpdateBundle(7)
 
-    await expect(federated.importUpdateBundle(built.bundlePath)).resolves.toMatchObject({
+    await expect(
+      federated.importUpdateBundle(built.bundlePath)
+    ).resolves.toMatchObject({
       accepted: false,
       reason: 'import_failed',
       identity: PLACEHOLDER_IDENTITY,
@@ -353,7 +386,9 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    await expect(federated.importUpdateBundle(bundleFilePath)).resolves.toMatchObject({
+    await expect(
+      federated.importUpdateBundle(bundleFilePath)
+    ).resolves.toMatchObject({
       accepted: false,
       reason: 'signature_unverifiable',
       identity: '0x1234',
@@ -364,7 +399,10 @@ describe('local-ai federated bundle helper', () => {
   })
 
   it('rejects bundles that contain raw image payloads', async () => {
-    const bundleFilePath = storage.resolveLocalAiPath('incoming', 'raw-payload.json')
+    const bundleFilePath = storage.resolveLocalAiPath(
+      'incoming',
+      'raw-payload.json'
+    )
     const bundle = createPlaceholderBundle(storage, {
       nonce: 'bundle-nonce-raw',
       images: ['data:image/png;base64,AAA='],
@@ -379,7 +417,9 @@ describe('local-ai federated bundle helper', () => {
       storage,
     })
 
-    await expect(federated.importUpdateBundle(bundleFilePath)).resolves.toMatchObject({
+    await expect(
+      federated.importUpdateBundle(bundleFilePath)
+    ).resolves.toMatchObject({
       accepted: false,
       reason: 'contains_raw_payload',
       identity: null,
@@ -506,7 +546,9 @@ describe('local-ai federated bundle helper', () => {
       deltaType: 'pending_adapter',
     })
 
-    firstBundle.signature.value = storage.sha256(JSON.stringify(firstBundle.payload))
+    firstBundle.signature.value = storage.sha256(
+      JSON.stringify(firstBundle.payload)
+    )
     secondBundle.signature.value = storage.sha256(
       JSON.stringify(secondBundle.payload)
     )
@@ -571,23 +613,26 @@ describe('local-ai federated bundle helper', () => {
 
     await storage.writeJsonAtomic(compatiblePath, compatibleBundle)
     await storage.writeJsonAtomic(mismatchPath, mismatchBundle)
-    await storage.writeJsonAtomic(storage.resolveLocalAiPath('received', 'index.json'), {
-      version: 1,
-      bundles: [
-        createReceivedEntry({
-          storage,
-          bundle: compatibleBundle,
-          bundleId: compatibleId,
-          storedPath: compatiblePath,
-        }),
-        createReceivedEntry({
-          storage,
-          bundle: mismatchBundle,
-          bundleId: mismatchId,
-          storedPath: mismatchPath,
-        }),
-      ],
-    })
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('received', 'index.json'),
+      {
+        version: 1,
+        bundles: [
+          createReceivedEntry({
+            storage,
+            bundle: compatibleBundle,
+            bundleId: compatibleId,
+            storedPath: compatiblePath,
+          }),
+          createReceivedEntry({
+            storage,
+            bundle: mismatchBundle,
+            bundleId: mismatchId,
+            storedPath: mismatchPath,
+          }),
+        ],
+      }
+    )
 
     const federated = createLocalAiFederated({
       logger: mockLogger(),

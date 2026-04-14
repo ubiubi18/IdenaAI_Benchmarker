@@ -1,15 +1,19 @@
 const crypto = require('crypto')
 const path = require('path')
 const {createLocalAiStorage} = require('./storage')
+const {LOCAL_AI_BASE_MODEL_ID} = require('./constants')
+const {
+  normalizeModelReference,
+  resolveModelReference,
+} = require('./model-reference')
 
 const UPDATE_BUNDLE_VERSION = 1
 const RECEIVED_INDEX_VERSION = 1
 const AGGREGATION_RESULT_VERSION = 1
 const MIN_COMPATIBLE_BUNDLES = 2
-const DEFAULT_BASE_MODEL_ID = 'local-ai:sidecar:mvp-placeholder-v1'
+const DEFAULT_BASE_MODEL_ID = LOCAL_AI_BASE_MODEL_ID
 const PLACEHOLDER_IDENTITY = 'identity-unavailable'
-const PLACEHOLDER_SIGNATURE_REASON =
-  'idena_signing_unavailable_in_main_process'
+const PLACEHOLDER_SIGNATURE_REASON = 'idena_signing_unavailable_in_main_process'
 
 function normalizeEpoch(value) {
   const epoch = Number.parseInt(value, 10)
@@ -107,7 +111,11 @@ function receivedIndexPath(storage) {
 }
 
 function receivedBundlePath(storage, epoch, bundleId) {
-  return storage.resolveLocalAiPath('received', String(epoch), `${bundleId}.json`)
+  return storage.resolveLocalAiPath(
+    'received',
+    String(epoch),
+    `${bundleId}.json`
+  )
 }
 
 function aggregationResultPath(storage) {
@@ -168,8 +176,9 @@ async function signBundlePayload({
   }
 
   try {
-    const signature = String(await signPayload(buildSignaturePayload(payload)))
-      .trim()
+    const signature = String(
+      await signPayload(buildSignaturePayload(payload))
+    ).trim()
 
     if (!signature) {
       return {
@@ -189,30 +198,6 @@ async function signBundlePayload({
       ...createPlaceholderSignature(storage, payload),
       reason: 'idena_sign_failed',
     }
-  }
-}
-
-function normalizeBaseModelReference(storage, value) {
-  const source =
-    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-  const baseModelId =
-    String(source.baseModelId || DEFAULT_BASE_MODEL_ID).trim() ||
-    DEFAULT_BASE_MODEL_ID
-  const baseModelHash =
-    String(source.baseModelHash || '').trim() || storage.sha256(baseModelId)
-
-  return {baseModelId, baseModelHash}
-}
-
-async function resolveBaseModelReference(storage, getBaseModelReference) {
-  if (typeof getBaseModelReference !== 'function') {
-    return normalizeBaseModelReference(storage)
-  }
-
-  try {
-    return normalizeBaseModelReference(storage, await getBaseModelReference())
-  } catch {
-    return normalizeBaseModelReference(storage)
   }
 }
 
@@ -319,14 +304,24 @@ function validateBundleShape(bundle) {
     return {ok: false, reason: 'schema_invalid'}
   }
 
-  if (!bundle.payload || typeof bundle.payload !== 'object' || Array.isArray(bundle.payload)) {
+  if (
+    !bundle.payload ||
+    typeof bundle.payload !== 'object' ||
+    Array.isArray(bundle.payload)
+  ) {
     return {ok: false, reason: 'schema_invalid'}
   }
 
-  const payload = bundle.payload
+  const {payload} = bundle
   const signature = normalizeSignature(bundle.signature)
   const epoch = normalizeEpoch(payload.epoch)
   const identity = normalizeIdentity(payload.identity)
+  const publicModelId = String(payload.publicModelId || '').trim()
+  const publicVisionId = String(payload.publicVisionId || '').trim()
+  const runtimeBackend = String(payload.runtimeBackend || '').trim()
+  const reasonerBackend = String(payload.reasonerBackend || '').trim()
+  const visionBackend = String(payload.visionBackend || '').trim()
+  const contractVersion = String(payload.contractVersion || '').trim()
   const baseModelId = String(payload.baseModelId || '').trim()
   const baseModelHash = String(payload.baseModelHash || '').trim()
   const nonce = String(payload.nonce || '').trim()
@@ -337,7 +332,9 @@ function validateBundleShape(bundle) {
       ? payload.manifest
       : null
   const metrics =
-    payload.metrics && typeof payload.metrics === 'object' ? payload.metrics : null
+    payload.metrics && typeof payload.metrics === 'object'
+      ? payload.metrics
+      : null
   const eligibleFlipHashes = Array.isArray(payload.eligibleFlipHashes)
     ? payload.eligibleFlipHashes.filter(Boolean)
     : null
@@ -360,7 +357,10 @@ function validateBundleShape(bundle) {
     return {ok: false, reason: 'schema_invalid'}
   }
 
-  if (baseModelHash !== crypto.createHash('sha256').update(baseModelId).digest('hex')) {
+  if (
+    baseModelHash !==
+    crypto.createHash('sha256').update(baseModelId).digest('hex')
+  ) {
     return {ok: false, reason: 'base_model_mismatch'}
   }
 
@@ -374,6 +374,12 @@ function validateBundleShape(bundle) {
     signature,
     epoch,
     identity,
+    publicModelId,
+    publicVisionId,
+    runtimeBackend,
+    reasonerBackend,
+    visionBackend,
+    contractVersion,
     baseModelId,
     baseModelHash,
     nonce,
@@ -465,18 +471,22 @@ function buildImportResult({
   reason,
   identity = null,
   epoch = null,
-  bundlePath = null,
+  bundlePath: legacyBundlePath = null,
+  sourceBundlePath = null,
   storedPath = null,
   bundleId = null,
   signed,
   signatureType = null,
 }) {
+  const resolvedBundlePath =
+    sourceBundlePath !== null ? sourceBundlePath : legacyBundlePath
+
   const result = {
     accepted,
     reason,
     identity,
     epoch,
-    bundlePath,
+    bundlePath: resolvedBundlePath,
     storedPath,
     acceptedCount: accepted ? 1 : 0,
     rejectedCount: accepted ? 0 : 1,
@@ -540,7 +550,9 @@ function logImportResult(logger, result) {
       epoch: result.epoch,
       identity: result.identity,
       fileName: result.bundlePath ? path.basename(result.bundlePath) : null,
-      storedFileName: result.storedPath ? path.basename(result.storedPath) : null,
+      storedFileName: result.storedPath
+        ? path.basename(result.storedPath)
+        : null,
       reason: result.reason,
       acceptedCount: result.acceptedCount,
       rejectedCount: result.rejectedCount,
@@ -577,10 +589,7 @@ function createLocalAiFederated({
       ? manifest.eligibleFlipHashes.filter(Boolean)
       : []
     const excluded = Array.isArray(manifest.excluded) ? manifest.excluded : []
-    const baseModelId =
-      String(manifest.baseModelId || DEFAULT_BASE_MODEL_ID).trim() ||
-      DEFAULT_BASE_MODEL_ID
-    const baseModelHash = localAiStorage.sha256(baseModelId)
+    const modelReference = normalizeModelReference(localAiStorage, manifest)
     const manifestSha256 = localAiStorage.sha256(JSON.stringify(manifest))
     const generatedAt = new Date().toISOString()
     const nonce = crypto.randomBytes(16).toString('hex')
@@ -588,8 +597,14 @@ function createLocalAiFederated({
     const payload = {
       epoch,
       identity: identityInfo.identity,
-      baseModelId,
-      baseModelHash,
+      publicModelId: modelReference.publicModelId,
+      publicVisionId: modelReference.publicVisionId,
+      runtimeBackend: modelReference.runtimeBackend,
+      reasonerBackend: modelReference.reasonerBackend,
+      visionBackend: modelReference.visionBackend,
+      contractVersion: modelReference.contractVersion,
+      baseModelId: modelReference.baseModelId,
+      baseModelHash: modelReference.baseModelHash,
       nonce,
       eligibleFlipHashes,
       manifest: {
@@ -732,7 +747,7 @@ function createLocalAiFederated({
     let bundleId = null
 
     try {
-      const expectedBaseModel = await resolveBaseModelReference(
+      const expectedBaseModel = await resolveModelReference(
         localAiStorage,
         getBaseModelReference
       )
@@ -741,19 +756,19 @@ function createLocalAiFederated({
         validation.baseModelId !== expectedBaseModel.baseModelId ||
         validation.baseModelHash !== expectedBaseModel.baseModelHash
       ) {
-        const result = buildImportResult({
+        const rejectionResult = buildImportResult({
           accepted: false,
           reason: 'base_model_mismatch',
           identity: validation.identity,
           epoch: validation.epoch,
-          bundlePath: sourcePath,
+          sourceBundlePath: sourcePath,
         })
 
         if (isDev) {
-          logImportResult(logger, result)
+          logImportResult(logger, rejectionResult)
         }
 
-        return result
+        return rejectionResult
       }
 
       const signatureCheck = await verifyBundleSignature({
@@ -765,19 +780,19 @@ function createLocalAiFederated({
       })
 
       if (!signatureCheck.ok) {
-        const result = buildImportResult({
+        const rejectionResult = buildImportResult({
           accepted: false,
           reason: signatureCheck.reason,
           identity: validation.identity,
           epoch: validation.epoch,
-          bundlePath: sourcePath,
+          sourceBundlePath: sourcePath,
         })
 
         if (isDev) {
-          logImportResult(logger, result)
+          logImportResult(logger, rejectionResult)
         }
 
-        return result
+        return rejectionResult
       }
 
       bundleId = computeBundleId(localAiStorage, bundle)
@@ -789,39 +804,43 @@ function createLocalAiFederated({
       )
 
       if (
-        nextReceivedIndex.bundles.some((item) => item.nonce === validation.nonce)
+        nextReceivedIndex.bundles.some(
+          (item) => item.nonce === validation.nonce
+        )
       ) {
-        const result = buildImportResult({
+        const rejectionResult = buildImportResult({
           accepted: false,
           reason: 'duplicate_nonce',
           identity: validation.identity,
           epoch: validation.epoch,
-          bundlePath: sourcePath,
+          sourceBundlePath: sourcePath,
           bundleId,
         })
 
         if (isDev) {
-          logImportResult(logger, result)
+          logImportResult(logger, rejectionResult)
         }
 
-        return result
+        return rejectionResult
       }
 
-      if (nextReceivedIndex.bundles.some((item) => item.bundleId === bundleId)) {
-        const result = buildImportResult({
+      if (
+        nextReceivedIndex.bundles.some((item) => item.bundleId === bundleId)
+      ) {
+        const rejectionResult = buildImportResult({
           accepted: false,
           reason: 'duplicate_bundle',
           identity: validation.identity,
           epoch: validation.epoch,
-          bundlePath: sourcePath,
+          sourceBundlePath: sourcePath,
           bundleId,
         })
 
         if (isDev) {
-          logImportResult(logger, result)
+          logImportResult(logger, rejectionResult)
         }
 
-        return result
+        return rejectionResult
       }
 
       const storedPath = receivedBundlePath(
@@ -848,12 +867,12 @@ function createLocalAiFederated({
         }),
       })
 
-      const result = buildImportResult({
+      const importResult = buildImportResult({
         accepted: true,
         reason: null,
         identity: validation.identity,
         epoch: validation.epoch,
-        bundlePath: sourcePath,
+        sourceBundlePath: sourcePath,
         storedPath,
         bundleId,
         signed: signatureCheck.signed,
@@ -861,10 +880,10 @@ function createLocalAiFederated({
       })
 
       if (isDev) {
-        logImportResult(logger, result)
+        logImportResult(logger, importResult)
       }
 
-      return result
+      return importResult
     } catch (error) {
       if (logger && typeof logger.error === 'function') {
         logger.error('Local AI update bundle import failed', {
@@ -874,25 +893,25 @@ function createLocalAiFederated({
         })
       }
 
-      const result = buildImportResult({
+      const importResult = buildImportResult({
         accepted: false,
         reason: 'import_failed',
         identity: validation.identity,
         epoch: validation.epoch,
-        bundlePath: sourcePath,
+        sourceBundlePath: sourcePath,
         bundleId,
       })
 
       if (isDev) {
-        logImportResult(logger, result)
+        logImportResult(logger, importResult)
       }
 
-      return result
+      return importResult
     }
   }
 
   async function aggregateAcceptedBundles() {
-    const expectedBaseModel = await resolveBaseModelReference(
+    const expectedBaseModel = await resolveModelReference(
       localAiStorage,
       getBaseModelReference
     )
@@ -911,67 +930,48 @@ function createLocalAiFederated({
     }
 
     for (const entry of acceptedBundles) {
+      let bundle = null
+      let validation = null
+      let skipReason = null
+
       if (
         entry.baseModelId !== expectedBaseModel.baseModelId ||
         entry.baseModelHash !== expectedBaseModel.baseModelHash
       ) {
-        skipped.push({
-          bundleId: entry.bundleId,
-          reason: 'base_model_mismatch',
-        })
-        continue
+        skipReason = 'base_model_mismatch'
+      } else if (!(await localAiStorage.exists(entry.storedPath))) {
+        skipReason = 'missing_bundle_file'
+      } else {
+        try {
+          bundle = await localAiStorage.readJson(entry.storedPath)
+        } catch {
+          skipReason = 'schema_invalid'
+        }
       }
 
-      if (!(await localAiStorage.exists(entry.storedPath))) {
-        skipped.push({
-          bundleId: entry.bundleId,
-          reason: 'missing_bundle_file',
-        })
-        continue
+      if (!skipReason) {
+        validation = validateBundleShape(bundle)
+
+        if (!validation.ok) {
+          skipReason = validation.reason
+        } else if (computeBundleId(localAiStorage, bundle) !== entry.bundleId) {
+          skipReason = 'bundle_id_mismatch'
+        } else if (
+          validation.baseModelId !== expectedBaseModel.baseModelId ||
+          validation.baseModelHash !== expectedBaseModel.baseModelHash
+        ) {
+          skipReason = 'base_model_mismatch'
+        }
       }
 
-      let bundle
-
-      try {
-        bundle = await localAiStorage.readJson(entry.storedPath)
-      } catch {
+      if (skipReason) {
         skipped.push({
           bundleId: entry.bundleId,
-          reason: 'schema_invalid',
+          reason: skipReason,
         })
-        continue
+      } else {
+        compatibleBundles.push({entry, validation})
       }
-
-      const validation = validateBundleShape(bundle)
-
-      if (!validation.ok) {
-        skipped.push({
-          bundleId: entry.bundleId,
-          reason: validation.reason,
-        })
-        continue
-      }
-
-      if (computeBundleId(localAiStorage, bundle) !== entry.bundleId) {
-        skipped.push({
-          bundleId: entry.bundleId,
-          reason: 'bundle_id_mismatch',
-        })
-        continue
-      }
-
-      if (
-        validation.baseModelId !== expectedBaseModel.baseModelId ||
-        validation.baseModelHash !== expectedBaseModel.baseModelHash
-      ) {
-        skipped.push({
-          bundleId: entry.bundleId,
-          reason: 'base_model_mismatch',
-        })
-        continue
-      }
-
-      compatibleBundles.push({entry, validation})
     }
 
     if (isDev) {
@@ -1009,13 +1009,13 @@ function createLocalAiFederated({
       logger.debug('Local AI aggregation completed', {
         aggregated: result.aggregated,
         mode: result.mode,
-      compatibleCount: result.compatibleCount,
-      skippedCount: result.skippedCount,
-      acceptedCount: result.acceptedCount,
-      rejectedCount: result.rejectedCount,
-      reason: result.reason,
-      outputPath,
-    })
+        compatibleCount: result.compatibleCount,
+        skippedCount: result.skippedCount,
+        acceptedCount: result.acceptedCount,
+        rejectedCount: result.rejectedCount,
+        reason: result.reason,
+        outputPath,
+      })
     }
 
     return {

@@ -5,6 +5,10 @@ import {loadPersistentState} from '../utils/persist'
 import {BASE_API_URL, BASE_INTERNAL_API_PORT} from '../api/api-client'
 import useLogger from '../hooks/use-logger'
 import {AVAILABLE_LANGS} from '../../i18n'
+import {
+  buildLocalAiSettings,
+  mergeLocalAiSettings,
+} from '../utils/local-ai-settings'
 
 const SETTINGS_INITIALIZE = 'SETTINGS_INITIALIZE'
 const TOGGLE_USE_EXTERNAL_NODE = 'TOGGLE_USE_EXTERNAL_NODE'
@@ -63,51 +67,6 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
-const DEFAULT_LOCAL_AI_SETTINGS = {
-  enabled: false,
-  runtimeMode: 'sidecar',
-  runtimeType: 'phi-sidecar',
-  runtimeFamily: 'phi-3.5-vision',
-  baseUrl: 'http://127.0.0.1:5000',
-  endpoint: 'http://127.0.0.1:5000',
-  model: 'phi-3.5-vision-instruct',
-  visionModel: 'phi-3.5-vision',
-  adapterStrategy: 'lora-first',
-  trainingPolicy: 'approved-post-consensus-only',
-  contractVersion: 'phi-sidecar/v1',
-  captureEnabled: false,
-  trainEnabled: false,
-  federated: {
-    enabled: false,
-    relays: [],
-    minExamples: 5,
-    clipNorm: 1.0,
-    dpNoise: 0.01,
-  },
-  eligibilityGate: {
-    requireValidatedIdentity: true,
-    requireLocalNode: true,
-  },
-}
-
-function normalizeLocalAiSettings(settings = {}) {
-  const nextSettings = {...(settings || {})}
-
-  if (nextSettings.runtimeType && nextSettings.runtimeType !== 'phi-sidecar') {
-    nextSettings.runtimeType = DEFAULT_LOCAL_AI_SETTINGS.runtimeType
-    nextSettings.runtimeFamily = DEFAULT_LOCAL_AI_SETTINGS.runtimeFamily
-    nextSettings.baseUrl = DEFAULT_LOCAL_AI_SETTINGS.baseUrl
-    nextSettings.endpoint = DEFAULT_LOCAL_AI_SETTINGS.endpoint
-    nextSettings.model = DEFAULT_LOCAL_AI_SETTINGS.model
-    nextSettings.visionModel = DEFAULT_LOCAL_AI_SETTINGS.visionModel
-    nextSettings.adapterStrategy = DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy
-    nextSettings.trainingPolicy = DEFAULT_LOCAL_AI_SETTINGS.trainingPolicy
-    nextSettings.contractVersion = DEFAULT_LOCAL_AI_SETTINGS.contractVersion
-  }
-
-  return nextSettings
-}
-
 function buildAiSolverSettings(settings = {}) {
   const nextSettings = {
     ...DEFAULT_AI_SOLVER_SETTINGS,
@@ -122,39 +81,6 @@ function buildAiSolverSettings(settings = {}) {
   }
 
   return nextSettings
-}
-
-// localAi includes nested settings, so it needs structured hydration.
-function buildLocalAiSettings(settings = {}) {
-  const normalizedSettings = normalizeLocalAiSettings(settings)
-
-  return {
-    ...DEFAULT_LOCAL_AI_SETTINGS,
-    ...(normalizedSettings || {}),
-    federated: {
-      ...DEFAULT_LOCAL_AI_SETTINGS.federated,
-      ...((normalizedSettings && normalizedSettings.federated) || {}),
-    },
-    eligibilityGate: {
-      ...DEFAULT_LOCAL_AI_SETTINGS.eligibilityGate,
-      ...((normalizedSettings && normalizedSettings.eligibilityGate) || {}),
-    },
-  }
-}
-
-function mergeLocalAiSettings(current = {}, next = {}) {
-  return buildLocalAiSettings({
-    ...(current || {}),
-    ...(next || {}),
-    federated: {
-      ...((current && current.federated) || {}),
-      ...((next && next.federated) || {}),
-    },
-    eligibilityGate: {
-      ...((current && current.eligibilityGate) || {}),
-      ...((next && next.eligibilityGate) || {}),
-    },
-  })
 }
 
 const initialState = {
