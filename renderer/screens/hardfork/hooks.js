@@ -49,6 +49,7 @@ export function useHardFork() {
   const [hardForkMachine] = React.useState(() =>
     createMachine(
       {
+        predictableActionArguments: true,
         context: {
           changes: [],
           didActivate: undefined,

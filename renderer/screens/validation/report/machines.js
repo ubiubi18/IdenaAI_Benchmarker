@@ -4,6 +4,7 @@ import {apiUrl} from '../../../shared/api/api-client'
 import {ValidationResult} from './types'
 
 export const validationReportMachine = createMachine({
+  predictableActionArguments: true,
   context: {
     earnings: 0,
     missedRewards: 0,

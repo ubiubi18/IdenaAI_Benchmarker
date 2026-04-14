@@ -512,7 +512,7 @@ export default function SocialPage() {
               borderRadius="lg"
               bg="white"
               referrerPolicy="no-referrer"
-              sandbox="allow-scripts allow-same-origin allow-popups"
+              sandbox="allow-scripts allow-popups"
               onLoad={() => {
                 if (postBootstrapToIframe()) {
                   setBootstrapReady(true)

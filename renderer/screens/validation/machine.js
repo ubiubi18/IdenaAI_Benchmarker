@@ -42,6 +42,7 @@ export const createValidationMachine = ({
 }) =>
   createMachine(
     {
+      predictableActionArguments: true,
       id: 'validation',
       initial: 'shortSession',
       context: {

@@ -509,6 +509,7 @@ function SyncingApp() {
 
   const [peerSyncMachine] = React.useState(() =>
     createMachine({
+      predictableActionArguments: true,
       context: {
         peers: [],
       },
