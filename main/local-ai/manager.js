@@ -1,6 +1,7 @@
 const {createLocalAiStorage} = require('./storage')
 const {createLocalAiSidecar} = require('./sidecar')
 const {resolveModelReference} = require('./model-reference')
+const {resolveLocalAiRuntimeAdapter} = require('./runtime-adapter')
 
 const CAPTURE_INDEX_VERSION = 1
 const TRAINING_CANDIDATE_PACKAGE_VERSION = 1
@@ -18,10 +19,23 @@ function normalizeBaseUrl(value, fallback = 'http://localhost:5000') {
   return baseUrl || fallback
 }
 
-function normalizeRuntimePayload(payload) {
-  return payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload
-    : {}
+function normalizeRuntimePayload(payload, fallbackRuntime = {}) {
+  const nextPayload =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {}
+  const runtime = resolveLocalAiRuntimeAdapter(nextPayload, fallbackRuntime)
+
+  return {
+    ...nextPayload,
+    runtime: runtime.runtime,
+    runtimeBackend: runtime.runtimeBackend,
+    runtimeType: runtime.runtimeType,
+    baseUrl: normalizeBaseUrl(
+      nextPayload.baseUrl || nextPayload.endpoint,
+      runtime.defaultBaseUrl
+    ),
+  }
 }
 
 function pickRuntimeInput(payload) {
@@ -322,11 +336,15 @@ function createLocalAiManager({
       logger,
       isDev,
     })
+  const initialRuntime = resolveLocalAiRuntimeAdapter()
   const state = {
     available: true,
     running: false,
     mode: 'sidecar',
-    baseUrl: 'http://localhost:5000',
+    runtime: initialRuntime.runtime,
+    runtimeBackend: initialRuntime.runtimeBackend,
+    runtimeType: initialRuntime.runtimeType,
+    baseUrl: initialRuntime.baseUrl,
     capturedCount: 0,
     lastError: null,
     sidecarReachable: null,
@@ -346,6 +364,9 @@ function createLocalAiManager({
       available: state.available,
       running: state.running,
       mode: state.mode,
+      runtime: state.runtime,
+      runtimeBackend: state.runtimeBackend,
+      runtimeType: state.runtimeType,
       baseUrl: state.baseUrl,
       capturedCount: state.capturedCount,
       lastError: state.lastError,
@@ -361,6 +382,14 @@ function createLocalAiManager({
     state.sidecarCheckedAt = checkedAt || new Date().toISOString()
     state.sidecarModels = Array.isArray(models) ? models : state.sidecarModels
     state.lastError = lastError || null
+  }
+
+  function applyRuntimeState(next) {
+    state.mode = normalizeMode(next.mode, state.mode)
+    state.runtime = next.runtime || state.runtime
+    state.runtimeBackend = next.runtimeBackend || state.runtimeBackend
+    state.runtimeType = next.runtimeType || state.runtimeType
+    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
   }
 
   async function hydrate() {
@@ -426,13 +455,13 @@ function createLocalAiManager({
   }
 
   async function refreshSidecarStatus(payload = {}) {
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.mode = normalizeMode(next.mode, state.mode)
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const health = await localAiSidecar.getHealth({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       timeoutMs: next.timeoutMs,
     })
@@ -446,6 +475,7 @@ function createLocalAiManager({
     if (health.ok) {
       models = await localAiSidecar.listModels({
         baseUrl: state.baseUrl,
+        runtimeBackend: next.runtimeBackend,
         runtimeType: next.runtimeType,
         timeoutMs: next.timeoutMs,
       })
@@ -479,10 +509,9 @@ function createLocalAiManager({
   async function start(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.mode = normalizeMode(next.mode, state.mode)
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
     state.running = true
     state.lastError = null
 
@@ -517,12 +546,13 @@ function createLocalAiManager({
   async function listModels(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.listModels({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       timeoutMs: next.timeoutMs,
     })
@@ -543,12 +573,13 @@ function createLocalAiManager({
   async function chat(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.chat({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       model: next.model,
       messages: next.messages,
@@ -573,12 +604,13 @@ function createLocalAiManager({
   async function flipToText(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.flipToText({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       visionModel: next.visionModel,
       model: next.model,
@@ -601,12 +633,13 @@ function createLocalAiManager({
   async function checkFlipSequence(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.checkFlipSequence({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       visionModel: next.visionModel,
       model: next.model,
@@ -629,9 +662,9 @@ function createLocalAiManager({
   async function captionFlip(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.captionFlip({
       ...next,
@@ -653,9 +686,9 @@ function createLocalAiManager({
   async function ocrImage(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.ocrImage({
       ...next,
@@ -677,9 +710,9 @@ function createLocalAiManager({
   async function trainEpoch(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.trainEpoch({
       ...next,

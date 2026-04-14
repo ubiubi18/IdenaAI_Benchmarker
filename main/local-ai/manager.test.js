@@ -581,6 +581,58 @@ describe('local-ai manager', () => {
     )
   })
 
+  it('derives the legacy runtime type from runtimeBackend for Local AI flip text requests', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      flipToText: jest.fn(async (payload) => ({
+        ok: true,
+        status: 'ok',
+        provider: 'local-ai',
+        runtimeBackend: payload.runtimeBackend,
+        runtimeType: payload.runtimeType,
+        visionModel: payload.visionModel,
+        text: 'A short local flip summary.',
+        lastError: null,
+      })),
+      checkFlipSequence: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+    })
+
+    await expect(
+      manager.flipToText({
+        runtimeBackend: 'ollama-direct',
+        visionModel: 'moondream',
+        model: 'llama3.1:8b',
+        input: {
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
+        },
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      provider: 'local-ai',
+      runtimeBackend: 'ollama-direct',
+      runtimeType: 'ollama',
+      baseUrl: 'http://127.0.0.1:11434',
+    })
+
+    expect(sidecar.flipToText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeBackend: 'ollama-direct',
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+      })
+    )
+  })
+
   it('routes checkFlipSequence through the Local AI sidecar with runtime config', async () => {
     const sidecar = {
       getHealth: jest.fn(),

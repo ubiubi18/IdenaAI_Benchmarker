@@ -3,6 +3,7 @@ const LEGACY_LOCAL_AI_RUNTIME_FAMILY = 'phi-3.5-vision'
 const LEGACY_LOCAL_AI_MODEL = 'phi-3.5-vision-instruct'
 const LEGACY_LOCAL_AI_VISION_MODEL = 'phi-3.5-vision'
 const LEGACY_LOCAL_AI_CONTRACT_VERSION = 'phi-sidecar/v1'
+const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 
 const DEFAULT_LOCAL_AI_SETTINGS = {
   enabled: false,
@@ -41,9 +42,21 @@ function trimString(value) {
 }
 
 function normalizeRuntimeBackend(source = {}) {
-  const explicit = trimString(source.runtimeBackend)
-  if (explicit) {
-    return explicit
+  const explicit = trimString(source.runtimeBackend).toLowerCase()
+  switch (explicit) {
+    case 'ollama':
+    case 'ollama-http':
+    case 'ollama-direct':
+      return 'ollama-direct'
+    case 'sidecar':
+    case 'sidecar-http':
+    case 'local-ai-sidecar':
+    case LEGACY_LOCAL_AI_RUNTIME_TYPE:
+      return DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
+    default:
+      if (explicit) {
+        return explicit
+      }
   }
 
   const legacyRuntimeType = trimString(source.runtimeType).toLowerCase()
@@ -52,6 +65,12 @@ function normalizeRuntimeBackend(source = {}) {
   }
 
   return DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
+}
+
+function defaultBaseUrlForRuntimeBackend(runtimeBackend) {
+  return runtimeBackend === 'ollama-direct'
+    ? DEFAULT_LOCAL_AI_OLLAMA_BASE_URL
+    : DEFAULT_LOCAL_AI_SETTINGS.baseUrl
 }
 
 function normalizeContractVersion(value) {
@@ -68,19 +87,33 @@ function normalizeContractVersion(value) {
 }
 
 function normalizeBaseUrl(source = {}) {
-  return (
-    trimString(source.baseUrl) ||
-    trimString(source.endpoint) ||
-    DEFAULT_LOCAL_AI_SETTINGS.baseUrl
-  )
+  const runtimeBackend = normalizeRuntimeBackend(source)
+  const defaultBaseUrl = defaultBaseUrlForRuntimeBackend(runtimeBackend)
+  const explicit = trimString(source.baseUrl) || trimString(source.endpoint)
+
+  if (!explicit) {
+    return defaultBaseUrl
+  }
+
+  if (
+    runtimeBackend === 'ollama-direct' &&
+    explicit === DEFAULT_LOCAL_AI_SETTINGS.baseUrl
+  ) {
+    return defaultBaseUrl
+  }
+
+  if (
+    runtimeBackend === DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend &&
+    explicit === DEFAULT_LOCAL_AI_OLLAMA_BASE_URL
+  ) {
+    return defaultBaseUrl
+  }
+
+  return explicit
 }
 
 function normalizeEndpoint(source = {}) {
-  return (
-    trimString(source.endpoint) ||
-    trimString(source.baseUrl) ||
-    DEFAULT_LOCAL_AI_SETTINGS.endpoint
-  )
+  return normalizeBaseUrl(source)
 }
 
 function normalizeLegacyRuntimeFamily(source = {}) {
@@ -104,11 +137,12 @@ function resolveLocalAiWireRuntimeType(settings = {}) {
 
   switch (trimString(settings.runtimeBackend).toLowerCase()) {
     case 'ollama':
+    case 'ollama-http':
     case 'ollama-direct':
       return 'ollama'
     case 'sidecar-http':
     default:
-      return LEGACY_LOCAL_AI_RUNTIME_TYPE
+      return 'sidecar'
   }
 }
 

@@ -73,7 +73,7 @@ describe('local-ai settings schema', () => {
         ...DEFAULT_LOCAL_AI_SETTINGS,
         runtimeBackend: 'sidecar-http',
       })
-    ).toBe('phi-sidecar')
+    ).toBe('sidecar')
 
     expect(
       resolveLocalAiWireRuntimeType({
@@ -81,5 +81,15 @@ describe('local-ai settings schema', () => {
         runtimeType: 'custom-runtime',
       })
     ).toBe('custom-runtime')
+  })
+
+  it('switches to the matching backend default URL when transport changes', () => {
+    const settings = buildLocalAiSettings({
+      runtimeBackend: 'ollama-direct',
+      baseUrl: 'http://127.0.0.1:5000',
+    })
+
+    expect(settings.baseUrl).toBe('http://127.0.0.1:11434')
+    expect(settings.endpoint).toBe('http://127.0.0.1:11434')
   })
 })

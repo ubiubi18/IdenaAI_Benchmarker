@@ -78,6 +78,7 @@ const {createAiTestUnitBridge} = require('./ai-test-unit')
 const {prepareDb} = require('./stores/setup')
 const {createLocalAiFederated} = require('./local-ai/federated')
 const {createLocalAiManager} = require('./local-ai/manager')
+const {resolveLocalAiRuntimeAdapter} = require('./local-ai/runtime-adapter')
 const {
   ensureLocalAiEnabled,
   isLocalAiEnabled,
@@ -89,7 +90,6 @@ const {
   LOCAL_AI_REASONER_BACKEND,
   LOCAL_AI_VISION_BACKEND,
   LOCAL_AI_RUNTIME_FAMILY,
-  LOCAL_AI_DEFAULT_BASE_URL,
   LOCAL_AI_DEFAULT_MODEL,
   LOCAL_AI_DEFAULT_VISION_MODEL,
   LOCAL_AI_PUBLIC_MODEL_ID,
@@ -516,6 +516,10 @@ function getMainLocalAiSettings(payload = {}) {
     settings && settings.localAi && typeof settings.localAi === 'object'
       ? settings.localAi
       : {}
+  const runtimeAdapter = resolveLocalAiRuntimeAdapter(
+    {...localAi, ...nextPayload},
+    localAi
+  )
 
   return {
     enabled: localAi.enabled === true,
@@ -530,7 +534,7 @@ function getMainLocalAiSettings(payload = {}) {
         nextPayload.endpoint,
         nextPayload.baseUrl,
       ],
-      LOCAL_AI_DEFAULT_BASE_URL
+      runtimeAdapter.defaultBaseUrl
     ),
     model: pickTrimmedString(
       [localAi.model, nextPayload.model],
@@ -547,11 +551,11 @@ function getMainLocalAiSettings(payload = {}) {
         nextPayload.runtimeBackend,
         localAi.runtimeBackend,
       ],
-      LOCAL_AI_RUNTIME
+      runtimeAdapter.runtime
     ),
     runtimeBackend: pickTrimmedString(
       [localAi.runtimeBackend, nextPayload.runtimeBackend],
-      LOCAL_AI_RUNTIME_BACKEND
+      runtimeAdapter.runtimeBackend
     ),
     reasonerBackend: pickTrimmedString(
       [localAi.reasonerBackend, nextPayload.reasonerBackend],
@@ -580,7 +584,7 @@ function getMainLocalAiSettings(payload = {}) {
     ),
     runtimeType: pickTrimmedString(
       [localAi.runtimeType, nextPayload.runtimeType],
-      ''
+      runtimeAdapter.runtimeType
     ),
     adapterStrategy: pickTrimmedString(
       [localAi.adapterStrategy, nextPayload.adapterStrategy],
