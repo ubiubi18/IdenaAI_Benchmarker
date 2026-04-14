@@ -5154,6 +5154,171 @@ function summarizeTokenUsage(results) {
   )
 }
 
+function normalizeValidationReportKeywords(keywords = []) {
+  if (!Array.isArray(keywords)) {
+    return []
+  }
+
+  return keywords
+    .map((item, index) => {
+      if (item && typeof item === 'object') {
+        const name = String(item.name || item.keyword || '').trim()
+        const desc = String(item.desc || item.description || '').trim()
+        if (!name && !desc) {
+          return null
+        }
+        return {
+          name: name || `keyword-${index + 1}`,
+          desc,
+        }
+      }
+
+      const keywordName = String(item || '').trim()
+      if (!keywordName) {
+        return null
+      }
+      return {name: keywordName, desc: ''}
+    })
+    .filter(Boolean)
+    .slice(0, 2)
+}
+
+function buildValidationReportReviewPrompt({keywords = []} = {}) {
+  const normalizedKeywords = normalizeValidationReportKeywords(keywords)
+  const keywordLines = normalizedKeywords.length
+    ? normalizedKeywords.map((item, index) => {
+        const detail = item.desc ? ` - ${item.desc}` : ''
+        return `${index + 1}. ${item.name}${detail}`
+      })
+    : ['1. keyword unavailable', '2. keyword unavailable']
+
+  return [
+    'You are reviewing one already-selected Idena validation flip sequence during the long-session keyword check.',
+    'You will receive exactly 4 ordered frames for the chosen story and the 2 official keywords.',
+    'Decide whether the chosen sequence should be APPROVED or REPORTED.',
+    'Report only for clear rule violations:',
+    '- one keyword is missing, irrelevant, or not clearly visible in the chosen sequence',
+    '- the sequence depends on reading text to solve',
+    '- numbers, letters, arrows, labels, or overlays indicate frame order',
+    '- inappropriate, adult, or graphic content is present',
+    '- the 4 frames contain multiple unrelated stories instead of one coherent sequence',
+    '- the flip uses an obvious waking-up template',
+    '- the flip ends with a thumbs up/down style answer cue',
+    '- the keywords only appear inside a page, screen, painting, poster, or printed collage',
+    'Do not report merely because the story is awkward, low quality, or hard.',
+    'If you are uncertain, choose "approve".',
+    'Return JSON only with this shape:',
+    '{"decision":"approve"|"report","confidence":0.0,"reason":"short reason","triggeredRules":["keyword_missing"]}',
+    '',
+    'Keywords:',
+    ...keywordLines,
+  ].join('\n')
+}
+
+function normalizeValidationReportDecision(parsed) {
+  const rawDecision = String(
+    (parsed && (parsed.decision || parsed.answer || parsed.verdict)) || ''
+  )
+    .trim()
+    .toLowerCase()
+
+  const decision = [
+    'report',
+    'reported',
+    'reject',
+    'flag',
+    'bad',
+    'invalid',
+  ].includes(rawDecision)
+    ? 'report'
+    : 'approve'
+
+  const reason = String(
+    (parsed && (parsed.reason || parsed.reasoning || parsed.summary)) || ''
+  )
+    .trim()
+    .slice(0, 240)
+
+  const triggeredRules = Array.isArray(parsed && parsed.triggeredRules)
+    ? parsed.triggeredRules
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : []
+
+  return {
+    decision,
+    confidence: normalizeConfidence(parsed && parsed.confidence),
+    reason,
+    triggeredRules,
+  }
+}
+
+function aggregateValidationReportReviews(reviews = []) {
+  let approveScore = 0
+  let reportScore = 0
+  let totalWeight = 0
+  let bestApprove = null
+  let bestApproveScore = -1
+  let bestReport = null
+  let bestReportScore = -1
+
+  reviews.forEach((item) => {
+    const weight = normalizeConsultantWeight(item && item.weight, 1)
+    const confidence = normalizeConfidence(item && item.confidence)
+    const score = weight * confidence
+
+    totalWeight += weight
+
+    if (item && item.decision === 'report') {
+      reportScore += score
+      if (score > bestReportScore) {
+        bestReportScore = score
+        bestReport = item
+      }
+      return
+    }
+
+    approveScore += score
+    if (score > bestApproveScore) {
+      bestApproveScore = score
+      bestApprove = item
+    }
+  })
+
+  if (reportScore <= 0 && approveScore <= 0) {
+    return {
+      decision: 'approve',
+      confidence: 0,
+      reason: 'insufficient signal',
+      triggeredRules: [],
+      totalWeight,
+    }
+  }
+
+  const decision = reportScore > approveScore ? 'report' : 'approve'
+  const chosenScore = decision === 'report' ? reportScore : approveScore
+  const bestReview = decision === 'report' ? bestReport : bestApprove
+
+  return {
+    decision,
+    confidence:
+      totalWeight > 0 ? Math.max(0, Math.min(1, chosenScore / totalWeight)) : 0,
+    reason:
+      (bestReview && bestReview.reason) ||
+      (decision === 'report'
+        ? 'reported by automated review'
+        : 'approved by automated review'),
+    triggeredRules:
+      decision === 'report' &&
+      bestReview &&
+      Array.isArray(bestReview.triggeredRules)
+        ? bestReview.triggeredRules
+        : [],
+    totalWeight,
+  }
+}
+
 function createAiProviderBridge(logger, dependencies = {}) {
   const providerKeys = new Map(
     Object.values(PROVIDERS).map((provider) => [provider, null])
@@ -7346,9 +7511,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
       typeof payload.renderFeedbackEnabled === 'boolean'
         ? payload.renderFeedbackEnabled
         : true
-    const textAuditModel = String(
-      payload.textAuditModel || 'gpt-5.4'
-    ).trim()
+    const textAuditModel = String(payload.textAuditModel || 'gpt-5.4').trim()
     const validatorModel = String(
       payload.validatorModel || textAuditModel
     ).trim()
@@ -8961,6 +9124,208 @@ function createAiProviderBridge(logger, dependencies = {}) {
     }
   }
 
+  async function reviewValidationReports(payload = {}) {
+    const provider = normalizeProvider(payload.provider)
+    const model = String(payload.model || DEFAULT_MODELS[provider]).trim()
+    const flips = Array.isArray(payload.flips) ? payload.flips : []
+    const providerConfig = payload.providerConfig || null
+    const consultProviders = normalizeConsultProviders(payload, provider, model)
+    const consultProvidersWithKeys = consultProviders.map((consultant) => ({
+      ...consultant,
+      apiKey:
+        consultant.internalStrategy === LEGACY_HEURISTIC_STRATEGY
+          ? null
+          : getApiKey(consultant.provider),
+    }))
+
+    if (!flips.length) {
+      throw new Error('No validation report flips provided')
+    }
+    if (!consultProviders.length) {
+      throw new Error('No consultant strategies available')
+    }
+
+    const profile = sanitizeBenchmarkProfile(payload)
+    const startedAt = now()
+    const interFlipDelayMs = Math.max(0, Number(profile.interFlipDelayMs) || 0)
+
+    async function reviewSingleFlip(flip) {
+      const flipStartedAt = now()
+      const sequenceImages = normalizeImageList(flip && flip.images).slice(0, 4)
+
+      if (!sequenceImages.length) {
+        return {
+          hash: flip && flip.hash ? flip.hash : '',
+          decision: 'approve',
+          confidence: 0,
+          reason: 'missing sequence images',
+          triggeredRules: [],
+          error: 'missing_images',
+          latencyMs: now() - flipStartedAt,
+          tokenUsage: createEmptyTokenUsage(),
+          consultedProviders: [],
+        }
+      }
+
+      const promptText = buildValidationReportReviewPrompt({
+        keywords: flip && flip.keywords,
+      })
+
+      const consultantReviews = await Promise.all(
+        consultProvidersWithKeys.map(async (consultant) => {
+          try {
+            const providerResponse = await withRetries(
+              profile.maxRetries,
+              async (attempt) => {
+                try {
+                  return await invokeProvider({
+                    provider: consultant.provider,
+                    model: consultant.model,
+                    flip: {
+                      hash: flip.hash,
+                      images: sequenceImages,
+                    },
+                    profile,
+                    apiKey: consultant.apiKey,
+                    providerConfig: consultant.providerConfig || providerConfig,
+                    promptText,
+                    promptOptions: {
+                      promptPhase: 'report_review',
+                    },
+                  })
+                } catch (error) {
+                  const status = getResponseStatus(error)
+                  if (status === 429 && attempt < profile.maxRetries) {
+                    const retryAfterMs =
+                      getRetryAfterMs(error) ||
+                      Math.max(500, 700 * (attempt + 1))
+                    await sleep(retryAfterMs)
+                  }
+                  throw error
+                }
+              }
+            )
+
+            const normalizedResponse =
+              normalizeProviderResponse(providerResponse)
+            const parsed = extractJsonBlock(normalizedResponse.rawText)
+            const review = normalizeValidationReportDecision(parsed)
+
+            return {
+              provider: consultant.provider,
+              model: consultant.model,
+              weight: normalizeConsultantWeight(consultant.weight, 1),
+              decision: review.decision,
+              confidence: review.confidence,
+              reason: review.reason,
+              triggeredRules: review.triggeredRules,
+              error: null,
+              tokenUsage: normalizedResponse.tokenUsage,
+            }
+          } catch (error) {
+            const message = createProviderErrorMessage({
+              provider: consultant.provider,
+              model: consultant.model,
+              operation: 'validation_report_review',
+              error,
+            })
+
+            return {
+              provider: consultant.provider,
+              model: consultant.model,
+              weight: normalizeConsultantWeight(consultant.weight, 1),
+              decision: 'approve',
+              confidence: 0,
+              reason: 'provider error',
+              triggeredRules: [],
+              error: message,
+              tokenUsage: createEmptyTokenUsage(),
+            }
+          }
+        })
+      )
+
+      const aggregate = aggregateValidationReportReviews(consultantReviews)
+      const consultantTokenUsage = consultantReviews.reduce(
+        (acc, item) => addTokenUsage(acc, item.tokenUsage),
+        createEmptyTokenUsage()
+      )
+      const providerErrors = consultantReviews
+        .filter((item) => item.error)
+        .map((item) => item.error)
+
+      return {
+        hash: flip.hash,
+        decision: aggregate.decision,
+        confidence: aggregate.confidence,
+        reason: aggregate.reason,
+        triggeredRules: aggregate.triggeredRules,
+        error:
+          providerErrors.length > 0
+            ? providerErrors.slice(0, 3).join(' | ')
+            : null,
+        latencyMs: now() - flipStartedAt,
+        tokenUsage: consultantTokenUsage,
+        consultedProviders: consultantReviews.map(
+          ({
+            provider: consultProvider,
+            model: consultModel,
+            weight: itemWeight,
+            decision,
+            confidence,
+            error,
+          }) => ({
+            provider: consultProvider,
+            model: consultModel,
+            weight: normalizeConsultantWeight(itemWeight, 1),
+            decision,
+            confidence,
+            error,
+          })
+        ),
+      }
+    }
+
+    const results = []
+    for (let flipIndex = 0; flipIndex < flips.length; flipIndex += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await reviewSingleFlip(flips[flipIndex])
+      results.push(result)
+
+      if (interFlipDelayMs > 0 && flipIndex < flips.length - 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(interFlipDelayMs)
+      }
+    }
+
+    const tokenUsageSummary = summarizeTokenUsage(results)
+    const summary = {
+      totalFlips: results.length,
+      elapsedMs: now() - startedAt,
+      approved: results.filter((item) => item.decision === 'approve').length,
+      reported: results.filter((item) => item.decision === 'report').length,
+      consultedProviders: consultProviders.map(
+        ({provider: itemProvider, model: itemModel, weight: itemWeight}) => ({
+          provider: itemProvider,
+          model: itemModel,
+          weight: normalizeConsultantWeight(itemWeight, 1),
+        })
+      ),
+      tokens: tokenUsageSummary,
+      diagnostics: {
+        providerErrors: results.filter((item) => Boolean(item.error)).length,
+      },
+    }
+
+    return {
+      provider,
+      model,
+      profile,
+      summary,
+      results,
+    }
+  }
+
   return {
     setProviderKey,
     clearProviderKey,
@@ -8971,6 +9336,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
     generateStoryOptions,
     generateFlipPanels,
     solveFlipBatch,
+    reviewValidationReports,
   }
 }
 

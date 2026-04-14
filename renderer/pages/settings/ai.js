@@ -112,6 +112,8 @@ const DEFAULT_AI_SETTINGS = {
   provider: 'openai',
   model: DEFAULT_MODELS.openai,
   mode: 'manual',
+  autoReportEnabled: false,
+  autoReportDelayMinutes: 10,
   benchmarkProfile: 'strict',
   deadlineMs: 60 * 1000,
   requestTimeoutMs: 9 * 1000,
@@ -1909,6 +1911,53 @@ export default function AiSettingsPage() {
                     </option>
                   </Select>
                 </SettingsFormControl>
+
+                {aiSolver.mode === 'session-auto' && (
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Delayed auto-report')}
+                    </SettingsFormLabel>
+                    <Stack spacing={3}>
+                      <Flex align="center" justify="space-between">
+                        <Text color="muted" fontSize="sm" maxW="lg" mr={4}>
+                          {t(
+                            'If manual reporting has not started within the grace period after the automatic keyword step begins, let AI review bad flips and submit the long session automatically.'
+                          )}
+                        </Text>
+                        <Switch
+                          isChecked={Boolean(aiSolver.autoReportEnabled)}
+                          onChange={(e) =>
+                            updateAiSolverSettings({
+                              autoReportEnabled: e.target.checked,
+                            })
+                          }
+                        />
+                      </Flex>
+
+                      {aiSolver.autoReportEnabled && (
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Manual reporting grace period (minutes)')}
+                          </SettingsFormLabel>
+                          <Input
+                            type="number"
+                            min="1"
+                            max="60"
+                            step="1"
+                            value={aiSolver.autoReportDelayMinutes ?? 10}
+                            onChange={(e) =>
+                              updateNumberField(
+                                'autoReportDelayMinutes',
+                                e.target.value
+                              )
+                            }
+                            w="xs"
+                          />
+                        </SettingsFormControl>
+                      )}
+                    </Stack>
+                  </SettingsFormControl>
+                )}
 
                 <SettingsFormControl>
                   <SettingsFormLabel>

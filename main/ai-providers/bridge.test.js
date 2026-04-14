@@ -214,6 +214,76 @@ describe('createAiProviderBridge', () => {
     })
   })
 
+  it('reviews long-session keyword report decisions with the provider bridge', async () => {
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValueOnce(
+        '{"decision":"report","confidence":0.91,"reason":"Numbers show the frame order","triggeredRules":["order_labels"]}'
+      )
+      .mockResolvedValueOnce(
+        '{"decision":"approve","confidence":0.74,"reason":"Keywords are visible and no clear report rule is violated","triggeredRules":[]}'
+      )
+
+    const bridge = createAiProviderBridge(mockLogger(), {
+      invokeProvider,
+    })
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.reviewValidationReports({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      benchmarkProfile: 'custom',
+      requestTimeoutMs: 1000,
+      maxRetries: 0,
+      flips: [
+        {
+          hash: 'flip-report-1',
+          images: [
+            'data:image/png;base64,AAA',
+            'data:image/png;base64,BBB',
+            'data:image/png;base64,CCC',
+            'data:image/png;base64,DDD',
+          ],
+          keywords: [
+            {name: 'wolf', desc: 'animal'},
+            {name: 'fairy', desc: 'mythical character'},
+          ],
+        },
+        {
+          hash: 'flip-report-2',
+          images: [
+            'data:image/png;base64,EEE',
+            'data:image/png;base64,FFF',
+            'data:image/png;base64,GGG',
+            'data:image/png;base64,HHH',
+          ],
+          keywords: [
+            {name: 'lamp', desc: 'light source'},
+            {name: 'cat', desc: 'animal'},
+          ],
+        },
+      ],
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(2)
+    expect(result.summary).toMatchObject({
+      totalFlips: 2,
+      approved: 1,
+      reported: 1,
+    })
+    expect(result.results[0]).toMatchObject({
+      hash: 'flip-report-1',
+      decision: 'report',
+      confidence: 0.91,
+      triggeredRules: ['order_labels'],
+    })
+    expect(result.results[1]).toMatchObject({
+      hash: 'flip-report-2',
+      decision: 'approve',
+      confidence: 0.74,
+    })
+  })
+
   it('remaps right-biased answers when side order is swapped', async () => {
     const invokeProvider = jest
       .fn()

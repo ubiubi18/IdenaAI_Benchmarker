@@ -77,12 +77,21 @@ import {
 } from '../shared/components/icons'
 import {useAutoCloseValidationToast} from '../screens/validation/hooks/use-validation-toast'
 import {solveValidationSessionWithAi} from '../screens/validation/ai/solver-orchestrator'
+import {
+  checkAiProviderReadiness,
+  formatMissingAiProviders,
+} from '../shared/utils/ai-provider-readiness'
 
+const previewAiSampleSet = require('../../samples/flips/flip-challenge-test-5-decoded-labeled.json')
+
+const AUTO_REPORT_DEFAULT_DELAY_MINUTES = 10
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
   provider: 'openai',
   model: 'gpt-5.4',
   mode: 'manual',
+  autoReportEnabled: false,
+  autoReportDelayMinutes: AUTO_REPORT_DEFAULT_DELAY_MINUTES,
   benchmarkProfile: 'strict',
   deadlineMs: 60 * 1000,
   requestTimeoutMs: 9 * 1000,
@@ -124,6 +133,48 @@ function formatErrorForToast(error) {
   return withoutIpcPrefix || 'Unknown error'
 }
 
+function createAiProviderStatusState() {
+  return {
+    checked: false,
+    checking: false,
+    hasKey: false,
+    allReady: false,
+    primaryReady: false,
+    activeProvider: '',
+    requiredProviders: [],
+    missingProviders: [],
+    error: '',
+  }
+}
+
+function formatAiProviderReadinessError(status, t) {
+  if (status && status.error === 'ai_bridge_unavailable') {
+    return t('AI solver bridge is unavailable in this build.')
+  }
+
+  const missingProviders = formatMissingAiProviders(
+    status && status.missingProviders
+  )
+
+  if (missingProviders) {
+    return t(
+      'Missing AI provider key for: {{providers}}. Open AI settings and load the session key before starting live solving.',
+      {
+        providers: missingProviders,
+      }
+    )
+  }
+
+  const message = String((status && status.error) || '').trim()
+  if (message) {
+    return message
+  }
+
+  return t(
+    'AI provider setup is not ready. Open AI settings and load the session key before starting live solving.'
+  )
+}
+
 function hasLocalAiValidationSequences(flip) {
   return Boolean(
     flip &&
@@ -134,6 +185,154 @@ function hasLocalAiValidationSequences(flip) {
       flip.orders.length >= 2 &&
       flip.orders.every((order) => Array.isArray(order) && order.length > 0)
   )
+}
+
+const PREVIEW_AI_SHORT_FLIP_LIMIT = 3
+
+function createPreviewAiShortFlips() {
+  const sampleFlips = Array.isArray(previewAiSampleSet?.flips)
+    ? previewAiSampleSet.flips.slice(0, PREVIEW_AI_SHORT_FLIP_LIMIT)
+    : []
+
+  return sampleFlips.map((flip, index) => ({
+    hash:
+      String(flip?.hash || '').trim() || `preview-ai-short-flip-${index + 1}`,
+    ready: true,
+    fetched: true,
+    decoded: true,
+    extra: false,
+    failed: false,
+    flipped: false,
+    loading: false,
+    retries: 0,
+    option: AnswerType.None,
+    relevance: RelevanceType.Abstained,
+    images: Array.isArray(flip?.images) ? flip.images.slice() : [],
+    orders: Array.isArray(flip?.orders)
+      ? flip.orders.slice(0, 2).map((order) => [...order])
+      : [],
+  }))
+}
+
+function buildAiProviderConfig(aiSolver = {}) {
+  const provider = String(aiSolver.provider || '')
+    .trim()
+    .toLowerCase()
+
+  if (provider !== 'openai-compatible') {
+    return null
+  }
+
+  return {
+    name: aiSolver.customProviderName,
+    baseUrl: aiSolver.customProviderBaseUrl,
+    chatPath: aiSolver.customProviderChatPath,
+  }
+}
+
+function normalizeAiConsultProvider(value) {
+  const provider = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  if (
+    [
+      'openai',
+      'openai-compatible',
+      'gemini',
+      'anthropic',
+      'xai',
+      'mistral',
+      'groq',
+      'deepseek',
+      'openrouter',
+    ].includes(provider)
+  ) {
+    return provider
+  }
+
+  return null
+}
+
+function normalizeAiWeight(value, fallback = 1) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback
+  }
+  return Math.min(10, Math.max(0.05, parsed))
+}
+
+function buildAiConsultProviders(aiSolver = {}, providerConfig = null) {
+  if (!aiSolver.ensembleEnabled) {
+    return []
+  }
+
+  return [
+    {
+      enabled: aiSolver.ensembleProvider2Enabled,
+      provider: aiSolver.ensembleProvider2,
+      model: aiSolver.ensembleModel2,
+      weight: aiSolver.ensembleProvider2Weight,
+      source: 'ensemble-slot-2',
+    },
+    {
+      enabled: aiSolver.ensembleProvider3Enabled,
+      provider: aiSolver.ensembleProvider3,
+      model: aiSolver.ensembleModel3,
+      weight: aiSolver.ensembleProvider3Weight,
+      source: 'ensemble-slot-3',
+    },
+  ]
+    .filter((slot) => slot.enabled)
+    .map((slot) => {
+      const provider = normalizeAiConsultProvider(slot.provider)
+      const model = String(slot.model || '').trim()
+
+      if (!provider || !model) {
+        return null
+      }
+
+      return {
+        provider,
+        model,
+        weight: normalizeAiWeight(slot.weight, 1),
+        source: slot.source,
+        providerConfig:
+          provider === 'openai-compatible' ? {...(providerConfig || {})} : null,
+      }
+    })
+    .filter(Boolean)
+    .slice(0, 2)
+}
+
+function hasLongSessionReportSelections(longFlips = []) {
+  return Array.isArray(longFlips)
+    ? longFlips.some(
+        ({relevance}) =>
+          relevance === RelevanceType.Relevant ||
+          relevance === RelevanceType.Irrelevant
+      )
+    : false
+}
+
+function pickLongSessionReviewOrder(flip) {
+  if (flip?.option === AnswerType.Right) {
+    return Array.isArray(flip?.orders?.[1]) ? flip.orders[1] : []
+  }
+
+  return Array.isArray(flip?.orders?.[0]) ? flip.orders[0] : []
+}
+
+function normalizeAutoReportKeywords(words = []) {
+  return Array.isArray(words)
+    ? words
+        .map((item) => ({
+          name: String(item?.name || '').trim(),
+          desc: String(item?.desc || '').trim(),
+        }))
+        .filter(({name, desc}) => name || desc)
+        .slice(0, 2)
+    : []
 }
 
 async function imageSrcToDataUrl(src) {
@@ -387,7 +586,12 @@ function ValidationSession({
   const [aiLastRun, setAiLastRun] = useState(null)
   const [aiLiveTimeline, setAiLiveTimeline] = useState([])
   const [aiActiveFlip, setAiActiveFlip] = useState(null)
+  const [aiProviderStatus, setAiProviderStatus] = useState(() =>
+    createAiProviderStatusState()
+  )
   const [awaitingHumanReporting, setAwaitingHumanReporting] = useState(false)
+  const [autoReportDeadlineAt, setAutoReportDeadlineAt] = useState(null)
+  const [autoReportRunning, setAutoReportRunning] = useState(false)
   const [localAiRecommendation, setLocalAiRecommendation] = useState({
     status: 'idle',
     left: null,
@@ -397,6 +601,12 @@ function ValidationSession({
   const [isCheckingLocalAiRecommendation, setIsCheckingLocalAiRecommendation] =
     useState(false)
   const autoSolveStartedRef = useRef({short: false, long: false})
+  const manualReportingStartedRef = useRef(false)
+  const autoReportSubmitPendingRef = useRef(false)
+  const previewShortFlips = useMemo(
+    () => (forceAiPreview ? createPreviewAiShortFlips() : []),
+    [forceAiPreview]
+  )
 
   const {
     isOpen: isExceededTooltipOpen,
@@ -447,9 +657,11 @@ function ValidationSession({
             }
           }
         },
+        initialShortFlips: previewShortFlips,
       }),
     [
       epoch,
+      previewShortFlips,
       i18n.language,
       localAiCaptureEnabled,
       longSessionDuration,
@@ -468,7 +680,7 @@ function ValidationSession({
         router.push('/validation/after')
       },
     },
-    state: loadValidationState(),
+    state: forceAiPreview ? undefined : loadValidationState(),
     logger: global.isDev
       ? console.log
       : (...args) => global.logger.debug(...args),
@@ -484,8 +696,18 @@ function ValidationSession({
   } = state.context
 
   useEffect(() => {
+    if (hasLongSessionReportSelections(longFlips)) {
+      manualReportingStartedRef.current = true
+      setAutoReportDeadlineAt(null)
+    }
+  }, [longFlips])
+
+  useEffect(() => {
+    if (forceAiPreview) {
+      return
+    }
     persistValidationState(state)
-  }, [state])
+  }, [forceAiPreview, state])
 
   const {
     isOpen: isOpenEncourageReportDialog,
@@ -586,7 +808,101 @@ function ValidationSession({
 
   const isSessionAutoMode =
     aiSolverSettings.enabled && aiSolverSettings.mode === 'session-auto'
-  const canRunAiSolve = aiSolverSettings.enabled && Boolean(aiSessionType)
+  const autoReportDelayMinutes = Math.max(
+    1,
+    Number(aiSolverSettings.autoReportDelayMinutes) ||
+      AUTO_REPORT_DEFAULT_DELAY_MINUTES
+  )
+  const autoReportEnabled =
+    isSessionAutoMode &&
+    aiSolverSettings.autoReportEnabled === true &&
+    !forceAiPreview
+  const aiProviderConfig = useMemo(
+    () => buildAiProviderConfig(aiSolverSettings),
+    [aiSolverSettings]
+  )
+  const aiConsultProviders = useMemo(
+    () => buildAiConsultProviders(aiSolverSettings, aiProviderConfig),
+    [aiProviderConfig, aiSolverSettings]
+  )
+
+  const refreshAiProviderStatus = useCallback(async () => {
+    if (!aiSolverSettings.enabled) {
+      const nextState = createAiProviderStatusState()
+      setAiProviderStatus(nextState)
+      return nextState
+    }
+
+    setAiProviderStatus((prev) => ({
+      ...prev,
+      checking: true,
+      error: '',
+    }))
+
+    try {
+      const nextState = await checkAiProviderReadiness({
+        bridge: global.aiSolver,
+        aiSolver: aiSolverSettings,
+      })
+      setAiProviderStatus(nextState)
+      return nextState
+    } catch (error) {
+      const fallbackState = {
+        ...createAiProviderStatusState(),
+        checked: true,
+        activeProvider: String(aiSolverSettings.provider || 'openai').trim(),
+        requiredProviders: [
+          String(aiSolverSettings.provider || 'openai').trim(),
+        ],
+        missingProviders: [
+          String(aiSolverSettings.provider || 'openai').trim(),
+        ],
+        error: String((error && error.message) || error || '').trim(),
+      }
+      setAiProviderStatus(fallbackState)
+      return fallbackState
+    }
+  }, [aiSolverSettings])
+
+  useEffect(() => {
+    refreshAiProviderStatus()
+  }, [refreshAiProviderStatus])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    const refreshOnFocus = () => {
+      refreshAiProviderStatus()
+    }
+
+    window.addEventListener('focus', refreshOnFocus)
+    document.addEventListener('visibilitychange', refreshOnFocus)
+
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus)
+      document.removeEventListener('visibilitychange', refreshOnFocus)
+    }
+  }, [refreshAiProviderStatus])
+
+  const aiProviderSetupError = useMemo(() => {
+    if (!aiSolverSettings.enabled || !aiProviderStatus.checked) {
+      return ''
+    }
+
+    if (aiProviderStatus.allReady) {
+      return ''
+    }
+
+    return formatAiProviderReadinessError(aiProviderStatus, t)
+  }, [aiProviderStatus, aiSolverSettings.enabled, t])
+
+  const aiProviderSetupReady =
+    !aiSolverSettings.enabled ||
+    (aiProviderStatus.checked && aiProviderStatus.allReady)
+  const canRunAiSolve =
+    aiSolverSettings.enabled && Boolean(aiSessionType) && aiProviderSetupReady
 
   const runAiSolve = useCallback(async () => {
     if (!canRunAiSolve || aiSolving || !aiSessionType) return
@@ -610,6 +926,11 @@ function ValidationSession({
     })
 
     try {
+      const readiness = await refreshAiProviderStatus()
+      if (!readiness.allReady) {
+        throw new Error(formatAiProviderReadinessError(readiness, t))
+      }
+
       const liveEntries = []
       const result = await solveValidationSessionWithAi({
         sessionType,
@@ -760,8 +1081,25 @@ function ValidationSession({
         completedAt: new Date().toISOString(),
       })
 
-      if (sessionType === 'short' && result.answers.length > 0) {
+      if (
+        sessionType === 'short' &&
+        result.answers.length > 0 &&
+        !forceAiPreview
+      ) {
         send('SUBMIT')
+      }
+
+      if (
+        sessionType === 'short' &&
+        result.answers.length > 0 &&
+        forceAiPreview
+      ) {
+        notifyAi(
+          t('Preview answers applied'),
+          t(
+            'AI answers were applied to the local sample flips only. Nothing was submitted on-chain.'
+          )
+        )
       }
 
       if (
@@ -795,10 +1133,177 @@ function ValidationSession({
     canRunAiSolve,
     epoch,
     notifyAi,
+    forceAiPreview,
+    refreshAiProviderStatus,
     send,
     state,
     t,
   ])
+
+  const beginManualReporting = useCallback(() => {
+    manualReportingStartedRef.current = true
+    autoReportSubmitPendingRef.current = false
+    setAutoReportDeadlineAt(null)
+  }, [])
+
+  const handleApproveWords = useCallback(
+    (hash) => {
+      beginManualReporting()
+      onCloseExceededTooltip()
+      send({
+        type: 'APPROVE_WORDS',
+        hash,
+      })
+    },
+    [beginManualReporting, onCloseExceededTooltip, send]
+  )
+
+  const handleReportWords = useCallback(
+    (hash) => {
+      beginManualReporting()
+      send({
+        type: 'REPORT_WORDS',
+        hash,
+      })
+    },
+    [beginManualReporting, send]
+  )
+
+  const runAutoReportReview = useCallback(async () => {
+    if (
+      !autoReportEnabled ||
+      autoReportRunning ||
+      manualReportingStartedRef.current ||
+      !state.matches('longSession.solve.answer.keywords')
+    ) {
+      return
+    }
+
+    if (
+      !global.aiSolver ||
+      typeof global.aiSolver.reviewValidationReports !== 'function'
+    ) {
+      notifyAi(
+        t('AI auto-report unavailable'),
+        t('This build does not expose the keyword review bridge.'),
+        'error'
+      )
+      return
+    }
+
+    setAutoReportRunning(true)
+    setAutoReportDeadlineAt(null)
+
+    try {
+      const readiness = await refreshAiProviderStatus()
+      if (!readiness.allReady) {
+        throw new Error(formatAiProviderReadinessError(readiness, t))
+      }
+
+      const candidateSourceFlips = longFlips.filter(decodedWithKeywords)
+      const candidateFlips = await Promise.all(
+        candidateSourceFlips.map(async (flip) => ({
+          hash: flip.hash,
+          images: await buildOrderedLocalAiImages(
+            flip.images,
+            pickLongSessionReviewOrder(flip)
+          ),
+          keywords: normalizeAutoReportKeywords(flip.words),
+        }))
+      )
+
+      if (!candidateFlips.length) {
+        throw new Error(
+          t('No keyword-ready flips are available for automatic report review.')
+        )
+      }
+
+      const reviewResult = await global.aiSolver.reviewValidationReports({
+        ...aiSolverSettings,
+        provider: aiSolverSettings.provider,
+        model: aiSolverSettings.model,
+        providerConfig: aiProviderConfig,
+        consultProviders: aiConsultProviders,
+        flips: candidateFlips,
+        session: {
+          epoch,
+          sessionType: 'long-report-review',
+          startedAt: new Date().toISOString(),
+        },
+      })
+
+      const reportQuota = availableReportsNumber(longFlips)
+      const reportHashes = (
+        Array.isArray(reviewResult?.results) ? reviewResult.results : []
+      )
+        .filter((item) => item && item.decision === 'report')
+        .sort((left, right) => right.confidence - left.confidence)
+        .slice(0, reportQuota)
+        .map((item) => item.hash)
+      const reportHashSet = new Set(reportHashes)
+
+      candidateSourceFlips.forEach((flip) => {
+        send({
+          type: reportHashSet.has(flip.hash) ? 'REPORT_WORDS' : 'APPROVE_WORDS',
+          hash: flip.hash,
+        })
+      })
+
+      autoReportSubmitPendingRef.current = true
+
+      notifyAi(
+        t('AI auto-report completed'),
+        t(
+          'Applied {{reported}} report decisions and {{approved}} approvals. Long session answers will be submitted automatically.',
+          {
+            reported: reportHashSet.size,
+            approved: Math.max(
+              0,
+              candidateSourceFlips.length - reportHashSet.size
+            ),
+          }
+        )
+      )
+
+      send('SUBMIT')
+    } catch (error) {
+      autoReportSubmitPendingRef.current = false
+      notifyAi(
+        t('AI auto-report failed'),
+        error?.message || String(error || ''),
+        'error'
+      )
+    } finally {
+      setAutoReportRunning(false)
+    }
+  }, [
+    aiConsultProviders,
+    aiProviderConfig,
+    aiSolverSettings,
+    autoReportEnabled,
+    autoReportRunning,
+    epoch,
+    longFlips,
+    notifyAi,
+    refreshAiProviderStatus,
+    send,
+    state,
+    t,
+  ])
+
+  const handleSubmit = useCallback(() => {
+    if (forceAiPreview) {
+      notifyAi(
+        t('Preview only'),
+        t(
+          'This off-chain preview does not submit answers on-chain. Use it to verify loading and AI solving, then return to AI settings.'
+        )
+      )
+      return
+    }
+
+    send('SUBMIT')
+  }, [forceAiPreview, notifyAi, send, t])
 
   useEffect(() => {
     if (
@@ -815,11 +1320,20 @@ function ValidationSession({
   useEffect(() => {
     if (
       isSessionAutoMode &&
+      aiProviderSetupReady &&
       state.matches('longSession.solve.answer.welcomeQualification')
     ) {
       send('START_LONG_SESSION')
     }
-  }, [isSessionAutoMode, send, state])
+  }, [aiProviderSetupReady, isSessionAutoMode, send, state])
+
+  useEffect(() => {
+    if (state.matches('longSession.solve.answer.flips')) {
+      manualReportingStartedRef.current = false
+      autoReportSubmitPendingRef.current = false
+      setAutoReportDeadlineAt(null)
+    }
+  }, [state])
 
   useEffect(() => {
     if (
@@ -836,16 +1350,91 @@ function ValidationSession({
       awaitingHumanReporting &&
       state.matches('longSession.solve.answer.keywords')
     ) {
-      notifyAi(
-        t('Human reporting required'),
-        t(
-          'AI finished flip choices. Please complete reporting/approval manually, then submit long session answers.'
-        ),
-        'warning'
-      )
+      const existingSelections = hasLongSessionReportSelections(longFlips)
+
+      manualReportingStartedRef.current = existingSelections
+
+      if (autoReportEnabled && !existingSelections) {
+        const deadlineAt = Date.now() + autoReportDelayMinutes * 60 * 1000
+
+        setAutoReportDeadlineAt(deadlineAt)
+
+        notifyAi(
+          t('Delayed AI auto-report armed'),
+          t(
+            'Manual reporting has {{minutes}} minutes before AI reviews bad flips and submits the long session automatically.',
+            {
+              minutes: autoReportDelayMinutes,
+            }
+          )
+        )
+      } else {
+        notifyAi(
+          t('Human reporting required'),
+          t(
+            'AI finished flip choices. Please complete reporting/approval manually, then submit long session answers.'
+          ),
+          'warning'
+        )
+      }
+
       setAwaitingHumanReporting(false)
     }
-  }, [awaitingHumanReporting, notifyAi, state, t])
+  }, [
+    autoReportDelayMinutes,
+    autoReportEnabled,
+    awaitingHumanReporting,
+    longFlips,
+    notifyAi,
+    state,
+    t,
+  ])
+
+  useEffect(() => {
+    if (
+      autoReportSubmitPendingRef.current &&
+      state.matches('longSession.solve.answer.review')
+    ) {
+      autoReportSubmitPendingRef.current = false
+      send('SUBMIT')
+    }
+  }, [send, state])
+
+  useEffect(() => {
+    if (!state.matches('longSession.solve.answer.keywords')) {
+      setAutoReportDeadlineAt(null)
+      return undefined
+    }
+
+    if (
+      !autoReportEnabled ||
+      autoReportRunning ||
+      !autoReportDeadlineAt ||
+      manualReportingStartedRef.current
+    ) {
+      return undefined
+    }
+
+    const remainingMs = autoReportDeadlineAt - Date.now()
+    if (remainingMs <= 0) {
+      runAutoReportReview()
+      return undefined
+    }
+
+    const timeoutId = setTimeout(() => {
+      runAutoReportReview()
+    }, remainingMs)
+
+    return () => {
+      clearTimeout(timeoutId)
+    }
+  }, [
+    autoReportDeadlineAt,
+    autoReportEnabled,
+    autoReportRunning,
+    runAutoReportReview,
+    state,
+  ])
 
   useEffect(() => {
     setLocalAiRecommendation({
@@ -941,7 +1530,7 @@ function ValidationSession({
               <Text fontWeight={600}>{t('Off-chain AI solver test')}</Text>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'This is only a local test screen. It does not start a real validation session and it does not publish anything.'
+                  'This is only a local test screen. It loads a few local sample flips, does not start a real validation session, and does not publish anything.'
                 )}
               </Text>
             </Box>
@@ -1064,13 +1653,8 @@ function ValidationSession({
                       isSelected={
                         currentFlip.relevance === RelevanceType.Relevant
                       }
-                      onClick={() => {
-                        onCloseExceededTooltip()
-                        send({
-                          type: 'APPROVE_WORDS',
-                          hash: currentFlip.hash,
-                        })
-                      }}
+                      isDisabled={autoReportRunning}
+                      onClick={() => handleApproveWords(currentFlip.hash)}
                     >
                       {t('Approve')}
                     </QualificationButton>
@@ -1103,12 +1687,8 @@ function ValidationSession({
                           boxShadow: '0 0 0 3px rgb(255 102 102 /0.50)',
                           outline: 'none',
                         }}
-                        onClick={() =>
-                          send({
-                            type: 'REPORT_WORDS',
-                            hash: currentFlip.hash,
-                          })
-                        }
+                        isDisabled={autoReportRunning}
+                        onClick={() => handleReportWords(currentFlip.hash)}
                       >
                         {t('Report')}{' '}
                         {t('({{count}} left)', {
@@ -1232,8 +1812,21 @@ function ValidationSession({
                     {aiProgress}
                   </Text>
                 )}
+                {!aiProgress && aiProviderSetupError && (
+                  <Text
+                    fontSize="xs"
+                    color={isShortSession(state) ? 'orange.200' : 'orange.500'}
+                    maxW="sm"
+                  >
+                    {aiProviderSetupError}
+                  </Text>
+                )}
                 <SecondaryButton
-                  isDisabled={!canRunAiSolve}
+                  isDisabled={
+                    !canRunAiSolve ||
+                    aiProviderStatus.checking ||
+                    Boolean(aiProviderSetupError)
+                  }
                   isLoading={aiSolving}
                   onClick={runAiSolve}
                 >
@@ -1246,20 +1839,28 @@ function ValidationSession({
           {(isShortSession(state) || isLongSessionKeywords(state)) &&
             (hasAllRelevanceMarks(state) || isLastFlip(state) ? (
               <PrimaryButton
-                isDisabled={!canSubmit(state)}
-                isLoading={isSubmitting(state)}
-                loadingText={t('Submitting answers...')}
-                onClick={() => send('SUBMIT')}
+                isDisabled={!canSubmit(state) || autoReportRunning}
+                isLoading={isSubmitting(state) || autoReportRunning}
+                loadingText={
+                  autoReportRunning
+                    ? t('AI reviewing...')
+                    : t('Submitting answers...')
+                }
+                onClick={handleSubmit}
               >
                 {t('Submit answers')}
               </PrimaryButton>
             ) : (
               <Tooltip label={t('Go to last flip')}>
                 <PrimaryButton
-                  isDisabled={!canSubmit(state)}
-                  isLoading={isSubmitting(state)}
-                  loadingText={t('Submitting answers...')}
-                  onClick={() => send('SUBMIT')}
+                  isDisabled={!canSubmit(state) || autoReportRunning}
+                  isLoading={isSubmitting(state) || autoReportRunning}
+                  loadingText={
+                    autoReportRunning
+                      ? t('AI reviewing...')
+                      : t('Submitting answers...')
+                  }
+                  onClick={handleSubmit}
                 >
                   {t('Submit answers')}
                 </PrimaryButton>
@@ -1328,7 +1929,8 @@ function ValidationSession({
       <BadFlipDialog
         isOpen={
           isReportDialogOpen ||
-          state.matches('longSession.solve.answer.finishFlips')
+          (state.matches('longSession.solve.answer.finishFlips') &&
+            !(isSessionAutoMode && awaitingHumanReporting))
         }
         title={t('Earn rewards for reporting')}
         subtitle={t(
@@ -1347,7 +1949,7 @@ function ValidationSession({
         availableReportsCount={availableReportsNumber(longFlips)}
         isOpen={state.matches('longSession.solve.answer.review')}
         isSubmitting={isSubmitting(state)}
-        onSubmit={() => send('SUBMIT')}
+        onSubmit={handleSubmit}
         onMisingAnswers={() => {
           send({
             type: 'CHECK_FLIPS',
@@ -1367,7 +1969,7 @@ function ValidationSession({
         isOpen={state.matches(
           'shortSession.solve.answer.submitShortSession.confirm'
         )}
-        onSubmit={() => send('SUBMIT')}
+        onSubmit={handleSubmit}
         onClose={() => {
           send('CANCEL')
         }}

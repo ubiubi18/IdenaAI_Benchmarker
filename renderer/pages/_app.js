@@ -95,6 +95,7 @@ function syncLegacyBridgeGlobals(bridge = {}) {
         models: [],
       }),
       solveFlipBatch: empty,
+      reviewValidationReports: empty,
     }
   }
 

@@ -1,4 +1,4 @@
-export function normalizeAiProviderId(value, fallback = 'openai') {
+function normalizeAiProviderId(value, fallback = 'openai') {
   const provider = String(value || '')
     .trim()
     .toLowerCase()
@@ -6,7 +6,7 @@ export function normalizeAiProviderId(value, fallback = 'openai') {
   return provider || fallback
 }
 
-export function getRequiredAiProviders(aiSolver = {}) {
+function getRequiredAiProviders(aiSolver = {}) {
   const providers = []
   const legacyOnlyMode = Boolean(
     aiSolver.legacyHeuristicEnabled && aiSolver.legacyHeuristicOnly
@@ -32,7 +32,7 @@ export function getRequiredAiProviders(aiSolver = {}) {
   return Array.from(new Set(providers.filter(Boolean)))
 }
 
-export function formatMissingAiProviders(missingProviders = []) {
+function formatMissingAiProviders(missingProviders = []) {
   const uniqueProviders = Array.from(
     new Set(
       (Array.isArray(missingProviders) ? missingProviders : [])
@@ -48,7 +48,7 @@ export function formatMissingAiProviders(missingProviders = []) {
   return uniqueProviders.join(', ')
 }
 
-export async function checkAiProviderReadiness({bridge, aiSolver = {}} = {}) {
+async function checkAiProviderReadiness({bridge, aiSolver = {}} = {}) {
   const activeProvider = normalizeAiProviderId(aiSolver.provider, 'openai')
   const requiredProviders = getRequiredAiProviders(aiSolver)
 
@@ -128,4 +128,11 @@ export async function checkAiProviderReadiness({bridge, aiSolver = {}} = {}) {
     providerStates,
     error: statusError,
   }
+}
+
+module.exports = {
+  normalizeAiProviderId,
+  getRequiredAiProviders,
+  formatMissingAiProviders,
+  checkAiProviderReadiness,
 }

@@ -28,6 +28,8 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   provider: 'openai',
   model: 'gpt-5.4',
   mode: 'manual',
+  autoReportEnabled: false,
+  autoReportDelayMinutes: 10,
   benchmarkProfile: 'strict',
   deadlineMs: 60 * 1000,
   requestTimeoutMs: 9 * 1000,
@@ -112,7 +114,10 @@ function buildAiSolverSettings(settings = {}) {
     ...(settings || {}),
   }
 
-  if (nextSettings.provider === 'openai' && nextSettings.model === 'gpt-4o-mini') {
+  if (
+    nextSettings.provider === 'openai' &&
+    nextSettings.model === 'gpt-4o-mini'
+  ) {
     nextSettings.model = 'gpt-5.4'
   }
 
