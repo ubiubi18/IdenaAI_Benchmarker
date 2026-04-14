@@ -45,7 +45,7 @@ export function OnboardingProvider({children}) {
     },
   })
 
-  const [current, send] = useMachine(
+  const [onboardingMachine] = React.useState(() =>
     createMachine(
       {
         context: {currentStep: null, dismissedSteps: null},
@@ -146,6 +146,7 @@ export function OnboardingProvider({children}) {
       }
     )
   )
+  const [current, send] = useMachine(onboardingMachine)
 
   React.useEffect(() => {
     if (identity.address) send('RESET')
