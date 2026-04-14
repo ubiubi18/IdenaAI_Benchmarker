@@ -431,6 +431,16 @@ function describeLocalAiAdapterDeltaType(value, t) {
   }
 }
 
+function formatLocalAiFederatedReason(value) {
+  const text = String(value || '').trim()
+
+  if (!text) {
+    return '-'
+  }
+
+  return text.replace(/_/g, ' ')
+}
+
 function LocalAiDebugResult({label, result}) {
   if (!result) {
     return null
@@ -583,6 +593,17 @@ export default function AiSettingsPage() {
   const [isLoadingLocalAiAdapter, setIsLoadingLocalAiAdapter] = useState(false)
   const [localAiAdapterManifest, setLocalAiAdapterManifest] = useState(null)
   const [localAiAdapterError, setLocalAiAdapterError] = useState('')
+  const [isBuildingLocalAiBundle, setIsBuildingLocalAiBundle] = useState(false)
+  const [isImportingLocalAiBundle, setIsImportingLocalAiBundle] =
+    useState(false)
+  const [isAggregatingLocalAiBundles, setIsAggregatingLocalAiBundles] =
+    useState(false)
+  const [localAiBundleImportPath, setLocalAiBundleImportPath] = useState('')
+  const [localAiBuildBundleResult, setLocalAiBuildBundleResult] = useState(null)
+  const [localAiImportBundleResult, setLocalAiImportBundleResult] =
+    useState(null)
+  const [localAiAggregateResult, setLocalAiAggregateResult] = useState(null)
+  const [localAiFederatedError, setLocalAiFederatedError] = useState('')
   const [providerKeyStatus, setProviderKeyStatus] = useState({
     checked: false,
     checking: true,
@@ -1103,6 +1124,69 @@ export default function AiSettingsPage() {
       setIsLoadingLocalAiAdapter(false)
     }
   }, [buildLocalAiRuntimePayload, localAiPackageEpoch, t])
+
+  const runLocalAiBuildBundle = useCallback(async () => {
+    const epoch = String(localAiPackageEpoch || '').trim()
+
+    if (!epoch) {
+      setLocalAiFederatedError(
+        t('Enter an epoch before building a federated bundle.')
+      )
+      return
+    }
+
+    setIsBuildingLocalAiBundle(true)
+    setLocalAiFederatedError('')
+
+    try {
+      const result = await ensureLocalAiBridge().buildBundle(epoch)
+      setLocalAiBuildBundleResult(result)
+    } catch (error) {
+      setLocalAiBuildBundleResult(null)
+      setLocalAiFederatedError(formatErrorForToast(error))
+    } finally {
+      setIsBuildingLocalAiBundle(false)
+    }
+  }, [localAiPackageEpoch, t])
+
+  const runLocalAiImportBundle = useCallback(async () => {
+    const filePath = String(localAiBundleImportPath || '').trim()
+
+    if (!filePath) {
+      setLocalAiFederatedError(
+        t('Provide an absolute incoming bundle path before importing it.')
+      )
+      return
+    }
+
+    setIsImportingLocalAiBundle(true)
+    setLocalAiFederatedError('')
+
+    try {
+      const result = await ensureLocalAiBridge().importBundle(filePath)
+      setLocalAiImportBundleResult(result)
+    } catch (error) {
+      setLocalAiImportBundleResult(null)
+      setLocalAiFederatedError(formatErrorForToast(error))
+    } finally {
+      setIsImportingLocalAiBundle(false)
+    }
+  }, [localAiBundleImportPath, t])
+
+  const runLocalAiAggregateBundles = useCallback(async () => {
+    setIsAggregatingLocalAiBundles(true)
+    setLocalAiFederatedError('')
+
+    try {
+      const result = await ensureLocalAiBridge().aggregate()
+      setLocalAiAggregateResult(result)
+    } catch (error) {
+      setLocalAiAggregateResult(null)
+      setLocalAiFederatedError(formatErrorForToast(error))
+    } finally {
+      setIsAggregatingLocalAiBundles(false)
+    }
+  }, [])
 
   const hasSessionKeyForProvider = async (provider) => {
     const bridge = ensureBridge()
@@ -3146,6 +3230,173 @@ export default function AiSettingsPage() {
                                 'A package preview for this epoch still shows a pending adapter contract. Regenerate the package preview to refresh it to the stored adapter registration.'
                               )}
                             </Text>
+                          ) : null}
+                        </Stack>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        p={3}
+                      >
+                        <Stack spacing={3}>
+                          <Stack spacing={1}>
+                            <Text fontWeight={500}>
+                              {t('Federated bundle operations')}
+                            </Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'Building a local federated bundle now requires an approved training package and a concrete registered adapter artifact for the same epoch.'
+                              )}
+                            </Text>
+                          </Stack>
+                          <Stack isInline spacing={2}>
+                            <SecondaryButton
+                              isLoading={isBuildingLocalAiBundle}
+                              onClick={runLocalAiBuildBundle}
+                            >
+                              {t('Build Federated Bundle')}
+                            </SecondaryButton>
+                            <SecondaryButton
+                              isLoading={isAggregatingLocalAiBundles}
+                              onClick={runLocalAiAggregateBundles}
+                            >
+                              {t('Aggregate Received Bundles')}
+                            </SecondaryButton>
+                          </Stack>
+                          <SettingsFormControl>
+                            <SettingsFormLabel>
+                              {t('Incoming bundle path')}
+                            </SettingsFormLabel>
+                            <Input
+                              value={localAiBundleImportPath}
+                              onChange={(e) =>
+                                setLocalAiBundleImportPath(e.target.value)
+                              }
+                              placeholder="/absolute/path/to/incoming/update-epoch.json"
+                            />
+                          </SettingsFormControl>
+                          <SecondaryButton
+                            isLoading={isImportingLocalAiBundle}
+                            onClick={runLocalAiImportBundle}
+                          >
+                            {t('Import Bundle')}
+                          </SecondaryButton>
+                          {localAiFederatedError ? (
+                            <Text color="orange.500" fontSize="sm">
+                              {localAiFederatedError}
+                            </Text>
+                          ) : null}
+                          {localAiBuildBundleResult ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.50"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text fontWeight={500}>
+                                  {t('Latest built bundle')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Delta type')}:{' '}
+                                  {localAiBuildBundleResult.deltaType || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Signed')}:{' '}
+                                  {localAiBuildBundleResult.signed
+                                    ? t('Yes')
+                                    : t('No')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Eligible')}:{' '}
+                                  {Number(
+                                    localAiBuildBundleResult.eligibleCount
+                                  ) || 0}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Bundle path')}:{' '}
+                                  {localAiBuildBundleResult.bundlePath || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact path')}:{' '}
+                                  {localAiBuildBundleResult.artifactPath || '-'}
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : null}
+                          {localAiImportBundleResult ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.50"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text fontWeight={500}>
+                                  {t('Latest import result')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Accepted')}:{' '}
+                                  {localAiImportBundleResult.accepted
+                                    ? t('Yes')
+                                    : t('No')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Reason')}:{' '}
+                                  {formatLocalAiFederatedReason(
+                                    localAiImportBundleResult.reason
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Bundle path')}:{' '}
+                                  {localAiImportBundleResult.bundlePath || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Stored path')}:{' '}
+                                  {localAiImportBundleResult.storedPath || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact path')}:{' '}
+                                  {localAiImportBundleResult.artifactPath ||
+                                    '-'}
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : null}
+                          {localAiAggregateResult ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.50"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text fontWeight={500}>
+                                  {t('Latest aggregation result')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Mode')}:{' '}
+                                  {localAiAggregateResult.mode || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Compatible bundles')}:{' '}
+                                  {Number(
+                                    localAiAggregateResult.compatibleCount
+                                  ) || 0}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Skipped bundles')}:{' '}
+                                  {Number(
+                                    localAiAggregateResult.skippedCount
+                                  ) || 0}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Output path')}:{' '}
+                                  {localAiAggregateResult.outputPath || '-'}
+                                </Text>
+                              </Stack>
+                            </Box>
                           ) : null}
                         </Stack>
                       </Box>

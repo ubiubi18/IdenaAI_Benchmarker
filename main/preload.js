@@ -320,6 +320,10 @@ const bridge = {
           'localAi.updateTrainingCandidatePackageReview',
           payload
         ),
+      buildBundle: (epoch) => invokeCloneable('localAi.buildBundle', epoch),
+      importBundle: (filePath) =>
+        invokeCloneable('localAi.importBundle', filePath),
+      aggregate: () => invokeCloneable('localAi.aggregate'),
     },
     ipcRenderer: ipcBridge,
     openExternal: (url) =>
