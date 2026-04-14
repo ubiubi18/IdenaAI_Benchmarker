@@ -1060,6 +1060,28 @@ const isFirstInstance = app.requestSingleInstanceLock()
 
 const extractDnaUrl = (argv) => argv.find((item) => item.startsWith('dna://'))
 
+function isBenignRendererConsoleMessage(message, sourceId) {
+  if (!isDev) {
+    return false
+  }
+
+  const normalizedMessage = String(message || '')
+  const normalizedSourceId = String(sourceId || '')
+
+  if (normalizedMessage.includes('[Fast Refresh]')) {
+    return true
+  }
+
+  if (
+    normalizedMessage.includes('unreachable code after return statement') &&
+    normalizedSourceId.includes('/_next/static/chunks/pages/_app.js')
+  ) {
+    return true
+  }
+
+  return false
+}
+
 if (isFirstInstance) {
   app.on('second-instance', (e, argv) => {
     // Protocol handler for win32 and linux
@@ -1110,6 +1132,10 @@ const createMainWindow = () => {
   mainWindow.webContents.on(
     'console-message',
     (_event, level, message, line, sourceId) => {
+      if (isBenignRendererConsoleMessage(message, sourceId)) {
+        return
+      }
+
       const entry = `[renderer:${level}] ${
         sourceId || 'unknown'
       }:${line} ${message}`
