@@ -1,5 +1,9 @@
 const crypto = require('crypto')
 const path = require('path')
+const {
+  hasConcreteAdapterDelta,
+  resolveAdapterContract,
+} = require('./adapter-contract')
 const {createLocalAiStorage} = require('./storage')
 const {LOCAL_AI_BASE_MODEL_ID} = require('./constants')
 const {
@@ -327,6 +331,9 @@ function validateBundleShape(bundle) {
   const nonce = String(payload.nonce || '').trim()
   const generatedAt = String(payload.generatedAt || '').trim()
   const deltaType = String(payload.deltaType || '').trim()
+  const adapterFormat = String(payload.adapterFormat || '').trim()
+  const adapterSha256 = String(payload.adapterSha256 || '').trim()
+  const trainingConfigHash = String(payload.trainingConfigHash || '').trim()
   const manifest =
     payload.manifest && typeof payload.manifest === 'object'
       ? payload.manifest
@@ -358,6 +365,16 @@ function validateBundleShape(bundle) {
   }
 
   if (
+    deltaType &&
+    deltaType !== 'none' &&
+    (!adapterFormat ||
+      !trainingConfigHash ||
+      (deltaType === 'lora_adapter' && !adapterSha256))
+  ) {
+    return {ok: false, reason: 'schema_invalid'}
+  }
+
+  if (
     baseModelHash !==
     crypto.createHash('sha256').update(baseModelId).digest('hex')
   ) {
@@ -382,6 +399,9 @@ function validateBundleShape(bundle) {
     contractVersion,
     baseModelId,
     baseModelHash,
+    adapterFormat: adapterFormat || null,
+    adapterSha256: adapterSha256 || null,
+    trainingConfigHash: trainingConfigHash || null,
     nonce,
     eligibleFlipHashes,
   }
@@ -439,12 +459,13 @@ function buildAggregationSummary({
   compatibleBundles,
   skipped,
   deltaAvailability,
+  mode,
   reason,
 }) {
   return {
     version: AGGREGATION_RESULT_VERSION,
     aggregated: false,
-    mode: 'metadata_only_noop',
+    mode,
     baseModelId,
     baseModelHash,
     minimumCompatibleBundles: MIN_COMPATIBLE_BUNDLES,
@@ -460,6 +481,12 @@ function buildAggregationSummary({
       epoch: validation.epoch,
       identity: validation.identity,
       deltaType: String(validation.payload.deltaType || '').trim() || 'none',
+      adapterFormat:
+        String(validation.payload.adapterFormat || '').trim() || null,
+      adapterSha256:
+        String(validation.payload.adapterSha256 || '').trim() || null,
+      trainingConfigHash:
+        String(validation.payload.trainingConfigHash || '').trim() || null,
       storedPath: entry.storedPath,
     })),
     skipped,
@@ -590,6 +617,11 @@ function createLocalAiFederated({
       : []
     const excluded = Array.isArray(manifest.excluded) ? manifest.excluded : []
     const modelReference = normalizeModelReference(localAiStorage, manifest)
+    const adapterContract = resolveAdapterContract(
+      localAiStorage,
+      manifest,
+      modelReference
+    )
     const manifestSha256 = localAiStorage.sha256(JSON.stringify(manifest))
     const generatedAt = new Date().toISOString()
     const nonce = crypto.randomBytes(16).toString('hex')
@@ -611,7 +643,10 @@ function createLocalAiFederated({
         file: path.basename(nextManifestPath),
         sha256: manifestSha256,
       },
-      deltaType: 'none',
+      deltaType: adapterContract.deltaType,
+      adapterFormat: adapterContract.adapterFormat,
+      adapterSha256: adapterContract.adapterSha256,
+      trainingConfigHash: adapterContract.trainingConfigHash,
       metrics: {
         eligibleCount: eligibleFlipHashes.length,
         excludedCount: excluded.length,
@@ -978,16 +1013,44 @@ function createLocalAiFederated({
       logRejectedBundles(logger, skipped)
     }
 
-    const bundlesWithDeltas = compatibleBundles.filter(({validation}) => {
-      const deltaType = String(validation.payload.deltaType || '').trim()
-      return deltaType && deltaType !== 'none'
-    })
+    const bundlesWithUnsupportedDeltas = compatibleBundles.filter(
+      ({validation}) => {
+        const deltaType = String(validation.payload.deltaType || '')
+          .trim()
+          .toLowerCase()
+
+        return (
+          deltaType &&
+          deltaType !== 'none' &&
+          deltaType !== 'pending_adapter' &&
+          deltaType !== 'lora_adapter'
+        )
+      }
+    )
+    const bundlesWithPendingAdapters = compatibleBundles.filter(
+      ({validation}) => {
+        const deltaType = String(validation.payload.deltaType || '').trim()
+        return deltaType === 'pending_adapter'
+      }
+    )
+    const bundlesWithConcreteAdapters = compatibleBundles.filter(
+      ({validation}) => hasConcreteAdapterDelta(validation.payload)
+    )
     let reason = 'no_real_model_deltas'
     let deltaAvailability = 'none'
+    let mode = 'metadata_only_noop'
 
     if (compatibleBundles.length < MIN_COMPATIBLE_BUNDLES) {
       reason = 'insufficient_compatible_bundles'
-    } else if (bundlesWithDeltas.length > 0) {
+    } else if (bundlesWithConcreteAdapters.length > 0) {
+      reason = 'adapter_merge_not_implemented'
+      deltaAvailability = 'available'
+      mode = 'adapter_merge_pending'
+    } else if (bundlesWithPendingAdapters.length > 0) {
+      reason = 'adapter_artifacts_pending'
+      deltaAvailability = 'pending'
+      mode = 'adapter_contract_pending'
+    } else if (bundlesWithUnsupportedDeltas.length > 0) {
       reason = 'unsupported_delta_payload'
       deltaAvailability = 'unsupported'
     }
@@ -999,6 +1062,7 @@ function createLocalAiFederated({
       compatibleBundles,
       skipped,
       deltaAvailability,
+      mode,
       reason,
     })
     const outputPath = aggregationResultPath(localAiStorage)

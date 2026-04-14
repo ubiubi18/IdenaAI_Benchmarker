@@ -38,6 +38,8 @@ function createPlaceholderBundle(storage, overrides = {}) {
       sha256: storage.sha256('epoch-7-manifest'),
     },
     deltaType: 'none',
+    adapterFormat: 'peft_lora_v1',
+    trainingConfigHash: storage.sha256('training-config-default'),
     metrics: {
       eligibleCount: 2,
       excludedCount: 1,
@@ -138,7 +140,7 @@ describe('local-ai federated bundle helper', () => {
       epoch: 7,
       identity: PLACEHOLDER_IDENTITY,
       signed: false,
-      deltaType: 'none',
+      deltaType: 'pending_adapter',
       eligibleCount: 2,
     })
     expect(bundle.payload).toMatchObject({
@@ -153,7 +155,10 @@ describe('local-ai federated bundle helper', () => {
       baseModelId: DEFAULT_BASE_MODEL_ID,
       baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
       eligibleFlipHashes: ['flip-a', 'flip-b'],
-      deltaType: 'none',
+      deltaType: 'pending_adapter',
+      adapterFormat: 'peft_lora_v1',
+      adapterSha256: null,
+      trainingConfigHash: expect.any(String),
       metrics: {
         eligibleCount: 2,
         excludedCount: 1,
@@ -450,7 +455,7 @@ describe('local-ai federated bundle helper', () => {
 
     expect(summary).toMatchObject({
       aggregated: false,
-      mode: 'metadata_only_noop',
+      mode: 'adapter_contract_pending',
       compatibleCount: 2,
       skippedCount: 0,
       acceptedCount: 2,
@@ -459,7 +464,7 @@ describe('local-ai federated bundle helper', () => {
     })
     expect(result).toMatchObject({
       aggregated: false,
-      mode: 'metadata_only_noop',
+      mode: 'adapter_contract_pending',
       baseModelId: DEFAULT_BASE_MODEL_ID,
       baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
       minimumCompatibleBundles: 2,
@@ -467,8 +472,8 @@ describe('local-ai federated bundle helper', () => {
       skippedCount: 0,
       acceptedCount: 2,
       rejectedCount: 0,
-      deltaAvailability: 'none',
-      reason: 'no_real_model_deltas',
+      deltaAvailability: 'pending',
+      reason: 'adapter_artifacts_pending',
     })
     expect(result.compatibleBundles).toHaveLength(2)
     expect(JSON.stringify(result)).not.toContain('"images"')
@@ -539,11 +544,11 @@ describe('local-ai federated bundle helper', () => {
     )
     const firstBundle = createPlaceholderBundle(storage, {
       nonce: 'bundle-nonce-delta-a',
-      deltaType: 'pending_adapter',
+      deltaType: 'custom_adapter',
     })
     const secondBundle = createPlaceholderBundle(storage, {
       nonce: 'bundle-nonce-delta-b',
-      deltaType: 'pending_adapter',
+      deltaType: 'custom_adapter',
     })
 
     firstBundle.signature.value = storage.sha256(

@@ -1,4 +1,5 @@
 const {createLocalAiStorage} = require('./storage')
+const {resolveAdapterContract} = require('./adapter-contract')
 const {createLocalAiSidecar} = require('./sidecar')
 const {resolveModelReference} = require('./model-reference')
 const {resolveLocalAiRuntimeAdapter} = require('./runtime-adapter')
@@ -838,6 +839,11 @@ function createLocalAiManager({
       getModelReference,
       next
     )
+    const adapterContract = resolveAdapterContract(
+      localAiStorage,
+      next,
+      modelReference
+    )
 
     const eligibleFlipHashes = []
     const excluded = []
@@ -868,6 +874,12 @@ function createLocalAiManager({
       contractVersion: modelReference.contractVersion,
       baseModelId: modelReference.baseModelId,
       baseModelHash: modelReference.baseModelHash,
+      adapterStrategy: String(next.adapterStrategy || '').trim() || null,
+      trainingPolicy: String(next.trainingPolicy || '').trim() || null,
+      deltaType: adapterContract.deltaType,
+      adapterFormat: adapterContract.adapterFormat,
+      adapterSha256: adapterContract.adapterSha256,
+      trainingConfigHash: adapterContract.trainingConfigHash,
       eligibleFlipHashes,
       flipCount: eligibleFlipHashes.length,
       excluded,
@@ -917,6 +929,11 @@ function createLocalAiManager({
       getModelReference,
       next
     )
+    const adapterContract = resolveAdapterContract(
+      localAiStorage,
+      next,
+      modelReference
+    )
 
     const items = []
     const excluded = []
@@ -965,6 +982,12 @@ function createLocalAiManager({
       contractVersion: modelReference.contractVersion,
       baseModelId: modelReference.baseModelId,
       baseModelHash: modelReference.baseModelHash,
+      adapterStrategy: String(next.adapterStrategy || '').trim() || null,
+      trainingPolicy: String(next.trainingPolicy || '').trim() || null,
+      deltaType: adapterContract.deltaType,
+      adapterFormat: adapterContract.adapterFormat,
+      adapterSha256: adapterContract.adapterSha256,
+      trainingConfigHash: adapterContract.trainingConfigHash,
       reviewStatus: 'draft',
       reviewedAt: null,
       federatedReady: false,
