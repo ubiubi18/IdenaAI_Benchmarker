@@ -110,6 +110,22 @@ function bundlePath(storage, epoch, identity) {
   )
 }
 
+function sanitizeArtifactFileName(fileName, fallback = 'adapter.bin') {
+  const baseName = path.basename(String(fileName || '').trim())
+  const normalized = baseName.replace(/[^a-zA-Z0-9._-]+/g, '-')
+  return normalized || fallback
+}
+
+function bundleArtifactPath(storage, epoch, identity, fileName) {
+  const nextBundlePath = bundlePath(storage, epoch, identity)
+  return path.join(
+    path.dirname(nextBundlePath),
+    `${path.basename(nextBundlePath, '.json')}-${sanitizeArtifactFileName(
+      fileName
+    )}`
+  )
+}
+
 function receivedIndexPath(storage) {
   return storage.resolveLocalAiPath('received', 'index.json')
 }
@@ -119,6 +135,14 @@ function receivedBundlePath(storage, epoch, bundleId) {
     'received',
     String(epoch),
     `${bundleId}.json`
+  )
+}
+
+function receivedArtifactPath(storage, epoch, bundleId, fileName) {
+  return storage.resolveLocalAiPath(
+    'received',
+    String(epoch),
+    `${bundleId}-${sanitizeArtifactFileName(fileName)}`
   )
 }
 
@@ -272,6 +296,7 @@ function normalizeReceivedEntry(item) {
     bundleId,
     nonce,
     storedPath,
+    artifactStoredPath: String(item.artifactStoredPath || '').trim() || null,
     importedAt,
     identity: identity || PLACEHOLDER_IDENTITY,
     epoch,
@@ -340,6 +365,9 @@ function validateBundleShape(bundle) {
     !Array.isArray(payload.adapterArtifact)
       ? payload.adapterArtifact
       : null
+  const adapterArtifactFile = String(
+    (adapterArtifact && adapterArtifact.file) || ''
+  ).trim()
   const manifest =
     payload.manifest && typeof payload.manifest === 'object'
       ? payload.manifest
@@ -381,6 +409,13 @@ function validateBundleShape(bundle) {
   }
 
   if (
+    adapterArtifactFile &&
+    path.basename(adapterArtifactFile) !== adapterArtifactFile
+  ) {
+    return {ok: false, reason: 'schema_invalid'}
+  }
+
+  if (
     baseModelHash !==
     crypto.createHash('sha256').update(baseModelId).digest('hex')
   ) {
@@ -409,10 +444,10 @@ function validateBundleShape(bundle) {
     adapterSha256: adapterSha256 || null,
     adapterArtifact:
       adapterArtifact &&
-      (String(adapterArtifact.file || '').trim() ||
+      (adapterArtifactFile ||
         Number.isFinite(Number(adapterArtifact.sizeBytes)))
         ? {
-            file: String(adapterArtifact.file || '').trim() || null,
+            file: adapterArtifactFile || null,
             sizeBytes: Number.isFinite(Number(adapterArtifact.sizeBytes))
               ? Number(adapterArtifact.sizeBytes)
               : null,
@@ -510,6 +545,7 @@ function buildAggregationSummary({
       trainingConfigHash:
         String(validation.payload.trainingConfigHash || '').trim() || null,
       storedPath: entry.storedPath,
+      artifactStoredPath: entry.artifactStoredPath || null,
     })),
     skipped,
   }
@@ -523,6 +559,8 @@ function buildImportResult({
   bundlePath: legacyBundlePath = null,
   sourceBundlePath = null,
   storedPath = null,
+  artifactPath = null,
+  artifactStoredPath = null,
   bundleId = null,
   signed,
   signatureType = null,
@@ -539,6 +577,13 @@ function buildImportResult({
     storedPath,
     acceptedCount: accepted ? 1 : 0,
     rejectedCount: accepted ? 0 : 1,
+  }
+
+  const resolvedArtifactPath =
+    artifactStoredPath !== null ? artifactStoredPath : artifactPath
+
+  if (resolvedArtifactPath) {
+    result.artifactPath = resolvedArtifactPath
   }
 
   if (bundleId) {
@@ -599,6 +644,9 @@ function logImportResult(logger, result) {
       epoch: result.epoch,
       identity: result.identity,
       fileName: result.bundlePath ? path.basename(result.bundlePath) : null,
+      artifactFileName: result.artifactPath
+        ? path.basename(result.artifactPath)
+        : null,
       storedFileName: result.storedPath
         ? path.basename(result.storedPath)
         : null,
@@ -619,6 +667,103 @@ function createLocalAiFederated({
   getBaseModelReference,
 } = {}) {
   const localAiStorage = storage || createLocalAiStorage()
+
+  async function materializeBundleAdapterArtifact(
+    epoch,
+    identity,
+    adapterContract
+  ) {
+    if (
+      !hasConcreteAdapterDelta(adapterContract) ||
+      !adapterContract.adapterArtifactSourcePath
+    ) {
+      return {
+        payloadArtifact: adapterContract.adapterArtifact || null,
+        artifactPath: null,
+      }
+    }
+
+    const sourcePath = String(
+      adapterContract.adapterArtifactSourcePath || ''
+    ).trim()
+
+    if (!sourcePath || !(await localAiStorage.exists(sourcePath))) {
+      throw new Error('Local adapter artifact file is unavailable')
+    }
+
+    const artifactSha256 = await localAiStorage.sha256File(sourcePath)
+
+    if (artifactSha256 !== adapterContract.adapterSha256) {
+      throw new Error('Local adapter artifact sha256 mismatch')
+    }
+
+    const sizeBytes = await localAiStorage.fileSize(sourcePath)
+    const artifactFileName = sanitizeArtifactFileName(
+      adapterContract.adapterArtifact && adapterContract.adapterArtifact.file
+        ? adapterContract.adapterArtifact.file
+        : path.basename(sourcePath),
+      `adapter-${adapterContract.adapterSha256}.bin`
+    )
+    const artifactPath = bundleArtifactPath(
+      localAiStorage,
+      epoch,
+      identity,
+      artifactFileName
+    )
+
+    await localAiStorage.copyFile(sourcePath, artifactPath)
+
+    return {
+      payloadArtifact: {
+        file: path.basename(artifactPath),
+        sizeBytes,
+      },
+      artifactPath,
+    }
+  }
+
+  async function importConcreteAdapterArtifact(
+    sourceBundlePath,
+    bundleId,
+    validation
+  ) {
+    if (
+      !hasConcreteAdapterDelta(validation.payload) ||
+      !validation.adapterArtifact
+    ) {
+      return null
+    }
+
+    const artifactFileName = sanitizeArtifactFileName(
+      validation.adapterArtifact.file,
+      `adapter-${validation.adapterSha256}.bin`
+    )
+    const sourceArtifactPath = path.join(
+      path.dirname(sourceBundlePath),
+      artifactFileName
+    )
+
+    if (!(await localAiStorage.exists(sourceArtifactPath))) {
+      throw new Error('Imported adapter artifact file is unavailable')
+    }
+
+    const artifactSha256 = await localAiStorage.sha256File(sourceArtifactPath)
+
+    if (artifactSha256 !== validation.adapterSha256) {
+      throw new Error('Imported adapter artifact sha256 mismatch')
+    }
+
+    const targetPath = receivedArtifactPath(
+      localAiStorage,
+      validation.epoch,
+      bundleId,
+      artifactFileName
+    )
+
+    await localAiStorage.copyFile(sourceArtifactPath, targetPath)
+
+    return targetPath
+  }
 
   async function buildUpdateBundle(epochValue) {
     const epoch = normalizeEpoch(epochValue)
@@ -648,6 +793,16 @@ function createLocalAiFederated({
     const generatedAt = new Date().toISOString()
     const nonce = crypto.randomBytes(16).toString('hex')
     const identityInfo = await resolveIdentity(getIdentity)
+    const nextBundlePath = bundlePath(
+      localAiStorage,
+      epoch,
+      identityInfo.identity
+    )
+    const materializedArtifact = await materializeBundleAdapterArtifact(
+      epoch,
+      identityInfo.identity,
+      adapterContract
+    )
     const payload = {
       epoch,
       identity: identityInfo.identity,
@@ -668,7 +823,7 @@ function createLocalAiFederated({
       deltaType: adapterContract.deltaType,
       adapterFormat: adapterContract.adapterFormat,
       adapterSha256: adapterContract.adapterSha256,
-      adapterArtifact: adapterContract.adapterArtifact || null,
+      adapterArtifact: materializedArtifact.payloadArtifact,
       trainingConfigHash: adapterContract.trainingConfigHash,
       metrics: {
         eligibleCount: eligibleFlipHashes.length,
@@ -688,11 +843,6 @@ function createLocalAiFederated({
       payload,
       signature,
     }
-    const nextBundlePath = bundlePath(
-      localAiStorage,
-      epoch,
-      identityInfo.identity
-    )
 
     await localAiStorage.writeJsonAtomic(nextBundlePath, bundle)
 
@@ -703,6 +853,7 @@ function createLocalAiFederated({
         signed: signature.signed,
         eligibleCount: eligibleFlipHashes.length,
         bundlePath: nextBundlePath,
+        artifactPath: materializedArtifact.artifactPath,
       })
     }
 
@@ -710,6 +861,7 @@ function createLocalAiFederated({
       epoch,
       identity: identityInfo.identity,
       bundlePath: nextBundlePath,
+      artifactPath: materializedArtifact.artifactPath,
       signed: signature.signed,
       deltaType: payload.deltaType,
       eligibleCount: eligibleFlipHashes.length,
@@ -906,6 +1058,11 @@ function createLocalAiFederated({
         validation.epoch,
         bundleId
       )
+      const artifactStoredPath = await importConcreteAdapterArtifact(
+        sourcePath,
+        bundleId,
+        validation
+      )
       const importedAt = new Date().toISOString()
 
       await localAiStorage.writeJsonAtomic(storedPath, bundle)
@@ -915,6 +1072,7 @@ function createLocalAiFederated({
           bundleId,
           nonce: validation.nonce,
           storedPath,
+          artifactStoredPath,
           importedAt,
           identity: validation.identity,
           epoch: validation.epoch,
@@ -932,6 +1090,7 @@ function createLocalAiFederated({
         epoch: validation.epoch,
         sourceBundlePath: sourcePath,
         storedPath,
+        artifactStoredPath,
         bundleId,
         signed: signatureCheck.signed,
         signatureType: validation.signature.type,
@@ -1019,6 +1178,13 @@ function createLocalAiFederated({
           validation.baseModelHash !== expectedBaseModel.baseModelHash
         ) {
           skipReason = 'base_model_mismatch'
+        } else if (
+          hasConcreteAdapterDelta(validation.payload) &&
+          validation.adapterArtifact &&
+          (!entry.artifactStoredPath ||
+            !(await localAiStorage.exists(entry.artifactStoredPath)))
+        ) {
+          skipReason = 'missing_adapter_artifact'
         }
       }
 

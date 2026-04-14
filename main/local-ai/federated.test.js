@@ -175,6 +175,13 @@ describe('local-ai federated bundle helper', () => {
 
   it('builds a concrete adapter bundle when a local adapter artifact manifest exists', async () => {
     await writeManifest(7)
+    const adapterSourcePath = storage.resolveLocalAiPath(
+      'artifacts',
+      'epoch-7-lora.safetensors'
+    )
+    const adapterBuffer = Buffer.from('adapter-bytes-epoch-7')
+
+    await storage.writeBuffer(adapterSourcePath, adapterBuffer)
     await storage.writeJsonAtomic(
       storage.resolveLocalAiPath('adapters', 'epoch-7.json'),
       {
@@ -182,11 +189,11 @@ describe('local-ai federated bundle helper', () => {
         baseModelId: DEFAULT_BASE_MODEL_ID,
         baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
         adapterFormat: 'peft_lora_v1',
-        adapterSha256: 'adapter-sha-epoch-7',
+        adapterSha256: storage.sha256(adapterBuffer),
         trainingConfigHash: 'training-config-epoch-7',
         adapterArtifact: {
           file: 'epoch-7-lora.safetensors',
-          sizeBytes: 8192,
+          sourcePath: adapterSourcePath,
         },
       }
     )
@@ -203,17 +210,71 @@ describe('local-ai federated bundle helper', () => {
       epoch: 7,
       deltaType: 'lora_adapter',
       eligibleCount: 2,
+      artifactPath: expect.any(String),
     })
     expect(bundle.payload).toMatchObject({
       deltaType: 'lora_adapter',
       adapterFormat: 'peft_lora_v1',
-      adapterSha256: 'adapter-sha-epoch-7',
+      adapterSha256: storage.sha256(adapterBuffer),
       trainingConfigHash: 'training-config-epoch-7',
       adapterArtifact: {
-        file: 'epoch-7-lora.safetensors',
-        sizeBytes: 8192,
+        file: path.basename(summary.artifactPath),
+        sizeBytes: adapterBuffer.length,
       },
     })
+    await expect(storage.readBuffer(summary.artifactPath)).resolves.toEqual(
+      adapterBuffer
+    )
+  })
+
+  it('imports a concrete adapter bundle and stores the adapter artifact locally', async () => {
+    await writeManifest(7)
+    const adapterSourcePath = storage.resolveLocalAiPath(
+      'artifacts',
+      'epoch-7-import.safetensors'
+    )
+    const adapterBuffer = Buffer.from('adapter-import-bytes')
+
+    await storage.writeBuffer(adapterSourcePath, adapterBuffer)
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('adapters', 'epoch-7.json'),
+      {
+        epoch: 7,
+        baseModelId: DEFAULT_BASE_MODEL_ID,
+        baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
+        adapterFormat: 'peft_lora_v1',
+        adapterSha256: storage.sha256(adapterBuffer),
+        trainingConfigHash: 'training-config-epoch-7-import',
+        adapterArtifact: {
+          file: 'epoch-7-import.safetensors',
+          sourcePath: adapterSourcePath,
+        },
+      }
+    )
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+    })
+    const built = await federated.buildUpdateBundle(7)
+    const imported = await federated.importUpdateBundle(built.bundlePath)
+    const index = await storage.readJson(
+      storage.resolveLocalAiPath('received', 'index.json')
+    )
+
+    expect(imported).toMatchObject({
+      accepted: true,
+      artifactPath: expect.any(String),
+      storedPath: expect.any(String),
+    })
+    expect(index.bundles[0]).toEqual(
+      expect.objectContaining({
+        artifactStoredPath: imported.artifactPath,
+      })
+    )
+    await expect(storage.readBuffer(imported.artifactPath)).resolves.toEqual(
+      adapterBuffer
+    )
   })
 
   it('imports a valid placeholder bundle and stores a replay index entry', async () => {

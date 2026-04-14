@@ -142,7 +142,9 @@ describe('local-ai storage', () => {
       excluded: [],
     })
 
-    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+    await expect(
+      storage.readTrainingCandidatePackage(filePath)
+    ).resolves.toEqual(
       expect.objectContaining({
         schemaVersion: 1,
         epoch: 12,
@@ -170,9 +172,12 @@ describe('local-ai storage', () => {
       excluded: [],
     })
 
-    const result = await storage.updateTrainingCandidatePackageReview(filePath, {
-      reviewStatus: 'reviewed',
-    })
+    const result = await storage.updateTrainingCandidatePackageReview(
+      filePath,
+      {
+        reviewStatus: 'reviewed',
+      }
+    )
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -181,7 +186,9 @@ describe('local-ai storage', () => {
         federatedReady: false,
       })
     )
-    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+    await expect(
+      storage.readTrainingCandidatePackage(filePath)
+    ).resolves.toEqual(
       expect.objectContaining({
         reviewStatus: 'reviewed',
         reviewedAt: expect.any(String),
@@ -211,7 +218,9 @@ describe('local-ai storage', () => {
       reviewStatus: 'approved',
     })
 
-    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+    await expect(
+      storage.readTrainingCandidatePackage(filePath)
+    ).resolves.toEqual(
       expect.objectContaining({
         reviewStatus: 'approved',
         reviewedAt: expect.any(String),
@@ -241,7 +250,9 @@ describe('local-ai storage', () => {
       reviewStatus: 'rejected',
     })
 
-    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+    await expect(
+      storage.readTrainingCandidatePackage(filePath)
+    ).resolves.toEqual(
       expect.objectContaining({
         reviewStatus: 'rejected',
         reviewedAt: expect.any(String),
@@ -272,7 +283,9 @@ describe('local-ai storage', () => {
       reviewStatus: 'reviewed',
     })
 
-    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+    await expect(
+      storage.readTrainingCandidatePackage(filePath)
+    ).resolves.toEqual(
       expect.objectContaining({
         reviewStatus: 'reviewed',
         reviewedAt: expect.any(String),
@@ -287,6 +300,23 @@ describe('local-ai storage', () => {
     )
     expect(storage.sha256(Buffer.from('hello'))).toBe(
       '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
+    )
+  })
+
+  it('copies binary files and computes file hashes', async () => {
+    const sourcePath = storage.resolveLocalAiPath('artifacts', 'adapter.bin')
+    const targetPath = storage.resolveLocalAiPath('bundles', 'adapter-copy.bin')
+    const sourceBuffer = Buffer.from('adapter-bytes')
+
+    await storage.writeBuffer(sourcePath, sourceBuffer)
+    await storage.copyFile(sourcePath, targetPath)
+
+    await expect(storage.readBuffer(targetPath)).resolves.toEqual(sourceBuffer)
+    await expect(storage.fileSize(targetPath)).resolves.toBe(
+      sourceBuffer.length
+    )
+    await expect(storage.sha256File(targetPath)).resolves.toBe(
+      storage.sha256(sourceBuffer)
     )
   })
 })

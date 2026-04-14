@@ -1,3 +1,5 @@
+const path = require('path')
+
 const {
   LOCAL_AI_ADAPTER_STRATEGY,
   LOCAL_AI_TRAINING_POLICY,
@@ -51,7 +53,30 @@ function normalizeEpoch(value) {
   return Number.isFinite(epoch) && epoch >= 0 ? epoch : null
 }
 
-function normalizeAdapterArtifactRecord(record = {}) {
+function normalizeAdapterArtifactSourcePath(record = {}) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return null
+  }
+
+  const nestedArtifact =
+    record.adapterArtifact &&
+    typeof record.adapterArtifact === 'object' &&
+    !Array.isArray(record.adapterArtifact)
+      ? record.adapterArtifact
+      : {}
+
+  const sourcePath = trimString(
+    nestedArtifact.sourcePath ||
+      nestedArtifact.path ||
+      record.artifactPath ||
+      record.sourcePath ||
+      record.path
+  )
+
+  return sourcePath ? path.resolve(sourcePath) : null
+}
+
+function normalizeAdapterArtifactRecord(record = {}, sourcePath = null) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
     return null
   }
@@ -65,6 +90,7 @@ function normalizeAdapterArtifactRecord(record = {}) {
 
   const file =
     trimString(nestedArtifact.file || record.artifactFile || record.file) ||
+    (sourcePath ? path.basename(sourcePath) : '') ||
     null
   const rawSize =
     nestedArtifact.sizeBytes || record.artifactSizeBytes || record.sizeBytes
@@ -173,12 +199,36 @@ async function readStoredAdapterContract(
       const record = await storage.readJson(candidatePath, null)
 
       if (isCompatibleAdapterRecord(record, payload, modelReference)) {
+        const adapterArtifactSourcePath =
+          normalizeAdapterArtifactSourcePath(record)
+        let adapterArtifact = normalizeAdapterArtifactRecord(
+          record,
+          adapterArtifactSourcePath
+        )
+
+        if (
+          adapterArtifactSourcePath &&
+          typeof storage.fileSize === 'function' &&
+          (await storage.exists(adapterArtifactSourcePath))
+        ) {
+          adapterArtifact = {
+            ...(adapterArtifact || {}),
+            file:
+              (adapterArtifact && adapterArtifact.file) ||
+              path.basename(adapterArtifactSourcePath),
+            sizeBytes:
+              (adapterArtifact && adapterArtifact.sizeBytes) ||
+              (await storage.fileSize(adapterArtifactSourcePath)),
+          }
+        }
+
         return {
           deltaType: CONCRETE_LOCAL_AI_DELTA_TYPE,
           adapterFormat:
             trimString(record.adapterFormat) || DEFAULT_LOCAL_AI_ADAPTER_FORMAT,
           adapterSha256: trimString(record.adapterSha256) || null,
-          adapterArtifact: normalizeAdapterArtifactRecord(record),
+          adapterArtifact,
+          adapterArtifactSourcePath,
           trainingConfigHash:
             trimString(record.trainingConfigHash) ||
             buildTrainingConfigHash(storage, payload, modelReference),
@@ -235,5 +285,6 @@ module.exports = {
   buildTrainingConfigHash,
   buildTrainingConfigSource,
   hasConcreteAdapterDelta,
+  normalizeAdapterArtifactRecord,
   resolveAdapterContract,
 }
