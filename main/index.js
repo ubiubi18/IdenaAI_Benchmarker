@@ -1369,6 +1369,12 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'start-local-node': {
+      if (node && node.exitCode == null) {
+        logger.info(`node already managed, PID: ${node.pid || 'unknown'}`)
+        sendMainWindowMsg(NODE_EVENT, 'node-started')
+        break
+      }
+
       startNode(
         data.rpcPort,
         data.tcpPort,
@@ -1693,6 +1699,8 @@ handleTrusted(AI_SOLVER_COMMAND, async (_event, command, payload) => {
         return aiProviderBridge.generateFlipPanels(payload)
       case 'solveFlipBatch':
         return aiProviderBridge.solveFlipBatch(payload)
+      case 'reviewValidationReports':
+        return aiProviderBridge.reviewValidationReports(payload)
       default:
         throw new Error(`Unsupported AI solver command: ${command}`)
     }

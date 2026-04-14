@@ -3,6 +3,7 @@ import {AUTO_UPDATE_EVENT, AUTO_UPDATE_COMMAND} from '../../../main/channels'
 import {useSettingsState} from './settings-context'
 import {useInterval} from '../hooks/use-interval'
 import {fetchNodeVersion} from '../api/dna'
+import {callRpc} from '../utils/utils'
 
 export const TOGGLE_NODE_SWITCHER = 'TOGGLE_NODE_SWITCHER'
 export const SAVE_EXTERNAL_URL = 'SAVE_EXTERNAL_URL'
@@ -108,6 +109,15 @@ function hasIpcRenderer() {
   )
 }
 
+function isDeferredNodeRpcError(error) {
+  const message = String((error && error.message) || error || '')
+  return (
+    message.includes('does not exist/is not available') ||
+    message.includes('ECONNREFUSED') ||
+    message.includes('Initializing database')
+  )
+}
+
 // eslint-disable-next-line react/prop-types
 export function AutoUpdateProvider({children}) {
   const settings = useSettingsState()
@@ -174,11 +184,19 @@ export function AutoUpdateProvider({children}) {
   useInterval(
     async () => {
       try {
+        const syncStatus = await callRpc('bcn_syncing')
+        if (syncStatus && syncStatus.syncing) {
+          return
+        }
+
         const version = await fetchNodeVersion()
         if (version && state.nodeCurrentVersion !== version) {
           dispatch({type: NEW_NODE_VERSION, data: version})
         }
       } catch (error) {
+        if (!settings.useExternalNode && isDeferredNodeRpcError(error)) {
+          return
+        }
         global.logger.error('Error fetching node version', error, state)
       }
     },

@@ -4,6 +4,7 @@ import deepEqual from 'dequal'
 import {useInterval} from '../hooks/use-interval'
 import {fetchIdentity, killIdentity} from '../api/dna'
 import useRpc from '../hooks/use-rpc'
+import {useChainState} from './chain-context'
 import {IdentityStatus} from '../types'
 
 export function mapToFriendlyStatus(status) {
@@ -21,8 +22,18 @@ const IdentityDispatchContext = React.createContext()
 export function IdentityProvider({children}) {
   const [identity, setIdentity] = React.useState(null)
   const [{result: balanceResult}, callRpc] = useRpc()
+  const {loading, offline, syncing} = useChainState()
+  const isRpcUsable = !loading && !offline && !syncing
+  let identityPollingDelay = null
+  if (isRpcUsable) {
+    identityPollingDelay = identity ? 1000 * 5 : 1000 * 10
+  }
 
   React.useEffect(() => {
+    if (!isRpcUsable) {
+      return undefined
+    }
+
     let ignore = false
 
     async function fetchData() {
@@ -44,40 +55,38 @@ export function IdentityProvider({children}) {
     return () => {
       ignore = true
     }
-  }, [callRpc])
+  }, [callRpc, isRpcUsable])
 
-  useInterval(
-    async () => {
-      async function fetchData() {
-        try {
-          const nextIdentity = await fetchIdentity()
+  useInterval(async () => {
+    async function fetchData() {
+      try {
+        const nextIdentity = await fetchIdentity()
 
-          if (!deepEqual(identity, nextIdentity)) {
-            const state =
-              identity &&
-              identity.state === IdentityStatus.Terminating &&
-              nextIdentity &&
-              nextIdentity.state !== IdentityStatus.Undefined // still mining
-                ? identity.state
-                : nextIdentity.state
-            setIdentity({...nextIdentity, state})
-          }
-        } catch (error) {
-          global.logger.error(
-            'An error occured while fetching identity',
-            error.message
-          )
+        if (!deepEqual(identity, nextIdentity)) {
+          const keepTerminatingState =
+            Boolean(identity) &&
+            identity.state === IdentityStatus.Terminating &&
+            Boolean(nextIdentity) &&
+            nextIdentity.state !== IdentityStatus.Undefined
+          const state = keepTerminatingState
+            ? identity.state
+            : nextIdentity.state
+          setIdentity({...nextIdentity, state})
         }
+      } catch (error) {
+        global.logger.error(
+          'An error occured while fetching identity',
+          error.message
+        )
       }
+    }
 
-      await fetchData()
-    },
-    identity ? 1000 * 5 : 1000 * 10
-  )
+    await fetchData()
+  }, identityPollingDelay)
 
   useInterval(
     () => callRpc('dna_getBalance', identity.address),
-    identity && identity.address ? 1000 * 10 : null,
+    isRpcUsable && identity && identity.address ? 1000 * 10 : null,
     true
   )
 

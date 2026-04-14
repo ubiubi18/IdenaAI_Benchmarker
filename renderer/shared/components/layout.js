@@ -518,7 +518,13 @@ function SyncingApp() {
       states: {
         loading: {
           invoke: {
-            src: () => callRpc('net_peers'),
+            src: async () => {
+              try {
+                return await callRpc('net_peers')
+              } catch {
+                return []
+              }
+            },
             onDone: {
               target: 'done',
               actions: [assign({peers: (_, {data}) => data})],

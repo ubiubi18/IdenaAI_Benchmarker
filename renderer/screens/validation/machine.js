@@ -37,14 +37,16 @@ export const createValidationMachine = ({
   longSessionDuration,
   locale,
   onDecodedFlip,
+  initialShortFlips = [],
+  initialLongFlips = [],
 }) =>
   createMachine(
     {
       id: 'validation',
       initial: 'shortSession',
       context: {
-        shortFlips: [],
-        longFlips: [],
+        shortFlips: initialShortFlips,
+        longFlips: initialLongFlips,
         currentIndex: 0,
         bestFlipHashes: {},
         epoch,
@@ -65,8 +67,16 @@ export const createValidationMachine = ({
           states: {
             fetch: {
               entry: log('Start fetching short flips'),
-              initial: 'polling',
+              initial: 'prepare',
               states: {
+                prepare: {
+                  on: {
+                    '': [
+                      {target: 'done', cond: 'didFetchShortFlips'},
+                      {target: 'polling'},
+                    ],
+                  },
+                },
                 polling: {
                   type: 'parallel',
                   states: {
@@ -579,10 +589,10 @@ export const createValidationMachine = ({
                           ),
                           invoke: {
                             src:
-                              ({longFlips, epoch}) =>
+                              ({longFlips, epoch: epochNumber}) =>
                               (cb) =>
                                 fetchFlips(missingHashes(longFlips), cb, 0, {
-                                  epoch,
+                                  epoch: epochNumber,
                                   sessionType: SessionType.Long,
                                   onDecodedFlip,
                                 }),
@@ -1057,28 +1067,28 @@ export const createValidationMachine = ({
       services: {
         fetchShortHashes: () => fetchFlipHashes(SessionType.Short),
         fetchShortFlips:
-          ({shortFlips, epoch}) =>
+          ({shortFlips, epoch: epochNumber}) =>
           (cb) =>
             fetchFlips(
               shortFlips.filter(readyNotFetchedFlip).map(({hash}) => hash),
               cb,
               0,
               {
-                epoch,
+                epoch: epochNumber,
                 sessionType: SessionType.Short,
                 onDecodedFlip,
               }
             ),
         fetchLongHashes: () => fetchFlipHashes(SessionType.Long),
         fetchLongFlips:
-          ({longFlips, epoch}) =>
+          ({longFlips, epoch: epochNumber}) =>
           (cb) =>
             fetchFlips(
               longFlips.filter(readyNotFetchedFlip).map(({hash}) => hash),
               cb,
               1000,
               {
-                epoch,
+                epoch: epochNumber,
                 sessionType: SessionType.Long,
                 onDecodedFlip,
               }

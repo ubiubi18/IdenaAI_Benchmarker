@@ -247,6 +247,12 @@ const bridge = {
         ipcRenderer.invoke(AI_SOLVER_COMMAND, 'generateFlipPanels', payload),
       solveFlipBatch: (payload) =>
         ipcRenderer.invoke(AI_SOLVER_COMMAND, 'solveFlipBatch', payload),
+      reviewValidationReports: (payload) =>
+        ipcRenderer.invoke(
+          AI_SOLVER_COMMAND,
+          'reviewValidationReports',
+          payload
+        ),
     },
     aiTestUnit: {
       addFlips: (payload) =>

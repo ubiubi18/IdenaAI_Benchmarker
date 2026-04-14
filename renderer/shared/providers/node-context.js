@@ -153,7 +153,13 @@ export function NodeProvider({children}) {
     return () => {
       global.ipcRenderer.removeListener(NODE_EVENT, onEvent)
     }
-  })
+  }, [
+    dispatch,
+    settings.autoActivateMining,
+    settings.internalPort,
+    settings.ipfsPort,
+    settings.tcpPort,
+  ])
 
   useEffect(() => {
     dispatch({type: NODE_REINIT})

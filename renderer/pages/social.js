@@ -1,5 +1,4 @@
 import React from 'react'
-import NextLink from 'next/link'
 import {Box, Button, Flex, HStack, Stack, Text, Tooltip} from '@chakra-ui/react'
 import Layout from '../shared/components/layout'
 import {SecondaryButton} from '../shared/components/button'
@@ -388,34 +387,35 @@ export default function SocialPage() {
   }, [postBootstrapToIframe])
 
   const usingIndexerFallback = historyMode === 'indexer-api'
+  const socialViewportHeight = 'calc(100vh - 220px)'
 
   return (
     <Layout>
       <Page px={0} py={0} overflow="hidden" align="stretch">
-        <Box px={8} py={6} w="full">
-          <PageTitle mb={2}>Social</PageTitle>
-          <Stack spacing={3} maxW="7xl">
-            <Text color="muted">
+        <Box px={8} pt={4} pb={3} w="full">
+          <PageTitle mb={1}>Social</PageTitle>
+          <Stack spacing={2} maxW="7xl">
+            <Text color="muted" fontSize="sm" lineHeight="tall">
               Local bundled `idena.social` UI inside idena-desktop. Posting
               always uses your own node RPC. Community history now defaults to
               the official Idena indexer as a read-only fallback because node
               RPC-only scanning is often too narrow for the full feed.
             </Text>
-            <HStack spacing={6} flexWrap="wrap" align="flex-start">
+            <HStack spacing={4} flexWrap="wrap" align="flex-start">
               <HStack spacing={2}>
-                <Text>
+                <Text fontSize="sm" lineHeight="short">
                   Node: <strong>{bootstrap.nodeUrl}</strong>
                 </Text>
                 <InfoHint label="This embedded social view uses your current idena-desktop node endpoint. RPC authentication stays in the parent desktop app and is proxied to the embedded view instead of being injected into the iframe." />
               </HStack>
               <HStack spacing={2}>
-                <Text>
+                <Text fontSize="sm" lineHeight="short">
                   Sending: <strong>RPC only</strong>
                 </Text>
                 <InfoHint label="Posting, liking, tipping and image uploads use only your own node RPC. Picture bytes are first stored through your node IPFS path, then referenced on-chain by CID." />
               </HStack>
               <HStack spacing={2}>
-                <Text>
+                <Text fontSize="sm" lineHeight="short">
                   History scan:{' '}
                   <strong>
                     {usingIndexerFallback
@@ -432,7 +432,7 @@ export default function SocialPage() {
                 />
               </HStack>
               <HStack spacing={2}>
-                <Text>
+                <Text fontSize="sm" lineHeight="short">
                   Image posts:{' '}
                   <strong>
                     {formatBytesAsMib(SOCIAL_MAX_IMAGE_BYTES)} max
@@ -445,7 +445,7 @@ export default function SocialPage() {
                 />
               </HStack>
               <HStack spacing={2}>
-                <Text>
+                <Text fontSize="sm" lineHeight="short">
                   Fees: <strong>live max-fee estimate in composer</strong>
                 </Text>
                 <InfoHint label="The composer inside the social view shows a conservative max-fee estimate from your own node RPC for the current draft. The final charged fee can be lower." />
@@ -453,6 +453,7 @@ export default function SocialPage() {
             </HStack>
             <HStack spacing={3} flexWrap="wrap">
               <SecondaryButton
+                size="sm"
                 onClick={() => setIframeNonce((value) => value + 1)}
               >
                 Reload social view
@@ -471,22 +472,23 @@ export default function SocialPage() {
                   ? 'Use node RPC-only history'
                   : 'Use official indexer for community history'}
               </Button>
-              <NextLink href="/settings/node" passHref>
-                <TextLink>Node settings</TextLink>
-              </NextLink>
+              <TextLink href="/settings/node" fontSize="sm">
+                Node settings
+              </TextLink>
               <ExternalLink
+                fontSize="sm"
                 href={`https://scan.idena.io/contract/${SOCIAL_CONTRACT_ADDRESS}`}
               >
                 Contract on scan.idena.io
               </ExternalLink>
             </HStack>
-            <Text color="muted" fontSize="sm">
+            <Text color="muted" fontSize="xs" lineHeight="tall">
               {usingIndexerFallback
                 ? `Community history is currently read from ${SOCIAL_OFFICIAL_INDEXER_URL}. Posting still stays on your own node RPC.`
                 : 'RPC-only history is active. This mode may miss broader community posts even when your node is synced.'}
             </Text>
             {(offline || syncing) && (
-              <Text color="orange.500">
+              <Text color="orange.500" fontSize="sm" lineHeight="tall">
                 Your node is currently {offline ? 'offline' : 'syncing'}. The
                 social view may stay read-only or temporarily unavailable until
                 RPC becomes healthy.
@@ -496,7 +498,7 @@ export default function SocialPage() {
         </Box>
 
         <Flex flex={1} w="full" px={8} pb={6} minH="0">
-          <Box position="relative" w="full" h="calc(100vh - 250px)">
+          <Box position="relative" w="full" h={socialViewportHeight}>
             <Box
               as="iframe"
               ref={iframeRef}

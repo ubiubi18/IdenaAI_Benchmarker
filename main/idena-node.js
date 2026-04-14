@@ -2,7 +2,8 @@
 const path = require('path')
 const fs = require('fs-extra')
 const os = require('os')
-const {spawn} = require('child_process')
+const {spawn, execFile} = require('child_process')
+const {promisify} = require('util')
 const axios = require('axios')
 const progress = require('progress-stream')
 const semver = require('semver')
@@ -25,6 +26,9 @@ const peerAssistInitialDelayMs = 12 * 1000
 const peerAssistRetryIntervalMs = 30 * 1000
 const peerAssistRetryCooldownMs = 2 * 60 * 1000
 const maxPersistedPeerHints = 32
+const nodeRpcProbeTimeoutMs = 1500
+
+const execFileAsync = promisify(execFile)
 
 const defaultIpfsBootstrapNodes = [
   '/ip4/135.181.40.10/tcp/40405/ipfs/QmNYWtiwM1UfeCmHfWSdefrMuQdg6nycY5yS64HYqWCUhD',
@@ -51,6 +55,7 @@ const getNodeFile = () => path.join(getNodeDir(), idenaBin + getBinarySuffix())
 
 const getNodeConfigFile = () => path.join(getNodeDir(), 'config.json')
 const getNodePeerHintsFile = () => path.join(getNodeDir(), 'peer-hints.json')
+const getNodeRuntimeFile = () => path.join(getNodeDir(), 'runtime.json')
 
 const getTempNodeFile = () =>
   path.join(getNodeDir(), `new-${idenaBin}${getBinarySuffix()}`)
@@ -219,6 +224,216 @@ function createRpcClient(port) {
   })
 }
 
+async function readNodeRuntime() {
+  const runtimeFile = getNodeRuntimeFile()
+
+  try {
+    if (!(await fs.pathExists(runtimeFile))) {
+      return null
+    }
+
+    const runtime = (await fs.readJson(runtimeFile)) || {}
+    const pid = Number(runtime.pid)
+    const port = Number(runtime.port)
+
+    return {
+      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+      port: Number.isInteger(port) && port > 0 ? port : null,
+      startedAt:
+        typeof runtime.startedAt === 'string' ? runtime.startedAt : undefined,
+    }
+  } catch (error) {
+    logger.warn('cannot read node runtime file', {error: error.toString()})
+    return null
+  }
+}
+
+async function writeNodeRuntime({pid, port}) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return
+  }
+
+  await fs.ensureDir(getNodeDir())
+  await fs.writeJson(
+    getNodeRuntimeFile(),
+    {
+      pid,
+      port,
+      startedAt: new Date().toISOString(),
+    },
+    {spaces: 2}
+  )
+}
+
+async function clearNodeRuntime(expectedPid) {
+  const runtimeFile = getNodeRuntimeFile()
+
+  try {
+    if (!(await fs.pathExists(runtimeFile))) {
+      return
+    }
+
+    if (Number.isInteger(expectedPid) && expectedPid > 0) {
+      const runtime = await readNodeRuntime()
+      if (runtime && runtime.pid && runtime.pid !== expectedPid) {
+        return
+      }
+    }
+
+    await fs.remove(runtimeFile)
+  } catch (error) {
+    logger.warn('cannot clear node runtime file', {error: error.toString()})
+  }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false
+  }
+
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function findListeningProcessPid(port) {
+  if (!Number.isInteger(port) || port <= 0) {
+    return null
+  }
+
+  try {
+    if (process.platform === 'win32') {
+      const {stdout: netstatOutput} = await execFileAsync(
+        'netstat',
+        ['-ano', '-p', 'tcp'],
+        {windowsHide: true}
+      )
+
+      const lines = String(netstatOutput || '').split(/\r?\n/)
+      for (const line of lines) {
+        const match = line.match(
+          /^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/
+        )
+
+        if (match) {
+          const matchedPort = Number.parseInt(match[1], 10)
+          const matchedPid = Number.parseInt(match[2], 10)
+
+          if (
+            matchedPort === port &&
+            Number.isInteger(matchedPid) &&
+            matchedPid > 0
+          ) {
+            return matchedPid
+          }
+        }
+      }
+
+      return null
+    }
+
+    const {stdout: lsofOutput} = await execFileAsync(
+      'lsof',
+      ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'],
+      {windowsHide: true}
+    )
+
+    const pid = Number.parseInt(
+      String(lsofOutput || '')
+        .trim()
+        .split(/\s+/)[0],
+      10
+    )
+    return Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+async function isManagedNodeRpcReady(port, apiKey) {
+  try {
+    const rpcClient = axios.create({
+      baseURL: `http://127.0.0.1:${port}`,
+      timeout: nodeRpcProbeTimeoutMs,
+      validateStatus: (status) => status >= 200 && status < 500,
+      headers: {'Content-Type': 'application/json'},
+    })
+
+    await callNodeRpc(rpcClient, apiKey, 'bcn_syncing')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function createManagedNodeHandle({
+  pid,
+  port,
+  apiKey,
+  onLog,
+  bootstrapNodes = [],
+  recovered = false,
+}) {
+  return {
+    pid,
+    port,
+    recovered,
+    exitCode: null,
+    peerAssist: startPeerAssist({
+      port,
+      apiKey,
+      onLog,
+      bootstrapNodes,
+    }),
+  }
+}
+
+async function recoverManagedNode({port, apiKey, onLog, bootstrapNodes = []}) {
+  const runtime = await readNodeRuntime()
+
+  if (runtime && runtime.pid && !isProcessAlive(runtime.pid)) {
+    await clearNodeRuntime(runtime.pid)
+  }
+
+  const rpcReady = await isManagedNodeRpcReady(port, apiKey)
+  if (!rpcReady) {
+    return null
+  }
+
+  const recoveredPid =
+    runtime &&
+    runtime.port === port &&
+    runtime.pid &&
+    isProcessAlive(runtime.pid)
+      ? runtime.pid
+      : await findListeningProcessPid(port)
+
+  const recoveredNode = createManagedNodeHandle({
+    pid: recoveredPid,
+    port,
+    apiKey,
+    onLog,
+    bootstrapNodes,
+    recovered: true,
+  })
+
+  if (recoveredPid) {
+    await writeNodeRuntime({pid: recoveredPid, port})
+  }
+
+  if (onLog) {
+    const sourceText = recoveredPid
+      ? `process ${recoveredPid}`
+      : `RPC endpoint ${port}`
+    onLog([`[node] Reusing existing built-in node ${sourceText}`])
+  }
+
+  return recoveredNode
+}
+
 async function callNodeRpc(rpcClient, apiKey, method, params = []) {
   const {data} = await rpcClient.post('/', {
     jsonrpc: '2.0',
@@ -271,6 +486,13 @@ function startPeerAssist({port, apiKey, onLog, bootstrapNodes = []}) {
     running = true
 
     try {
+      const syncStatus = await callNodeRpc(rpcClient, apiKey, 'bcn_syncing')
+
+      if (syncStatus && syncStatus.syncing) {
+        schedule(Math.min(peerAssistRetryIntervalMs, 5000))
+        return
+      }
+
       const peers = toArray(await callNodeRpc(rpcClient, apiKey, 'net_peers'))
 
       if (peers.length > 0) {
@@ -641,6 +863,17 @@ async function startNode(
   onExit
 ) {
   const managedNodeConfig = await ensureNodeConfig()
+  const bootstrapNodes = getConfiguredBootstrapNodes(managedNodeConfig)
+  const recoveredNode = await recoverManagedNode({
+    port,
+    apiKey,
+    onLog,
+    bootstrapNodes,
+  })
+
+  if (recoveredNode) {
+    return recoveredNode
+  }
 
   const parameters = [
     '--datadir',
@@ -667,11 +900,12 @@ async function startNode(
   parameters.push(getNodeConfigFile())
 
   const idenaNode = spawn(getNodeFile(), parameters)
+  await writeNodeRuntime({pid: idenaNode.pid, port})
   idenaNode.peerAssist = startPeerAssist({
     port,
     apiKey,
     onLog,
-    bootstrapNodes: getConfiguredBootstrapNodes(managedNodeConfig),
+    bootstrapNodes,
   })
 
   idenaNode.stdout.on('data', (data) => {
@@ -691,7 +925,18 @@ async function startNode(
     }
   })
 
+  idenaNode.on('error', async (error) => {
+    await clearNodeRuntime(idenaNode.pid)
+    if (idenaNode.peerAssist) {
+      idenaNode.peerAssist.stop()
+    }
+    if (onExit) {
+      onExit(`node failed to start: ${error.message}`, 1)
+    }
+  })
+
   idenaNode.on('exit', (code) => {
+    clearNodeRuntime(idenaNode.pid)
     if (idenaNode.peerAssist) {
       idenaNode.peerAssist.stop()
     }
@@ -716,22 +961,26 @@ async function stopNode(node) {
       if (node && node.peerAssist) {
         node.peerAssist.stop()
       }
+      if (!Number.isInteger(node.pid) || node.pid <= 0) {
+        resolve('node pid is not available')
+        return
+      }
       if (node.exitCode != null) {
+        clearNodeRuntime(node.pid)
         resolve(`node already exited with code ${node.exitCode}`)
         return
       }
-      if (process.platform !== 'win32') {
-        kill(node.pid, 'SIGINT', (err) => {
+      kill(
+        node.pid,
+        process.platform === 'win32' ? 'SIGTERM' : 'SIGINT',
+        (err) => {
           if (err) {
             return reject(err)
           }
+          clearNodeRuntime(node.pid)
           return resolve(`node ${node.pid} stopped successfully`)
-        })
-      } else {
-        node.on('exit', () => resolve(`node ${node.pid} stopped successfully`))
-        node.on('error', reject)
-        node.kill()
-      }
+        }
+      )
     } catch (e) {
       reject(e)
     }
@@ -827,6 +1076,11 @@ function getLastLogs() {
   const number = 100
   return new Promise((resolve, reject) => {
     try {
+      if (!fs.existsSync(getNodeLogsFile())) {
+        resolve([])
+        return
+      }
+
       const logs = []
       lineReader.eachLine(getNodeLogsFile(), (line, last) => {
         logs.push(line)

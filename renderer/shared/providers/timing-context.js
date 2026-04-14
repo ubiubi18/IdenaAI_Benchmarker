@@ -2,6 +2,7 @@ import React from 'react'
 import {apiUrl} from '../api/api-client'
 import {fetchCeremonyIntervals} from '../api/dna'
 import {useInterval} from '../hooks/use-interval'
+import {useChainState} from './chain-context'
 import {ntp} from '../utils/utils'
 
 const TIME_DRIFT_THRESHOLD = 10 * 1000
@@ -22,6 +23,8 @@ export function TimingProvider(props) {
   })
 
   const [interval, setInterval] = React.useState(1000 * 60)
+  const {loading, offline, syncing} = useChainState()
+  const isRpcUsable = !loading && !offline && !syncing
 
   useInterval(
     async () => {
@@ -48,7 +51,7 @@ export function TimingProvider(props) {
         )
       }
     },
-    interval,
+    isRpcUsable ? interval : null,
     true
   )
 
