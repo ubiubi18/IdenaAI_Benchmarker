@@ -77,6 +77,11 @@ const customModalStyles = {
     },
 };
 
+type FlashNotice = {
+    type: 'error' | 'warning' | 'success';
+    text: string;
+};
+
 Modal.setAppElement('#root');
 
 function App() {
@@ -145,12 +150,42 @@ function App() {
     const [mainComposerCostEstimateLoading, setMainComposerCostEstimateLoading] = useState<boolean>(false);
     const copyTxHandlerEnabledRef = useRef<boolean>(true);
     const lastUsedNonceSavedRef = useRef<number>(0);
+    const [flashNotice, setFlashNotice] = useState<FlashNotice | null>(null);
+    const flashNoticeTimeoutRef = useRef<number | undefined>(undefined);
+
+    const clearFlashNotice = () => {
+        if (flashNoticeTimeoutRef.current) {
+            window.clearTimeout(flashNoticeTimeoutRef.current);
+            flashNoticeTimeoutRef.current = undefined;
+        }
+        setFlashNotice(null);
+    };
+
+    const showFlashNotice = (type: FlashNotice['type'], text: string) => {
+        if (flashNoticeTimeoutRef.current) {
+            window.clearTimeout(flashNoticeTimeoutRef.current);
+        }
+
+        setFlashNotice({ type, text });
+        flashNoticeTimeoutRef.current = window.setTimeout(() => {
+            setFlashNotice(null);
+            flashNoticeTimeoutRef.current = undefined;
+        }, 8000);
+    };
 
     useEffect(() => {
         return installDesktopBootstrapListener((nextBootstrap) => {
             setDesktopBootstrap(nextBootstrap);
             setDesktopBootstrapReady(true);
         });
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (flashNoticeTimeoutRef.current) {
+                window.clearTimeout(flashNoticeTimeoutRef.current);
+            }
+        };
     }, []);
 
     useEffect(() => {
@@ -177,11 +212,11 @@ function App() {
             const { result: syncingResult } = await rpcClientRef.current!('bcn_syncing', []);
 
             if (!syncingResult) {
-                alert('Your node has an issue! Please check if you typed in the correct details.');
+                showFlashNotice('error', 'Your node has an issue. Please check the RPC URL or API key.');
                 return;
             }
             if (syncingResult.syncing) {
-                alert('Your node is still syncing! Please try again after syncing has completed.');
+                showFlashNotice('warning', 'Your node is still syncing. Please try again after syncing has completed.');
                 return;
             }
 
@@ -238,7 +273,7 @@ function App() {
                         setPostersAddressInvalid(true);
                     } else {
                         if (Number(getBalanceResult.balance) === 0) {
-                            alert('Your address has no idna, posting will fail!');
+                            showFlashNotice('warning', 'Your address has no iDNA. Posting will fail until it is funded.');
                         }
                         setIdenaWalletBalance(getBalanceResult.balance);
                         setPostersAddressInvalid(false);
@@ -736,17 +771,17 @@ function App() {
 
     const setPostMediaAttachmentHandler = async (location: string, file: File) => {
         if (!supportedImageTypes.includes(file.type)) {
-            alert('Media format not supported.');
+            showFlashNotice('warning', 'Media format not supported.');
             return;
         }
 
         if (inputSendingTxs === 'rpc' && file.size > MAX_POST_MEDIA_BYTES) {
-            alert('1MB is the maximum size. This image is too large.');
+            showFlashNotice('warning', '1MB is the maximum size. This image is too large.');
             return;
         }
 
         if (inputSendingTxs === 'idena-app' && file.size > MAX_POST_MEDIA_BYTES_WEBAPP) {
-            alert('5KB is the maximum size when using the Idena App. This image is too large.');
+            showFlashNotice('warning', '5KB is the maximum size when using the Idena App. This image is too large.');
             return;
         }
 
@@ -762,7 +797,7 @@ function App() {
 
             postMediaAttachmentsRef.current = { ...postMediaAttachmentsRef.current, [location]: newMedia };
         } catch {
-            alert('Failed to read media file.');
+            showFlashNotice('error', 'Failed to read media file.');
         }
     };
 
@@ -788,7 +823,7 @@ function App() {
 
     const copyPostTxHandler = async (location: string, replyToPostId?: string, channelId?: string) => {
         if (!nodeAvailable) {
-            alert('Node unavailable, cannot copy!');
+            showFlashNotice('error', 'Node unavailable, cannot copy.');
             return;
         }
 
@@ -805,7 +840,7 @@ function App() {
             let { inputText, media, mediaType } = getTextAndMediaForPost(postTextareaElement, postMediaAttachment);
 
             if (!inputText && !postMediaAttachment) {
-                alert('No text or media provided!');
+                showFlashNotice('warning', 'No text or media provided.');
                 copyTxTextElement!.innerText = savedInnerText;
                 copyTxHandlerEnabledRef.current = true;
                 return;
@@ -840,7 +875,7 @@ function App() {
 
     const submitPostHandler = async (location: string, replyToPostId?: string, channelId?: string) => {
         if (!nodeAvailable) {
-            alert('Node unavailable, cannot post!');
+            showFlashNotice('error', 'Node unavailable, cannot post.');
             return;
         }
 
@@ -850,7 +885,7 @@ function App() {
         let { inputText, media, mediaType } = getTextAndMediaForPost(postTextareaElement, postMediaAttachment);
 
         if (!inputText && !postMediaAttachment) {
-            alert('No text or media provided!');
+            showFlashNotice('warning', 'No text or media provided.');
             return;
         }
 
@@ -860,10 +895,11 @@ function App() {
                 const cidAddress = await storeFileToIpfs(rpcClientRef.current!, lastUsedNonceSavedRef, fileBytes, postersAddressRef.current);
 
                 if (!cidAddress) {
-                    alert('Something went wrong. Probably you have insufficient iDNA.');
+                    showFlashNotice('error', 'Failed to store the post text on IPFS. You may have insufficient iDNA.');
+                    return;
                 }
                 
-                inputText = cidAddress!;
+                inputText = cidAddress;
             }
 
             if (postMediaAttachment) {
@@ -872,10 +908,11 @@ function App() {
                 const cidAddress = await storeFileToIpfs(rpcClientRef.current!, lastUsedNonceSavedRef, fileBytes, postersAddressRef.current);
 
                 if (!cidAddress) {
-                    alert('Something went wrong. Probably you have insufficient iDNA.');
+                    showFlashNotice('error', 'Failed to store the media on IPFS. You may have insufficient iDNA.');
+                    return;
                 }
 
-                media = [cidAddress!];
+                media = [cidAddress];
                 mediaType = [postMediaAttachment.file.type];
             }
         }
@@ -890,7 +927,7 @@ function App() {
 
     const submitLikeHandler = async (emoji: string, location: string, replyToPostId?: string, channelId?: string) => {
         if (!nodeAvailable) {
-            alert('Node unavailable, cannot like!');
+            showFlashNotice('error', 'Node unavailable, cannot like.');
             return;
         }
 
@@ -901,7 +938,7 @@ function App() {
 
     const submitSendTipHandler = async (location: string, tipToPostId: string, tipAmount: string) => {
         if (!nodeAvailable) {
-            alert('Node unavailable, cannot tip!');
+            showFlashNotice('error', 'Node unavailable, cannot tip.');
             return;
         }
 
@@ -1065,6 +1102,27 @@ function App() {
                     className={`mx-auto w-full ${isDesktopOnchainMode ? 'max-w-[1480px]' : 'max-w-[1080px]'}`}
                     style={isDesktopOnchainMode ? { width: '100%', maxWidth: '1480px' } : undefined}
                 >
+                {flashNotice && (
+                    <div
+                        className={`mb-3 flex items-start justify-between gap-3 rounded-md border px-4 py-3 text-[14px] ${
+                            flashNotice.type === 'error'
+                                ? 'border-red-400/40 bg-red-500/10 text-red-100'
+                                : flashNotice.type === 'success'
+                                    ? 'border-green-400/40 bg-green-500/10 text-green-100'
+                                    : 'border-amber-400/40 bg-amber-500/10 text-amber-100'
+                        }`}
+                        role="status"
+                        aria-live="polite"
+                    >
+                        <p>{flashNotice.text}</p>
+                        <button
+                            className="cursor-pointer text-[12px] font-semibold uppercase tracking-wide text-inherit opacity-80 hover:opacity-100"
+                            onClick={clearFlashNotice}
+                        >
+                            Dismiss
+                        </button>
+                    </div>
+                )}
                 <Outlet
                     context={{
                         currentBlockCaptured,
