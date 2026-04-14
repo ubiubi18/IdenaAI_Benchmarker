@@ -14,7 +14,6 @@ import {useTranslation} from 'react-i18next'
 import {useMachine} from '@xstate/react'
 import {
   IconLink,
-  FloatDebug,
   HDivider,
   Toast,
   VDivider,
@@ -243,8 +242,6 @@ export default function VotingListPage() {
         )}
 
         <ScrollToTop scrollableRef={pageRef}>{t('Back to top')}</ScrollToTop>
-
-        {global.isDev && <FloatDebug>{current.value}</FloatDebug>}
       </Page>
     </Layout>
   )

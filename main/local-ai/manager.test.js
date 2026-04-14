@@ -4,6 +4,15 @@ const fs = require('fs-extra')
 
 const {createLocalAiStorage} = require('./storage')
 const {createLocalAiManager} = require('./manager')
+const {
+  LOCAL_AI_BASE_MODEL_ID,
+  LOCAL_AI_CONTRACT_VERSION,
+  LOCAL_AI_PUBLIC_MODEL_ID,
+  LOCAL_AI_PUBLIC_VISION_ID,
+  LOCAL_AI_REASONER_BACKEND,
+  LOCAL_AI_RUNTIME_BACKEND,
+  LOCAL_AI_VISION_BACKEND,
+} = require('./constants')
 
 function mockLogger() {
   return {
@@ -154,7 +163,18 @@ describe('local-ai manager', () => {
     })
     expect(manifest).toMatchObject({
       epoch: 12,
-      baseModelId: 'local-ai:sidecar:mvp-placeholder-v1',
+      publicModelId: LOCAL_AI_PUBLIC_MODEL_ID,
+      publicVisionId: LOCAL_AI_PUBLIC_VISION_ID,
+      runtimeBackend: LOCAL_AI_RUNTIME_BACKEND,
+      reasonerBackend: LOCAL_AI_REASONER_BACKEND,
+      visionBackend: LOCAL_AI_VISION_BACKEND,
+      contractVersion: LOCAL_AI_CONTRACT_VERSION,
+      baseModelId: LOCAL_AI_BASE_MODEL_ID,
+      baseModelHash: storage.sha256(LOCAL_AI_BASE_MODEL_ID),
+      deltaType: 'pending_adapter',
+      adapterFormat: 'peft_lora_v1',
+      adapterSha256: null,
+      trainingConfigHash: expect.any(String),
       eligibleFlipHashes: ['flip-a'],
       flipCount: 1,
       skippedCount: 2,
@@ -183,8 +203,107 @@ describe('local-ai manager', () => {
     expect(JSON.stringify(captureIndex)).not.toContain('"images"')
   })
 
+  it('promotes manifests to a concrete adapter contract when a local adapter artifact is registered', async () => {
+    const logger = mockLogger()
+    const manager = createLocalAiManager({logger, storage})
+
+    await manager.captureFlip({
+      flipHash: 'flip-a',
+      epoch: 12,
+      sessionType: 'short',
+      images: ['left', 'right'],
+      consensus: {
+        finalAnswer: 'left',
+        reported: false,
+      },
+    })
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('adapters', 'epoch-12.json'),
+      {
+        epoch: 12,
+        baseModelId: LOCAL_AI_BASE_MODEL_ID,
+        baseModelHash: storage.sha256(LOCAL_AI_BASE_MODEL_ID),
+        adapterFormat: 'peft_lora_v1',
+        adapterSha256: 'adapter-sha-epoch-12',
+        trainingConfigHash: 'training-config-epoch-12',
+        adapterArtifact: {
+          file: 'epoch-12-lora.safetensors',
+          sizeBytes: 2048,
+        },
+      }
+    )
+
+    const summary = await manager.buildManifest(12)
+    const manifest = await storage.readJson(summary.manifestPath)
+
+    expect(manifest).toMatchObject({
+      epoch: 12,
+      deltaType: 'lora_adapter',
+      adapterFormat: 'peft_lora_v1',
+      adapterSha256: 'adapter-sha-epoch-12',
+      trainingConfigHash: 'training-config-epoch-12',
+      adapterArtifact: {
+        file: 'epoch-12-lora.safetensors',
+        sizeBytes: 2048,
+      },
+    })
+  })
+
+  it('registers and reloads adapter artifacts from a local file', async () => {
+    const logger = mockLogger()
+    const manager = createLocalAiManager({logger, storage})
+    const sourcePath = storage.resolveLocalAiPath(
+      'artifacts',
+      'epoch-12-registration.safetensors'
+    )
+    const adapterBuffer = Buffer.from('registered-adapter-bytes')
+
+    await storage.writeBuffer(sourcePath, adapterBuffer)
+
+    const registered = await manager.registerAdapterArtifact({
+      epoch: 12,
+      sourcePath,
+    })
+    const reloaded = await manager.loadAdapterArtifact({epoch: 12})
+
+    expect(registered).toMatchObject({
+      epoch: 12,
+      adapterManifestPath: storage.resolveLocalAiPath(
+        'adapters',
+        'epoch-12.json'
+      ),
+      baseModelId: LOCAL_AI_BASE_MODEL_ID,
+      deltaType: 'lora_adapter',
+      adapterFormat: 'peft_lora_v1',
+      adapterSha256: storage.sha256(adapterBuffer),
+      adapterArtifact: {
+        file: 'epoch-12-registration.safetensors',
+        sourcePath,
+        sizeBytes: adapterBuffer.length,
+      },
+    })
+    expect(reloaded).toMatchObject({
+      epoch: 12,
+      adapterManifestPath: storage.resolveLocalAiPath(
+        'adapters',
+        'epoch-12.json'
+      ),
+      deltaType: 'lora_adapter',
+      adapterSha256: storage.sha256(adapterBuffer),
+      adapterArtifact: {
+        file: 'epoch-12-registration.safetensors',
+        sourcePath,
+        sizeBytes: adapterBuffer.length,
+      },
+    })
+  })
+
   it('builds a local post-consensus training-candidate package conservatively', async () => {
-    const captureIndexPath = storage.resolveLocalAiPath('captures', 'index.json')
+    const captureIndexPath = storage.resolveLocalAiPath(
+      'captures',
+      'index.json'
+    )
 
     await storage.writeJsonAtomic(captureIndexPath, {
       version: 1,
@@ -251,6 +370,18 @@ describe('local-ai manager', () => {
       schemaVersion: 1,
       packageType: 'local-ai-training-candidates',
       epoch: 12,
+      publicModelId: LOCAL_AI_PUBLIC_MODEL_ID,
+      publicVisionId: LOCAL_AI_PUBLIC_VISION_ID,
+      runtimeBackend: LOCAL_AI_RUNTIME_BACKEND,
+      reasonerBackend: LOCAL_AI_REASONER_BACKEND,
+      visionBackend: LOCAL_AI_VISION_BACKEND,
+      contractVersion: LOCAL_AI_CONTRACT_VERSION,
+      baseModelId: LOCAL_AI_BASE_MODEL_ID,
+      baseModelHash: storage.sha256(LOCAL_AI_BASE_MODEL_ID),
+      deltaType: 'pending_adapter',
+      adapterFormat: 'peft_lora_v1',
+      adapterSha256: null,
+      trainingConfigHash: expect.any(String),
       reviewStatus: 'draft',
       reviewedAt: null,
       federatedReady: false,
@@ -288,7 +419,10 @@ describe('local-ai manager', () => {
 
   it('skips malformed eligible items without crashing training-candidate packaging', async () => {
     const logger = mockLogger()
-    const captureIndexPath = storage.resolveLocalAiPath('captures', 'index.json')
+    const captureIndexPath = storage.resolveLocalAiPath(
+      'captures',
+      'index.json'
+    )
 
     await storage.writeJsonAtomic(captureIndexPath, {
       version: 1,
@@ -413,7 +547,9 @@ describe('local-ai manager', () => {
         federatedReady: true,
       }),
     })
-    await expect(storage.readTrainingCandidatePackage(filePath)).resolves.toEqual(
+    await expect(
+      storage.readTrainingCandidatePackage(filePath)
+    ).resolves.toEqual(
       expect.objectContaining({
         reviewStatus: 'approved',
         reviewedAt: expect.any(String),
@@ -524,10 +660,7 @@ describe('local-ai manager', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -546,11 +679,60 @@ describe('local-ai manager', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
+      })
+    )
+  })
+
+  it('derives the legacy runtime type from runtimeBackend for Local AI flip text requests', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      flipToText: jest.fn(async (payload) => ({
+        ok: true,
+        status: 'ok',
+        provider: 'local-ai',
+        runtimeBackend: payload.runtimeBackend,
+        runtimeType: payload.runtimeType,
+        visionModel: payload.visionModel,
+        text: 'A short local flip summary.',
+        lastError: null,
+      })),
+      checkFlipSequence: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+    })
+
+    await expect(
+      manager.flipToText({
+        runtimeBackend: 'ollama-direct',
+        visionModel: 'moondream',
+        model: 'llama3.1:8b',
+        input: {
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
+        },
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      provider: 'local-ai',
+      runtimeBackend: 'ollama-direct',
+      runtimeType: 'ollama',
+      baseUrl: 'http://127.0.0.1:11434',
+    })
+
+    expect(sidecar.flipToText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeBackend: 'ollama-direct',
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
       })
     )
   })
@@ -591,10 +773,7 @@ describe('local-ai manager', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     ).resolves.toMatchObject({
@@ -616,10 +795,7 @@ describe('local-ai manager', () => {
         visionModel: 'moondream',
         model: 'llama3.1:8b',
         input: {
-          images: [
-            'data:image/png;base64,AAA=',
-            'data:image/png;base64,BBB=',
-          ],
+          images: ['data:image/png;base64,AAA=', 'data:image/png;base64,BBB='],
         },
       })
     )

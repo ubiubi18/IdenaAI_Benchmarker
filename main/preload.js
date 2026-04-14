@@ -16,6 +16,7 @@ const flips = require('./stores/flips')
 const invites = require('./stores/invites')
 const contacts = require('./stores/contacts')
 const logger = require('./logger')
+const {toIpcCloneable} = require('./utils/ipc-cloneable')
 const {prepareDb, dbPath} = require('./stores/setup')
 const {
   APP_INFO_COMMAND,
@@ -81,14 +82,17 @@ function createIpcBridge() {
         throw new Error(`Unsupported IPC send channel: ${channel}`)
       }
 
-      ipcRenderer.send(channel, ...args)
+      ipcRenderer.send(channel, ...args.map((arg) => toIpcCloneable(arg)))
     },
     invoke(channel, ...args) {
       if (!allowedInvokeChannels.has(channel)) {
         throw new Error(`Unsupported IPC invoke channel: ${channel}`)
       }
 
-      return ipcRenderer.invoke(channel, ...args)
+      return ipcRenderer.invoke(
+        channel,
+        ...args.map((arg) => toIpcCloneable(arg))
+      )
     },
     on(channel, handler) {
       if (!allowedSubscribeChannels.has(channel)) {
@@ -221,48 +225,45 @@ function resizeImageDataUrl(
 const appInfo = getAppInfo()
 const [locale] = String(appInfo.locale || 'en').split('-')
 const ipcBridge = createIpcBridge()
+const invokeCloneable = (channel, ...args) =>
+  ipcRenderer.invoke(channel, ...args.map((arg) => toIpcCloneable(arg)))
 
 const bridge = {
   globals: {
     aiSolver: {
       setProviderKey: (payload) =>
-        ipcRenderer.invoke(AI_SOLVER_COMMAND, 'setProviderKey', payload),
+        invokeCloneable(AI_SOLVER_COMMAND, 'setProviderKey', payload),
       clearProviderKey: (payload) =>
-        ipcRenderer.invoke(AI_SOLVER_COMMAND, 'clearProviderKey', payload),
+        invokeCloneable(AI_SOLVER_COMMAND, 'clearProviderKey', payload),
       hasProviderKey: (payload) =>
-        ipcRenderer.invoke(AI_SOLVER_COMMAND, 'hasProviderKey', payload),
+        invokeCloneable(AI_SOLVER_COMMAND, 'hasProviderKey', payload),
       testProvider: (payload) =>
-        ipcRenderer.invoke(AI_SOLVER_COMMAND, 'testProvider', payload),
+        invokeCloneable(AI_SOLVER_COMMAND, 'testProvider', payload),
       listModels: (payload) =>
-        ipcRenderer.invoke(AI_SOLVER_COMMAND, 'listModels', payload),
+        invokeCloneable(AI_SOLVER_COMMAND, 'listModels', payload),
       generateImageSearchResults: (payload) =>
-        ipcRenderer.invoke(
+        invokeCloneable(
           AI_SOLVER_COMMAND,
           'generateImageSearchResults',
           payload
         ),
       generateStoryOptions: (payload) =>
-        ipcRenderer.invoke(AI_SOLVER_COMMAND, 'generateStoryOptions', payload),
+        invokeCloneable(AI_SOLVER_COMMAND, 'generateStoryOptions', payload),
       generateFlipPanels: (payload) =>
-        ipcRenderer.invoke(AI_SOLVER_COMMAND, 'generateFlipPanels', payload),
+        invokeCloneable(AI_SOLVER_COMMAND, 'generateFlipPanels', payload),
       solveFlipBatch: (payload) =>
-        ipcRenderer.invoke(AI_SOLVER_COMMAND, 'solveFlipBatch', payload),
+        invokeCloneable(AI_SOLVER_COMMAND, 'solveFlipBatch', payload),
       reviewValidationReports: (payload) =>
-        ipcRenderer.invoke(
-          AI_SOLVER_COMMAND,
-          'reviewValidationReports',
-          payload
-        ),
+        invokeCloneable(AI_SOLVER_COMMAND, 'reviewValidationReports', payload),
     },
     aiTestUnit: {
       addFlips: (payload) =>
-        ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'addFlips', payload),
+        invokeCloneable(AI_TEST_UNIT_COMMAND, 'addFlips', payload),
       listFlips: (payload) =>
-        ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'listFlips', payload),
+        invokeCloneable(AI_TEST_UNIT_COMMAND, 'listFlips', payload),
       clearFlips: (payload) =>
-        ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'clearFlips', payload),
-      run: (payload) =>
-        ipcRenderer.invoke(AI_TEST_UNIT_COMMAND, 'run', payload),
+        invokeCloneable(AI_TEST_UNIT_COMMAND, 'clearFlips', payload),
+      run: (payload) => invokeCloneable(AI_TEST_UNIT_COMMAND, 'run', payload),
       onEvent(handler) {
         if (typeof handler !== 'function') {
           return () => {}
@@ -292,37 +293,41 @@ const bridge = {
       },
     },
     localAi: {
-      status: (payload) => ipcRenderer.invoke('localAi.status', payload),
-      start: (payload) => ipcRenderer.invoke('localAi.start', payload),
-      stop: () => ipcRenderer.invoke('localAi.stop'),
-      listModels: (payload) =>
-        ipcRenderer.invoke('localAi.listModels', payload),
-      info: (payload) => ipcRenderer.invoke('localAi.info', payload),
-      chat: (payload) => ipcRenderer.invoke('localAi.chat', payload),
-      flipJudge: (payload) => ipcRenderer.invoke('localAi.flipJudge', payload),
-      trainHook: (payload) => ipcRenderer.invoke('localAi.trainHook', payload),
+      status: (payload) => invokeCloneable('localAi.status', payload),
+      start: (payload) => invokeCloneable('localAi.start', payload),
+      stop: () => invokeCloneable('localAi.stop'),
+      listModels: (payload) => invokeCloneable('localAi.listModels', payload),
+      info: (payload) => invokeCloneable('localAi.info', payload),
+      chat: (payload) => invokeCloneable('localAi.chat', payload),
+      flipJudge: (payload) => invokeCloneable('localAi.flipJudge', payload),
+      trainHook: (payload) => invokeCloneable('localAi.trainHook', payload),
       checkFlipSequence: (payload) =>
-        ipcRenderer.invoke('localAi.checkFlipSequence', payload),
-      flipToText: (payload) =>
-        ipcRenderer.invoke('localAi.flipToText', payload),
-      captionFlip: (payload) =>
-        ipcRenderer.invoke('localAi.captionFlip', payload),
-      ocrImage: (payload) => ipcRenderer.invoke('localAi.ocrImage', payload),
-      trainEpoch: (payload) =>
-        ipcRenderer.invoke('localAi.trainEpoch', payload),
+        invokeCloneable('localAi.checkFlipSequence', payload),
+      flipToText: (payload) => invokeCloneable('localAi.flipToText', payload),
+      captionFlip: (payload) => invokeCloneable('localAi.captionFlip', payload),
+      ocrImage: (payload) => invokeCloneable('localAi.ocrImage', payload),
+      trainEpoch: (payload) => invokeCloneable('localAi.trainEpoch', payload),
+      registerAdapterArtifact: (payload) =>
+        invokeCloneable('localAi.registerAdapterArtifact', payload),
+      loadAdapterArtifact: (payload) =>
+        invokeCloneable('localAi.loadAdapterArtifact', payload),
       loadTrainingCandidatePackage: (payload) =>
-        ipcRenderer.invoke('localAi.loadTrainingCandidatePackage', payload),
+        invokeCloneable('localAi.loadTrainingCandidatePackage', payload),
       buildTrainingCandidatePackage: (payload) =>
-        ipcRenderer.invoke('localAi.buildTrainingCandidatePackage', payload),
+        invokeCloneable('localAi.buildTrainingCandidatePackage', payload),
       updateTrainingCandidatePackageReview: (payload) =>
-        ipcRenderer.invoke(
+        invokeCloneable(
           'localAi.updateTrainingCandidatePackageReview',
           payload
         ),
+      buildBundle: (epoch) => invokeCloneable('localAi.buildBundle', epoch),
+      importBundle: (filePath) =>
+        invokeCloneable('localAi.importBundle', filePath),
+      aggregate: () => invokeCloneable('localAi.aggregate'),
     },
     ipcRenderer: ipcBridge,
     openExternal: (url) =>
-      ipcRenderer.invoke('shell.openExternal.safe', {url: String(url || '')}),
+      invokeCloneable('shell.openExternal.safe', {url: String(url || '')}),
     flipStore: {
       getFlips: flips.getFlips,
       getFlip: flips.getFlip,
@@ -355,11 +360,9 @@ const bridge = {
     getZoomLevel: () => webFrame.getZoomLevel(),
     setZoomLevel: (level) => webFrame.setZoomLevel(level),
     toggleFullScreen: () =>
-      ipcRenderer
-        .invoke(WINDOW_COMMAND, 'toggleFullScreen')
-        .catch((error) =>
-          logger.warn('Cannot toggle fullscreen', error && error.message)
-        ),
+      invokeCloneable(WINDOW_COMMAND, 'toggleFullScreen').catch((error) =>
+        logger.warn('Cannot toggle fullscreen', error && error.message)
+      ),
   },
   persistence: {
     loadState(dbName) {
@@ -446,14 +449,14 @@ const bridge = {
     },
   },
   home: {
-    getIdenaBotState: () => ipcRenderer.invoke('home.idenaBot.get'),
+    getIdenaBotState: () => invokeCloneable('home.idenaBot.get'),
     skipIdenaBot: () => ipcRenderer.send('home.idenaBot.skip'),
   },
   social: {
-    rpc: (payload) => ipcRenderer.invoke('social.rpc', payload),
+    rpc: (payload) => invokeCloneable('social.rpc', payload),
   },
   rpc: {
-    call: (payload) => ipcRenderer.invoke('rpc.call', payload),
+    call: (payload) => invokeCloneable('rpc.call', payload),
   },
 }
 

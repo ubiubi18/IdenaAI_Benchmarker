@@ -198,6 +198,16 @@ function createLocalAiStorage({
     }
   }
 
+  async function readBuffer(filePath) {
+    const targetPath = String(filePath || '').trim()
+
+    if (!targetPath) {
+      throw new Error('filePath is required')
+    }
+
+    return fs.readFile(targetPath)
+  }
+
   async function readTrainingCandidatePackage(
     filePath,
     fallbackValue = NO_FALLBACK
@@ -266,6 +276,34 @@ function createLocalAiStorage({
     return targetPath
   }
 
+  async function copyFile(sourcePath, targetPath) {
+    const nextSourcePath = String(sourcePath || '').trim()
+    const nextTargetPath = String(targetPath || '').trim()
+
+    if (!nextSourcePath || !nextTargetPath) {
+      throw new Error('sourcePath and targetPath are required')
+    }
+
+    await fs.ensureDir(path.dirname(nextTargetPath))
+    await fs.copy(nextSourcePath, nextTargetPath, {overwrite: true})
+    return nextTargetPath
+  }
+
+  async function fileSize(filePath) {
+    const targetPath = String(filePath || '').trim()
+
+    if (!targetPath) {
+      throw new Error('filePath is required')
+    }
+
+    const stats = await fs.stat(targetPath)
+    return Number(stats.size)
+  }
+
+  async function sha256File(filePath) {
+    return sha256(await readBuffer(filePath))
+  }
+
   function sha256(bufferOrString) {
     if (
       !Buffer.isBuffer(bufferOrString) &&
@@ -278,12 +316,16 @@ function createLocalAiStorage({
   }
 
   return {
+    copyFile,
     ensureDir,
     exists,
+    fileSize,
     readJson,
+    readBuffer,
     readTrainingCandidatePackage,
     resolveLocalAiPath,
     sha256,
+    sha256File,
     updateTrainingCandidatePackageReview,
     writeBuffer,
     writeJsonAtomic,

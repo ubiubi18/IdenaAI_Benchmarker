@@ -19,7 +19,6 @@ import dayjs from 'dayjs'
 import {useRouter} from 'next/router'
 import {
   Checkbox,
-  FloatDebug,
   Input,
   SuccessAlert,
   Textarea,
@@ -590,8 +589,6 @@ function NewVotingPage() {
           onChoosePreset={(preset) => send('CHOOSE_PRESET', {preset})}
           onCancel={() => send('CANCEL')}
         />
-
-        {global.isDev && <FloatDebug>{current.value}</FloatDebug>}
       </Page>
     </Layout>
   )

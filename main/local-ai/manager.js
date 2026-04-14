@@ -1,5 +1,10 @@
+const path = require('path')
+
 const {createLocalAiStorage} = require('./storage')
+const {resolveAdapterContract} = require('./adapter-contract')
 const {createLocalAiSidecar} = require('./sidecar')
+const {resolveModelReference} = require('./model-reference')
+const {resolveLocalAiRuntimeAdapter} = require('./runtime-adapter')
 
 const CAPTURE_INDEX_VERSION = 1
 const TRAINING_CANDIDATE_PACKAGE_VERSION = 1
@@ -17,10 +22,23 @@ function normalizeBaseUrl(value, fallback = 'http://localhost:5000') {
   return baseUrl || fallback
 }
 
-function normalizeRuntimePayload(payload) {
-  return payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload
-    : {}
+function normalizeRuntimePayload(payload, fallbackRuntime = {}) {
+  const nextPayload =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {}
+  const runtime = resolveLocalAiRuntimeAdapter(nextPayload, fallbackRuntime)
+
+  return {
+    ...nextPayload,
+    runtime: runtime.runtime,
+    runtimeBackend: runtime.runtimeBackend,
+    runtimeType: runtime.runtimeType,
+    baseUrl: normalizeBaseUrl(
+      nextPayload.baseUrl || nextPayload.endpoint,
+      runtime.defaultBaseUrl
+    ),
+  }
 }
 
 function pickRuntimeInput(payload) {
@@ -38,6 +56,11 @@ function pickRuntimeInput(payload) {
 function normalizeEpoch(value) {
   const epoch = Number.parseInt(value, 10)
   return Number.isFinite(epoch) ? epoch : null
+}
+
+function normalizeFilePath(value) {
+  const filePath = String(value || '').trim()
+  return filePath ? path.resolve(filePath) : null
 }
 
 function normalizeSessionType(value) {
@@ -177,15 +200,15 @@ function manifestPath(storage, epoch) {
   return storage.resolveLocalAiPath('manifests', `epoch-${epoch}-manifest.json`)
 }
 
+function adapterArtifactManifestPath(storage, epoch) {
+  return storage.resolveLocalAiPath('adapters', `epoch-${epoch}.json`)
+}
+
 function trainingCandidatePackagePath(storage, epoch) {
   return storage.resolveLocalAiPath(
     'training-candidates',
     `epoch-${epoch}-candidates.json`
   )
-}
-
-function createBaseModelId(mode) {
-  return `local-ai:${normalizeMode(mode)}:mvp-placeholder-v1`
 }
 
 function reduceLatestCaptures(captures) {
@@ -311,7 +334,13 @@ function buildTrainingCandidateItem(capture) {
   }
 }
 
-function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
+function createLocalAiManager({
+  logger,
+  isDev = false,
+  storage,
+  sidecar,
+  getModelReference,
+} = {}) {
   const localAiStorage = storage || createLocalAiStorage()
   const localAiSidecar =
     sidecar ||
@@ -319,11 +348,15 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       logger,
       isDev,
     })
+  const initialRuntime = resolveLocalAiRuntimeAdapter()
   const state = {
     available: true,
     running: false,
     mode: 'sidecar',
-    baseUrl: 'http://localhost:5000',
+    runtime: initialRuntime.runtime,
+    runtimeBackend: initialRuntime.runtimeBackend,
+    runtimeType: initialRuntime.runtimeType,
+    baseUrl: initialRuntime.baseUrl,
     capturedCount: 0,
     lastError: null,
     sidecarReachable: null,
@@ -343,6 +376,9 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       available: state.available,
       running: state.running,
       mode: state.mode,
+      runtime: state.runtime,
+      runtimeBackend: state.runtimeBackend,
+      runtimeType: state.runtimeType,
       baseUrl: state.baseUrl,
       capturedCount: state.capturedCount,
       lastError: state.lastError,
@@ -358,6 +394,14 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     state.sidecarCheckedAt = checkedAt || new Date().toISOString()
     state.sidecarModels = Array.isArray(models) ? models : state.sidecarModels
     state.lastError = lastError || null
+  }
+
+  function applyRuntimeState(next) {
+    state.mode = normalizeMode(next.mode, state.mode)
+    state.runtime = next.runtime || state.runtime
+    state.runtimeBackend = next.runtimeBackend || state.runtimeBackend
+    state.runtimeType = next.runtimeType || state.runtimeType
+    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
   }
 
   async function hydrate() {
@@ -423,13 +467,13 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   }
 
   async function refreshSidecarStatus(payload = {}) {
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.mode = normalizeMode(next.mode, state.mode)
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const health = await localAiSidecar.getHealth({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       timeoutMs: next.timeoutMs,
     })
@@ -443,6 +487,7 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     if (health.ok) {
       models = await localAiSidecar.listModels({
         baseUrl: state.baseUrl,
+        runtimeBackend: next.runtimeBackend,
         runtimeType: next.runtimeType,
         timeoutMs: next.timeoutMs,
       })
@@ -476,10 +521,9 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   async function start(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.mode = normalizeMode(next.mode, state.mode)
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
     state.running = true
     state.lastError = null
 
@@ -514,12 +558,13 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   async function listModels(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.listModels({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       timeoutMs: next.timeoutMs,
     })
@@ -540,12 +585,13 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   async function chat(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.chat({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       model: next.model,
       messages: next.messages,
@@ -570,12 +616,13 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   async function flipToText(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.flipToText({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       visionModel: next.visionModel,
       model: next.model,
@@ -598,12 +645,13 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   async function checkFlipSequence(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.checkFlipSequence({
       baseUrl: state.baseUrl,
+      runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       visionModel: next.visionModel,
       model: next.model,
@@ -626,9 +674,9 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   async function captionFlip(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.captionFlip({
       ...next,
@@ -650,9 +698,9 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   async function ocrImage(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.ocrImage({
       ...next,
@@ -674,9 +722,9 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
   async function trainEpoch(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload)
+    const next = normalizeRuntimePayload(payload, state)
 
-    state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+    applyRuntimeState(next)
 
     const result = await localAiSidecar.trainEpoch({
       ...next,
@@ -788,11 +836,25 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       throw new Error('Local AI capture index is unavailable')
     }
 
-    const epoch = normalizeEpoch(epochValue)
+    const next = normalizeRuntimePayload(epochValue)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : epochValue
+    )
 
     if (epoch === null) {
       throw new Error('Epoch is required')
     }
+
+    const modelReference = await resolveModelReference(
+      localAiStorage,
+      getModelReference,
+      next
+    )
+    const adapterContract = await resolveAdapterContract(
+      localAiStorage,
+      {...next, epoch},
+      modelReference
+    )
 
     const eligibleFlipHashes = []
     const excluded = []
@@ -815,7 +877,21 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
 
     const manifest = {
       epoch,
-      baseModelId: createBaseModelId(state.mode),
+      publicModelId: modelReference.publicModelId,
+      publicVisionId: modelReference.publicVisionId,
+      runtimeBackend: modelReference.runtimeBackend,
+      reasonerBackend: modelReference.reasonerBackend,
+      visionBackend: modelReference.visionBackend,
+      contractVersion: modelReference.contractVersion,
+      baseModelId: modelReference.baseModelId,
+      baseModelHash: modelReference.baseModelHash,
+      adapterStrategy: String(next.adapterStrategy || '').trim() || null,
+      trainingPolicy: String(next.trainingPolicy || '').trim() || null,
+      deltaType: adapterContract.deltaType,
+      adapterFormat: adapterContract.adapterFormat,
+      adapterSha256: adapterContract.adapterSha256,
+      adapterArtifact: adapterContract.adapterArtifact || null,
+      trainingConfigHash: adapterContract.trainingConfigHash,
       eligibleFlipHashes,
       flipCount: eligibleFlipHashes.length,
       excluded,
@@ -844,6 +920,122 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     }
   }
 
+  async function registerAdapterArtifact(payload = {}) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const sourcePath = normalizeFilePath(
+      next.sourcePath ||
+        next.artifactPath ||
+        (next.adapterArtifact &&
+        typeof next.adapterArtifact === 'object' &&
+        !Array.isArray(next.adapterArtifact)
+          ? next.adapterArtifact.sourcePath ||
+            next.adapterArtifact.path ||
+            next.adapterArtifact.filePath
+          : '')
+    )
+
+    if (!sourcePath) {
+      throw new Error('Adapter source path is required')
+    }
+
+    if (!(await localAiStorage.exists(sourcePath))) {
+      throw new Error('Adapter source file is unavailable')
+    }
+
+    const modelReference = await resolveModelReference(
+      localAiStorage,
+      getModelReference,
+      next
+    )
+    const adapterFile = path.basename(sourcePath)
+    const sizeBytes = await localAiStorage.fileSize(sourcePath)
+    const adapterSha256 = await localAiStorage.sha256File(sourcePath)
+    const adapterContract = await resolveAdapterContract(
+      localAiStorage,
+      {
+        ...next,
+        epoch,
+        deltaType: 'lora_adapter',
+        adapterSha256,
+        adapterArtifact: {
+          file: adapterFile,
+          sourcePath,
+          sizeBytes,
+        },
+      },
+      modelReference
+    )
+    const adapterManifest = {
+      epoch,
+      publicModelId: modelReference.publicModelId,
+      publicVisionId: modelReference.publicVisionId,
+      runtimeBackend: modelReference.runtimeBackend,
+      reasonerBackend: modelReference.reasonerBackend,
+      visionBackend: modelReference.visionBackend,
+      contractVersion: modelReference.contractVersion,
+      baseModelId: modelReference.baseModelId,
+      baseModelHash: modelReference.baseModelHash,
+      deltaType: adapterContract.deltaType,
+      adapterFormat: adapterContract.adapterFormat,
+      adapterSha256: adapterContract.adapterSha256,
+      trainingConfigHash: adapterContract.trainingConfigHash,
+      adapterArtifact: {
+        file: adapterFile,
+        sourcePath,
+        sizeBytes,
+      },
+      registeredAt: new Date().toISOString(),
+    }
+    const nextManifestPath = adapterArtifactManifestPath(localAiStorage, epoch)
+
+    await localAiStorage.writeJsonAtomic(nextManifestPath, adapterManifest)
+
+    return {
+      epoch,
+      adapterManifestPath: nextManifestPath,
+      ...adapterManifest,
+    }
+  }
+
+  async function loadAdapterArtifact(payload = {}) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const nextManifestPath = adapterArtifactManifestPath(localAiStorage, epoch)
+    const adapterManifest = await localAiStorage.readJson(
+      nextManifestPath,
+      null
+    )
+
+    if (!adapterManifest) {
+      throw new Error('Adapter artifact is unavailable')
+    }
+
+    return {
+      epoch,
+      adapterManifestPath: nextManifestPath,
+      ...adapterManifest,
+    }
+  }
+
   async function buildTrainingCandidatePackage(payload) {
     await hydrate()
 
@@ -859,6 +1051,17 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     if (epoch === null) {
       throw new Error('Epoch is required')
     }
+
+    const modelReference = await resolveModelReference(
+      localAiStorage,
+      getModelReference,
+      next
+    )
+    const adapterContract = await resolveAdapterContract(
+      localAiStorage,
+      {...next, epoch},
+      modelReference
+    )
 
     const items = []
     const excluded = []
@@ -899,6 +1102,21 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
       packageType: 'local-ai-training-candidates',
       epoch,
       createdAt: new Date().toISOString(),
+      publicModelId: modelReference.publicModelId,
+      publicVisionId: modelReference.publicVisionId,
+      runtimeBackend: modelReference.runtimeBackend,
+      reasonerBackend: modelReference.reasonerBackend,
+      visionBackend: modelReference.visionBackend,
+      contractVersion: modelReference.contractVersion,
+      baseModelId: modelReference.baseModelId,
+      baseModelHash: modelReference.baseModelHash,
+      adapterStrategy: String(next.adapterStrategy || '').trim() || null,
+      trainingPolicy: String(next.trainingPolicy || '').trim() || null,
+      deltaType: adapterContract.deltaType,
+      adapterFormat: adapterContract.adapterFormat,
+      adapterSha256: adapterContract.adapterSha256,
+      adapterArtifact: adapterContract.adapterArtifact || null,
+      trainingConfigHash: adapterContract.trainingConfigHash,
       reviewStatus: 'draft',
       reviewedAt: null,
       federatedReady: false,
@@ -1012,6 +1230,8 @@ function createLocalAiManager({logger, isDev = false, storage, sidecar} = {}) {
     ocrImage,
     trainEpoch,
     captureFlip,
+    registerAdapterArtifact,
+    loadAdapterArtifact,
     buildManifest,
     buildTrainingCandidatePackage,
     loadTrainingCandidatePackage,

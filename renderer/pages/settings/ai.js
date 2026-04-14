@@ -38,6 +38,11 @@ import {
   formatMissingAiProviders,
 } from '../../shared/utils/ai-provider-readiness'
 import {AiEnableDialog} from '../../shared/components/ai-enable-dialog'
+import {
+  DEFAULT_LOCAL_AI_SETTINGS,
+  buildLocalAiSettings,
+  resolveLocalAiWireRuntimeType,
+} from '../../shared/utils/local-ai-settings'
 
 const DEFAULT_MODELS = {
   openai: 'gpt-5.4',
@@ -147,33 +152,6 @@ const DEFAULT_AI_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
-const DEFAULT_LOCAL_AI_SETTINGS = {
-  enabled: false,
-  runtimeMode: 'sidecar',
-  runtimeType: 'phi-sidecar',
-  runtimeFamily: 'phi-3.5-vision',
-  baseUrl: 'http://127.0.0.1:5000',
-  endpoint: 'http://127.0.0.1:5000',
-  model: 'phi-3.5-vision-instruct',
-  visionModel: 'phi-3.5-vision',
-  adapterStrategy: 'lora-first',
-  trainingPolicy: 'approved-post-consensus-only',
-  contractVersion: 'phi-sidecar/v1',
-  captureEnabled: false,
-  trainEnabled: false,
-  federated: {
-    enabled: false,
-    relays: [],
-    minExamples: 5,
-    clipNorm: 1.0,
-    dpNoise: 0.01,
-  },
-  eligibilityGate: {
-    requireValidatedIdentity: true,
-    requireLocalNode: true,
-  },
-}
-
 const DEFAULT_LOCAL_AI_DEBUG_CHAT_PROMPT =
   'Reply with one short sentence confirming local chat works.'
 
@@ -183,21 +161,6 @@ const DEFAULT_LOCAL_AI_DEBUG_FLIP_INPUT = `{
     "/absolute/path/to/panel-2.png"
   ]
 }`
-
-function buildLocalAiSettings(settings = {}) {
-  return {
-    ...DEFAULT_LOCAL_AI_SETTINGS,
-    ...(settings || {}),
-    federated: {
-      ...DEFAULT_LOCAL_AI_SETTINGS.federated,
-      ...((settings && settings.federated) || {}),
-    },
-    eligibilityGate: {
-      ...DEFAULT_LOCAL_AI_SETTINGS.eligibilityGate,
-      ...((settings && settings.eligibilityGate) || {}),
-    },
-  }
-}
 
 function numberOrFallback(value, fallback) {
   const parsed = Number.parseInt(value, 10)
@@ -281,10 +244,11 @@ function normalizeLocalAiStatusResult(result, fallbackBaseUrl) {
       (reachable === true ? 'ok' : 'error'),
     runtime:
       String(
-        result && (result.runtime || result.runtimeType)
-          ? result.runtime || result.runtimeType
-          : 'ollama'
-      ).trim() || 'ollama',
+        result &&
+          (result.runtimeBackend || result.runtime || result.runtimeType)
+          ? result.runtimeBackend || result.runtime || result.runtimeType
+          : DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
+      ).trim() || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
     baseUrl:
       String(
         result && result.baseUrl ? result.baseUrl : fallbackBaseUrl || ''
@@ -358,6 +322,24 @@ function formatLocalAiTrainingPackageTimestamp(value) {
   return nextDate.toLocaleString()
 }
 
+function formatLocalAiArtifactSize(value) {
+  const sizeBytes = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(sizeBytes) || sizeBytes < 0) {
+    return '-'
+  }
+
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`
+  }
+
+  if (sizeBytes < 1024 * 1024) {
+    return `${(sizeBytes / 1024).toFixed(1)} KB`
+  }
+
+  return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
 function normalizeLocalAiTrainingPackageReviewStatus(value) {
   const reviewStatus = String(value || '')
     .trim()
@@ -412,6 +394,51 @@ function describeLocalAiTrainingPackageFederatedReady(value, t) {
     label: t('No'),
     color: 'muted',
   }
+}
+
+function normalizeLocalAiAdapterDeltaType(value) {
+  const deltaType = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  if (!deltaType) {
+    return 'pending_adapter'
+  }
+
+  return deltaType
+}
+
+function describeLocalAiAdapterDeltaType(value, t) {
+  switch (normalizeLocalAiAdapterDeltaType(value)) {
+    case 'lora_adapter':
+      return {
+        label: t('Concrete LoRA adapter'),
+        color: 'green.500',
+      }
+    case 'pending_adapter':
+      return {
+        label: t('Pending adapter'),
+        color: 'orange.500',
+      }
+    default: {
+      const label = String(value || '').trim() || 'pending_adapter'
+
+      return {
+        label,
+        color: 'blue.500',
+      }
+    }
+  }
+}
+
+function formatLocalAiFederatedReason(value) {
+  const text = String(value || '').trim()
+
+  if (!text) {
+    return '-'
+  }
+
+  return text.replace(/_/g, ' ')
 }
 
 function LocalAiDebugResult({label, result}) {
@@ -489,6 +516,10 @@ export default function AiSettingsPage() {
     () => buildLocalAiSettings(settings.localAi),
     [settings.localAi]
   )
+  const localAiWireRuntimeType = useMemo(
+    () => resolveLocalAiWireRuntimeType(localAi),
+    [localAi]
+  )
   const localAiRuntimeUrl = useMemo(() => {
     if (typeof localAi.endpoint === 'string') {
       return localAi.endpoint.trim()
@@ -509,6 +540,10 @@ export default function AiSettingsPage() {
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
   const [latestModelsByProvider, setLatestModelsByProvider] = useState({})
   const [showAdvancedAiSettings, setShowAdvancedAiSettings] = useState(false)
+  const [
+    showLocalAiCompatibilityOverrides,
+    setShowLocalAiCompatibilityOverrides,
+  ] = useState(false)
   const setupSectionRef = React.useRef(null)
   const [isEnableDialogOpen, setIsEnableDialogOpen] = useState(false)
   const [isCheckingLocalAi, setIsCheckingLocalAi] = useState(false)
@@ -519,7 +554,8 @@ export default function AiSettingsPage() {
       {
         enabled: !!localAi.enabled,
         status: localAi.enabled ? 'error' : 'disabled',
-        runtime: localAi.runtimeType || 'ollama',
+        runtime:
+          localAi.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
         baseUrl: localAiRuntimeUrl,
         error: localAi.enabled
           ? 'Check the local runtime URL and try again.'
@@ -551,6 +587,23 @@ export default function AiSettingsPage() {
   const [localAiPackagePreview, setLocalAiPackagePreview] = useState(null)
   const [localAiPackageExportPath, setLocalAiPackageExportPath] = useState('')
   const [localAiPackageError, setLocalAiPackageError] = useState('')
+  const [localAiAdapterSourcePath, setLocalAiAdapterSourcePath] = useState('')
+  const [isRegisteringLocalAiAdapter, setIsRegisteringLocalAiAdapter] =
+    useState(false)
+  const [isLoadingLocalAiAdapter, setIsLoadingLocalAiAdapter] = useState(false)
+  const [localAiAdapterManifest, setLocalAiAdapterManifest] = useState(null)
+  const [localAiAdapterError, setLocalAiAdapterError] = useState('')
+  const [isBuildingLocalAiBundle, setIsBuildingLocalAiBundle] = useState(false)
+  const [isImportingLocalAiBundle, setIsImportingLocalAiBundle] =
+    useState(false)
+  const [isAggregatingLocalAiBundles, setIsAggregatingLocalAiBundles] =
+    useState(false)
+  const [localAiBundleImportPath, setLocalAiBundleImportPath] = useState('')
+  const [localAiBuildBundleResult, setLocalAiBuildBundleResult] = useState(null)
+  const [localAiImportBundleResult, setLocalAiImportBundleResult] =
+    useState(null)
+  const [localAiAggregateResult, setLocalAiAggregateResult] = useState(null)
+  const [localAiFederatedError, setLocalAiFederatedError] = useState('')
   const [providerKeyStatus, setProviderKeyStatus] = useState({
     checked: false,
     checking: true,
@@ -624,7 +677,13 @@ export default function AiSettingsPage() {
   const buildLocalAiRuntimePayload = useCallback(
     () => ({
       mode: localAi.runtimeMode,
-      runtimeType: localAi.runtimeType || 'ollama',
+      runtimeType: localAiWireRuntimeType,
+      runtimeBackend: localAi.runtimeBackend,
+      reasonerBackend: localAi.reasonerBackend,
+      visionBackend: localAi.visionBackend,
+      publicModelId: localAi.publicModelId,
+      publicVisionId: localAi.publicVisionId,
+      contractVersion: localAi.contractVersion,
       baseUrl: localAiRuntimeUrl,
       endpoint: localAiRuntimeUrl,
       model: String(localAi.model || '').trim(),
@@ -634,9 +693,15 @@ export default function AiSettingsPage() {
     }),
     [
       localAi.model,
+      localAi.contractVersion,
+      localAi.publicModelId,
+      localAi.publicVisionId,
+      localAi.reasonerBackend,
       localAi.runtimeMode,
-      localAi.runtimeType,
+      localAi.runtimeBackend,
+      localAiWireRuntimeType,
       localAi.visionModel,
+      localAi.visionBackend,
       localAiRuntimeUrl,
     ]
   )
@@ -647,7 +712,8 @@ export default function AiSettingsPage() {
         {
           enabled: false,
           status: 'disabled',
-          runtime: localAi.runtimeType || 'ollama',
+          runtime:
+            localAi.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
           baseUrl: localAiRuntimeUrl,
           error: null,
           lastError: null,
@@ -675,7 +741,8 @@ export default function AiSettingsPage() {
         {
           enabled: true,
           status: 'error',
-          runtime: localAi.runtimeType || 'ollama',
+          runtime:
+            localAi.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
           baseUrl: localAiRuntimeUrl,
           error: formatErrorForToast(error),
           lastError: formatErrorForToast(error),
@@ -690,7 +757,7 @@ export default function AiSettingsPage() {
   }, [
     buildLocalAiRuntimePayload,
     localAi.enabled,
-    localAi.runtimeType,
+    localAi.runtimeBackend,
     localAiRuntimeUrl,
   ])
 
@@ -701,7 +768,9 @@ export default function AiSettingsPage() {
           {
             enabled: false,
             status: 'disabled',
-            runtime: localAi.runtimeType || 'ollama',
+            runtime:
+              localAi.runtimeBackend ||
+              DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
             baseUrl: localAiRuntimeUrl,
             error: null,
             lastError: null,
@@ -721,7 +790,8 @@ export default function AiSettingsPage() {
         {
           enabled: true,
           status: 'error',
-          runtime: localAi.runtimeType || 'ollama',
+          runtime:
+            localAi.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
           baseUrl: localAiRuntimeUrl,
           error: 'Check the local runtime URL and try again.',
           lastError: 'Check the local runtime URL and try again.',
@@ -729,7 +799,7 @@ export default function AiSettingsPage() {
         localAiRuntimeUrl
       )
     })
-  }, [localAi.enabled, localAi.runtimeType, localAiRuntimeUrl])
+  }, [localAi.enabled, localAi.runtimeBackend, localAiRuntimeUrl])
 
   const localAiRuntimeStatus = useMemo(
     () =>
@@ -978,6 +1048,146 @@ export default function AiSettingsPage() {
     [localAiPackageEpoch, t]
   )
 
+  const runLocalAiRegisterAdapterArtifact = useCallback(async () => {
+    const epoch = String(localAiPackageEpoch || '').trim()
+    const sourcePath = String(localAiAdapterSourcePath || '').trim()
+
+    if (!epoch) {
+      setLocalAiAdapterError(
+        t('Enter an epoch before registering a local adapter artifact.')
+      )
+      return
+    }
+
+    if (!sourcePath) {
+      setLocalAiAdapterError(
+        t('Provide an absolute adapter file path before registering it.')
+      )
+      return
+    }
+
+    setIsRegisteringLocalAiAdapter(true)
+    setLocalAiAdapterError('')
+
+    try {
+      const result = await ensureLocalAiBridge().registerAdapterArtifact({
+        ...buildLocalAiRuntimePayload(),
+        epoch,
+        sourcePath,
+      })
+
+      setLocalAiAdapterManifest(result)
+    } catch (error) {
+      setLocalAiAdapterManifest(null)
+      setLocalAiAdapterError(formatErrorForToast(error))
+    } finally {
+      setIsRegisteringLocalAiAdapter(false)
+    }
+  }, [
+    buildLocalAiRuntimePayload,
+    localAiAdapterSourcePath,
+    localAiPackageEpoch,
+    t,
+  ])
+
+  const runLocalAiLoadAdapterArtifact = useCallback(async () => {
+    const epoch = String(localAiPackageEpoch || '').trim()
+
+    if (!epoch) {
+      setLocalAiAdapterError(
+        t('Enter an epoch before loading a registered adapter artifact.')
+      )
+      return
+    }
+
+    setIsLoadingLocalAiAdapter(true)
+    setLocalAiAdapterError('')
+
+    try {
+      const result = await ensureLocalAiBridge().loadAdapterArtifact({
+        ...buildLocalAiRuntimePayload(),
+        epoch,
+      })
+
+      setLocalAiAdapterManifest(result)
+      setLocalAiAdapterSourcePath(
+        String(
+          result && result.adapterArtifact && result.adapterArtifact.sourcePath
+            ? result.adapterArtifact.sourcePath
+            : ''
+        ).trim()
+      )
+    } catch (error) {
+      setLocalAiAdapterManifest(null)
+      setLocalAiAdapterError(formatErrorForToast(error))
+    } finally {
+      setIsLoadingLocalAiAdapter(false)
+    }
+  }, [buildLocalAiRuntimePayload, localAiPackageEpoch, t])
+
+  const runLocalAiBuildBundle = useCallback(async () => {
+    const epoch = String(localAiPackageEpoch || '').trim()
+
+    if (!epoch) {
+      setLocalAiFederatedError(
+        t('Enter an epoch before building a federated bundle.')
+      )
+      return
+    }
+
+    setIsBuildingLocalAiBundle(true)
+    setLocalAiFederatedError('')
+
+    try {
+      const result = await ensureLocalAiBridge().buildBundle(epoch)
+      setLocalAiBuildBundleResult(result)
+    } catch (error) {
+      setLocalAiBuildBundleResult(null)
+      setLocalAiFederatedError(formatErrorForToast(error))
+    } finally {
+      setIsBuildingLocalAiBundle(false)
+    }
+  }, [localAiPackageEpoch, t])
+
+  const runLocalAiImportBundle = useCallback(async () => {
+    const filePath = String(localAiBundleImportPath || '').trim()
+
+    if (!filePath) {
+      setLocalAiFederatedError(
+        t('Provide an absolute incoming bundle path before importing it.')
+      )
+      return
+    }
+
+    setIsImportingLocalAiBundle(true)
+    setLocalAiFederatedError('')
+
+    try {
+      const result = await ensureLocalAiBridge().importBundle(filePath)
+      setLocalAiImportBundleResult(result)
+    } catch (error) {
+      setLocalAiImportBundleResult(null)
+      setLocalAiFederatedError(formatErrorForToast(error))
+    } finally {
+      setIsImportingLocalAiBundle(false)
+    }
+  }, [localAiBundleImportPath, t])
+
+  const runLocalAiAggregateBundles = useCallback(async () => {
+    setIsAggregatingLocalAiBundles(true)
+    setLocalAiFederatedError('')
+
+    try {
+      const result = await ensureLocalAiBridge().aggregate()
+      setLocalAiAggregateResult(result)
+    } catch (error) {
+      setLocalAiAggregateResult(null)
+      setLocalAiFederatedError(formatErrorForToast(error))
+    } finally {
+      setIsAggregatingLocalAiBundles(false)
+    }
+  }, [])
+
   const hasSessionKeyForProvider = async (provider) => {
     const bridge = ensureBridge()
     const result = await bridge.hasProviderKey({provider})
@@ -1197,6 +1407,50 @@ export default function AiSettingsPage() {
       ),
     [localAiPackagePreview, t]
   )
+  const localAiPackageContractUi = useMemo(
+    () =>
+      describeLocalAiAdapterDeltaType(
+        localAiPackagePreview &&
+          localAiPackagePreview.package &&
+          localAiPackagePreview.package.deltaType,
+        t
+      ),
+    [localAiPackagePreview, t]
+  )
+  const localAiAdapterContractUi = useMemo(
+    () =>
+      describeLocalAiAdapterDeltaType(
+        localAiAdapterManifest ? localAiAdapterManifest.deltaType : '',
+        t
+      ),
+    [localAiAdapterManifest, t]
+  )
+  const localAiPackageNeedsRefreshAfterAdapterRegistration = useMemo(() => {
+    if (
+      !localAiPackagePreview ||
+      !localAiPackagePreview.package ||
+      !localAiAdapterManifest
+    ) {
+      return false
+    }
+
+    const previewEpoch = Number.parseInt(
+      localAiPackagePreview.package.epoch || localAiPackagePreview.epoch,
+      10
+    )
+    const adapterEpoch = Number.parseInt(localAiAdapterManifest.epoch, 10)
+
+    if (!Number.isFinite(previewEpoch) || !Number.isFinite(adapterEpoch)) {
+      return false
+    }
+
+    return (
+      previewEpoch === adapterEpoch &&
+      normalizeLocalAiAdapterDeltaType(
+        localAiPackagePreview.package.deltaType
+      ) !== 'lora_adapter'
+    )
+  }, [localAiAdapterManifest, localAiPackagePreview])
 
   return (
     <SettingsLayout>
@@ -2293,16 +2547,80 @@ export default function AiSettingsPage() {
             </SettingsFormControl>
 
             <SettingsFormControl>
-              <SettingsFormLabel>{t('Runtime type')}</SettingsFormLabel>
-              <Select
-                value={localAi.runtimeType || 'ollama'}
+              <SettingsFormLabel>{t('Runtime backend')}</SettingsFormLabel>
+              <Input
+                value={localAi.runtimeBackend || ''}
                 onChange={(e) =>
-                  updateLocalAiSettings({runtimeType: e.target.value})
+                  updateLocalAiSettings({runtimeBackend: e.target.value})
                 }
-                w="xs"
-              >
-                <option value="ollama">{t('Ollama')}</option>
-              </Select>
+                placeholder="sidecar-http"
+                w="xl"
+              />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {t(
+                  'Neutral product-side backend identifier. This is separate from any current wire/runtime compatibility override.'
+                )}
+              </Text>
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Reasoner backend')}</SettingsFormLabel>
+              <Input
+                value={localAi.reasonerBackend || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({reasonerBackend: e.target.value})
+                }
+                placeholder="local-reasoner"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Vision backend')}</SettingsFormLabel>
+              <Input
+                value={localAi.visionBackend || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({visionBackend: e.target.value})
+                }
+                placeholder="local-vision"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Public model ID')}</SettingsFormLabel>
+              <Input
+                value={localAi.publicModelId || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({publicModelId: e.target.value})
+                }
+                placeholder="idena-core-v1"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Public vision ID')}</SettingsFormLabel>
+              <Input
+                value={localAi.publicVisionId || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({publicVisionId: e.target.value})
+                }
+                placeholder="idena-vision-v1"
+                w="xl"
+              />
+            </SettingsFormControl>
+
+            <SettingsFormControl>
+              <SettingsFormLabel>{t('Contract version')}</SettingsFormLabel>
+              <Input
+                value={localAi.contractVersion || ''}
+                onChange={(e) =>
+                  updateLocalAiSettings({contractVersion: e.target.value})
+                }
+                placeholder="idena-local/v1"
+                w="xl"
+              />
             </SettingsFormControl>
 
             <SettingsFormControl>
@@ -2322,34 +2640,106 @@ export default function AiSettingsPage() {
               />
             </SettingsFormControl>
 
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Local runtime model')}</SettingsFormLabel>
-              <Input
-                value={localAi.model || ''}
-                onChange={(e) => updateLocalAiSettings({model: e.target.value})}
-                placeholder="llama3.1:8b"
-                w="xl"
-              />
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Local vision model')}</SettingsFormLabel>
-              <Input
-                value={
-                  typeof localAi.visionModel === 'string'
-                    ? localAi.visionModel
-                    : DEFAULT_LOCAL_AI_SETTINGS.visionModel
+            <Stack spacing={2} align="flex-start">
+              <SecondaryButton
+                onClick={() =>
+                  setShowLocalAiCompatibilityOverrides((value) => !value)
                 }
-                onChange={(e) =>
-                  updateLocalAiSettings({visionModel: e.target.value})
-                }
-                placeholder="moondream"
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t('Used for local image-aware flip-to-text.')}
+              >
+                {showLocalAiCompatibilityOverrides
+                  ? t('Hide runtime compatibility overrides')
+                  : t('Show runtime compatibility overrides')}
+              </SecondaryButton>
+              <Text color="muted" fontSize="sm">
+                {t(
+                  'These legacy override fields are only for wire/runtime compatibility. They are not the public Idena product identity.'
+                )}
               </Text>
-            </SettingsFormControl>
+            </Stack>
+
+            {showLocalAiCompatibilityOverrides ? (
+              <>
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Reasoner model override')}
+                  </SettingsFormLabel>
+                  <Input
+                    value={localAi.model || ''}
+                    onChange={(e) =>
+                      updateLocalAiSettings({model: e.target.value})
+                    }
+                    placeholder={t('Leave blank to use the runtime default')}
+                    w="xl"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Compatibility override for the current local runtime wire contract. This is not the product identity.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
+
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Vision model override')}
+                  </SettingsFormLabel>
+                  <Input
+                    value={
+                      typeof localAi.visionModel === 'string'
+                        ? localAi.visionModel
+                        : ''
+                    }
+                    onChange={(e) =>
+                      updateLocalAiSettings({visionModel: e.target.value})
+                    }
+                    placeholder={t('Leave blank to use the runtime default')}
+                    w="xl"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Compatibility override for the current image-aware runtime path.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
+
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Wire runtime type')}
+                  </SettingsFormLabel>
+                  <Input
+                    value={localAi.runtimeType || ''}
+                    onChange={(e) =>
+                      updateLocalAiSettings({runtimeType: e.target.value})
+                    }
+                    placeholder={localAiWireRuntimeType}
+                    w="xl"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Legacy compatibility field for the current runtime bridge. Leave blank unless you need to force a wire-level runtime.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
+
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Wire runtime family')}
+                  </SettingsFormLabel>
+                  <Input
+                    value={localAi.runtimeFamily || ''}
+                    onChange={(e) =>
+                      updateLocalAiSettings({runtimeFamily: e.target.value})
+                    }
+                    placeholder={localAi.reasonerBackend || 'local-reasoner'}
+                    w="xl"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Legacy compatibility label retained for old payloads and persisted settings.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
+              </>
+            ) : null}
 
             <Flex align="center" justify="space-between">
               <Box>
@@ -2463,7 +2853,9 @@ export default function AiSettingsPage() {
                             {
                               enabled: true,
                               status: 'error',
-                              runtime: localAi.runtimeType || 'ollama',
+                              runtime:
+                                localAi.runtimeBackend ||
+                                DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
                               baseUrl: localAiRuntimeUrl,
                               error: t('Local AI runtime is idle.'),
                               lastError: t('Local AI runtime is idle.'),
@@ -2712,6 +3104,302 @@ export default function AiSettingsPage() {
                           </Stack>
                         </Box>
                       ) : null}
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        p={3}
+                      >
+                        <Stack spacing={3}>
+                          <Stack spacing={1}>
+                            <Text fontWeight={500}>
+                              {t('Adapter artifact registration')}
+                            </Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'Register one local adapter file for this epoch to promote federated exports from pending metadata to a concrete adapter contract.'
+                              )}
+                            </Text>
+                          </Stack>
+                          <SettingsFormControl>
+                            <SettingsFormLabel>
+                              {t('Local adapter file path')}
+                            </SettingsFormLabel>
+                            <Input
+                              value={localAiAdapterSourcePath}
+                              onChange={(e) =>
+                                setLocalAiAdapterSourcePath(e.target.value)
+                              }
+                              placeholder="/absolute/path/to/epoch-12-lora.safetensors"
+                            />
+                          </SettingsFormControl>
+                          <Stack isInline spacing={2}>
+                            <SecondaryButton
+                              isLoading={isRegisteringLocalAiAdapter}
+                              onClick={runLocalAiRegisterAdapterArtifact}
+                            >
+                              {t('Register Adapter')}
+                            </SecondaryButton>
+                            <SecondaryButton
+                              isLoading={isLoadingLocalAiAdapter}
+                              onClick={runLocalAiLoadAdapterArtifact}
+                            >
+                              {t('Load Registered Adapter')}
+                            </SecondaryButton>
+                          </Stack>
+                          {localAiAdapterError ? (
+                            <Text color="orange.500" fontSize="sm">
+                              {localAiAdapterError}
+                            </Text>
+                          ) : null}
+                          {localAiAdapterManifest ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.50"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text
+                                  color={localAiAdapterContractUi.color}
+                                  fontSize="sm"
+                                  fontWeight={600}
+                                >
+                                  {t('Stored contract')}:{' '}
+                                  {localAiAdapterContractUi.label}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Registered at')}:{' '}
+                                  {formatLocalAiTrainingPackageTimestamp(
+                                    localAiAdapterManifest.registeredAt
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Adapter manifest path')}:{' '}
+                                  {localAiAdapterManifest.adapterManifestPath}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Public model')}:{' '}
+                                  {localAiAdapterManifest.publicModelId || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Base model')}:{' '}
+                                  {localAiAdapterManifest.baseModelId || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Adapter format')}:{' '}
+                                  {localAiAdapterManifest.adapterFormat || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Adapter SHA-256')}:{' '}
+                                  {localAiAdapterManifest.adapterSha256 || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Training config hash')}:{' '}
+                                  {localAiAdapterManifest.trainingConfigHash ||
+                                    '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact file')}:{' '}
+                                  {(localAiAdapterManifest.adapterArtifact &&
+                                    localAiAdapterManifest.adapterArtifact
+                                      .file) ||
+                                    '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact size')}:{' '}
+                                  {formatLocalAiArtifactSize(
+                                    localAiAdapterManifest.adapterArtifact &&
+                                      localAiAdapterManifest.adapterArtifact
+                                        .sizeBytes
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Source path')}:{' '}
+                                  {(localAiAdapterManifest.adapterArtifact &&
+                                    localAiAdapterManifest.adapterArtifact
+                                      .sourcePath) ||
+                                    '-'}
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : null}
+                          {localAiPackageNeedsRefreshAfterAdapterRegistration ? (
+                            <Text color="blue.500" fontSize="xs">
+                              {t(
+                                'A package preview for this epoch still shows a pending adapter contract. Regenerate the package preview to refresh it to the stored adapter registration.'
+                              )}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        p={3}
+                      >
+                        <Stack spacing={3}>
+                          <Stack spacing={1}>
+                            <Text fontWeight={500}>
+                              {t('Federated bundle operations')}
+                            </Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'Building a local federated bundle now requires an approved training package and a concrete registered adapter artifact for the same epoch.'
+                              )}
+                            </Text>
+                          </Stack>
+                          <Stack isInline spacing={2}>
+                            <SecondaryButton
+                              isLoading={isBuildingLocalAiBundle}
+                              onClick={runLocalAiBuildBundle}
+                            >
+                              {t('Build Federated Bundle')}
+                            </SecondaryButton>
+                            <SecondaryButton
+                              isLoading={isAggregatingLocalAiBundles}
+                              onClick={runLocalAiAggregateBundles}
+                            >
+                              {t('Aggregate Received Bundles')}
+                            </SecondaryButton>
+                          </Stack>
+                          <SettingsFormControl>
+                            <SettingsFormLabel>
+                              {t('Incoming bundle path')}
+                            </SettingsFormLabel>
+                            <Input
+                              value={localAiBundleImportPath}
+                              onChange={(e) =>
+                                setLocalAiBundleImportPath(e.target.value)
+                              }
+                              placeholder="/absolute/path/to/incoming/update-epoch.json"
+                            />
+                          </SettingsFormControl>
+                          <SecondaryButton
+                            isLoading={isImportingLocalAiBundle}
+                            onClick={runLocalAiImportBundle}
+                          >
+                            {t('Import Bundle')}
+                          </SecondaryButton>
+                          {localAiFederatedError ? (
+                            <Text color="orange.500" fontSize="sm">
+                              {localAiFederatedError}
+                            </Text>
+                          ) : null}
+                          {localAiBuildBundleResult ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.50"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text fontWeight={500}>
+                                  {t('Latest built bundle')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Delta type')}:{' '}
+                                  {localAiBuildBundleResult.deltaType || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Signed')}:{' '}
+                                  {localAiBuildBundleResult.signed
+                                    ? t('Yes')
+                                    : t('No')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Eligible')}:{' '}
+                                  {Number(
+                                    localAiBuildBundleResult.eligibleCount
+                                  ) || 0}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Bundle path')}:{' '}
+                                  {localAiBuildBundleResult.bundlePath || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact path')}:{' '}
+                                  {localAiBuildBundleResult.artifactPath || '-'}
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : null}
+                          {localAiImportBundleResult ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.50"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text fontWeight={500}>
+                                  {t('Latest import result')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Accepted')}:{' '}
+                                  {localAiImportBundleResult.accepted
+                                    ? t('Yes')
+                                    : t('No')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Reason')}:{' '}
+                                  {formatLocalAiFederatedReason(
+                                    localAiImportBundleResult.reason
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Bundle path')}:{' '}
+                                  {localAiImportBundleResult.bundlePath || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Stored path')}:{' '}
+                                  {localAiImportBundleResult.storedPath || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact path')}:{' '}
+                                  {localAiImportBundleResult.artifactPath ||
+                                    '-'}
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : null}
+                          {localAiAggregateResult ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.50"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text fontWeight={500}>
+                                  {t('Latest aggregation result')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Mode')}:{' '}
+                                  {localAiAggregateResult.mode || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Compatible bundles')}:{' '}
+                                  {Number(
+                                    localAiAggregateResult.compatibleCount
+                                  ) || 0}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Skipped bundles')}:{' '}
+                                  {Number(
+                                    localAiAggregateResult.skippedCount
+                                  ) || 0}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Output path')}:{' '}
+                                  {localAiAggregateResult.outputPath || '-'}
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : null}
+                        </Stack>
+                      </Box>
                       {localAiPackagePreview &&
                       localAiPackagePreview.package ? (
                         <Box
@@ -2747,6 +3435,14 @@ export default function AiSettingsPage() {
                                 {t('Federated-ready')}:{' '}
                                 {localAiPackageFederatedReadyUi.label}
                               </Text>
+                              <Text
+                                color={localAiPackageContractUi.color}
+                                fontSize="sm"
+                                fontWeight={500}
+                              >
+                                {t('Contract state')}:{' '}
+                                {localAiPackageContractUi.label}
+                              </Text>
                               <Text color="muted" fontSize="sm">
                                 {t('Schema version')}:{' '}
                                 {localAiPackagePreview.package.schemaVersion}
@@ -2772,6 +3468,38 @@ export default function AiSettingsPage() {
                               <Text color="muted" fontSize="sm">
                                 {t('Package path')}:{' '}
                                 {localAiPackagePreview.packagePath}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Adapter format')}:{' '}
+                                {localAiPackagePreview.package.adapterFormat ||
+                                  '-'}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Adapter SHA-256')}:{' '}
+                                {localAiPackagePreview.package.adapterSha256 ||
+                                  '-'}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Training config hash')}:{' '}
+                                {localAiPackagePreview.package
+                                  .trainingConfigHash || '-'}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Artifact file')}:{' '}
+                                {(localAiPackagePreview.package
+                                  .adapterArtifact &&
+                                  localAiPackagePreview.package.adapterArtifact
+                                    .file) ||
+                                  '-'}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t('Artifact size')}:{' '}
+                                {formatLocalAiArtifactSize(
+                                  localAiPackagePreview.package
+                                    .adapterArtifact &&
+                                    localAiPackagePreview.package
+                                      .adapterArtifact.sizeBytes
+                                )}
                               </Text>
                               <Text color="muted" fontSize="xs">
                                 {t(

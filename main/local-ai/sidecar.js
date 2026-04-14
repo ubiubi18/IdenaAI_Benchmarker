@@ -1,10 +1,16 @@
 const axios = require('axios')
+const {LOCAL_AI_RUNTIME, LOCAL_AI_RUNTIME_BACKEND} = require('./constants')
+const {
+  LOCAL_AI_OLLAMA_DEFAULT_BASE_URL,
+  LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
+  resolveLocalAiRuntimeAdapter,
+} = require('./runtime-adapter')
 
 const DEFAULT_BASE_URL = 'http://localhost:5000'
 const DEFAULT_MODEL = ''
-const DEFAULT_RUNTIME = 'local-ai-sidecar'
-const DEFAULT_RUNTIME_TYPE = 'ollama'
-const DEFAULT_OLLAMA_ENDPOINT = 'http://127.0.0.1:11434'
+const DEFAULT_RUNTIME = LOCAL_AI_RUNTIME
+const DEFAULT_RUNTIME_TYPE = 'sidecar'
+const DEFAULT_OLLAMA_ENDPOINT = LOCAL_AI_OLLAMA_DEFAULT_BASE_URL
 const DEFAULT_VISION_MODEL = 'moondream'
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_FLIP_IMAGES = 8
@@ -24,11 +30,6 @@ function normalizeBaseUrl(value, fallback = DEFAULT_BASE_URL) {
   return baseUrl || fallback
 }
 
-function normalizeRuntimeType(value, fallback = DEFAULT_RUNTIME_TYPE) {
-  const runtimeType = String(value || fallback).trim().toLowerCase()
-  return runtimeType || fallback
-}
-
 function normalizePath(value) {
   const nextPath = String(value || '').trim()
   if (!nextPath) {
@@ -41,7 +42,19 @@ function buildEndpoint(baseUrl, endpointPath) {
   return `${normalizeBaseUrl(baseUrl)}${normalizePath(endpointPath)}`
 }
 
-function createErrorMessage(error, fallback = 'Local AI sidecar request failed') {
+function resolveRuntimeAdapter(source, fallbackRuntimeBackend) {
+  const nextSource =
+    source && typeof source === 'object' && !Array.isArray(source) ? source : {}
+
+  return resolveLocalAiRuntimeAdapter(nextSource, {
+    runtimeBackend: fallbackRuntimeBackend,
+  })
+}
+
+function createErrorMessage(
+  error,
+  fallback = 'Local AI sidecar request failed'
+) {
   const status = error && error.response && error.response.status
   const data = error && error.response && error.response.data
   const remoteMessage = String(
@@ -55,11 +68,13 @@ function createErrorMessage(error, fallback = 'Local AI sidecar request failed')
 }
 
 function normalizeModelList(data) {
-  const items = Array.isArray(data && data.data)
-    ? data.data
-    : Array.isArray(data && data.models)
-    ? data.models
-    : []
+  let items = []
+
+  if (Array.isArray(data && data.data)) {
+    items = data.data
+  } else if (Array.isArray(data && data.models)) {
+    items = data.models
+  }
 
   return items
     .map((item) => {
@@ -82,26 +97,30 @@ function isNotFoundError(error) {
 
 function normalizeChatMessage(item) {
   if (typeof item === 'string') {
-    const content = item.trim()
+    const stringContent = item.trim()
 
-    return content ? {role: 'user', content} : null
+    return stringContent ? {role: 'user', content: stringContent} : null
   }
 
   if (!item || typeof item !== 'object' || Array.isArray(item)) {
     return null
   }
 
-  const role = String(item.role || 'user').trim().toLowerCase() || 'user'
-  const content =
-    typeof item.content === 'string'
-      ? item.content.trim()
-      : typeof item.message === 'string'
-      ? item.message.trim()
-      : typeof item.text === 'string'
-      ? item.text.trim()
-      : ''
+  const role =
+    String(item.role || 'user')
+      .trim()
+      .toLowerCase() || 'user'
+  let textContent = ''
 
-  return content ? {role, content} : null
+  if (typeof item.content === 'string') {
+    textContent = item.content.trim()
+  } else if (typeof item.message === 'string') {
+    textContent = item.message.trim()
+  } else if (typeof item.text === 'string') {
+    textContent = item.text.trim()
+  }
+
+  return textContent ? {role, content: textContent} : null
 }
 
 function normalizeChatMessages({messages, message, prompt, input} = {}) {
@@ -184,10 +203,7 @@ function normalizeFlipImageItem(item) {
   }
 
   return toBase64Image(
-    item.imageDataUrl ||
-      item.image ||
-      item.src ||
-      item.base64
+    item.imageDataUrl || item.image || item.src || item.base64
   )
 }
 
@@ -203,11 +219,7 @@ function normalizeFlipImages(input) {
       source = input.images
     } else if (Array.isArray(input.panels)) {
       source = input.panels
-    } else if (
-      input.imageDataUrl ||
-      input.image ||
-      input.src
-    ) {
+    } else if (input.imageDataUrl || input.image || input.src) {
       source = [input]
     } else {
       source = [input.leftImage, input.rightImage].filter(Boolean)
@@ -229,7 +241,9 @@ function buildPanelCaptionMessages(image, index) {
     },
     {
       role: 'user',
-      content: `Describe panel ${index + 1} in one concise plain-text sentence.`,
+      content: `Describe panel ${
+        index + 1
+      } in one concise plain-text sentence.`,
       images: [image],
     },
   ]
@@ -289,21 +303,28 @@ function stripMarkdownCodeFence(value) {
 function parseFlipSequenceCheckerText(value) {
   const text = stripMarkdownCodeFence(value)
   const parsed = JSON.parse(text)
-  const classification = String(parsed && parsed.classification ? parsed.classification : '')
+  const classification = String(
+    parsed && parsed.classification ? parsed.classification : ''
+  )
     .trim()
     .toLowerCase()
-  const confidence = String(parsed && parsed.confidence ? parsed.confidence : '')
+  const confidence = String(
+    parsed && parsed.confidence ? parsed.confidence : ''
+  )
     .trim()
     .toLowerCase()
-  const reason = String(parsed && parsed.reason ? parsed.reason : '')
-    .trim()
+  const reason = String(parsed && parsed.reason ? parsed.reason : '').trim()
 
   if (!CHECKER_CLASSIFICATIONS.has(classification)) {
-    throw new Error('Local AI checker response included an unsupported classification')
+    throw new Error(
+      'Local AI checker response included an unsupported classification'
+    )
   }
 
   if (!CHECKER_CONFIDENCES.has(confidence)) {
-    throw new Error('Local AI checker response included an unsupported confidence')
+    throw new Error(
+      'Local AI checker response included an unsupported confidence'
+    )
   }
 
   if (!reason) {
@@ -319,6 +340,7 @@ function parseFlipSequenceCheckerText(value) {
 
 function buildFlipPipelineConfigError({
   baseUrl,
+  runtimeBackend,
   runtimeType,
   visionModel,
   model,
@@ -329,6 +351,7 @@ function buildFlipPipelineConfigError({
     ok: false,
     status: 'config_error',
     provider: 'local-ai',
+    runtimeBackend,
     runtimeType,
     visionModel,
     model,
@@ -358,26 +381,38 @@ async function requestWithFallback(candidates, request) {
   throw lastError || new Error('No sidecar endpoint candidates succeeded')
 }
 
-function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) {
+function createLocalAiSidecar({
+  httpClient = axios,
+  logger,
+  isDev = false,
+} = {}) {
   async function captionFlipPanels({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     visionModel,
     input,
     timeoutMs,
   }) {
-    const nextRuntimeType = normalizeRuntimeType(runtimeType)
+    const runtimeAdapter = resolveRuntimeAdapter(
+      {baseUrl, runtimeBackend, runtimeType},
+      LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+    )
+    const nextRuntimeBackend = runtimeAdapter.runtimeBackend
+    const nextRuntimeType = runtimeAdapter.runtimeType
     const nextVisionModel = normalizeVisionModel(visionModel)
     const images = normalizeFlipImages(input)
 
     if (!nextVisionModel) {
       return buildFlipPipelineConfigError({
-        baseUrl,
+        baseUrl: runtimeAdapter.baseUrl,
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         visionModel: '',
         model: '',
         error: 'vision_model_required',
-        lastError: 'Local AI vision model is required for Ollama panel captioning',
+        lastError:
+          'Local AI vision model is required for Ollama panel captioning',
       })
     }
 
@@ -386,10 +421,11 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: false,
         status: 'validation_error',
         provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         visionModel: nextVisionModel,
         model: '',
-        baseUrl: String(baseUrl || '').trim() || null,
+        baseUrl: runtimeAdapter.baseUrl || null,
         endpoint: null,
         text: null,
         error: 'image_required',
@@ -402,7 +438,8 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
     for (const [index, image] of images.entries()) {
       // eslint-disable-next-line no-await-in-loop
       const result = await requestOllamaChat({
-        baseUrl,
+        baseUrl: runtimeAdapter.baseUrl,
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         model: nextVisionModel,
         messages: buildPanelCaptionMessages(image, index),
@@ -427,39 +464,49 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
       ok: true,
       status: 'ok',
       provider: 'local-ai',
+      runtimeBackend: nextRuntimeBackend,
       runtimeType: nextRuntimeType,
       visionModel: nextVisionModel,
       captions,
-      baseUrl: normalizeBaseUrl(baseUrl, DEFAULT_OLLAMA_ENDPOINT),
+      baseUrl: runtimeAdapter.baseUrl,
       lastError: null,
     }
   }
 
   async function reduceFlipSequence({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     visionModel,
     model,
     captions,
     timeoutMs,
   }) {
-    const nextRuntimeType = normalizeRuntimeType(runtimeType)
+    const runtimeAdapter = resolveRuntimeAdapter(
+      {baseUrl, runtimeBackend, runtimeType},
+      LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+    )
+    const nextRuntimeBackend = runtimeAdapter.runtimeBackend
+    const nextRuntimeType = runtimeAdapter.runtimeType
     const nextVisionModel = normalizeVisionModel(visionModel)
     const nextModel = String(model || '').trim()
 
     if (!nextModel) {
       return buildFlipPipelineConfigError({
-        baseUrl,
+        baseUrl: runtimeAdapter.baseUrl,
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         visionModel: nextVisionModel,
         model: '',
         error: 'model_required',
-        lastError: 'Local AI text model is required for flip sequence reduction',
+        lastError:
+          'Local AI text model is required for flip sequence reduction',
       })
     }
 
     return requestOllamaChat({
-      baseUrl,
+      baseUrl: runtimeAdapter.baseUrl,
+      runtimeBackend: nextRuntimeBackend,
       runtimeType: nextRuntimeType,
       model: nextModel,
       messages: buildSequenceReductionMessages(captions),
@@ -469,17 +516,24 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
 
   async function runFlipSequencePipeline({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     visionModel,
     model,
     input,
     timeoutMs = 15 * 1000,
   } = {}) {
-    const nextRuntimeType = normalizeRuntimeType(runtimeType)
+    const runtimeAdapter = resolveRuntimeAdapter(
+      {baseUrl, runtimeBackend, runtimeType},
+      LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+    )
+    const nextRuntimeBackend = runtimeAdapter.runtimeBackend
+    const nextRuntimeType = runtimeAdapter.runtimeType
     const nextVisionModel = normalizeVisionModel(visionModel)
     const nextModel = String(model || '').trim()
     const captioning = await captionFlipPanels({
-      baseUrl,
+      baseUrl: runtimeAdapter.baseUrl,
+      runtimeBackend: nextRuntimeBackend,
       runtimeType: nextRuntimeType,
       visionModel: nextVisionModel,
       input,
@@ -495,7 +549,8 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
     }
 
     const reduced = await reduceFlipSequence({
-      baseUrl,
+      baseUrl: runtimeAdapter.baseUrl,
+      runtimeBackend: nextRuntimeBackend,
       runtimeType: nextRuntimeType,
       visionModel: nextVisionModel,
       model: nextModel,
@@ -515,6 +570,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
       ok: true,
       status: 'ok',
       provider: 'local-ai',
+      runtimeBackend: nextRuntimeBackend,
       runtimeType: nextRuntimeType,
       visionModel: nextVisionModel,
       model: reduced.model,
@@ -528,28 +584,35 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
 
   async function requestOllamaChat({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     model = '',
     messages = [],
     timeoutMs = 15 * 1000,
   } = {}) {
-    const nextRuntimeType = normalizeRuntimeType(runtimeType)
-    const nextBaseUrl = String(baseUrl || '').trim()
+    const runtimeAdapter = resolveRuntimeAdapter(
+      {baseUrl, runtimeBackend, runtimeType},
+      LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+    )
+    const nextRuntimeBackend = runtimeAdapter.runtimeBackend
+    const nextRuntimeType = runtimeAdapter.runtimeType
+    const nextBaseUrl = runtimeAdapter.baseUrl
     const nextModel = String(model || '').trim()
     const nextMessages = Array.isArray(messages) ? messages : []
 
-    if (nextRuntimeType !== 'ollama') {
+    if (nextRuntimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
       return {
         ok: false,
         status: 'config_error',
         provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         model: nextModel,
         baseUrl: nextBaseUrl || null,
         endpoint: null,
         text: null,
         error: 'unsupported_runtime_type',
-        lastError: `Unsupported Local AI runtime type: ${nextRuntimeType}`,
+        lastError: `Unsupported Local AI runtime backend: ${nextRuntimeBackend}`,
       }
     }
 
@@ -558,6 +621,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: false,
         status: 'config_error',
         provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         model: nextModel,
         baseUrl: null,
@@ -573,9 +637,10 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: false,
         status: 'config_error',
         provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         model: '',
-        baseUrl: normalizeBaseUrl(nextBaseUrl, DEFAULT_OLLAMA_ENDPOINT),
+        baseUrl: nextBaseUrl,
         endpoint: null,
         text: null,
         error: 'model_required',
@@ -588,9 +653,10 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: false,
         status: 'validation_error',
         provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         model: nextModel,
-        baseUrl: normalizeBaseUrl(nextBaseUrl, DEFAULT_OLLAMA_ENDPOINT),
+        baseUrl: nextBaseUrl,
         endpoint: null,
         text: null,
         error: 'message_required',
@@ -598,10 +664,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
       }
     }
 
-    const endpoint = buildEndpoint(
-      normalizeBaseUrl(nextBaseUrl, DEFAULT_OLLAMA_ENDPOINT),
-      '/api/chat'
-    )
+    const endpoint = buildEndpoint(nextBaseUrl, '/api/chat')
 
     try {
       const response = await httpClient.post(
@@ -626,9 +689,10 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
           ok: false,
           status: 'parse_error',
           provider: 'local-ai',
+          runtimeBackend: nextRuntimeBackend,
           runtimeType: nextRuntimeType,
           model: nextModel,
-          baseUrl: normalizeBaseUrl(nextBaseUrl, DEFAULT_OLLAMA_ENDPOINT),
+          baseUrl: nextBaseUrl,
           endpoint,
           text: null,
           error: 'invalid_response',
@@ -640,9 +704,12 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: true,
         status: 'ok',
         provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
-        model: String(data && data.model ? data.model : nextModel).trim() || nextModel,
-        baseUrl: normalizeBaseUrl(nextBaseUrl, DEFAULT_OLLAMA_ENDPOINT),
+        model:
+          String(data && data.model ? data.model : nextModel).trim() ||
+          nextModel,
+        baseUrl: nextBaseUrl,
         endpoint: response && response.config && response.config.url,
         text,
         lastError: null,
@@ -652,33 +719,36 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: false,
         status: 'unavailable',
         provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         model: nextModel,
-        baseUrl: normalizeBaseUrl(nextBaseUrl, DEFAULT_OLLAMA_ENDPOINT),
+        baseUrl: nextBaseUrl,
         endpoint,
         text: null,
         error: 'unavailable',
-        lastError: createErrorMessage(
-          error,
-          'Local AI Ollama request failed'
-        ),
+        lastError: createErrorMessage(error, 'Local AI Ollama request failed'),
       }
     }
   }
 
   async function getHealth({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = {}) {
-    const nextRuntimeType = normalizeRuntimeType(runtimeType, 'sidecar')
-    const nextBaseUrl = normalizeBaseUrl(
-      baseUrl,
-      nextRuntimeType === 'ollama' ? DEFAULT_OLLAMA_ENDPOINT : DEFAULT_BASE_URL
+    const runtimeAdapter = resolveRuntimeAdapter(
+      {baseUrl, runtimeBackend, runtimeType},
+      LOCAL_AI_RUNTIME_BACKEND
     )
+    const nextRuntimeBackend = runtimeAdapter.runtimeBackend
+    const nextRuntimeType = runtimeAdapter.runtimeType
+    const nextBaseUrl = runtimeAdapter.baseUrl
     const endpoint = buildEndpoint(
       nextBaseUrl,
-      nextRuntimeType === 'ollama' ? '/api/version' : '/health'
+      nextRuntimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+        ? '/api/version'
+        : '/health'
     )
 
     try {
@@ -690,7 +760,8 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: true,
         status: 'ok',
         reachable: true,
-        runtime: nextRuntimeType === 'ollama' ? 'ollama' : DEFAULT_RUNTIME,
+        runtime: runtimeAdapter.runtime,
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         baseUrl: nextBaseUrl,
         endpoint,
@@ -712,7 +783,8 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: false,
         status: 'error',
         reachable: false,
-        runtime: nextRuntimeType === 'ollama' ? 'ollama' : DEFAULT_RUNTIME,
+        runtime: runtimeAdapter.runtime,
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         baseUrl: nextBaseUrl,
         endpoint,
@@ -724,18 +796,21 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
 
   async function listModels({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = {}) {
-    const nextRuntimeType = normalizeRuntimeType(runtimeType, 'sidecar')
-    const nextBaseUrl = normalizeBaseUrl(
-      baseUrl,
-      nextRuntimeType === 'ollama' ? DEFAULT_OLLAMA_ENDPOINT : DEFAULT_BASE_URL
+    const runtimeAdapter = resolveRuntimeAdapter(
+      {baseUrl, runtimeBackend, runtimeType},
+      LOCAL_AI_RUNTIME_BACKEND
     )
+    const nextRuntimeBackend = runtimeAdapter.runtimeBackend
+    const nextRuntimeType = runtimeAdapter.runtimeType
+    const nextBaseUrl = runtimeAdapter.baseUrl
 
     try {
       const response =
-        nextRuntimeType === 'ollama'
+        nextRuntimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
           ? await httpClient.get(buildEndpoint(nextBaseUrl, '/api/tags'), {
               timeout: timeoutMs,
             })
@@ -753,6 +828,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
       return {
         ok: true,
         reachable: true,
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         baseUrl: nextBaseUrl,
         endpoint: response && response.config && response.config.url,
@@ -764,6 +840,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
       return {
         ok: false,
         reachable: false,
+        runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         baseUrl: nextBaseUrl,
         endpoint: null,
@@ -779,6 +856,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
 
   async function chat({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     model = '',
     messages = [],
@@ -795,6 +873,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
     })
     const result = await requestOllamaChat({
       baseUrl,
+      runtimeBackend,
       runtimeType,
       model,
       messages: nextMessages,
@@ -809,6 +888,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
 
   async function flipToText({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     visionModel,
     model = '',
@@ -817,6 +897,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
   } = {}) {
     const result = await runFlipSequencePipeline({
       baseUrl,
+      runtimeBackend,
       runtimeType,
       visionModel,
       model,
@@ -832,6 +913,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
 
   async function checkFlipSequence({
     baseUrl,
+    runtimeBackend,
     runtimeType,
     visionModel,
     model = '',
@@ -840,6 +922,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
   } = {}) {
     const pipeline = await runFlipSequencePipeline({
       baseUrl,
+      runtimeBackend,
       runtimeType,
       visionModel,
       model,
@@ -858,6 +941,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
 
     const checkerResult = await requestOllamaChat({
       baseUrl,
+      runtimeBackend,
       runtimeType,
       model: pipeline.model,
       messages: buildFlipSequenceCheckerMessages({
@@ -885,6 +969,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: true,
         status: 'ok',
         provider: 'local-ai',
+        runtimeBackend: pipeline.runtimeBackend,
         runtimeType: pipeline.runtimeType,
         visionModel: pipeline.visionModel,
         model: pipeline.model,
@@ -901,6 +986,7 @@ function createLocalAiSidecar({httpClient = axios, logger, isDev = false} = {}) 
         ok: false,
         status: 'parse_error',
         provider: 'local-ai',
+        runtimeBackend: pipeline.runtimeBackend,
         runtimeType: pipeline.runtimeType,
         visionModel: pipeline.visionModel,
         model: pipeline.model,
