@@ -6,6 +6,7 @@ const {createLocalAiStorage} = require('./storage')
 const {resolveAdapterContract} = require('./adapter-contract')
 const {createLocalAiSidecar} = require('./sidecar')
 const {resolveModelReference} = require('./model-reference')
+const {createModernTrainingCollector} = require('./modern-training')
 const {
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
   resolveLocalAiRuntimeAdapter,
@@ -486,6 +487,7 @@ function createLocalAiManager({
   sidecar,
   getModelReference,
   runtimeController,
+  modernTrainingCollector,
 } = {}) {
   const localAiStorage = storage || createLocalAiStorage()
   const localAiSidecar =
@@ -496,6 +498,12 @@ function createLocalAiManager({
     })
   const localAiRuntimeController =
     runtimeController || createDefaultRuntimeController({logger, isDev})
+  const localAiModernTrainingCollector =
+    modernTrainingCollector ||
+    createModernTrainingCollector({
+      logger,
+      storage: localAiStorage,
+    })
   const initialRuntime = resolveLocalAiRuntimeAdapter()
   const state = {
     available: true,
@@ -1283,6 +1291,7 @@ function createLocalAiManager({
 
     const items = []
     const excluded = []
+    const packagedCandidates = []
 
     reduceLatestCaptures(state.captureIndex).forEach((capture) => {
       const reasons = getExclusionReasons(capture, epoch)
@@ -1296,7 +1305,12 @@ function createLocalAiManager({
       }
 
       try {
-        items.push(buildTrainingCandidateItem(capture))
+        const item = buildTrainingCandidateItem(capture)
+        items.push(item)
+        packagedCandidates.push({
+          capture,
+          item,
+        })
       } catch (error) {
         excluded.push({
           flipHash: capture.flipHash || null,
@@ -1313,8 +1327,42 @@ function createLocalAiManager({
       }
     })
 
+    let finalItems = items
+    let finalExcluded = excluded
+    let rankingMetadata = {}
+
+    if (
+      next.rankingPolicy &&
+      String(next.rankingPolicy.sourcePriority || '').trim() ===
+        'local-node-first'
+    ) {
+      const ranked = await localAiModernTrainingCollector.buildCandidatePackage(
+        {
+          epoch,
+          candidates: packagedCandidates,
+          rankingPolicy: next.rankingPolicy,
+          allowPublicIndexerFallback: next.allowPublicIndexerFallback,
+          fetchFlipPayloads: next.fetchFlipPayloads === true,
+          requireFlipPayloads: next.requireFlipPayloads === true,
+          rpcUrl: next.rpcUrl,
+          rpcKey: next.rpcKey,
+          refreshPublicFallback: next.refreshPublicFallback === true,
+        }
+      )
+
+      finalItems = ranked.items
+      finalExcluded = excluded.concat(ranked.excluded || [])
+      rankingMetadata = {
+        sourcePriority: ranked.sourcePriority,
+        rankingPolicy: ranked.rankingPolicy,
+        localIndexPath: ranked.localIndexPath,
+        fallbackIndexPath: ranked.fallbackIndexPath,
+        fallbackUsed: ranked.fallbackUsed,
+      }
+    }
+
     const nextPackagePath = trainingCandidatePackagePath(localAiStorage, epoch)
-    const inconsistencyFlags = collectInconsistencyFlags(excluded)
+    const inconsistencyFlags = collectInconsistencyFlags(finalExcluded)
     const candidatePackage = {
       schemaVersion: TRAINING_CANDIDATE_PACKAGE_VERSION,
       packageType: 'local-ai-training-candidates',
@@ -1338,11 +1386,12 @@ function createLocalAiManager({
       reviewStatus: 'draft',
       reviewedAt: null,
       federatedReady: false,
-      eligibleCount: items.length,
-      excludedCount: excluded.length,
+      eligibleCount: finalItems.length,
+      excludedCount: finalExcluded.length,
       inconsistencyFlags,
-      items,
-      excluded,
+      items: finalItems,
+      excluded: finalExcluded,
+      ...rankingMetadata,
     }
 
     await localAiStorage.writeJsonAtomic(nextPackagePath, candidatePackage)
@@ -1350,16 +1399,16 @@ function createLocalAiManager({
     if (isDev && logger && typeof logger.debug === 'function') {
       logger.debug('Local AI training candidate package built', {
         epoch,
-        eligibleCount: items.length,
-        excludedCount: excluded.length,
+        eligibleCount: finalItems.length,
+        excludedCount: finalExcluded.length,
         packagePath: nextPackagePath,
       })
     }
 
     return {
       epoch,
-      eligibleCount: items.length,
-      excludedCount: excluded.length,
+      eligibleCount: finalItems.length,
+      excludedCount: finalExcluded.length,
       packagePath: nextPackagePath,
       package: next.includePackage ? candidatePackage : undefined,
     }

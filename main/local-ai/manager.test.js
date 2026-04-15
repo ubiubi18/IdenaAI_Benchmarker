@@ -558,6 +558,112 @@ describe('local-ai manager', () => {
     )
   })
 
+  it('uses the modern ranked package builder when ranking policy requests local-node-first', async () => {
+    const captureIndexPath = storage.resolveLocalAiPath(
+      'captures',
+      'index.json'
+    )
+
+    await storage.writeJsonAtomic(captureIndexPath, {
+      version: 1,
+      capturedCount: 1,
+      captures: [
+        {
+          flipHash: 'flip-a',
+          epoch: 12,
+          sessionType: 'short',
+          panelCount: 2,
+          timestamp: 1710000000000,
+          capturedAt: '2026-01-01T00:00:00.000Z',
+          consensus: {
+            finalAnswer: 'left',
+            reported: false,
+          },
+        },
+      ],
+    })
+
+    const modernTrainingCollector = {
+      buildCandidatePackage: jest.fn(async () => ({
+        items: [
+          {
+            flipHash: 'flip-a',
+            epoch: 12,
+            sessionType: 'short',
+            panelCount: 2,
+            timestamp: 1710000000000,
+            capturedAt: '2026-01-01T00:00:00.000Z',
+            finalAnswer: 'left',
+            trainingWeight: 1.5,
+            rankingSource: 'public_indexer_fallback',
+            audit: {
+              cid: 'flip-a',
+              author: '0xabc',
+            },
+          },
+        ],
+        excluded: [{flipHash: 'flip-z', reasons: ['missing_flip_payload']}],
+        sourcePriority: 'local-node-first',
+        rankingPolicy: {
+          sourcePriority: 'local-node-first',
+          allowPublicIndexerFallback: true,
+        },
+        localIndexPath: storage.resolveLocalAiPath(
+          'indexer',
+          'epochs',
+          'epoch-12.json'
+        ),
+        fallbackIndexPath: storage.resolveLocalAiPath(
+          'indexer-fallback',
+          'epochs',
+          'epoch-12.json'
+        ),
+        fallbackUsed: true,
+      })),
+    }
+
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      modernTrainingCollector,
+    })
+    const summary = await manager.buildTrainingCandidatePackage({
+      epoch: 12,
+      rankingPolicy: {
+        sourcePriority: 'local-node-first',
+      },
+    })
+    const candidatePackage = await storage.readJson(summary.packagePath)
+
+    expect(modernTrainingCollector.buildCandidatePackage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        epoch: 12,
+        rankingPolicy: expect.objectContaining({
+          sourcePriority: 'local-node-first',
+        }),
+      })
+    )
+    expect(summary).toMatchObject({
+      epoch: 12,
+      eligibleCount: 1,
+      excludedCount: 1,
+    })
+    expect(candidatePackage).toMatchObject({
+      sourcePriority: 'local-node-first',
+      fallbackUsed: true,
+      eligibleCount: 1,
+      excludedCount: 1,
+      items: [
+        expect.objectContaining({
+          flipHash: 'flip-a',
+          trainingWeight: 1.5,
+          rankingSource: 'public_indexer_fallback',
+        }),
+      ],
+      excluded: [{flipHash: 'flip-z', reasons: ['missing_flip_payload']}],
+    })
+  })
+
   it('refreshes Local AI sidecar health and model status without requiring cloud providers', async () => {
     const manager = createLocalAiManager({
       logger: mockLogger(),

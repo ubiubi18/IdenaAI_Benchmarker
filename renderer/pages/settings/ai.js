@@ -760,6 +760,9 @@ export default function AiSettingsPage() {
       publicModelId: localAi.publicModelId,
       publicVisionId: localAi.publicVisionId,
       contractVersion: localAi.contractVersion,
+      adapterStrategy: localAi.adapterStrategy,
+      trainingPolicy: localAi.trainingPolicy,
+      rankingPolicy: localAi.rankingPolicy,
       baseUrl: localAiRuntimeUrl,
       endpoint: localAiRuntimeUrl,
       model: String(localAi.model || '').trim(),
@@ -772,9 +775,12 @@ export default function AiSettingsPage() {
       localAi.contractVersion,
       localAi.publicModelId,
       localAi.publicVisionId,
+      localAi.rankingPolicy,
       localAi.reasonerBackend,
       localAi.runtimeMode,
       localAi.runtimeBackend,
+      localAi.adapterStrategy,
+      localAi.trainingPolicy,
       localAiWireRuntimeType,
       localAi.visionModel,
       localAi.visionBackend,
@@ -1068,6 +1074,7 @@ export default function AiSettingsPage() {
             }
 
             result = await bridge.buildTrainingCandidatePackage({
+              ...localAiRuntimePayload,
               epoch,
               includePackage: true,
             })
@@ -1083,6 +1090,7 @@ export default function AiSettingsPage() {
             }
 
             result = await bridge.buildTrainingCandidatePackage({
+              ...localAiRuntimePayload,
               epoch,
               includePackage: false,
             })
@@ -1120,7 +1128,7 @@ export default function AiSettingsPage() {
         }
       }
     },
-    [localAiPackageEpoch, t]
+    [localAiPackageEpoch, localAiRuntimePayload, t]
   )
 
   const updateLocalAiTrainingPackageReviewStatus = useCallback(
@@ -2969,6 +2977,159 @@ export default function AiSettingsPage() {
                 }
               />
             </Flex>
+
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              p={3}
+            >
+              <Stack spacing={3}>
+                <Box>
+                  <Text fontWeight={500}>{t('Training ranking policy')}</Text>
+                  <Text color="muted" fontSize="sm">
+                    {t(
+                      'Modern flips should be ranked from your own local node and local index snapshot first. Public indexer data is only a fallback when local ranking data is missing.'
+                    )}
+                  </Text>
+                </Box>
+
+                <Flex align="center" justify="space-between">
+                  <Box>
+                    <Text fontWeight={500}>
+                      {t('Allow public indexer fallback')}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {t(
+                        'Keep ranking alive if your local index snapshot is incomplete or offline during a training-package build.'
+                      )}
+                    </Text>
+                  </Box>
+                  <Switch
+                    isChecked={
+                      localAi.rankingPolicy.allowPublicIndexerFallback !== false
+                    }
+                    onChange={() =>
+                      updateLocalAiSettings({
+                        rankingPolicy: {
+                          allowPublicIndexerFallback:
+                            localAi.rankingPolicy.allowPublicIndexerFallback ===
+                            false,
+                        },
+                      })
+                    }
+                  />
+                </Flex>
+
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Extra-flip baseline')}
+                  </SettingsFormLabel>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={String(localAi.rankingPolicy.extraFlipBaseline ?? 3)}
+                    onChange={(e) =>
+                      updateLocalAiSettings({
+                        rankingPolicy: {
+                          extraFlipBaseline: Number.parseInt(
+                            e.target.value,
+                            10
+                          ),
+                        },
+                      })
+                    }
+                    w="xs"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Authors above this flip count in one epoch are downweighted as extra-flip producers.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
+
+                <Flex align="center" justify="space-between">
+                  <Box>
+                    <Text fontWeight={500}>{t('Exclude bad authors')}</Text>
+                    <Text color="muted" fontSize="sm">
+                      {t(
+                        'Drop flips entirely when the author is flagged for WrongWords in the ranking layer.'
+                      )}
+                    </Text>
+                  </Box>
+                  <Switch
+                    isChecked={localAi.rankingPolicy.excludeBadAuthors === true}
+                    onChange={() =>
+                      updateLocalAiSettings({
+                        rankingPolicy: {
+                          excludeBadAuthors:
+                            localAi.rankingPolicy.excludeBadAuthors !== true,
+                        },
+                      })
+                    }
+                  />
+                </Flex>
+
+                <Flex align="center" justify="space-between">
+                  <Box>
+                    <Text fontWeight={500}>
+                      {t('Exclude repeated report offenders')}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {t(
+                        'Optionally remove flips from authors who repeatedly accumulate reported or wrongWords-style penalties.'
+                      )}
+                    </Text>
+                  </Box>
+                  <Switch
+                    isChecked={
+                      localAi.rankingPolicy.excludeRepeatReportOffenders ===
+                      true
+                    }
+                    onChange={() =>
+                      updateLocalAiSettings({
+                        rankingPolicy: {
+                          excludeRepeatReportOffenders:
+                            localAi.rankingPolicy
+                              .excludeRepeatReportOffenders !== true,
+                        },
+                      })
+                    }
+                  />
+                </Flex>
+
+                <SettingsFormControl>
+                  <SettingsFormLabel>
+                    {t('Allowed repeat offenses before exclusion')}
+                  </SettingsFormLabel>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={String(
+                      localAi.rankingPolicy.maxRepeatReportOffenses ?? 1
+                    )}
+                    onChange={(e) =>
+                      updateLocalAiSettings({
+                        rankingPolicy: {
+                          maxRepeatReportOffenses: Number.parseInt(
+                            e.target.value,
+                            10
+                          ),
+                        },
+                      })
+                    }
+                    w="xs"
+                  />
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Used only when repeated-offender exclusion is enabled. Higher-quality modern flips automatically receive stronger training weights.'
+                    )}
+                  </Text>
+                </SettingsFormControl>
+              </Stack>
+            </Box>
 
             <Flex align="center" justify="space-between">
               <Box>

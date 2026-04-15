@@ -18,8 +18,11 @@ import argparse
 import json
 import sys
 import urllib.request
+from io import BytesIO
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
+
+from flip_training_ranker import build_historical_signals
 
 try:
     import pyarrow.parquet as pq
@@ -41,19 +44,31 @@ except ModuleNotFoundError:
     )
     raise
 
+try:
+    from PIL import Image, ImageOps
+except ModuleNotFoundError:
+    print(
+        "Missing dependency: pillow\n"
+        "Install with: python3 -m pip install --user pillow",
+        file=sys.stderr,
+    )
+    raise
+
 DATASET_ID = "aplesner-eth/FLIP-Challenge"
 TREE_URL = f"https://huggingface.co/api/datasets/{DATASET_ID}/tree/main?recursive=true"
 RESOLVE_BASE = f"https://huggingface.co/datasets/{DATASET_ID}/resolve/main"
 
 DEFAULT_PROMPT_TEMPLATE = (
     "You are solving an Idena FLIP validation challenge. "
-    "There are four candidate panels for one flip. "
+    "There are four candidate panels for one flip shown in a single 2x2 composite image. "
+    "Panel 1 is top-left, panel 2 is top-right, panel 3 is bottom-left, and panel 4 is bottom-right. "
     "Two possible story orders are proposed.\n"
     "LEFT order: panels {left_order}.\n"
     "RIGHT order: panels {right_order}.\n"
     "If neither order tells a coherent story, or the flip should be reported, answer skip.\n"
     "Reply with exactly one lowercase word: left, right, or skip."
 )
+COMPOSITE_MAX_SIZE = (448, 448)
 
 
 def fetch_json(url: str):
@@ -113,6 +128,34 @@ def format_order(order: List[int]) -> str:
     return ", ".join(str(index + 1) for index in order)
 
 
+def load_panel_image(raw: bytes) -> Image.Image:
+    image = Image.open(BytesIO(raw))
+    image = ImageOps.exif_transpose(image)
+    return image.convert("RGB")
+
+
+def resize_to_fit(image: Image.Image, size: Tuple[int, int]) -> Image.Image:
+    resized = image.copy()
+    resized.thumbnail(size, Image.Resampling.LANCZOS)
+    return resized
+
+
+def build_flip_composite(raw_panels: List[bytes]) -> Image.Image:
+    panels = [load_panel_image(raw) for raw in raw_panels]
+    cell_width = max(image.width for image in panels)
+    cell_height = max(image.height for image in panels)
+    canvas = Image.new("RGB", (cell_width * 2, cell_height * 2), "white")
+
+    for index, image in enumerate(panels[:4]):
+        fitted = resize_to_fit(image, (cell_width, cell_height))
+        row, column = divmod(index, 2)
+        x = column * cell_width + (cell_width - fitted.width) // 2
+        y = row * cell_height + (cell_height - fitted.height) // 2
+        canvas.paste(fitted, (x, y))
+
+    return resize_to_fit(canvas, COMPOSITE_MAX_SIZE)
+
+
 def build_training_record(
     task_id: str,
     task_data: dict,
@@ -155,32 +198,38 @@ def build_training_record(
     task_dir.mkdir(parents=True, exist_ok=True)
 
     saved_images: List[str] = []
+    panel_bytes: List[bytes] = []
     for index, slot in enumerate(slots):
         image_id = images_map.get(slot)
         if image_id not in image_bytes:
             raise ValueError(f"Missing bytes for image_id={image_id} task={task_id}")
         raw = image_bytes[image_id]
+        panel_bytes.append(raw)
         ext = guess_extension(raw)
         image_path = task_dir / f"{index + 1}{ext}"
         if not image_path.exists():
             image_path.write_bytes(raw)
         saved_images.append(str(image_path.resolve()))
 
+    composite_path = task_dir / "composite.png"
+    if not composite_path.exists():
+        build_flip_composite(panel_bytes).save(composite_path, format="PNG")
+
     prompt = prompt_template.format(
         left_order=format_order(left_stack),
         right_order=format_order(right_stack),
     )
+    ranking = build_historical_signals(task_id, task_data)
 
     return {
+        "schema_version": "idena.flip-training.v1",
         "flip_hash": task_id,
-        "images": saved_images,
+        "images": [str(composite_path.resolve())],
+        "panel_images": saved_images,
         "messages": [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image"},
-                    {"type": "image"},
-                    {"type": "image"},
                     {"type": "image"},
                     {"type": "text", "text": prompt},
                 ],
@@ -194,6 +243,14 @@ def build_training_record(
         "expected_strength": expected_strength or "",
         "left_order": left_stack,
         "right_order": right_stack,
+        "training_weight": ranking.training_weight,
+        "ranking_source": ranking.ranking_source,
+        "source": {
+            "kind": ranking.source_kind,
+            "name": ranking.source_name,
+            "priority": ranking.source_priority,
+        },
+        "audit": ranking.to_dict(),
     }
 
 
@@ -358,11 +415,26 @@ def main() -> int:
     write_jsonl(jsonl_path, records)
 
     counts_by_answer: Dict[str, int] = {}
+    ranking_sources: Dict[str, int] = {}
+    training_weights: List[float] = []
     for item in records:
         answer = item["expected_answer"]
         counts_by_answer[answer] = counts_by_answer.get(answer, 0) + 1
+        ranking_source = item.get("ranking_source") or "unknown"
+        ranking_sources[ranking_source] = ranking_sources.get(ranking_source, 0) + 1
+        try:
+            training_weights.append(float(item.get("training_weight", 1.0) or 1.0))
+        except (TypeError, ValueError):
+            training_weights.append(1.0)
+
+    training_weight_summary = {
+        "min": round(min(training_weights), 6),
+        "max": round(max(training_weights), 6),
+        "mean": round(sum(training_weights) / len(training_weights), 6),
+    }
 
     manifest = {
+        "schemaVersion": "idena.flip-training.v1",
         "source": DATASET_ID,
         "split": args.split,
         "count": len(records),
@@ -370,6 +442,8 @@ def main() -> int:
         "max": args.max_flips,
         "malformedRows": malformed,
         "countsByAnswer": counts_by_answer,
+        "rankingSources": ranking_sources,
+        "trainingWeight": training_weight_summary,
         "hfDatasetPath": str(hf_dataset_dir),
         "jsonlPath": str(jsonl_path),
         "imagesPath": str(images_dir),

@@ -43,6 +43,14 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
     requireValidatedIdentity: true,
     requireLocalNode: true,
   },
+  rankingPolicy: {
+    sourcePriority: 'local-node-first',
+    allowPublicIndexerFallback: true,
+    extraFlipBaseline: 3,
+    excludeBadAuthors: false,
+    excludeRepeatReportOffenders: false,
+    maxRepeatReportOffenses: 1,
+  },
 }
 
 function trimString(value) {
@@ -382,6 +390,10 @@ function buildLocalAiSettings(settings = {}) {
       ...DEFAULT_LOCAL_AI_SETTINGS.eligibilityGate,
       ...((source && source.eligibilityGate) || {}),
     },
+    rankingPolicy: {
+      ...DEFAULT_LOCAL_AI_SETTINGS.rankingPolicy,
+      ...((source && source.rankingPolicy) || {}),
+    },
   }
 
   return normalizedSettings
@@ -398,6 +410,10 @@ function mergeLocalAiSettings(current = {}, next = {}) {
     eligibilityGate: {
       ...((current && current.eligibilityGate) || {}),
       ...((next && next.eligibilityGate) || {}),
+    },
+    rankingPolicy: {
+      ...((current && current.rankingPolicy) || {}),
+      ...((next && next.rankingPolicy) || {}),
     },
   })
 }

@@ -510,6 +510,43 @@ function pickLocalAiInput(nextPayload) {
   return nextPayload
 }
 
+function normalizeLocalAiRankingPolicy(value = {}) {
+  const source = value && typeof value === 'object' ? value : {}
+  return {
+    sourcePriority:
+      String(source.sourcePriority || '').trim() || 'local-node-first',
+    allowPublicIndexerFallback: source.allowPublicIndexerFallback !== false,
+    extraFlipBaseline: Math.max(
+      0,
+      Number.parseInt(source.extraFlipBaseline, 10) || 3
+    ),
+    excludeBadAuthors: source.excludeBadAuthors === true,
+    excludeRepeatReportOffenders: source.excludeRepeatReportOffenders === true,
+    maxRepeatReportOffenses: Math.max(
+      0,
+      Number.parseInt(source.maxRepeatReportOffenses, 10) || 1
+    ),
+    strongConsensusBonus:
+      Number.parseFloat(source.strongConsensusBonus) || 0.15,
+    weakConsensusPenalty: Number.parseFloat(source.weakConsensusPenalty) || 0.1,
+    reportedVotePenaltyPerVote:
+      Number.parseFloat(source.reportedVotePenaltyPerVote) || 0.12,
+    wrongWordsVotePenaltyPerVote:
+      Number.parseFloat(source.wrongWordsVotePenaltyPerVote) || 0.2,
+    extraFlipPenaltyPerExtraFlip:
+      Number.parseFloat(source.extraFlipPenaltyPerExtraFlip) || 0.08,
+    badAuthorPenalty: Number.parseFloat(source.badAuthorPenalty) || 0.6,
+    repeatReportPenalty: Number.parseFloat(source.repeatReportPenalty) || 0.45,
+    qualifiedStatusBonus: Number.parseFloat(source.qualifiedStatusBonus) || 0.2,
+    weaklyQualifiedStatusBonus:
+      Number.parseFloat(source.weaklyQualifiedStatusBonus) || 0.08,
+    reportedStatusPenalty:
+      Number.parseFloat(source.reportedStatusPenalty) || 0.5,
+    minWeight: Number.parseFloat(source.minWeight) || 0.05,
+    maxWeight: Number.parseFloat(source.maxWeight) || 3,
+  }
+}
+
 function getMainLocalAiSettings(payload = {}) {
   const settings = loadMainSettings()
   const nextPayload = normalizeLocalAiPayload(payload)
@@ -597,6 +634,10 @@ function getMainLocalAiSettings(payload = {}) {
       [nextPayload.trainingPolicy, localAi.trainingPolicy],
       LOCAL_AI_TRAINING_POLICY
     ),
+    rankingPolicy: normalizeLocalAiRankingPolicy({
+      ...(localAi.rankingPolicy || {}),
+      ...(nextPayload.rankingPolicy || {}),
+    }),
     contractVersion: pickTrimmedString(
       [nextPayload.contractVersion, localAi.contractVersion],
       LOCAL_AI_CONTRACT_VERSION
@@ -926,6 +967,7 @@ function buildLocalAiInfoPayload(payload = {}) {
     runtimeFamily: localAi.runtimeFamily,
     adapterStrategy: localAi.adapterStrategy,
     trainingPolicy: localAi.trainingPolicy,
+    rankingPolicy: localAi.rankingPolicy,
   }
 }
 
