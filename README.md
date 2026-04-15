@@ -1,6 +1,33 @@
-# idena-ai-benchmark !!! NOT READY TO USE !!!
+# IdenaAI
 
-This repository is WORK IN PROGRESS for a desktop benchmarking tool that connects AI API providers to the FLIP-Challenge - a human CAPTCHA-like benchmark built from human-generated and human-verified tasks collected from the Idena blockchain. It lets researchers test, compare, and stress-test models on tasks that are still easy for humans but often hard, brittle, and expensive for AI.
+## Work In Progress
+
+This repository is a **work-in-progress** community fork of
+[`idena-desktop`](https://github.com/idena-network/idena-desktop) with
+experimental AI, governance, and in-app social features.
+
+It is **not an official Idena release**, **not production-ready**, and **not
+fully security-audited**. Treat it as research software and test tooling, not
+as a hardened wallet or trusted desktop client.
+
+If you want to try it anyway, do so **only at your own risk** and **only inside
+a secure test environment**, for example:
+
+- a separate macOS/Linux user profile
+- a dedicated test machine or VM
+- a disposable or low-value Idena identity
+- tightly capped API/provider budgets
+- no unattended publishing or automation
+
+Do **not** use valuable identities, high-value wallets, long-lived secrets, or
+large AI budgets unless you have reviewed the code and understand the current
+risks.
+
+This fork connects AI tooling to the FLIP Challenge, a human CAPTCHA-like
+benchmark built from human-generated and human-verified tasks collected from the
+Idena blockchain. It lets researchers test, compare, and stress-test models on
+tasks that are still easy for humans but often hard, brittle, and expensive for
+AI.
 
 Use it to explore model capability, failure modes, prompt strategies, provider differences, and cost. See which models come closest, where they still break down, and what price AI has to pay on tasks where humans still hold the advantage.
 
@@ -14,7 +41,11 @@ Hugging Face dataset:
 Andreas Plesner repo:
 [https://github.com/aplesner/flip-reasoning-challenge](https://github.com/aplesner/flip-reasoning-challenge)
 
-Our repository enables also onchain testing, but entirely at the tester’s own responsibility. Onchain outcomes may differ from offchain benchmark results and depend not only on model capability, but also on the willingness and ability of the Idena community to defend the network against bad flips and to report invalid submissions.
+This repository also enables experimental on-chain testing, but entirely at the
+tester’s own responsibility. On-chain outcomes may differ from off-chain
+benchmark results and depend not only on model capability, but also on the
+willingness and ability of the Idena community to defend the network against bad
+flips and to report invalid submissions.
 
 This project does not endorse any token or coin. It is a research tool built around one core question: where are humans still meaningfully better than AI? If onchain benchmarking on Idena shows that stronger defenses are needed, an individual fork or a redesigned Idena-like blockchain may be the better path for preserving or improving AI resistance.
 
@@ -30,7 +61,8 @@ During validation, users solve and create short visual puzzles called flips. A f
 
 That makes FLIP interesting as a multimodal benchmark for reasoning, sequencing, common sense, and visual storytelling - not just raw image recognition.
 
-This fork keeps the familiar desktop app flow available while adding optional AI research features:
+This fork keeps the familiar desktop app flow available while adding optional AI
+research features:
 
 - AI-assisted flip story generation
 - AI-assisted flip image generation
@@ -41,6 +73,25 @@ This fork keeps the familiar desktop app flow available while adding optional AI
 
 AI is optional. The app should still be usable like regular `idena-desktop`
 without enabling AI or adding API keys.
+
+## Current Loose Ends
+
+The main unfinished areas at the time of writing are:
+
+- Electron hardening is incomplete. The app is still a development-oriented
+  Electron fork, not a fully hardened desktop client.
+- Local AI support is still evolving. Branding, runtime adapters, model
+  defaults, and compatibility layers are in active development.
+- Federated learning is still experimental and incomplete. Governance,
+  contributor verification, redundancy, aggregation, and auditability are not
+  yet finished end-to-end.
+- On-chain automation remains risky. Real validation and publishing flows still
+  need human review and should not be trusted unattended.
+- Linux and Windows support are still best-effort. Most testing has been on
+  current macOS.
+- Repository layout is still in transition. Some bundled snapshots and research
+  artifacts remain for reproducibility, but the long-term release shape is not
+  settled yet.
 
 ## Status
 
@@ -76,9 +127,10 @@ The project was developed through prompt-assisted coding with Codex and tested m
 - bloated repository metadata or bundled artifacts
 - unsafe assumptions around automation, costs, API calls, or publishing
 
-Use it at your own responsibility. Do not run it with valuable accounts, large
-API budgets, or unattended publishing enabled unless you have reviewed the code
-and understand the risks.
+Use it at your own responsibility. Prefer a secure test setup with isolated
+accounts, limited budgets, and no valuable production secrets. Do not run it
+with valuable identities, large API budgets, or unattended publishing enabled
+unless you have reviewed the code and understand the risks.
 
 ## Install From Source
 
