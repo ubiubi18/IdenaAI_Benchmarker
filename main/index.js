@@ -496,9 +496,72 @@ async function performNodeRpc(payload = {}) {
 }
 
 function normalizeLocalAiPayload(payload = {}) {
-  return payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload
-    : {}
+  const MAX_LOCAL_AI_PAYLOAD_DEPTH = 8
+  const MAX_LOCAL_AI_OBJECT_KEYS = 128
+  const MAX_LOCAL_AI_ARRAY_ITEMS = 32
+  const MAX_LOCAL_AI_TEXT_CHARS = 20000
+  const MAX_LOCAL_AI_DATA_URL_CHARS = 8 * 1024 * 1024
+
+  function sanitizeLocalAiValue(value, depth = 0) {
+    if (depth > MAX_LOCAL_AI_PAYLOAD_DEPTH) {
+      return null
+    }
+
+    if (value === null || typeof value === 'undefined') {
+      return value
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.startsWith('data:image/')
+        ? value.slice(0, MAX_LOCAL_AI_DATA_URL_CHARS)
+        : value.slice(0, MAX_LOCAL_AI_TEXT_CHARS)
+      return trimmed
+    }
+
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null
+    }
+
+    if (typeof value === 'boolean') {
+      return value
+    }
+
+    if (typeof value === 'bigint') {
+      return value.toString()
+    }
+
+    if (Array.isArray(value)) {
+      return value
+        .slice(0, MAX_LOCAL_AI_ARRAY_ITEMS)
+        .map((item) => sanitizeLocalAiValue(item, depth + 1))
+    }
+
+    if (value && typeof value === 'object') {
+      return Object.entries(value)
+        .slice(0, MAX_LOCAL_AI_OBJECT_KEYS)
+        .reduce((result, [key, entryValue]) => {
+          if (typeof key !== 'string') {
+            return result
+          }
+
+          const sanitized = sanitizeLocalAiValue(entryValue, depth + 1)
+
+          if (typeof sanitized !== 'undefined') {
+            result[key] = sanitized
+          }
+
+          return result
+        }, {})
+    }
+
+    return undefined
+  }
+
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return {}
+  }
+
+  return sanitizeLocalAiValue(payload) || {}
 }
 
 function pickLocalAiInput(nextPayload) {
@@ -2240,7 +2303,9 @@ onTrusted('localAi.captureFlip', (_event, payload) => {
     return
   }
 
-  Promise.resolve(localAiManager.captureFlip(payload)).catch((error) => {
+  Promise.resolve(
+    localAiManager.captureFlip(normalizeLocalAiPayload(payload))
+  ).catch((error) => {
     logger.error('Local AI capture failed', {
       error: error.toString(),
     })
