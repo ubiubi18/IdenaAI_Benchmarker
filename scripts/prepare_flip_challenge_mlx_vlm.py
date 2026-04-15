@@ -80,6 +80,7 @@ DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE = (
     "Reply with exactly one lowercase token: a, b, or skip."
 )
 COMPOSITE_MAX_SIZE = (448, 448)
+NATIVE_FRAME_MAX_SIZE = (128, 128)
 
 
 def fetch_json(url: str):
@@ -353,6 +354,7 @@ def build_training_record(
     task_dir.mkdir(parents=True, exist_ok=True)
 
     saved_images: List[str] = []
+    resized_training_images: List[str] = []
     panel_bytes: List[bytes] = []
     for index, slot in enumerate(slots):
         image_id = images_map.get(slot)
@@ -366,6 +368,12 @@ def build_training_record(
             image_path.write_bytes(raw)
         saved_images.append(str(image_path.resolve()))
 
+        resized_image_path = task_dir / f"train-{index + 1}.png"
+        if not resized_image_path.exists():
+            resized_image = resize_to_fit(load_panel_image(raw), NATIVE_FRAME_MAX_SIZE)
+            resized_image.save(resized_image_path, format="PNG")
+        resized_training_images.append(str(resized_image_path.resolve()))
+
     composite_path = task_dir / "composite.png"
     if not composite_path.exists():
         build_flip_composite(panel_bytes).save(composite_path, format="PNG")
@@ -373,9 +381,11 @@ def build_training_record(
     training_images, left_frame_images, right_frame_images = build_training_images(
         image_mode=image_mode,
         composite_path=composite_path,
-        saved_images=saved_images,
-        left_stack=left_stack,
-        right_stack=right_stack,
+        saved_images=resized_training_images
+        if normalize_image_mode(image_mode) == "native_frames"
+        else saved_images,
+        option_a_stack=left_stack,
+        option_b_stack=right_stack,
     )
 
     ranking = build_historical_signals(task_id, task_data)
@@ -492,6 +502,7 @@ def process_parquet_files(
     augment_swap_orders: bool,
 ) -> Tuple[List[dict], int]:
     tasks: Dict[str, dict] = {}
+    completed_task_ids = set()
     completed: List[dict] = []
     malformed = 0
     produced = 0
@@ -505,6 +516,8 @@ def process_parquet_files(
                 task_id = row.get("task_id")
                 if not task_id:
                     malformed += 1
+                    continue
+                if task_id in completed_task_ids:
                     continue
 
                 record = tasks.get(task_id)
@@ -547,6 +560,7 @@ def process_parquet_files(
                         if produced >= skip_flips:
                             completed.extend(flip_records)
                         produced += 1
+                        completed_task_ids.add(task_id)
                     except Exception:
                         malformed += 1
                     del tasks[task_id]
