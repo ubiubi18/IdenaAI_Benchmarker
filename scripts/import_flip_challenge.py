@@ -21,6 +21,7 @@ import base64
 import json
 import os
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -59,16 +60,47 @@ def list_parquet_paths(split: str) -> List[str]:
     return sorted(paths)
 
 
+def is_valid_cached_download(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size <= 0:
+        return False
+
+    if path.suffix != ".parquet":
+        return True
+
+    if path.stat().st_size < 8:
+        return False
+
+    with path.open("rb") as fp:
+        fp.seek(-4, os.SEEK_END)
+        return fp.read(4) == b"PAR1"
+
+
 def download_file(url: str, dst: Path) -> None:
-    if dst.exists() and dst.stat().st_size > 0:
+    if is_valid_cached_download(dst):
         return
+
     dst.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(url, timeout=120) as response, dst.open("wb") as fp:
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            fp.write(chunk)
+    temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", delete=False, dir=dst.parent, prefix=f".{dst.name}.", suffix=".tmp"
+        ) as tmp_fp:
+            temp_path = Path(tmp_fp.name)
+            with urllib.request.urlopen(url, timeout=120) as response:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    tmp_fp.write(chunk)
+
+        if not is_valid_cached_download(temp_path):
+            raise RuntimeError(f"Incomplete download for {dst.name}")
+
+        os.replace(temp_path, dst)
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
 
 
 def guess_mime(data: bytes) -> str:
