@@ -357,6 +357,197 @@ describe('local-ai sidecar', () => {
     )
   })
 
+  it('accepts alternate Ollama response shapes for assistant text', async () => {
+    const httpClient = {
+      post: jest
+        .fn()
+        .mockResolvedValueOnce({
+          data: {
+            model: 'llama3.1:8b',
+            response: 'Hello from response.',
+          },
+          config: {
+            url: 'http://127.0.0.1:11434/api/chat',
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            model: 'llama3.1:8b',
+            message: {
+              role: 'assistant',
+              content: [{text: 'Hello'}, {text: 'from array.'}],
+            },
+          },
+          config: {
+            url: 'http://127.0.0.1:11434/api/chat',
+          },
+        }),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        input: 'Say hello.',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      text: 'Hello from response.',
+      content: 'Hello from response.',
+    })
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        input: 'Say hello again.',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      text: 'Hello\nfrom array.',
+      content: 'Hello\nfrom array.',
+    })
+  })
+
+  it('allows up to 10000 characters for one chat message', async () => {
+    const httpClient = {
+      post: jest.fn(async () => ({
+        data: {
+          model: 'llama3.1:8b',
+          message: {
+            role: 'assistant',
+            content: 'Long input accepted.',
+          },
+        },
+        config: {
+          url: 'http://127.0.0.1:11434/api/chat',
+        },
+      })),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+    const nearLimit = 'A'.repeat(10000)
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        input: nearLimit,
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      text: 'Long input accepted.',
+    })
+
+    expect(httpClient.post).toHaveBeenCalledWith(
+      'http://127.0.0.1:11434/api/chat',
+      expect.objectContaining({
+        messages: [{role: 'user', content: nearLimit}],
+      }),
+      expect.any(Object)
+    )
+  })
+
+  it('rejects chat input above 10000 characters', async () => {
+    const httpClient = {
+      post: jest.fn(),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        input: 'A'.repeat(10001),
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 'validation_error',
+      error: 'message_too_large',
+      lastError: 'Local AI chat accepts at most 10000 characters per message.',
+    })
+
+    expect(httpClient.post).not.toHaveBeenCalled()
+  })
+
+  it('rejects chat requests above 80000 total characters', async () => {
+    const httpClient = {
+      post: jest.fn(),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        messages: Array.from({length: 9}, (_, index) => ({
+          role: 'user',
+          content: `${index}:${'A'.repeat(9997)}`,
+        })),
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 'validation_error',
+      error: 'conversation_too_large',
+      lastError: 'Local AI chat accepts at most 80000 characters per request.',
+    })
+
+    expect(httpClient.post).not.toHaveBeenCalled()
+  })
+
+  it('allows longer image-chat timeouts up to the extended cap', async () => {
+    const httpClient = {
+      post: jest.fn(async () => ({
+        data: {
+          model: 'qwen2.5vl:7b',
+          message: {
+            role: 'assistant',
+            content: 'Image answer.',
+          },
+        },
+        config: {
+          url: 'http://127.0.0.1:11434/api/chat',
+        },
+      })),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        visionModel: 'qwen2.5vl:7b',
+        timeoutMs: 120000,
+        messages: [
+          {
+            role: 'user',
+            content: 'Describe the attached image.',
+            images: ['data:image/png;base64,AAA='],
+          },
+        ],
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      text: 'Image answer.',
+    })
+
+    expect(httpClient.post).toHaveBeenCalledWith(
+      'http://127.0.0.1:11434/api/chat',
+      expect.objectContaining({
+        model: 'qwen2.5vl:7b',
+      }),
+      expect.objectContaining({
+        timeout: 90000,
+      })
+    )
+  })
+
   it('returns a structured unavailable error when Ollama cannot be reached', async () => {
     const httpClient = {
       post: jest.fn(async () => {

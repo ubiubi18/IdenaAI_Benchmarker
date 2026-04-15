@@ -62,6 +62,14 @@ function buildDecisionRules({forceDecision, secondPass, repromptRule}) {
   }
 }
 
+function buildReportabilityRules() {
+  return [
+    '- Treat the flip as report-worthy if solving it clearly requires reading text.',
+    '- Treat the flip as report-worthy if visible order labels, letters, numbers, arrows, captions, or sequence markers are placed on top of the images.',
+    '- Treat the flip as report-worthy if it contains inappropriate, NSFW, or graphic violent content.',
+  ].join('\n')
+}
+
 function buildCompositePrompt({
   hash,
   allowedAnswers,
@@ -69,15 +77,25 @@ function buildCompositePrompt({
   passRule,
   repromptRule,
 }) {
+  const reportabilityRules = buildReportabilityRules()
   return `
 You are solving an Idena short-session flip benchmark.
-You are given two candidate stories of the same 4 images:
-- LEFT story image
-- RIGHT story image
+You are given one 2x2 composite image with four panels:
+- Panel 1 = top-left
+- Panel 2 = top-right
+- Panel 3 = bottom-left
+- Panel 4 = bottom-right
+
+Two candidate story orders are proposed:
+- LEFT order
+- RIGHT order
 
 Task:
-1) Choose the most meaningful story.
-2) Return JSON only.
+1) Inspect each panel separately and identify the main actors, actions, and visible state.
+2) If any readable text appears, transcribe it and translate it to English if needed.
+3) Mentally simulate LEFT and RIGHT as chronological stories.
+4) Choose the story with the clearest causal chain and consistent entity progression.
+5) Return JSON only.
 
 Allowed JSON schema:
 {"answer":"left|right|skip","confidence":0.0,"reasoning":"short optional note"}
@@ -85,7 +103,9 @@ Allowed JSON schema:
 Rules:
 - Use only ${allowedAnswers} for "answer"
 - "confidence" must be between 0 and 1
-- Keep reasoning concise and factual
+- Candidate side labels are arbitrary. Do not use position or label frequency as a hint.
+- Keep reasoning concise and factual, and mention one concrete visual cue when possible.
+${reportabilityRules}
 ${uncertaintyRule}
 ${passRule}
 ${repromptRule ? `- Extra instruction: ${repromptRule}` : ''}
@@ -101,6 +121,7 @@ function buildFramesSinglePassPrompt({
   passRule,
   repromptRule,
 }) {
+  const reportabilityRules = buildReportabilityRules()
   return `
 You are solving an Idena short-session flip benchmark.
 You are given 8 ordered frame images:
@@ -108,10 +129,12 @@ You are given 8 ordered frame images:
 - Images 5-8 belong to the RIGHT story (in temporal order)
 
 Task:
-1) Analyze each frame separately.
-2) Build a short narrative for LEFT and RIGHT.
-3) Choose the most meaningful story.
-4) Return JSON only.
+1) Inspect each frame separately and identify actors, actions, and visible state changes.
+2) If any readable text appears, transcribe it and translate it to English if needed.
+3) Build one short story summary for LEFT and one short story summary for RIGHT.
+4) Compare coherence using common-sense chronology and visible cause -> effect links.
+5) Choose the most meaningful story.
+6) Return JSON only.
 
 Allowed JSON schema:
 {"answer":"left|right|skip","confidence":0.0,"reasoning":"short optional note"}
@@ -119,7 +142,9 @@ Allowed JSON schema:
 Rules:
 - Use only ${allowedAnswers} for "answer"
 - "confidence" must be between 0 and 1
-- Keep reasoning concise and factual
+- Do not use LEFT/RIGHT label identity or candidate position as a hint.
+- Keep reasoning concise and factual, and mention one concrete visual cue when possible.
+${reportabilityRules}
 ${uncertaintyRule}
 ${passRule}
 ${repromptRule ? `- Extra instruction: ${repromptRule}` : ''}
@@ -136,24 +161,44 @@ You are given 8 ordered frame images:
 - Images 5-8 belong to the RIGHT story (in temporal order)
 
 Task:
-1) Caption each frame in one short factual sentence.
-2) Build one concise story summary for LEFT and RIGHT.
-3) Return JSON only.
+1) For each frame, write one short factual caption.
+2) Extract any readable text from each frame and translate it to English if needed.
+3) Build one concise story summary for LEFT and RIGHT.
+4) Estimate one coherence score from 0 to 100 for LEFT and RIGHT.
+5) Flag report risk if the flip is clearly report-worthy.
+6) Return JSON only.
 
 Allowed JSON schema:
 {
-  "leftFrames":["...", "...", "...", "..."],
-  "rightFrames":["...", "...", "...", "..."],
+  "leftFrames":[
+    {"caption":"...", "text":"...", "translation":"..."},
+    {"caption":"...", "text":"...", "translation":"..."},
+    {"caption":"...", "text":"...", "translation":"..."},
+    {"caption":"...", "text":"...", "translation":"..."}
+  ],
+  "rightFrames":[
+    {"caption":"...", "text":"...", "translation":"..."},
+    {"caption":"...", "text":"...", "translation":"..."},
+    {"caption":"...", "text":"...", "translation":"..."},
+    {"caption":"...", "text":"...", "translation":"..."}
+  ],
   "leftStory":"...",
   "rightStory":"...",
-  "confidenceLeft":0.0,
-  "confidenceRight":0.0
+  "coherenceLeft":0,
+  "coherenceRight":0,
+  "reportRisk": false,
+  "reportReason":""
 }
 
 Rules:
 - Keep each frame caption short and factual
+- Use "" for text and translation when no readable text exists
 - Keep story summaries concise
-- confidence values must be between 0 and 1
+- coherence scores must be integers between 0 and 100
+- Set reportRisk=true if reading text is required to solve the flip
+- Set reportRisk=true if visible order labels, numbers, letters, arrows, captions, or sequence markers appear on the images
+- Set reportRisk=true if the flip contains inappropriate, NSFW, or graphic violent content
+- Do not use LEFT/RIGHT label identity as a hint when comparing stories
 
 Flip hash: ${hash}
 `.trim()
@@ -167,13 +212,17 @@ function buildFramesDecisionPrompt({
   passRule,
   repromptRule,
 }) {
+  const reportabilityRules = buildReportabilityRules()
   return `
 You are solving an Idena short-session flip benchmark.
 You are given pre-analysis JSON for LEFT and RIGHT story frames.
 
 Task:
-1) Use the pre-analysis to select the better story.
-2) Return JSON only.
+1) Read the captions, extracted text, translations, story summaries, coherence scores, and report flags.
+2) If reportRisk is true, return skip unless the report signal is clearly invalid.
+3) Otherwise, choose the story with the better coherence and clearer causal chain.
+4) Prefer skip when both stories are similarly weak or ambiguous.
+5) Return JSON only.
 
 Allowed JSON schema:
 {"answer":"left|right|skip","confidence":0.0,"reasoning":"short optional note"}
@@ -181,7 +230,8 @@ Allowed JSON schema:
 Rules:
 - Use only ${allowedAnswers} for "answer"
 - "confidence" must be between 0 and 1
-- Keep reasoning concise and factual
+- Keep reasoning concise and factual, and cite one key caption or reportability signal
+${reportabilityRules}
 ${uncertaintyRule}
 ${passRule}
 ${repromptRule ? `- Extra instruction: ${repromptRule}` : ''}

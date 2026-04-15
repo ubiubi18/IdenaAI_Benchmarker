@@ -17,11 +17,11 @@ const DEFAULT_VISION_MODEL = 'moondream'
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_FLIP_IMAGES = 8
 const MIN_TIMEOUT_MS = 1000
-const MAX_TIMEOUT_MS = 30 * 1000
+const MAX_TIMEOUT_MS = 90 * 1000
 const MAX_MODEL_NAME_LENGTH = 160
 const MAX_CHAT_MESSAGES = 24
-const MAX_CHAT_MESSAGE_CHARS = 6000
-const MAX_TOTAL_CHAT_CHARS = 24 * 1000
+const MAX_CHAT_MESSAGE_CHARS = 10 * 1000
+const MAX_TOTAL_CHAT_CHARS = 80 * 1000
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
 const ALLOWED_CHAT_ROLES = new Set(['system', 'user', 'assistant'])
@@ -327,15 +327,66 @@ function shouldPreferOcrFirst(messages = []) {
 }
 
 function normalizeOllamaContent(data) {
-  const content =
+  if (!data || typeof data !== 'object') {
+    return null
+  }
+
+  const directContentCandidates = [
     data &&
     data.message &&
     typeof data.message === 'object' &&
     typeof data.message.content === 'string'
-      ? data.message.content.trim()
-      : ''
+      ? data.message.content
+      : '',
+    typeof data.response === 'string' ? data.response : '',
+    typeof data.content === 'string' ? data.content : '',
+    typeof data.output_text === 'string' ? data.output_text : '',
+    Array.isArray(data.choices) &&
+    data.choices[0] &&
+    data.choices[0].message &&
+    typeof data.choices[0].message.content === 'string'
+      ? data.choices[0].message.content
+      : '',
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
 
-  return content || null
+  if (directContentCandidates.length > 0) {
+    return directContentCandidates[0]
+  }
+
+  const structuredMessageContent =
+    data && data.message && typeof data.message === 'object'
+      ? data.message.content
+      : null
+
+  if (Array.isArray(structuredMessageContent)) {
+    const joined = structuredMessageContent
+      .map((item) => {
+        if (typeof item === 'string') {
+          return item.trim()
+        }
+
+        if (item && typeof item === 'object') {
+          if (typeof item.text === 'string') {
+            return item.text.trim()
+          }
+
+          if (typeof item.content === 'string') {
+            return item.content.trim()
+          }
+        }
+
+        return ''
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+
+    return joined || null
+  }
+
+  return null
 }
 
 function normalizeVisionModel(value, fallback = DEFAULT_VISION_MODEL) {

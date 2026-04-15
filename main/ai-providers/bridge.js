@@ -5518,20 +5518,22 @@ function createAiProviderBridge(logger, dependencies = {}) {
   function buildLocalAiNeutralFramePrompt({
     hash,
     forceDecision,
-    optionALabel,
-    optionBLabel,
+    firstCandidateLabel,
+    secondCandidateLabel,
   }) {
     return `
 You are solving an Idena short-session flip benchmark.
 You are given 8 ordered frame images:
-- Images 1-4 belong to OPTION ${optionALabel} (in temporal order)
-- Images 5-8 belong to OPTION ${optionBLabel} (in temporal order)
+- Images 1-4 belong to the first shown candidate: OPTION ${firstCandidateLabel} (in temporal order)
+- Images 5-8 belong to the second shown candidate: OPTION ${secondCandidateLabel} (in temporal order)
 
 Task:
-1) Analyze each frame separately.
-2) Compare the two candidate stories.
-3) Choose the more coherent chronological story.
-4) Return JSON only.
+1) Inspect each frame separately and identify the main actors, action, and visible state.
+2) If readable text exists, transcribe it and translate it to English if needed.
+3) Build one short story summary for OPTION ${firstCandidateLabel} and one for OPTION ${secondCandidateLabel}.
+4) Compare the two candidate stories using chronology, visible cause -> effect, and consistent entities.
+5) Decide which candidate is more coherent.
+6) Return JSON only.
 
 Allowed JSON schema:
 {"answer":"a|b|skip","confidence":0.0,"reasoning":"short optional note"}
@@ -5539,11 +5541,14 @@ Allowed JSON schema:
 Rules:
 - Use only ${forceDecision ? 'a|b' : 'a|b|skip'} for "answer"
 - "confidence" must be between 0 and 1
-- Keep reasoning concise and factual
+- Candidate labels are runtime labels only. Do not use label identity or first-vs-second position as a hint.
+- If solving clearly requires reading text, or visible order labels/numbers/letters/arrows/captions are drawn on the images, treat the flip as report-worthy and return skip unless forceDecision forbids it.
+- If inappropriate, NSFW, or graphic violent content is present, treat the flip as report-worthy and return skip unless forceDecision forbids it.
+- Keep reasoning concise and factual and mention one concrete visual cue
 ${
   forceDecision
-    ? '- You must choose a or b. Do not return skip.'
-    : '- If uncertain, return "skip".'
+    ? '- You must choose a or b unless the flip is clearly report-worthy.'
+    : '- If both candidates are ambiguous, equally weak, or clearly report-worthy, return "skip".'
 }
 
 Flip hash: ${hash}
@@ -5658,13 +5663,19 @@ Flip hash: ${hash}
       hashScore(`${flip.hash}:candidate-a`) % 2 === 0 ? 'left' : 'right'
     const optionAImages = optionAMapsTo === 'left' ? leftImages : rightImages
     const optionBImages = optionAMapsTo === 'left' ? rightImages : leftImages
+    const firstCandidateKey =
+      hashScore(`${flip.hash}:candidate-presentation`) % 2 === 0 ? 'a' : 'b'
+    const secondCandidateKey = firstCandidateKey === 'a' ? 'b' : 'a'
     const prompt = buildLocalAiNeutralFramePrompt({
       hash: flip.hash,
       forceDecision: profile.forceDecision,
-      optionALabel: 'A',
-      optionBLabel: 'B',
+      firstCandidateLabel: firstCandidateKey.toUpperCase(),
+      secondCandidateLabel: secondCandidateKey.toUpperCase(),
     })
-    const images = optionAImages.concat(optionBImages)
+    const images =
+      firstCandidateKey === 'a'
+        ? optionAImages.concat(optionBImages)
+        : optionBImages.concat(optionAImages)
     const preferredVisionModels = [
       'qwen2.5vl:7b',
       String(runtimePayload.visionModel || '').trim(),
@@ -5711,6 +5722,7 @@ Flip hash: ${hash}
                 runtime: directResponse,
                 visionModel,
                 optionAMapsTo,
+                firstCandidateKey,
               },
             }
           } catch (error) {

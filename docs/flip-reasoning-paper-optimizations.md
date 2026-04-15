@@ -5,8 +5,10 @@
 - Paper file reviewed locally: `$DOWNLOADS/2504.12256v1.pdf`
 - Main findings used here:
   - Caption-first pipelines often outperform direct image-only prompting in FLIP-like tasks.
-  - Ensemble methods materially improve accuracy over single models.
-  - Subset/weighted combinations outperform naive all-model majority voting.
+- Ensemble methods materially improve accuracy over single models.
+- Subset/weighted combinations outperform naive all-model majority voting.
+- Extended backlog derived from the later prompt/pipeline PDF review:
+  - [flip-prompt-pipeline-backlog.md](./flip-prompt-pipeline-backlog.md)
 
 ## Applied in app
 

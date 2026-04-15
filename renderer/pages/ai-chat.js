@@ -842,6 +842,7 @@ export default function AiChatPage() {
                 num_predict: 256,
               }
             : null,
+        timeoutMs: outgoingAttachments.length > 0 ? 90 * 1000 : 15 * 1000,
       })
       const assistantContent = extractChatContent(result)
 

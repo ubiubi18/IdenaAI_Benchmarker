@@ -6,6 +6,7 @@ const {promisify} = require('util')
 
 const execFileAsync = promisify(execFile)
 const OCR_SWIFT_SCRIPT = path.resolve(__dirname, 'apple-ocr.swift')
+const OCR_TIMEOUT_MS = 60 * 1000
 
 function decodeImagePayload(value) {
   if (Buffer.isBuffer(value)) {
@@ -128,7 +129,7 @@ async function runAppleVisionOcr(rawImages = []) {
       'swift',
       [OCR_SWIFT_SCRIPT, ...imagePaths],
       {
-        timeout: 20000,
+        timeout: OCR_TIMEOUT_MS,
         maxBuffer: 4 * 1024 * 1024,
       }
     )
