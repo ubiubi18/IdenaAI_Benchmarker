@@ -301,18 +301,19 @@ function Navbar() {
 
   return (
     <Nav>
-      <NavItem href="/home" icon={ProfileIcon}>
-        {t('My Idena')}
-      </NavItem>
       <NavSectionTitle>{t('Discover')}</NavSectionTitle>
       <NavItem href="/ai-chat" icon={ChatIcon} featured badge={t('AI')}>
-        {t('Chat with IdenaAI')}
+        {t('IdenaAI-GPT')}
       </NavItem>
       <NavItem href="/social" icon={GlobeIcon} featured badge={t('Live')}>
         {t('idena.social')}
       </NavItem>
       <NavItem href="/dao" icon={CommunityIcon} featured badge={t('DAO')}>
         {t('IdenaDAO')}
+      </NavItem>
+      <NavSectionTitle>{t('Workspace')}</NavSectionTitle>
+      <NavItem href="/home" icon={ProfileIcon}>
+        {t('My Idena')}
       </NavItem>
       <NavItem href="/wallets" icon={WalletIcon}>
         {t('Wallets')}
@@ -368,6 +369,8 @@ function NavItem({href, icon, children, badge, featured = false}) {
   const isActive = pathname.startsWith(href)
   let backgroundColor = 'transparent'
   let hoverBackgroundColor = 'gray.10'
+  let badgeBg = isActive ? 'whiteAlpha.300' : 'whiteAlpha.200'
+  let badgeColor = 'white'
 
   if (featured) {
     backgroundColor = 'xwhite.010'
@@ -377,6 +380,11 @@ function NavItem({href, icon, children, badge, featured = false}) {
   if (isActive) {
     backgroundColor = 'xblack.016'
     hoverBackgroundColor = 'xblack.016'
+  }
+
+  if (badge === 'DAO') {
+    badgeBg = isActive ? 'purple.300' : 'purple.400'
+    badgeColor = 'white'
   }
 
   return (
@@ -411,8 +419,8 @@ function NavItem({href, icon, children, badge, featured = false}) {
                 {children}
               </Text>
               <Badge
-                bg={isActive ? 'whiteAlpha.300' : 'whiteAlpha.200'}
-                color="white"
+                bg={badgeBg}
+                color={badgeColor}
                 borderRadius="full"
                 px={2}
                 py="0.5"

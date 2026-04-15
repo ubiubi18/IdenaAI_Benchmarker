@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import React from 'react'
 import {
+  Badge,
   Stack,
   Text,
   useDisclosure,
@@ -763,11 +764,11 @@ function HomeFeaturedDestinations() {
             href="/ai-chat"
             icon={<ChatIcon boxSize={5} />}
             eyebrow={t('AI assistant')}
-            title={t('Chat with IdenaAI')}
+            title={t('IdenaAI-GPT')}
             description={t(
               'Ask questions, attach images, and let the local runtime reason about test flips or node behavior.'
             )}
-            cta={t('Open chat')}
+            cta={t('Start chat')}
           />
           <HomeFeaturedCard
             href="/social"
@@ -784,6 +785,7 @@ function HomeFeaturedDestinations() {
             icon={<CommunityIcon boxSize={5} />}
             eyebrow={t('Governance')}
             title={t('IdenaDAO')}
+            stamp={t('DAO')}
             description={t(
               'Draft tagged proposals, review governance discussion, and publish through the integrated idena.social contract flow.'
             )}
@@ -795,7 +797,15 @@ function HomeFeaturedDestinations() {
   )
 }
 
-function HomeFeaturedCard({href, icon, eyebrow, title, description, cta}) {
+function HomeFeaturedCard({
+  href,
+  icon,
+  eyebrow,
+  title,
+  description,
+  cta,
+  stamp,
+}) {
   return (
     <Box
       borderWidth="1px"
@@ -807,16 +817,30 @@ function HomeFeaturedCard({href, icon, eyebrow, title, description, cta}) {
       bg="rgba(87, 143, 255, 0.06)"
     >
       <Stack spacing={3} h="full" align="flex-start">
-        <Stack spacing={2}>
-          <Text
-            color="brandBlue.500"
-            fontSize="xs"
-            fontWeight={600}
-            textTransform="uppercase"
-            letterSpacing="0.04em"
-          >
-            {eyebrow}
-          </Text>
+        <Stack spacing={2} w="full">
+          <HStack justify="space-between" align="flex-start" spacing={3}>
+            <Text
+              color="brandBlue.500"
+              fontSize="xs"
+              fontWeight={600}
+              textTransform="uppercase"
+              letterSpacing="0.04em"
+            >
+              {eyebrow}
+            </Text>
+            {stamp ? (
+              <Badge
+                colorScheme="purple"
+                borderRadius="full"
+                px={2}
+                py="0.5"
+                fontSize="2xs"
+                textTransform="uppercase"
+              >
+                {stamp}
+              </Badge>
+            ) : null}
+          </HStack>
           <HStack spacing={2} align="center">
             {icon}
             <Heading as="h3" fontSize="lg" fontWeight={500}>

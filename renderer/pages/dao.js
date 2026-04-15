@@ -58,6 +58,17 @@ export default function DaoPage() {
     >
       <Stack spacing={3}>
         <HStack spacing={2} flexWrap="wrap">
+          <Badge
+            colorScheme="purple"
+            borderRadius="full"
+            px={3}
+            py="1"
+            fontSize="xs"
+            textTransform="uppercase"
+            letterSpacing="0.04em"
+          >
+            {t('DAO')}
+          </Badge>
           <Badge colorScheme={isValidated ? 'green' : 'orange'}>
             {isValidated ? t('Validated identity') : t('Review mode')}
           </Badge>

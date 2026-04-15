@@ -912,7 +912,7 @@ export default function AiChatPage() {
             <Stack spacing={2}>
               <HStack spacing={3} align="center">
                 <ChatIcon boxSize="6" color="brandBlue.500" />
-                <PageTitle mb={0}>{t('Chat with IdenaAI')}</PageTitle>
+                <PageTitle mb={0}>{t('IdenaAI-GPT')}</PageTitle>
               </HStack>
               <Text color="muted" maxW="4xl">
                 {t(
