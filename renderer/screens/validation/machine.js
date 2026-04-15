@@ -1314,13 +1314,14 @@ function fetchFlips(
     fetchFlip(hash)
       .then(({result, error}) => {
         global.logger.debug(`Get flip_get response`, hash)
-        const flip = decodeFlip({...result}, ({images}) => {
+        const flip = decodeFlip({...result}, ({images, orders}) => {
           if (typeof onDecodedFlip === 'function') {
             onDecodedFlip({
               flipHash: hash,
               epoch,
               sessionType,
               images,
+              orders,
             })
           }
         })
@@ -1364,7 +1365,7 @@ function decodeFlip({hash, hex, publicHex, privateHex}, onDecoded) {
 
     if (typeof onDecoded === 'function') {
       try {
-        onDecoded({images})
+        onDecoded({images, orders})
       } catch {
         // Capture is optional and must never affect validation rendering.
       }

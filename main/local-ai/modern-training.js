@@ -535,12 +535,18 @@ function createModernTrainingCollector({
       })
       localEntries.push({
         cid: flipHash,
+        author: trimText(capture.author).toLowerCase(),
         epoch,
         sessionType: capture.sessionType,
         panelCount: capture.panelCount,
         timestamp: capture.timestamp,
         capturedAt: capture.capturedAt,
         consensus: capture.consensus || {},
+        orders: Array.isArray(capture.orders) ? capture.orders : [],
+        words: Array.isArray(capture.words) ? capture.words : [],
+        selectedOrder: trimText(capture.selectedOrder).toLowerCase() || null,
+        relevance: trimText(capture.relevance).toLowerCase() || null,
+        best: capture.best === true,
         payloadPath: payloadState.payloadPath,
         payloadAvailable: payloadState.payloadAvailable,
         payloadError: payloadState.payloadError,

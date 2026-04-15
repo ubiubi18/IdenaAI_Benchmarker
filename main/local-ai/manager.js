@@ -239,6 +239,7 @@ function normalizeConsensus(consensus) {
   return {
     finalAnswer: finalAnswer || null,
     reported,
+    strength: String(consensus.strength || '').trim() || null,
   }
 }
 
@@ -259,6 +260,62 @@ function hasEligibleConsensusAnswer(consensus) {
   )
 }
 
+function normalizeOrders(value) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((order) =>
+      Array.isArray(order)
+        ? order
+            .map((item) => Number.parseInt(item, 10))
+            .filter((item) => Number.isFinite(item) && item >= 0)
+        : []
+    )
+    .filter((order) => order.length > 0)
+    .slice(0, 2)
+}
+
+function normalizeWords(words) {
+  if (!Array.isArray(words)) {
+    return []
+  }
+
+  return words
+    .map((item) =>
+      item && typeof item === 'object' && !Array.isArray(item)
+        ? {
+            id: Number.isFinite(Number(item.id)) ? Number(item.id) : null,
+            name: String(item.name || '').trim() || null,
+            desc: String(item.desc || item.description || '').trim() || null,
+          }
+        : null
+    )
+    .filter(Boolean)
+}
+
+function normalizeSelectedOrder(value) {
+  const nextValue = String(value || '')
+    .trim()
+    .toLowerCase()
+  return nextValue === 'left' || nextValue === 'right' ? nextValue : null
+}
+
+function normalizeRelevance(value) {
+  const nextValue = String(value || '')
+    .trim()
+    .toLowerCase()
+  return nextValue || null
+}
+
+function normalizeAuthor(value) {
+  const nextValue = String(value || '')
+    .trim()
+    .toLowerCase()
+  return nextValue || null
+}
+
 function toCaptureMeta(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return null
@@ -271,15 +328,23 @@ function toCaptureMeta(payload) {
   }
 
   const images = Array.isArray(payload.images) ? payload.images : []
+  const explicitPanelCount = normalizePanelCount(payload.panelCount)
+  const panelCount = explicitPanelCount || images.length
 
   return {
     flipHash,
     epoch: normalizeEpoch(payload.epoch),
     sessionType: normalizeSessionType(payload.sessionType),
-    panelCount: images.length,
+    panelCount,
     timestamp: Date.now(),
     capturedAt: new Date().toISOString(),
     consensus: normalizeConsensus(payload.consensus),
+    author: normalizeAuthor(payload.author),
+    orders: normalizeOrders(payload.orders),
+    words: normalizeWords(payload.words),
+    selectedOrder: normalizeSelectedOrder(payload.selectedOrder),
+    relevance: normalizeRelevance(payload.relevance),
+    best: payload.best === true,
   }
 }
 
@@ -305,6 +370,61 @@ function normalizeCapture(item) {
     capturedAt:
       String(item.capturedAt || '').trim() || new Date().toISOString(),
     consensus: normalizeConsensus(item.consensus),
+    author: normalizeAuthor(item.author),
+    orders: normalizeOrders(item.orders),
+    words: normalizeWords(item.words),
+    selectedOrder: normalizeSelectedOrder(item.selectedOrder),
+    relevance: normalizeRelevance(item.relevance),
+    best: item.best === true,
+  }
+}
+
+function mergeConsensus(previousConsensus, nextConsensus) {
+  if (!previousConsensus && !nextConsensus) {
+    return null
+  }
+
+  return {
+    finalAnswer:
+      (nextConsensus && nextConsensus.finalAnswer) ||
+      (previousConsensus && previousConsensus.finalAnswer) ||
+      null,
+    reported:
+      (nextConsensus && nextConsensus.reported) ||
+      (previousConsensus && previousConsensus.reported) ||
+      false,
+    strength:
+      (nextConsensus && nextConsensus.strength) ||
+      (previousConsensus && previousConsensus.strength) ||
+      null,
+  }
+}
+
+function mergeCaptureMeta(previousCapture, nextCapture) {
+  const previous = previousCapture || {}
+  const next = nextCapture || {}
+  const nextOrders =
+    Array.isArray(next.orders) && next.orders.length ? next.orders : null
+  const previousOrders = Array.isArray(previous.orders) ? previous.orders : []
+  const nextWords =
+    Array.isArray(next.words) && next.words.length ? next.words : null
+  const previousWords = Array.isArray(previous.words) ? previous.words : []
+
+  return {
+    flipHash: next.flipHash || previous.flipHash || null,
+    epoch: next.epoch ?? previous.epoch ?? null,
+    sessionType: next.sessionType || previous.sessionType || null,
+    panelCount: next.panelCount || previous.panelCount || 0,
+    timestamp: Number(next.timestamp || previous.timestamp || Date.now()),
+    capturedAt:
+      next.capturedAt || previous.capturedAt || new Date().toISOString(),
+    consensus: mergeConsensus(previous.consensus, next.consensus),
+    author: next.author || previous.author || null,
+    orders: nextOrders || previousOrders,
+    words: nextWords || previousWords,
+    selectedOrder: next.selectedOrder || previous.selectedOrder || null,
+    relevance: next.relevance || previous.relevance || null,
+    best: next.best === true || previous.best === true,
   }
 }
 
@@ -477,6 +597,12 @@ function buildTrainingCandidateItem(capture) {
     timestamp: Number(capture.timestamp),
     capturedAt: normalizePackagedCapturedAt(capture.capturedAt),
     finalAnswer: capture.consensus.finalAnswer,
+    orders: Array.isArray(capture.orders) ? capture.orders : [],
+    words: Array.isArray(capture.words) ? capture.words : [],
+    selectedOrder: capture.selectedOrder || null,
+    relevance: capture.relevance || null,
+    best: capture.best === true,
+    author: capture.author || null,
   }
 }
 
@@ -972,9 +1098,9 @@ function createLocalAiManager({
   async function captureFlip(payload) {
     await hydrate()
 
-    const capture = toCaptureMeta(payload)
+    const nextCapture = toCaptureMeta(payload)
 
-    if (!capture) {
+    if (!nextCapture) {
       state.lastError = 'Invalid local AI capture payload'
 
       if (isDev && logger && typeof logger.debug === 'function') {
@@ -987,6 +1113,11 @@ function createLocalAiManager({
         ...currentStatus(),
       }
     }
+
+    const existingCapture = reduceLatestCaptures(state.captureIndex).find(
+      ({flipHash}) => flipHash === nextCapture.flipHash
+    )
+    const capture = mergeCaptureMeta(existingCapture, nextCapture)
 
     // Decoded flips often arrive before final consensus, so only explicit
     // disqualifiers are blocked here. Unknown cases still rely on manifest-time
@@ -1011,9 +1142,10 @@ function createLocalAiManager({
       }
     }
 
-    state.capturedCount += 1
+    state.capturedCount += existingCapture ? 0 : 1
     state.lastError = null
     state.captureIndex = state.captureIndex
+      .filter(({flipHash}) => flipHash !== capture.flipHash)
       .concat(capture)
       .slice(-MAX_CAPTURE_INDEX_ITEMS)
     state.recentCaptures = state.captureIndex.slice(-MAX_RECENT_CAPTURES)

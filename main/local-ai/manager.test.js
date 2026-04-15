@@ -112,6 +112,66 @@ describe('local-ai manager', () => {
     ])
   })
 
+  it('merges repeated flip captures into one enriched local record', async () => {
+    const logger = mockLogger()
+    const manager = createLocalAiManager({logger, storage})
+
+    await manager.captureFlip({
+      flipHash: 'flip-merge',
+      epoch: 12,
+      sessionType: 'short',
+      images: ['left', 'right', 'third', 'fourth'],
+      orders: [
+        [0, 1, 2, 3],
+        [3, 2, 1, 0],
+      ],
+    })
+
+    await manager.captureFlip({
+      flipHash: 'flip-merge',
+      epoch: 12,
+      sessionType: 'long',
+      panelCount: 4,
+      words: [{id: 1, name: 'apple', desc: 'fruit'}],
+      selectedOrder: 'left',
+      relevance: 'relevant',
+      best: true,
+      consensus: {
+        finalAnswer: 'left',
+        reported: false,
+        strength: 'Strong',
+      },
+    })
+
+    const captureIndex = await storage.readJson(
+      storage.resolveLocalAiPath('captures', 'index.json')
+    )
+
+    expect(captureIndex.capturedCount).toBe(1)
+    expect(captureIndex.captures).toHaveLength(1)
+    expect(captureIndex.captures[0]).toEqual(
+      expect.objectContaining({
+        flipHash: 'flip-merge',
+        epoch: 12,
+        sessionType: 'long',
+        panelCount: 4,
+        orders: [
+          [0, 1, 2, 3],
+          [3, 2, 1, 0],
+        ],
+        words: [{id: 1, name: 'apple', desc: 'fruit'}],
+        selectedOrder: 'left',
+        relevance: 'relevant',
+        best: true,
+        consensus: {
+          finalAnswer: 'left',
+          reported: false,
+          strength: 'Strong',
+        },
+      })
+    )
+  })
+
   it('persists capture metadata and builds a conservative epoch manifest', async () => {
     const logger = mockLogger()
     const manager = createLocalAiManager({logger, storage})
@@ -390,13 +450,19 @@ describe('local-ai manager', () => {
     })
     expect(candidatePackage.items).toEqual([
       {
+        author: null,
+        best: false,
         flipHash: 'flip-a',
         epoch: 12,
         sessionType: 'short',
         panelCount: 2,
+        orders: [],
+        relevance: null,
+        selectedOrder: null,
         timestamp: 1710000000000,
         capturedAt: '2026-01-01T00:00:00.000Z',
         finalAnswer: 'left',
+        words: [],
       },
     ])
     expect(candidatePackage.excluded).toEqual(

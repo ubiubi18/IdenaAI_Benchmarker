@@ -351,6 +351,63 @@ function normalizeAutoReportKeywords(words = []) {
     : []
 }
 
+function normalizeLocalCaptureWords(words = []) {
+  return Array.isArray(words)
+    ? words
+        .map((item) =>
+          item && typeof item === 'object'
+            ? {
+                id: Number.isFinite(Number(item.id)) ? Number(item.id) : null,
+                name: String(item.name || '').trim() || null,
+                desc:
+                  String(item.desc || item.description || '').trim() || null,
+              }
+            : null
+        )
+        .filter(Boolean)
+    : []
+}
+
+function getLocalAiCaptureSessionType(state) {
+  if (isShortSession(state)) {
+    return 'short'
+  }
+
+  if (isLongSessionFlips(state) || isLongSessionKeywords(state)) {
+    return 'long'
+  }
+
+  return null
+}
+
+function normalizeLocalCaptureSelectedOrder(flip) {
+  if (flip?.option === AnswerType.Left) {
+    return 'left'
+  }
+
+  if (flip?.option === AnswerType.Right) {
+    return 'right'
+  }
+
+  return null
+}
+
+function normalizeLocalCaptureRelevance(value) {
+  if (value === RelevanceType.Relevant) {
+    return 'relevant'
+  }
+
+  if (value === RelevanceType.Irrelevant) {
+    return 'irrelevant'
+  }
+
+  if (value === RelevanceType.Abstained) {
+    return 'abstained'
+  }
+
+  return null
+}
+
 async function imageSrcToDataUrl(src) {
   const value = String(src || '').trim()
 
@@ -623,6 +680,7 @@ function ValidationSession({
   const autoSolveStartedRef = useRef({short: false, long: false})
   const manualReportingStartedRef = useRef(false)
   const autoReportSubmitPendingRef = useRef(false)
+  const localAiCaptureSyncRef = useRef({})
   const previewShortFlips = useMemo(
     () => (forceAiPreview ? createPreviewAiShortFlips() : []),
     [forceAiPreview]
@@ -646,7 +704,13 @@ function ValidationSession({
       shortSessionDuration,
       longSessionDuration,
       locale: i18n.language || 'en',
-      onDecodedFlip: ({flipHash, epoch: epochNumber, sessionType, images}) => {
+      onDecodedFlip: ({
+        flipHash,
+        epoch: epochNumber,
+        sessionType,
+        images,
+        orders,
+      }) => {
         if (
           !localAiCaptureEnabled ||
           !global.localAi ||
@@ -661,6 +725,8 @@ function ValidationSession({
             epoch: epochNumber,
             sessionType,
             images,
+            panelCount: Array.isArray(images) ? images.length : 0,
+            orders,
           })
         } catch (error) {
           if (global.isDev) {
@@ -737,6 +803,7 @@ function ValidationSession({
     localAiCheckerAvailable &&
     (isShortSession(state) || isLongSessionFlips(state)) &&
     hasLocalAiValidationSequences(currentFlip)
+  const captureSessionType = getLocalAiCaptureSessionType(state)
 
   const flipTimerDetails = {
     isShortSession: isShortSession(state),
@@ -751,6 +818,54 @@ function ValidationSession({
       setBestRewardTipOpen(true)
     }
   }, [currentFlip])
+
+  useEffect(() => {
+    if (
+      !localAiCaptureEnabled ||
+      !captureSessionType ||
+      !global.localAi ||
+      typeof global.localAi.captureFlip !== 'function'
+    ) {
+      return
+    }
+
+    flips.forEach((flip) => {
+      if (!flip || !flip.hash) {
+        return
+      }
+
+      const payload = {
+        flipHash: flip.hash,
+        epoch,
+        sessionType: captureSessionType,
+        panelCount: Array.isArray(flip.images) ? flip.images.length : 0,
+        orders: Array.isArray(flip.orders) ? flip.orders : [],
+        words: normalizeLocalCaptureWords(flip.words),
+        selectedOrder: normalizeLocalCaptureSelectedOrder(flip),
+        relevance: normalizeLocalCaptureRelevance(flip.relevance),
+        best: Boolean(bestFlipHashes[flip.hash]),
+      }
+
+      const fingerprint = JSON.stringify(payload)
+      if (localAiCaptureSyncRef.current[flip.hash] === fingerprint) {
+        return
+      }
+
+      localAiCaptureSyncRef.current[flip.hash] = fingerprint
+
+      try {
+        global.localAi.captureFlip(payload)
+      } catch (error) {
+        if (global.isDev) {
+          global.logger.debug(
+            'localAi.captureFlip incremental update failed',
+            error && error.message
+          )
+        }
+      }
+    })
+  }, [bestFlipHashes, captureSessionType, epoch, flips, localAiCaptureEnabled])
+
   useEffect(() => {
     if (bestFlipHashes[currentFlip?.hash]) {
       setBestRewardTipOpen(false)
