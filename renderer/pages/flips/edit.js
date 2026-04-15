@@ -50,6 +50,7 @@ import {useChainState} from '../../shared/providers/chain-context'
 import {InfoIcon, RefreshIcon} from '../../shared/components/icons'
 import {useRpc, useTrackTx} from '../../screens/ads/hooks'
 import {eitherState} from '../../shared/utils/utils'
+import {getFlipsBridge} from '../../shared/utils/flips-bridge'
 
 export default function EditFlipPage() {
   const {t, i18n} = useTranslation()
@@ -83,7 +84,7 @@ export default function EditFlipPage() {
     services: {
       // eslint-disable-next-line no-shadow
       prepareFlip: async ({id}) => {
-        const persistedFlips = global.flipStore?.getFlips()
+        const persistedFlips = getFlipsBridge().getFlips()
 
         const {
           pics,

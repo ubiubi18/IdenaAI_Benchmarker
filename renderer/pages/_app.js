@@ -26,11 +26,7 @@ import {
 
 function hasRealBridge(bridge = {}) {
   return Boolean(
-    bridge &&
-      bridge.globals &&
-      bridge.globals.ipcRenderer &&
-      typeof bridge.globals.ipcRenderer.send === 'function' &&
-      !bridge.globals.ipcRenderer.__idenaFallback
+    bridge && bridge.app && typeof bridge.app.reload === 'function'
   )
 }
 
@@ -59,17 +55,6 @@ function syncLegacyBridgeGlobals(bridge = {}) {
       info: noop,
       warn: noop,
       error: noop,
-    }
-  }
-
-  if (!global.ipcRenderer) {
-    const noop = () => {}
-    global.ipcRenderer = {
-      __idenaFallback: true,
-      on: noop,
-      send: noop,
-      removeListener: noop,
-      invoke: async () => undefined,
     }
   }
 
@@ -126,6 +111,7 @@ function syncLegacyBridgeGlobals(bridge = {}) {
       captionFlip: async () => ({ok: false, status: 'not_implemented'}),
       ocrImage: async () => ({ok: false, status: 'not_implemented'}),
       trainEpoch: async () => ({ok: false, status: 'not_implemented'}),
+      captureFlip: () => {},
     }
   }
 
@@ -168,10 +154,6 @@ function syncLegacyBridgeGlobals(bridge = {}) {
     global.logger = bridgeGlobals.logger
   }
 
-  if (bridgeGlobals.ipcRenderer) {
-    global.ipcRenderer = bridgeGlobals.ipcRenderer
-  }
-
   if (bridgeGlobals.openExternal) {
     global.openExternal = bridgeGlobals.openExternal
   }
@@ -190,14 +172,10 @@ function syncLegacyBridgeGlobals(bridge = {}) {
 
   syncSharedGlobal('env', global.env)
   syncSharedGlobal('logger', global.logger)
-  syncSharedGlobal('ipcRenderer', global.ipcRenderer)
   syncSharedGlobal('openExternal', global.openExternal)
   syncSharedGlobal('aiSolver', global.aiSolver)
   syncSharedGlobal('aiTestUnit', global.aiTestUnit)
   syncSharedGlobal('localAi', global.localAi)
-  syncSharedGlobal('flipStore')
-  syncSharedGlobal('invitesDb')
-  syncSharedGlobal('contactsDb')
   syncSharedGlobal('appVersion', APP_VERSION_FALLBACK)
   syncSharedGlobal('isDev', false)
   syncSharedGlobal('isTest', false)
@@ -218,7 +196,10 @@ function syncLegacyBridgeGlobals(bridge = {}) {
     global.imageTools = bridge.image
   }
 
-  return hasRealBridge(bridge)
+  const isBridgeReady = hasRealBridge(bridge)
+  global.__idenaBridgeReady = isBridgeReady
+
+  return isBridgeReady
 }
 
 // err is a workaround for https://github.com/zeit/next.js/issues/8592
@@ -264,9 +245,7 @@ function AppProviders(props) {
       return
     }
 
-    const hadFallbackBridge = Boolean(
-      global.ipcRenderer && global.ipcRenderer.__idenaFallback
-    )
+    const hadFallbackBridge = global.__idenaBridgeReady === false
     const isBridgeReady = syncLegacyBridgeGlobals(window.idena || {})
 
     if (hadFallbackBridge && isBridgeReady) {

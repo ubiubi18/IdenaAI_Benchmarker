@@ -11,7 +11,6 @@ import {
 } from '@chakra-ui/react'
 import React from 'react'
 import {useTranslation} from 'react-i18next'
-import {NODE_COMMAND, NODE_EVENT} from '../../main/channels'
 import {PrimaryButton, SecondaryButton} from '../shared/components/button'
 import {
   Dialog,
@@ -19,6 +18,7 @@ import {
   DialogFooter,
   HDivider,
 } from '../shared/components/components'
+import {getNodeBridge} from '../shared/utils/node-bridge'
 
 export function TroubleshootingScreen() {
   const {t} = useTranslation()
@@ -118,7 +118,7 @@ function ResetNodeConfirmationDialog(props) {
   const [isPending, {on: setIsPendingOn, off: setIsPendingOff}] = useBoolean()
 
   React.useEffect(() => {
-    const handleNodeEvent = (_, event) => {
+    const handleNodeEvent = (event) => {
       switch (event) {
         case 'troubleshooting-reset-node':
           return setIsPendingOff()
@@ -127,11 +127,7 @@ function ResetNodeConfirmationDialog(props) {
       }
     }
 
-    global.ipcRenderer.on(NODE_EVENT, handleNodeEvent)
-
-    return () => {
-      global.ipcRenderer.removeListener(NODE_EVENT, handleNodeEvent)
-    }
+    return getNodeBridge().onEvent(handleNodeEvent)
   }, [setIsPendingOff])
 
   return (
@@ -158,15 +154,15 @@ function ResetNodeConfirmationDialog(props) {
 
 function useTroubleshooting() {
   const restart = () => {
-    global.ipcRenderer.send(NODE_COMMAND, 'troubleshooting-restart-node')
+    getNodeBridge().troubleshootingRestartNode()
   }
 
   const update = () => {
-    global.ipcRenderer.send(NODE_COMMAND, 'troubleshooting-update-node')
+    getNodeBridge().troubleshootingUpdateNode()
   }
 
   const reset = () => {
-    global.ipcRenderer.send(NODE_COMMAND, 'troubleshooting-reset-node')
+    getNodeBridge().troubleshootingResetNode()
   }
 
   return {

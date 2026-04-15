@@ -25,7 +25,10 @@ describe('local-ai sidecar', () => {
     const sidecar = createLocalAiSidecar({httpClient})
 
     await expect(
-      sidecar.getHealth({baseUrl: 'http://localhost:5000'})
+      sidecar.getHealth({
+        runtimeType: 'sidecar',
+        baseUrl: 'http://localhost:5000',
+      })
     ).resolves.toMatchObject({
       ok: true,
       status: 'ok',
@@ -50,7 +53,10 @@ describe('local-ai sidecar', () => {
     const sidecar = createLocalAiSidecar({httpClient})
 
     await expect(
-      sidecar.getHealth({baseUrl: 'http://localhost:5000'})
+      sidecar.getHealth({
+        runtimeType: 'sidecar',
+        baseUrl: 'http://localhost:5000',
+      })
     ).resolves.toMatchObject({
       ok: false,
       status: 'error',
@@ -81,7 +87,10 @@ describe('local-ai sidecar', () => {
     const sidecar = createLocalAiSidecar({httpClient})
 
     await expect(
-      sidecar.listModels({baseUrl: 'http://localhost:5000'})
+      sidecar.listModels({
+        runtimeType: 'sidecar',
+        baseUrl: 'http://localhost:5000',
+      })
     ).resolves.toMatchObject({
       ok: true,
       reachable: true,
@@ -163,6 +172,45 @@ describe('local-ai sidecar', () => {
     })
   })
 
+  it('rejects non-loopback endpoints before contacting the Local AI runtime', async () => {
+    const httpClient = {
+      get: jest.fn(),
+      post: jest.fn(),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.getHealth({
+        runtimeType: 'ollama',
+        baseUrl: 'https://example.com:11434',
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 'config_error',
+      error: 'loopback_only',
+      lastError:
+        'Local AI endpoint must stay on this machine (localhost, 127.0.0.1, or ::1).',
+    })
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'https://example.com:11434',
+        model: 'llama3.1:8b',
+        input: 'Hello',
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 'config_error',
+      error: 'loopback_only',
+      lastError:
+        'Local AI endpoint must stay on this machine (localhost, 127.0.0.1, or ::1).',
+    })
+
+    expect(httpClient.get).not.toHaveBeenCalled()
+    expect(httpClient.post).not.toHaveBeenCalled()
+  })
+
   it('loads Ollama models from /api/tags when runtimeType is ollama', async () => {
     const httpClient = {
       get: jest.fn(async () => ({
@@ -235,6 +283,29 @@ describe('local-ai sidecar', () => {
       provider: 'local-ai',
       runtimeType: 'ollama',
       error: 'model_required',
+    })
+    expect(httpClient.post).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed Ollama model identifiers before sending a request', async () => {
+    const httpClient = {
+      post: jest.fn(),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b\nrm -rf /',
+        input: 'Say hello.',
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 'config_error',
+      provider: 'local-ai',
+      runtimeType: 'ollama',
+      error: 'model_invalid',
     })
     expect(httpClient.post).not.toHaveBeenCalled()
   })
@@ -405,6 +476,36 @@ describe('local-ai sidecar', () => {
       model: 'llama3.1:8b',
       stream: false,
     })
+  })
+
+  it('rejects oversized image payloads before contacting Ollama', async () => {
+    const httpClient = {
+      post: jest.fn(),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+    const oversizedBase64 = `data:image/png;base64,${'A'.repeat(
+      8 * 1024 * 1024
+    )}`
+
+    await expect(
+      sidecar.flipToText({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        visionModel: 'moondream:latest',
+        model: 'llama3.1:8b',
+        input: {
+          images: [oversizedBase64],
+        },
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 'validation_error',
+      provider: 'local-ai',
+      runtimeType: 'ollama',
+      error: 'image_too_large',
+    })
+
+    expect(httpClient.post).not.toHaveBeenCalled()
   })
 
   it('preserves panel order and does not leak raw-image fields into reduction prompts', async () => {

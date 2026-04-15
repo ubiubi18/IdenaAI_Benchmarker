@@ -17,7 +17,39 @@ function mockLogger() {
   }
 }
 
+function createTestSignPayload(storage) {
+  return async (payloadText) => `test-signature:${storage.sha256(payloadText)}`
+}
+
+function createTestVerifySignature(storage) {
+  return async ({payload, signature}) =>
+    signature === `test-signature:${storage.sha256(JSON.stringify(payload))}`
+}
+
 function createPlaceholderBundle(storage, overrides = {}) {
+  const auditTrainingPackage = {
+    reviewStatus: 'approved',
+    reviewedAt: '2026-04-11T00:05:00.000Z',
+    federatedReady: true,
+    eligibleCount: 2,
+    excludedCount: 1,
+    packageSha256: storage.sha256('training-package-default'),
+    manifestSha256: storage.sha256('epoch-7-manifest'),
+  }
+  const governance = {
+    eligible: true,
+    source: 'test-fixture',
+    exclusionRule: 'reported_flips_without_reward_excluded_for_one_epoch',
+    exclusionWindowEpochs: 1,
+    excludedCurrentEpoch: false,
+    cooldownEpochsRemaining: 0,
+    excludedUntilEpoch: null,
+    exclusionReason: null,
+    lastPenaltyEpoch: null,
+    lastPenaltyType: null,
+    lastRewardedEpoch: null,
+    lastSessionReportedFlipPenalty: false,
+  }
   const payload = {
     epoch: 7,
     identity: PLACEHOLDER_IDENTITY,
@@ -35,6 +67,23 @@ function createPlaceholderBundle(storage, overrides = {}) {
     metrics: {
       eligibleCount: 2,
       excludedCount: 1,
+    },
+    governance,
+    audit: {
+      policyVersion: 1,
+      trainingPackage: auditTrainingPackage,
+      redundancy: {
+        minimumCompatibleBundles: 2,
+        minimumDistinctIdentities: 2,
+        corroborationPolicy:
+          'epoch+delta_type+adapter_format+adapter_sha256+training_config_hash+eligible_flip_hashes',
+        duplicateIdentityPolicy: 'reject_same_identity_same_epoch',
+      },
+      governance: {
+        exclusionRule: governance.exclusionRule,
+        exclusionWindowEpochs: governance.exclusionWindowEpochs,
+        source: governance.source,
+      },
     },
     generatedAt: '2026-04-11T00:00:00.000Z',
     ...overrides,
@@ -58,7 +107,9 @@ function createReceivedEntry({
   bundleId,
   storedPath,
   epoch = 7,
-  identity = PLACEHOLDER_IDENTITY,
+  identity = bundle && bundle.payload
+    ? bundle.payload.identity
+    : PLACEHOLDER_IDENTITY,
 }) {
   return {
     bundleId,
@@ -167,14 +218,24 @@ describe('local-ai federated bundle helper', () => {
     return bundleFilePath
   }
 
-  async function buildConcreteBundle(epoch = 7, adapterOptions = {}) {
+  async function buildConcreteBundle(
+    epoch = 7,
+    adapterOptions = {},
+    {identity = PLACEHOLDER_IDENTITY, governance = null} = {}
+  ) {
     await writeManifest(epoch)
     await writeTrainingCandidatePackage(epoch)
     await writeAdapterRegistration(epoch, adapterOptions)
 
+    const useSignedIdentity = identity !== PLACEHOLDER_IDENTITY
     const federated = createLocalAiFederated({
       logger: mockLogger(),
       storage,
+      getIdentity: () => identity,
+      signPayload: useSignedIdentity
+        ? createTestSignPayload(storage)
+        : undefined,
+      getGovernanceStatus: governance ? () => governance : undefined,
     })
 
     return federated.buildUpdateBundle(epoch)
@@ -184,6 +245,7 @@ describe('local-ai federated bundle helper', () => {
     const federated = createLocalAiFederated({
       logger: mockLogger(),
       storage,
+      verifySignature: createTestVerifySignature(storage),
     })
 
     await expect(federated.buildUpdateBundle(5)).rejects.toThrow(
@@ -197,6 +259,7 @@ describe('local-ai federated bundle helper', () => {
     const federated = createLocalAiFederated({
       logger: mockLogger(),
       storage,
+      verifySignature: createTestVerifySignature(storage),
     })
 
     await expect(federated.buildUpdateBundle(7)).rejects.toThrow(
@@ -211,6 +274,7 @@ describe('local-ai federated bundle helper', () => {
     const federated = createLocalAiFederated({
       logger: mockLogger(),
       storage,
+      verifySignature: createTestVerifySignature(storage),
     })
 
     await expect(federated.buildUpdateBundle(7)).rejects.toThrow(
@@ -287,9 +351,58 @@ describe('local-ai federated bundle helper', () => {
         file: path.basename(summary.artifactPath),
         sizeBytes: adapterBuffer.length,
       },
+      governance: expect.objectContaining({
+        eligible: true,
+        source: 'unverified_local_default',
+        excludedCurrentEpoch: false,
+      }),
+      audit: expect.objectContaining({
+        policyVersion: 1,
+        trainingPackage: expect.objectContaining({
+          reviewStatus: 'approved',
+          federatedReady: true,
+        }),
+        redundancy: expect.objectContaining({
+          minimumDistinctIdentities: 2,
+        }),
+      }),
     })
     await expect(storage.readBuffer(summary.artifactPath)).resolves.toEqual(
       adapterBuffer
+    )
+  })
+
+  it('blocks bundle export when the identity is on a governance cooldown', async () => {
+    await writeManifest(7)
+    await writeTrainingCandidatePackage(7)
+    await writeAdapterRegistration(7, {
+      fileName: 'epoch-7-governance-blocked.safetensors',
+      buffer: Buffer.from('adapter-governance-blocked'),
+      trainingConfigHash: 'training-config-governance-blocked',
+    })
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+      getIdentity: () => '0xgovernanceblocked',
+      getGovernanceStatus: () => ({
+        eligible: false,
+        source: 'reward-audit-snapshot',
+        exclusionRule: 'reported_flips_without_reward_excluded_for_one_epoch',
+        exclusionWindowEpochs: 1,
+        excludedCurrentEpoch: true,
+        cooldownEpochsRemaining: 1,
+        excludedUntilEpoch: 7,
+        exclusionReason: 'reported_flips_without_reward',
+        lastPenaltyEpoch: 6,
+        lastPenaltyType: 'reported_flips_without_reward',
+        lastRewardedEpoch: 5,
+        lastSessionReportedFlipPenalty: true,
+      }),
+    })
+
+    await expect(federated.buildUpdateBundle(7)).rejects.toThrow(
+      'Identity 0xgovernanceblocked is not eligible for federated governance in epoch 7'
     )
   })
 
@@ -359,15 +472,20 @@ describe('local-ai federated bundle helper', () => {
   })
 
   it('rejects duplicate nonces', async () => {
-    const built = await buildConcreteBundle(7, {
-      fileName: 'epoch-7-duplicate.safetensors',
-      buffer: Buffer.from('adapter-bytes-duplicate'),
-      trainingConfigHash: 'training-config-duplicate',
-    })
+    const built = await buildConcreteBundle(
+      7,
+      {
+        fileName: 'epoch-7-duplicate.safetensors',
+        buffer: Buffer.from('adapter-bytes-duplicate'),
+        trainingConfigHash: 'training-config-duplicate',
+      },
+      {identity: '0xduplicate'}
+    )
 
     const federated = createLocalAiFederated({
       logger: mockLogger(),
       storage,
+      verifySignature: createTestVerifySignature(storage),
     })
 
     await federated.importUpdateBundle(built.bundlePath)
@@ -377,7 +495,52 @@ describe('local-ai federated bundle helper', () => {
     ).resolves.toMatchObject({
       accepted: false,
       reason: 'duplicate_nonce',
-      identity: PLACEHOLDER_IDENTITY,
+      identity: '0xduplicate',
+      epoch: 7,
+      acceptedCount: 0,
+      rejectedCount: 1,
+    })
+  })
+
+  it('rejects a second bundle from the same identity in the same epoch', async () => {
+    const identity = '0xrepeatidentity'
+    const firstBuilt = await buildConcreteBundle(
+      7,
+      {
+        fileName: 'epoch-7-repeat-a.safetensors',
+        buffer: Buffer.from('adapter-bytes-repeat-a'),
+        trainingConfigHash: 'training-config-repeat-a',
+      },
+      {identity}
+    )
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+      verifySignature: createTestVerifySignature(storage),
+    })
+    await federated.importUpdateBundle(firstBuilt.bundlePath)
+
+    await writeAdapterRegistration(7, {
+      fileName: 'epoch-7-repeat-b.safetensors',
+      buffer: Buffer.from('adapter-bytes-repeat-b'),
+      trainingConfigHash: 'training-config-repeat-b',
+    })
+
+    const secondFederated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+      getIdentity: () => identity,
+      signPayload: createTestSignPayload(storage),
+    })
+    const secondBuilt = await secondFederated.buildUpdateBundle(7)
+
+    await expect(
+      federated.importUpdateBundle(secondBuilt.bundlePath)
+    ).resolves.toMatchObject({
+      accepted: false,
+      reason: 'duplicate_identity_epoch',
+      identity,
       epoch: 7,
       acceptedCount: 0,
       rejectedCount: 1,
@@ -619,10 +782,12 @@ describe('local-ai federated bundle helper', () => {
 
   it('aggregates previously accepted pending-adapter bundles as an honest no-op result', async () => {
     const firstBundle = createPlaceholderBundle(storage, {
+      identity: '0xaaaa',
       nonce: 'bundle-nonce-aggregate-a',
       deltaType: 'pending_adapter',
     })
     const secondBundle = createPlaceholderBundle(storage, {
+      identity: '0xbbbb',
       nonce: 'bundle-nonce-aggregate-b',
       deltaType: 'pending_adapter',
     })
@@ -675,6 +840,7 @@ describe('local-ai federated bundle helper', () => {
       aggregated: false,
       mode: 'adapter_contract_pending',
       compatibleCount: 2,
+      distinctIdentityCount: 2,
       skippedCount: 0,
       acceptedCount: 2,
       rejectedCount: 0,
@@ -686,14 +852,24 @@ describe('local-ai federated bundle helper', () => {
       baseModelId: DEFAULT_BASE_MODEL_ID,
       baseModelHash: storage.sha256(DEFAULT_BASE_MODEL_ID),
       minimumCompatibleBundles: 2,
+      minimumDistinctIdentities: 2,
       compatibleCount: 2,
+      distinctIdentityCount: 2,
       skippedCount: 0,
       acceptedCount: 2,
       rejectedCount: 0,
+      bestCorroborationDistinctIdentityCount: 2,
       deltaAvailability: 'pending',
       reason: 'adapter_artifacts_pending',
     })
     expect(result.compatibleBundles).toHaveLength(2)
+    expect(result.corroborationGroups).toEqual([
+      expect.objectContaining({
+        distinctIdentityCount: 2,
+        bundleCount: 2,
+        identities: ['0xaaaa', '0xbbbb'],
+      }),
+    ])
     expect(JSON.stringify(result)).not.toContain('"images"')
     expect(logger.debug).toHaveBeenCalledWith(
       'Local AI accepted bundle observed',
@@ -730,6 +906,7 @@ describe('local-ai federated bundle helper', () => {
       aggregated: false,
       mode: 'metadata_only_noop',
       compatibleCount: 0,
+      distinctIdentityCount: 0,
       skippedCount: 0,
       acceptedCount: 0,
       rejectedCount: 0,
@@ -739,6 +916,7 @@ describe('local-ai federated bundle helper', () => {
       aggregated: false,
       mode: 'metadata_only_noop',
       compatibleCount: 0,
+      distinctIdentityCount: 0,
       skippedCount: 0,
       acceptedCount: 0,
       rejectedCount: 0,
@@ -761,12 +939,20 @@ describe('local-ai federated bundle helper', () => {
       'delta-b.json'
     )
     const firstBundle = createPlaceholderBundle(storage, {
+      identity: '0x1111',
       nonce: 'bundle-nonce-delta-a',
       deltaType: 'custom_adapter',
+      adapterFormat: 'custom_format_v1',
+      adapterSha256: 'adapter-sha-shared',
+      trainingConfigHash: 'training-config-shared',
     })
     const secondBundle = createPlaceholderBundle(storage, {
+      identity: '0x2222',
       nonce: 'bundle-nonce-delta-b',
       deltaType: 'custom_adapter',
+      adapterFormat: 'custom_format_v1',
+      adapterSha256: 'adapter-sha-shared',
+      trainingConfigHash: 'training-config-shared',
     })
 
     firstBundle.signature.value = storage.sha256(
@@ -825,6 +1011,7 @@ describe('local-ai federated bundle helper', () => {
       aggregated: false,
       mode: 'metadata_only_noop',
       compatibleCount: 2,
+      distinctIdentityCount: 2,
       acceptedCount: 2,
       rejectedCount: 0,
       baseModelId: DEFAULT_BASE_MODEL_ID,
@@ -833,15 +1020,88 @@ describe('local-ai federated bundle helper', () => {
       aggregated: false,
       mode: 'metadata_only_noop',
       compatibleCount: 2,
+      distinctIdentityCount: 2,
       acceptedCount: 2,
       rejectedCount: 0,
+      bestCorroborationDistinctIdentityCount: 2,
       deltaAvailability: 'unsupported',
       reason: 'unsupported_delta_payload',
     })
   })
 
+  it('requires corroboration from different identities before trusting compatible bundles', async () => {
+    const firstBundle = createPlaceholderBundle(storage, {
+      identity: '0xsame-a',
+      nonce: 'bundle-nonce-corroboration-a',
+      deltaType: 'pending_adapter',
+      adapterFormat: 'peft_lora_v1',
+      trainingConfigHash: 'training-config-a',
+    })
+    const secondBundle = createPlaceholderBundle(storage, {
+      identity: '0xsame-b',
+      nonce: 'bundle-nonce-corroboration-b',
+      deltaType: 'pending_adapter',
+      adapterFormat: 'peft_lora_v1',
+      trainingConfigHash: 'training-config-b',
+    })
+
+    const firstBundleId = storage.sha256(JSON.stringify(firstBundle))
+    const secondBundleId = storage.sha256(JSON.stringify(secondBundle))
+    const firstStoredPath = storage.resolveLocalAiPath(
+      'received',
+      '7',
+      `${firstBundleId}.json`
+    )
+    const secondStoredPath = storage.resolveLocalAiPath(
+      'received',
+      '7',
+      `${secondBundleId}.json`
+    )
+
+    await storage.writeJsonAtomic(firstStoredPath, firstBundle)
+    await storage.writeJsonAtomic(secondStoredPath, secondBundle)
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath('received', 'index.json'),
+      {
+        version: 1,
+        bundles: [
+          createReceivedEntry({
+            bundle: firstBundle,
+            bundleId: firstBundleId,
+            storedPath: firstStoredPath,
+          }),
+          createReceivedEntry({
+            bundle: secondBundle,
+            bundleId: secondBundleId,
+            storedPath: secondStoredPath,
+          }),
+        ],
+      }
+    )
+
+    const federated = createLocalAiFederated({
+      logger: mockLogger(),
+      storage,
+    })
+    const summary = await federated.aggregateAcceptedBundles()
+    const result = await storage.readJson(summary.outputPath)
+
+    expect(summary).toMatchObject({
+      aggregated: false,
+      mode: 'metadata_only_noop',
+      compatibleCount: 2,
+      distinctIdentityCount: 2,
+      baseModelId: DEFAULT_BASE_MODEL_ID,
+    })
+    expect(result).toMatchObject({
+      reason: 'insufficient_corroboration',
+      bestCorroborationDistinctIdentityCount: 1,
+    })
+  })
+
   it('skips incompatible received bundles during aggregation', async () => {
     const compatibleBundle = createPlaceholderBundle(storage, {
+      identity: '0xcompatible',
       nonce: 'bundle-nonce-compatible',
     })
     const compatibleId = storage.sha256(JSON.stringify(compatibleBundle))
@@ -899,6 +1159,7 @@ describe('local-ai federated bundle helper', () => {
       aggregated: false,
       mode: 'metadata_only_noop',
       compatibleCount: 1,
+      distinctIdentityCount: 1,
       skippedCount: 1,
       acceptedCount: 1,
       rejectedCount: 1,

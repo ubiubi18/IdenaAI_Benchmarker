@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import React from 'react'
 import {
   Stack,
@@ -8,6 +9,7 @@ import {
   Heading,
   Button,
   Flex,
+  HStack,
 } from '@chakra-ui/react'
 import {useTranslation} from 'react-i18next'
 import {useRouter} from 'next/router'
@@ -76,8 +78,11 @@ import {useFailToast, useSuccessToast} from '../shared/hooks/use-toast'
 import {
   AddUserIcon,
   AdsIcon,
+  ChatIcon,
   ChevronRightIcon,
+  CommunityIcon,
   DeleteIcon,
+  GlobeIcon,
   InfoIcon,
   OracleIcon,
   PhotoIcon,
@@ -266,6 +271,7 @@ export default function ProfilePage() {
 
           <Page>
             <Stack spacing={8}>
+              <HomeFeaturedDestinations />
               <Stack isInline spacing="10">
                 <Box>
                   <Stack spacing={8} w="md" ref={activateInviteRef}>
@@ -722,5 +728,109 @@ export default function ProfilePage() {
         onClose={onCloseExportPk}
       />
     </>
+  )
+}
+
+function HomeFeaturedDestinations() {
+  const {t} = useTranslation()
+
+  return (
+    <Box
+      bg="white"
+      borderRadius="xl"
+      boxShadow="0 3px 12px 0 rgba(83, 86, 92, 0.1), 0 2px 3px 0 rgba(83, 86, 92, 0.2)"
+      px={6}
+      py={5}
+      w="full"
+    >
+      <Stack spacing={4}>
+        <Stack spacing={1}>
+          <Heading as="h2" fontSize="xl" fontWeight={500}>
+            {t('Use IdenaAI right away')}
+          </Heading>
+          <Text color="muted" fontSize="md" lineHeight="tall" maxW="3xl">
+            {t(
+              'The most active surfaces are now front and center: talk to your local AI assistant, jump into the community feed, or open the governance-focused DAO view.'
+            )}
+          </Text>
+        </Stack>
+        <Stack
+          direction={{base: 'column', xl: 'row'}}
+          align="stretch"
+          spacing={4}
+        >
+          <HomeFeaturedCard
+            href="/ai-chat"
+            icon={<ChatIcon boxSize={5} />}
+            eyebrow={t('AI assistant')}
+            title={t('Chat with IdenaAI')}
+            description={t(
+              'Ask questions, attach images, and let the local runtime reason about test flips or node behavior.'
+            )}
+            cta={t('Open chat')}
+          />
+          <HomeFeaturedCard
+            href="/social"
+            icon={<GlobeIcon boxSize={5} />}
+            eyebrow={t('Community')}
+            title={t('idena.social')}
+            description={t(
+              'Read the feed, publish through your own node, and stay close to the live network conversation.'
+            )}
+            cta={t('Open social')}
+          />
+          <HomeFeaturedCard
+            href="/dao"
+            icon={<CommunityIcon boxSize={5} />}
+            eyebrow={t('Governance')}
+            title={t('IdenaDAO')}
+            description={t(
+              'Draft tagged proposals, review governance discussion, and publish through the integrated idena.social contract flow.'
+            )}
+            cta={t('Open DAO')}
+          />
+        </Stack>
+      </Stack>
+    </Box>
+  )
+}
+
+function HomeFeaturedCard({href, icon, eyebrow, title, description, cta}) {
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor="gray.100"
+      borderRadius="lg"
+      px={4}
+      py={4}
+      flex={1}
+      bg="rgba(87, 143, 255, 0.06)"
+    >
+      <Stack spacing={3} h="full" align="flex-start">
+        <Stack spacing={2}>
+          <Text
+            color="brandBlue.500"
+            fontSize="xs"
+            fontWeight={600}
+            textTransform="uppercase"
+            letterSpacing="0.04em"
+          >
+            {eyebrow}
+          </Text>
+          <HStack spacing={2} align="center">
+            {icon}
+            <Heading as="h3" fontSize="lg" fontWeight={500}>
+              {title}
+            </Heading>
+          </HStack>
+          <Text color="muted" fontSize="sm" lineHeight="tall">
+            {description}
+          </Text>
+        </Stack>
+        <IconLink href={href} icon={icon} maxW="full">
+          {cta}
+        </IconLink>
+      </Stack>
+    </Box>
   )
 }

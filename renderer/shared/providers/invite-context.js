@@ -8,9 +8,10 @@ import {fetchIdentity, killInvitee, sendInvite} from '../api/dna'
 import {useFailToast} from '../hooks/use-toast'
 import {strip} from '../utils/obj'
 import {canKill} from '../../screens/contacts/utils'
+import {getInvitesBridge} from '../utils/invites-bridge'
 
 function getInviteDb() {
-  const db = global.invitesDb
+  const db = getInvitesBridge()
 
   if (db && typeof db.getInvites === 'function') {
     return db

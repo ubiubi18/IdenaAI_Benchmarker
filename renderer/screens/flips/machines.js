@@ -17,6 +17,8 @@ import {shuffle} from '../../shared/utils/arr'
 import {FlipType, FlipFilter} from '../../shared/types'
 import {deleteFlip} from '../../shared/api/dna'
 import {persistState} from '../../shared/utils/persist'
+import {getFlipsBridge} from '../../shared/utils/flips-bridge'
+import {getImageSearchBridge} from '../../shared/utils/image-search-bridge'
 
 const OFFLINE_KEYWORD_WORD_RANGE_START = 3300
 const RANDOM_KEYWORD_PAIR_COUNT = 9
@@ -93,7 +95,7 @@ export const flipsMachine = Machine(
           src: async ({knownFlips, availableKeywords}) => {
             handleOutdatedFlips()
 
-            const flipDb = global.flipStore
+            const flipDb = getFlipsBridge()
 
             const persistedFlips = flipDb
               .getFlips()
@@ -576,7 +578,7 @@ export const flipMachine = Machine(
     },
     actions: {
       persistFlip: (context) => {
-        global.flipStore.updateDraft(context)
+        getFlipsBridge().updateDraft(context)
       },
     },
   }
@@ -1232,8 +1234,8 @@ export const flipMasterMachine = Machine(
                   type: FlipType.Draft,
                 }
 
-            if (id) global.flipStore.updateDraft(nextFlip)
-            else global.flipStore.addDraft(nextFlip)
+            if (id) getFlipsBridge().updateDraft(nextFlip)
+            else getFlipsBridge().addDraft(nextFlip)
 
             cb({type: 'PERSISTED', flip: nextFlip})
           }
@@ -1258,7 +1260,7 @@ export const flipMasterMachine = Machine(
           order.map((n) => originalOrder.findIndex((o) => o === n)),
       }),
       persistFlip: (context) => {
-        global.flipStore.updateDraft(context)
+        getFlipsBridge().updateDraft(context)
       },
       assignEpochNumber: assign({
         epochNumber: (_, {epochNumber}) => epochNumber,
@@ -1390,7 +1392,7 @@ export const createViewFlipMachine = (id) =>
       },
       actions: {
         persistFlip: (context) => {
-          global.flipStore.updateDraft(context)
+          getFlipsBridge().updateDraft(context)
         },
       },
     }
@@ -1454,7 +1456,7 @@ export const imageSearchMachine = createMachine({
             )
           }
           return withImageSearchTimeout(
-            global.ipcRenderer.invoke('search-image', nextQuery),
+            getImageSearchBridge().search(nextQuery),
             15000,
             'Web image search timed out. Try different words or switch to AI image search.'
           )

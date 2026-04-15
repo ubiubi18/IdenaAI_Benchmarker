@@ -15,9 +15,16 @@ const UPDATE_BUNDLE_VERSION = 1
 const RECEIVED_INDEX_VERSION = 1
 const AGGREGATION_RESULT_VERSION = 1
 const MIN_COMPATIBLE_BUNDLES = 2
+const MIN_DISTINCT_IDENTITIES = 2
+const FEDERATED_AUDIT_POLICY_VERSION = 1
+const GOVERNANCE_EXCLUSION_EPOCHS = 1
 const DEFAULT_BASE_MODEL_ID = LOCAL_AI_BASE_MODEL_ID
 const PLACEHOLDER_IDENTITY = 'identity-unavailable'
 const PLACEHOLDER_SIGNATURE_REASON = 'idena_signing_unavailable_in_main_process'
+const GOVERNANCE_EXCLUSION_RULE =
+  'reported_flips_without_reward_excluded_for_one_epoch'
+const CORROBORATION_POLICY =
+  'epoch+delta_type+adapter_format+adapter_sha256+training_config_hash+eligible_flip_hashes'
 
 function normalizeEpoch(value) {
   const epoch = Number.parseInt(value, 10)
@@ -40,6 +47,16 @@ function normalizeIdentity(value) {
   }
 
   return null
+}
+
+function normalizeNonNegativeInteger(value, fallback = 0) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed
+  }
+
+  return fallback
 }
 
 function normalizeFilePath(filePath) {
@@ -327,6 +344,145 @@ function normalizeReceivedIndex(value) {
   }
 }
 
+function normalizeGovernance(value, currentEpoch = null) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = String(value.source || '').trim()
+  const exclusionRule = String(
+    value.exclusionRule || GOVERNANCE_EXCLUSION_RULE
+  ).trim()
+  const exclusionReason = String(value.exclusionReason || '').trim() || null
+  const lastPenaltyType = String(value.lastPenaltyType || '').trim() || null
+  const excludedUntilEpoch = normalizeEpoch(value.excludedUntilEpoch)
+  const lastPenaltyEpoch = normalizeEpoch(value.lastPenaltyEpoch)
+  const lastRewardedEpoch = normalizeEpoch(value.lastRewardedEpoch)
+  const cooldownEpochsRemaining = normalizeNonNegativeInteger(
+    value.cooldownEpochsRemaining,
+    0
+  )
+  const exclusionWindowEpochs = normalizeNonNegativeInteger(
+    value.exclusionWindowEpochs,
+    GOVERNANCE_EXCLUSION_EPOCHS
+  )
+
+  if (!source || !exclusionRule) {
+    return null
+  }
+
+  const excludedCurrentEpoch =
+    Boolean(value.excludedCurrentEpoch) ||
+    cooldownEpochsRemaining > 0 ||
+    (currentEpoch !== null &&
+      excludedUntilEpoch !== null &&
+      currentEpoch <= excludedUntilEpoch)
+  const eligible = Boolean(value.eligible) && !excludedCurrentEpoch
+
+  return {
+    eligible,
+    source,
+    exclusionRule,
+    exclusionWindowEpochs,
+    excludedCurrentEpoch,
+    cooldownEpochsRemaining,
+    excludedUntilEpoch,
+    exclusionReason,
+    lastPenaltyEpoch,
+    lastPenaltyType,
+    lastRewardedEpoch,
+    lastSessionReportedFlipPenalty: Boolean(
+      value.lastSessionReportedFlipPenalty
+    ),
+  }
+}
+
+async function resolveGovernance({
+  candidatePackage,
+  manifest,
+  epoch,
+  identity,
+  getGovernanceStatus,
+}) {
+  let resolved = null
+
+  if (typeof getGovernanceStatus === 'function') {
+    try {
+      resolved = await getGovernanceStatus({
+        candidatePackage,
+        manifest,
+        epoch,
+        identity,
+      })
+    } catch {
+      resolved = null
+    }
+  }
+
+  if (!resolved) {
+    resolved = (candidatePackage &&
+      candidatePackage.governance &&
+      typeof candidatePackage.governance === 'object' &&
+      candidatePackage.governance) ||
+      (manifest &&
+        manifest.governance &&
+        typeof manifest.governance === 'object' &&
+        manifest.governance) || {
+        eligible: true,
+        source: 'unverified_local_default',
+        exclusionRule: GOVERNANCE_EXCLUSION_RULE,
+        exclusionWindowEpochs: GOVERNANCE_EXCLUSION_EPOCHS,
+        excludedCurrentEpoch: false,
+        cooldownEpochsRemaining: 0,
+        excludedUntilEpoch: null,
+        exclusionReason: null,
+        lastPenaltyEpoch: null,
+        lastPenaltyType: null,
+        lastRewardedEpoch: null,
+        lastSessionReportedFlipPenalty: false,
+      }
+  }
+
+  return normalizeGovernance(resolved, epoch)
+}
+
+function buildAuditMetadata(storage, {candidatePackage, manifest, governance}) {
+  return {
+    policyVersion: FEDERATED_AUDIT_POLICY_VERSION,
+    trainingPackage: {
+      reviewStatus:
+        String(candidatePackage && candidatePackage.reviewStatus).trim() ||
+        null,
+      reviewedAt:
+        String(candidatePackage && candidatePackage.reviewedAt).trim() || null,
+      federatedReady: Boolean(
+        candidatePackage && candidatePackage.federatedReady
+      ),
+      eligibleCount: resolveExcludedCount(
+        candidatePackage && candidatePackage.eligibleCount,
+        candidatePackage && candidatePackage.items
+      ),
+      excludedCount: resolveExcludedCount(
+        candidatePackage && candidatePackage.excludedCount,
+        candidatePackage && candidatePackage.excluded
+      ),
+      packageSha256: storage.sha256(JSON.stringify(candidatePackage || {})),
+      manifestSha256: storage.sha256(JSON.stringify(manifest || {})),
+    },
+    redundancy: {
+      minimumCompatibleBundles: MIN_COMPATIBLE_BUNDLES,
+      minimumDistinctIdentities: MIN_DISTINCT_IDENTITIES,
+      corroborationPolicy: CORROBORATION_POLICY,
+      duplicateIdentityPolicy: 'reject_same_identity_same_epoch',
+    },
+    governance: {
+      exclusionRule: governance.exclusionRule,
+      exclusionWindowEpochs: governance.exclusionWindowEpochs,
+      source: governance.source,
+    },
+  }
+}
+
 function validateBundleShape(bundle) {
   if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
     return {ok: false, reason: 'schema_invalid'}
@@ -383,9 +539,54 @@ function validateBundleShape(bundle) {
     payload.metrics && typeof payload.metrics === 'object'
       ? payload.metrics
       : null
+  const audit =
+    payload.audit &&
+    typeof payload.audit === 'object' &&
+    !Array.isArray(payload.audit)
+      ? payload.audit
+      : null
+  const auditTrainingPackage =
+    audit &&
+    audit.trainingPackage &&
+    typeof audit.trainingPackage === 'object' &&
+    !Array.isArray(audit.trainingPackage)
+      ? audit.trainingPackage
+      : null
+  const auditRedundancy =
+    audit &&
+    audit.redundancy &&
+    typeof audit.redundancy === 'object' &&
+    !Array.isArray(audit.redundancy)
+      ? audit.redundancy
+      : null
+  const governance = normalizeGovernance(payload.governance, epoch)
   const eligibleFlipHashes = Array.isArray(payload.eligibleFlipHashes)
     ? payload.eligibleFlipHashes.filter(Boolean)
     : null
+  const auditPolicyVersion = normalizeNonNegativeInteger(
+    audit && audit.policyVersion,
+    -1
+  )
+  const minimumDistinctIdentities = normalizeNonNegativeInteger(
+    auditRedundancy && auditRedundancy.minimumDistinctIdentities,
+    -1
+  )
+  const minimumCompatibleBundles = normalizeNonNegativeInteger(
+    auditRedundancy && auditRedundancy.minimumCompatibleBundles,
+    -1
+  )
+  const corroborationPolicy = String(
+    (auditRedundancy && auditRedundancy.corroborationPolicy) || ''
+  ).trim()
+  const duplicateIdentityPolicy = String(
+    (auditRedundancy && auditRedundancy.duplicateIdentityPolicy) || ''
+  ).trim()
+  const trainingPackageSha256 = String(
+    (auditTrainingPackage && auditTrainingPackage.packageSha256) || ''
+  ).trim()
+  const trainingManifestSha256 = String(
+    (auditTrainingPackage && auditTrainingPackage.manifestSha256) || ''
+  ).trim()
 
   if (
     epoch === null ||
@@ -400,7 +601,11 @@ function validateBundleShape(bundle) {
     !String(manifest.sha256 || '').trim() ||
     !metrics ||
     !eligibleFlipHashes ||
-    !signature
+    !signature ||
+    !audit ||
+    !auditTrainingPackage ||
+    !auditRedundancy ||
+    !governance
   ) {
     return {ok: false, reason: 'schema_invalid'}
   }
@@ -418,6 +623,18 @@ function validateBundleShape(bundle) {
   if (
     adapterArtifactFile &&
     path.basename(adapterArtifactFile) !== adapterArtifactFile
+  ) {
+    return {ok: false, reason: 'schema_invalid'}
+  }
+
+  if (
+    auditPolicyVersion !== FEDERATED_AUDIT_POLICY_VERSION ||
+    minimumDistinctIdentities < MIN_DISTINCT_IDENTITIES ||
+    minimumCompatibleBundles < MIN_COMPATIBLE_BUNDLES ||
+    !corroborationPolicy ||
+    !duplicateIdentityPolicy ||
+    !trainingPackageSha256 ||
+    !trainingManifestSha256
   ) {
     return {ok: false, reason: 'schema_invalid'}
   }
@@ -461,9 +678,110 @@ function validateBundleShape(bundle) {
           }
         : null,
     trainingConfigHash: trainingConfigHash || null,
+    audit: {
+      policyVersion: auditPolicyVersion,
+      trainingPackage: {
+        reviewStatus:
+          String(auditTrainingPackage.reviewStatus || '').trim() || null,
+        reviewedAt:
+          String(auditTrainingPackage.reviewedAt || '').trim() || null,
+        federatedReady: Boolean(auditTrainingPackage.federatedReady),
+        eligibleCount: resolveExcludedCount(
+          auditTrainingPackage.eligibleCount,
+          null
+        ),
+        excludedCount: resolveExcludedCount(
+          auditTrainingPackage.excludedCount,
+          null
+        ),
+        packageSha256: trainingPackageSha256,
+        manifestSha256: trainingManifestSha256,
+      },
+      redundancy: {
+        minimumCompatibleBundles,
+        minimumDistinctIdentities,
+        corroborationPolicy,
+        duplicateIdentityPolicy,
+      },
+      governance: {
+        exclusionRule:
+          String(
+            (audit.governance && audit.governance.exclusionRule) || ''
+          ).trim() || governance.exclusionRule,
+        exclusionWindowEpochs: normalizeNonNegativeInteger(
+          audit.governance && audit.governance.exclusionWindowEpochs,
+          governance.exclusionWindowEpochs
+        ),
+        source:
+          String((audit.governance && audit.governance.source) || '').trim() ||
+          governance.source,
+      },
+    },
+    governance,
     nonce,
     eligibleFlipHashes,
   }
+}
+
+function buildCorroborationGroupKey(validation) {
+  return JSON.stringify({
+    epoch: validation.epoch,
+    deltaType: String(validation.payload.deltaType || '').trim() || 'none',
+    adapterFormat:
+      String(validation.payload.adapterFormat || '').trim() || null,
+    adapterSha256:
+      String(validation.payload.adapterSha256 || '').trim() || null,
+    trainingConfigHash:
+      String(validation.payload.trainingConfigHash || '').trim() || null,
+    eligibleFlipHashes: normalizeFlipHashList(validation.eligibleFlipHashes),
+  })
+}
+
+function buildCorroborationGroups(compatibleBundles) {
+  const groups = new Map()
+
+  compatibleBundles.forEach(({entry, validation}) => {
+    const groupKey = buildCorroborationGroupKey(validation)
+    const nextGroup = groups.get(groupKey) || {
+      corroborationKey: groupKey,
+      epoch: validation.epoch,
+      deltaType: String(validation.payload.deltaType || '').trim() || 'none',
+      adapterFormat:
+        String(validation.payload.adapterFormat || '').trim() || null,
+      adapterSha256:
+        String(validation.payload.adapterSha256 || '').trim() || null,
+      trainingConfigHash:
+        String(validation.payload.trainingConfigHash || '').trim() || null,
+      bundleIds: [],
+      identities: new Set(),
+    }
+
+    nextGroup.bundleIds.push(entry.bundleId)
+    nextGroup.identities.add(validation.identity)
+    groups.set(groupKey, nextGroup)
+  })
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      corroborationKey: group.corroborationKey,
+      epoch: group.epoch,
+      deltaType: group.deltaType,
+      adapterFormat: group.adapterFormat,
+      adapterSha256: group.adapterSha256,
+      trainingConfigHash: group.trainingConfigHash,
+      bundleCount: group.bundleIds.length,
+      distinctIdentityCount: group.identities.size,
+      bundleIds: group.bundleIds,
+      identities: Array.from(group.identities).sort(),
+    }))
+    .sort(
+      (left, right) =>
+        right.distinctIdentityCount - left.distinctIdentityCount ||
+        right.bundleCount - left.bundleCount ||
+        String(left.corroborationKey).localeCompare(
+          String(right.corroborationKey)
+        )
+    )
 }
 
 async function verifyBundleSignature({
@@ -606,10 +924,17 @@ function buildAggregationSummary({
   baseModelHash,
   compatibleBundles,
   skipped,
+  distinctIdentityCount,
+  corroborationGroups,
   deltaAvailability,
   mode,
   reason,
 }) {
+  const bestCorroborationDistinctIdentityCount = corroborationGroups.reduce(
+    (max, group) => Math.max(max, group.distinctIdentityCount),
+    0
+  )
+
   return {
     version: AGGREGATION_RESULT_VERSION,
     aggregated: false,
@@ -617,10 +942,13 @@ function buildAggregationSummary({
     baseModelId,
     baseModelHash,
     minimumCompatibleBundles: MIN_COMPATIBLE_BUNDLES,
+    minimumDistinctIdentities: MIN_DISTINCT_IDENTITIES,
     compatibleCount: compatibleBundles.length,
+    distinctIdentityCount,
     skippedCount: skipped.length,
     acceptedCount: compatibleBundles.length,
     rejectedCount: skipped.length,
+    bestCorroborationDistinctIdentityCount,
     deltaAvailability,
     reason,
     generatedAt: new Date().toISOString(),
@@ -642,7 +970,10 @@ function buildAggregationSummary({
         String(validation.payload.trainingConfigHash || '').trim() || null,
       storedPath: entry.storedPath,
       artifactStoredPath: entry.artifactStoredPath || null,
+      governance: validation.governance,
+      audit: validation.audit,
     })),
+    corroborationGroups,
     skipped,
   }
 }
@@ -761,6 +1092,7 @@ function createLocalAiFederated({
   signPayload,
   verifySignature,
   getBaseModelReference,
+  getGovernanceStatus,
 } = {}) {
   const localAiStorage = storage || createLocalAiStorage()
 
@@ -904,6 +1236,20 @@ function createLocalAiFederated({
     const generatedAt = new Date().toISOString()
     const nonce = crypto.randomBytes(16).toString('hex')
     const identityInfo = await resolveIdentity(getIdentity)
+    const governance = await resolveGovernance({
+      candidatePackage: approvedPackage,
+      manifest,
+      epoch,
+      identity: identityInfo.identity,
+      getGovernanceStatus,
+    })
+
+    if (!governance || !governance.eligible) {
+      throw new Error(
+        `Identity ${identityInfo.identity} is not eligible for federated governance in epoch ${epoch}`
+      )
+    }
+
     const nextBundlePath = bundlePath(
       localAiStorage,
       epoch,
@@ -940,6 +1286,12 @@ function createLocalAiFederated({
         eligibleCount: eligibleFlipHashes.length,
         excludedCount: excluded.length,
       },
+      governance,
+      audit: buildAuditMetadata(localAiStorage, {
+        candidatePackage: approvedPackage,
+        manifest,
+        governance,
+      }),
       generatedAt,
     }
     const signature = await signBundlePayload({
@@ -1178,6 +1530,29 @@ function createLocalAiFederated({
       }
 
       if (
+        nextReceivedIndex.bundles.some(
+          (item) =>
+            item.epoch === validation.epoch &&
+            item.identity === validation.identity
+        )
+      ) {
+        const rejectionResult = buildImportResult({
+          accepted: false,
+          reason: 'duplicate_identity_epoch',
+          identity: validation.identity,
+          epoch: validation.epoch,
+          sourceBundlePath: sourcePath,
+          bundleId,
+        })
+
+        if (isDev) {
+          logImportResult(logger, rejectionResult)
+        }
+
+        return rejectionResult
+      }
+
+      if (
         nextReceivedIndex.bundles.some((item) => item.bundleId === bundleId)
       ) {
         const rejectionResult = buildImportResult({
@@ -1314,6 +1689,8 @@ function createLocalAiFederated({
 
         if (!validation.ok) {
           skipReason = validation.reason
+        } else if (!validation.governance.eligible) {
+          skipReason = 'governance_ineligible'
         } else if (computeBundleId(localAiStorage, bundle) !== entry.bundleId) {
           skipReason = 'bundle_id_mismatch'
         } else if (
@@ -1368,12 +1745,26 @@ function createLocalAiFederated({
     const bundlesWithConcreteAdapters = compatibleBundles.filter(
       ({validation}) => hasConcreteAdapterDelta(validation.payload)
     )
+    const distinctIdentityCount = new Set(
+      compatibleBundles.map(({validation}) => validation.identity)
+    ).size
+    const corroborationGroups = buildCorroborationGroups(compatibleBundles)
+    const bestCorroborationDistinctIdentityCount = corroborationGroups.reduce(
+      (max, group) => Math.max(max, group.distinctIdentityCount),
+      0
+    )
     let reason = 'no_real_model_deltas'
     let deltaAvailability = 'none'
     let mode = 'metadata_only_noop'
 
     if (compatibleBundles.length < MIN_COMPATIBLE_BUNDLES) {
       reason = 'insufficient_compatible_bundles'
+    } else if (distinctIdentityCount < MIN_DISTINCT_IDENTITIES) {
+      reason = 'insufficient_distinct_identities'
+    } else if (
+      bestCorroborationDistinctIdentityCount < MIN_DISTINCT_IDENTITIES
+    ) {
+      reason = 'insufficient_corroboration'
     } else if (bundlesWithConcreteAdapters.length > 0) {
       reason = 'adapter_merge_not_implemented'
       deltaAvailability = 'available'
@@ -1393,6 +1784,8 @@ function createLocalAiFederated({
       baseModelHash: expectedBaseModel.baseModelHash,
       compatibleBundles,
       skipped,
+      distinctIdentityCount,
+      corroborationGroups,
       deltaAvailability,
       mode,
       reason,
@@ -1418,6 +1811,7 @@ function createLocalAiFederated({
       aggregated: result.aggregated,
       mode: result.mode,
       compatibleCount: result.compatibleCount,
+      distinctIdentityCount: result.distinctIdentityCount,
       skippedCount: result.skippedCount,
       acceptedCount: result.acceptedCount,
       rejectedCount: result.rejectedCount,

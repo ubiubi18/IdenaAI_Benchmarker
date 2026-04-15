@@ -1,9 +1,9 @@
 import React, {useCallback, useEffect, useMemo} from 'react'
-import {AUTO_UPDATE_EVENT, AUTO_UPDATE_COMMAND} from '../../../main/channels'
 import {useSettingsState} from './settings-context'
 import {useInterval} from '../hooks/use-interval'
 import {fetchNodeVersion} from '../api/dna'
 import {callRpc} from '../utils/utils'
+import {getUpdateBridge} from '../utils/update-bridge'
 
 export const TOGGLE_NODE_SWITCHER = 'TOGGLE_NODE_SWITCHER'
 export const SAVE_EXTERNAL_URL = 'SAVE_EXTERNAL_URL'
@@ -100,13 +100,8 @@ function updateReducer(state, action) {
 const AutoUpdateStateContext = React.createContext()
 const AutoUpdateDispatchContext = React.createContext()
 
-function hasIpcRenderer() {
-  return (
-    global.ipcRenderer &&
-    typeof global.ipcRenderer.on === 'function' &&
-    typeof global.ipcRenderer.send === 'function' &&
-    typeof global.ipcRenderer.removeListener === 'function'
-  )
+function hasUpdateBridge() {
+  return !getUpdateBridge().__idenaFallback
 }
 
 function isDeferredNodeRpcError(error) {
@@ -125,11 +120,11 @@ export function AutoUpdateProvider({children}) {
   const [state, dispatch] = React.useReducer(updateReducer, initialState)
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasUpdateBridge()) {
       return undefined
     }
 
-    const onEvent = (_sender, event, data) => {
+    const onEvent = (event, data) => {
       switch (event) {
         case 'node-update-available':
           if (!state.nodeUpdateAvailable)
@@ -160,20 +155,16 @@ export function AutoUpdateProvider({children}) {
       }
     }
 
-    global.ipcRenderer.on(AUTO_UPDATE_EVENT, onEvent)
-
-    return () => {
-      global.ipcRenderer.removeListener(AUTO_UPDATE_EVENT, onEvent)
-    }
+    return getUpdateBridge().onEvent(onEvent)
   })
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasUpdateBridge()) {
       return
     }
 
     if (state.nodeCurrentVersion !== '0.0.0') {
-      global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'start-checking', {
+      getUpdateBridge().startChecking({
         nodeCurrentVersion: state.nodeCurrentVersion,
         isInternalNode: !settings.useExternalNode,
       })
@@ -214,20 +205,20 @@ export function AutoUpdateProvider({children}) {
       (settings.useExternalNode && state.nodeUpdateAvailable))
 
   const updateClient = () => {
-    if (!hasIpcRenderer()) {
+    if (!hasUpdateBridge()) {
       return
     }
-    global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'update-ui')
+    getUpdateBridge().updateUi()
   }
 
   const updateNode = useCallback(() => {
     if (settings.useExternalNode) {
       dispatch({type: SHOW_EXTERNAL_UPDATE_MODAL})
     } else {
-      if (!hasIpcRenderer()) {
+      if (!hasUpdateBridge()) {
         return
       }
-      global.ipcRenderer.send(AUTO_UPDATE_COMMAND, 'update-node')
+      getUpdateBridge().updateNode()
       dispatch({type: NODE_UPDATE_START})
     }
   }, [settings.useExternalNode])

@@ -80,10 +80,7 @@ const {prepareDb} = require('./stores/setup')
 const {createLocalAiFederated} = require('./local-ai/federated')
 const {createLocalAiManager} = require('./local-ai/manager')
 const {resolveLocalAiRuntimeAdapter} = require('./local-ai/runtime-adapter')
-const {
-  ensureLocalAiEnabled,
-  isLocalAiEnabled,
-} = require('./local-ai/enablement')
+const {ensureLocalAiEnabled} = require('./local-ai/enablement')
 const {
   LOCAL_AI_RUNTIME_MODE,
   LOCAL_AI_RUNTIME,
@@ -115,15 +112,18 @@ const {
 
 const NodeUpdater = require('./node-updater')
 
-const aiProviderBridge = createAiProviderBridge(logger)
-const aiTestUnitBridge = createAiTestUnitBridge({
-  logger,
-  aiProviderBridge,
-})
 const localAiManager = createLocalAiManager({
   logger,
   isDev,
   getModelReference: getMainLocalAiSettings,
+})
+const aiProviderBridge = createAiProviderBridge(logger, {
+  localAiManager,
+  getLocalAiPayload: buildLocalAiFlipJudgePayload,
+})
+const aiTestUnitBridge = createAiTestUnitBridge({
+  logger,
+  aiProviderBridge,
 })
 const localAiFederated = createLocalAiFederated({
   logger,
@@ -523,80 +523,82 @@ function getMainLocalAiSettings(payload = {}) {
   )
 
   return {
-    enabled: localAi.enabled === true,
+    enabled:
+      nextPayload.enabled === true ||
+      (typeof nextPayload.enabled === 'undefined' && localAi.enabled === true),
     mode: pickTrimmedString(
-      [localAi.runtimeMode, nextPayload.mode],
+      [nextPayload.mode, localAi.runtimeMode],
       LOCAL_AI_RUNTIME_MODE
     ),
     baseUrl: pickTrimmedString(
       [
-        localAi.endpoint,
-        localAi.baseUrl,
         nextPayload.endpoint,
         nextPayload.baseUrl,
+        localAi.endpoint,
+        localAi.baseUrl,
       ],
       runtimeAdapter.defaultBaseUrl
     ),
     model: pickTrimmedString(
-      [localAi.model, nextPayload.model],
+      [nextPayload.model, localAi.model],
       LOCAL_AI_DEFAULT_MODEL
     ),
     visionModel: pickTrimmedString(
-      [localAi.visionModel, nextPayload.visionModel],
+      [nextPayload.visionModel, localAi.visionModel],
       LOCAL_AI_DEFAULT_VISION_MODEL
     ),
     runtime: pickTrimmedString(
       [
         nextPayload.runtime,
-        localAi.runtime,
         nextPayload.runtimeBackend,
+        localAi.runtime,
         localAi.runtimeBackend,
       ],
       runtimeAdapter.runtime
     ),
     runtimeBackend: pickTrimmedString(
-      [localAi.runtimeBackend, nextPayload.runtimeBackend],
+      [nextPayload.runtimeBackend, localAi.runtimeBackend],
       runtimeAdapter.runtimeBackend
     ),
     reasonerBackend: pickTrimmedString(
-      [localAi.reasonerBackend, nextPayload.reasonerBackend],
+      [nextPayload.reasonerBackend, localAi.reasonerBackend],
       LOCAL_AI_REASONER_BACKEND
     ),
     visionBackend: pickTrimmedString(
-      [localAi.visionBackend, nextPayload.visionBackend],
+      [nextPayload.visionBackend, localAi.visionBackend],
       LOCAL_AI_VISION_BACKEND
     ),
     publicModelId: pickTrimmedString(
-      [localAi.publicModelId, nextPayload.publicModelId],
+      [nextPayload.publicModelId, localAi.publicModelId],
       LOCAL_AI_PUBLIC_MODEL_ID
     ),
     publicVisionId: pickTrimmedString(
-      [localAi.publicVisionId, nextPayload.publicVisionId],
+      [nextPayload.publicVisionId, localAi.publicVisionId],
       LOCAL_AI_PUBLIC_VISION_ID
     ),
     runtimeFamily: pickTrimmedString(
       [
-        localAi.runtimeFamily,
         nextPayload.runtimeFamily,
-        localAi.reasonerBackend,
         nextPayload.reasonerBackend,
+        localAi.runtimeFamily,
+        localAi.reasonerBackend,
       ],
       LOCAL_AI_RUNTIME_FAMILY
     ),
     runtimeType: pickTrimmedString(
-      [localAi.runtimeType, nextPayload.runtimeType],
+      [nextPayload.runtimeType, localAi.runtimeType],
       runtimeAdapter.runtimeType
     ),
     adapterStrategy: pickTrimmedString(
-      [localAi.adapterStrategy, nextPayload.adapterStrategy],
+      [nextPayload.adapterStrategy, localAi.adapterStrategy],
       LOCAL_AI_ADAPTER_STRATEGY
     ),
     trainingPolicy: pickTrimmedString(
-      [localAi.trainingPolicy, nextPayload.trainingPolicy],
+      [nextPayload.trainingPolicy, localAi.trainingPolicy],
       LOCAL_AI_TRAINING_POLICY
     ),
     contractVersion: pickTrimmedString(
-      [localAi.contractVersion, nextPayload.contractVersion],
+      [nextPayload.contractVersion, localAi.contractVersion],
       LOCAL_AI_CONTRACT_VERSION
     ),
   }
@@ -613,6 +615,47 @@ function buildLocalAiAdapterState(localAi = {}) {
   }
 }
 
+function isLocalAiEnabled() {
+  try {
+    return loadMainSettings().localAi?.enabled === true
+  } catch {
+    return false
+  }
+}
+
+function getLocalAiFeatureFlags() {
+  try {
+    const localAi = loadMainSettings().localAi || {}
+
+    return {
+      captureEnabled: localAi.captureEnabled === true,
+      trainEnabled: localAi.trainEnabled === true,
+      federatedEnabled: localAi.federated?.enabled === true,
+    }
+  } catch {
+    return {
+      captureEnabled: false,
+      trainEnabled: false,
+      federatedEnabled: false,
+    }
+  }
+}
+
+function assertLocalAiActionEnabled(action, enabled, message) {
+  if (enabled) {
+    return
+  }
+
+  if (isDev && logger && typeof logger.debug === 'function') {
+    logger.debug('Local AI IPC blocked because a feature gate is disabled', {
+      action,
+      message,
+    })
+  }
+
+  throw new Error(message)
+}
+
 function assertLocalAiEnabled(action) {
   try {
     ensureLocalAiEnabled(loadMainSettings())
@@ -626,10 +669,50 @@ function assertLocalAiEnabled(action) {
   }
 }
 
+function assertLocalAiCaptureEnabled(action) {
+  assertLocalAiActionEnabled(
+    action,
+    getLocalAiFeatureFlags().captureEnabled,
+    'Local AI capture is disabled'
+  )
+}
+
+function assertLocalAiTrainingEnabled(action) {
+  assertLocalAiActionEnabled(
+    action,
+    getLocalAiFeatureFlags().trainEnabled,
+    'Local AI training is disabled'
+  )
+}
+
+function assertLocalAiFederatedEnabled(action) {
+  assertLocalAiActionEnabled(
+    action,
+    getLocalAiFeatureFlags().federatedEnabled,
+    'Local AI federated updates are disabled'
+  )
+}
+
 function withLocalAiEnabled(action, handler) {
-  return async (...args) => {
+  return async (event, payload, ...rest) => {
     assertLocalAiEnabled(action)
-    return handler(...args)
+    return handler(event, payload, ...rest)
+  }
+}
+
+function withLocalAiTrainingEnabled(action, handler) {
+  return async (event, payload, ...rest) => {
+    assertLocalAiEnabled(action)
+    assertLocalAiTrainingEnabled(action)
+    return handler(event, payload, ...rest)
+  }
+}
+
+function withLocalAiFederatedEnabled(action, handler) {
+  return async (event, payload, ...rest) => {
+    assertLocalAiEnabled(action)
+    assertLocalAiFederatedEnabled(action)
+    return handler(event, payload, ...rest)
   }
 }
 
@@ -1923,7 +2006,7 @@ handleTrusted(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
 })
 
 handleTrusted('localAi.status', async (_event, payload) => {
-  if (!isLocalAiEnabled(loadMainSettings())) {
+  if (!isLocalAiEnabled()) {
     return buildDisabledLocalAiStatus(payload)
   }
 
@@ -1950,7 +2033,7 @@ handleTrusted(
 )
 
 handleTrusted('localAi.info', async (_event, payload) => {
-  if (!isLocalAiEnabled(loadMainSettings())) {
+  if (!isLocalAiEnabled()) {
     return buildDisabledLocalAiInfoResponse(payload)
   }
 
@@ -1961,7 +2044,7 @@ handleTrusted('localAi.info', async (_event, payload) => {
 })
 
 handleTrusted('localAi.chat', async (_event, payload) => {
-  if (!isLocalAiEnabled(loadMainSettings())) {
+  if (!isLocalAiEnabled()) {
     return buildDisabledLocalAiChatResponse(payload)
   }
 
@@ -1972,7 +2055,7 @@ handleTrusted('localAi.chat', async (_event, payload) => {
 })
 
 handleTrusted('localAi.flipJudge', async (_event, payload) => {
-  if (!isLocalAiEnabled(loadMainSettings())) {
+  if (!isLocalAiEnabled()) {
     return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
 
@@ -1983,7 +2066,7 @@ handleTrusted('localAi.flipJudge', async (_event, payload) => {
 })
 
 handleTrusted('localAi.checkFlipSequence', async (_event, payload) => {
-  if (!isLocalAiEnabled(loadMainSettings())) {
+  if (!isLocalAiEnabled()) {
     return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
 
@@ -1996,7 +2079,7 @@ handleTrusted('localAi.checkFlipSequence', async (_event, payload) => {
 })
 
 handleTrusted('localAi.flipToText', async (_event, payload) => {
-  if (!isLocalAiEnabled(loadMainSettings())) {
+  if (!isLocalAiEnabled()) {
     return buildDisabledLocalAiFlipToTextResponse(payload)
   }
 
@@ -2022,31 +2105,33 @@ handleTrusted(
 
 handleTrusted(
   'localAi.trainHook',
-  withLocalAiEnabled('trainHook', async (_event, payload) =>
+  withLocalAiTrainingEnabled('trainHook', async (_event, payload) =>
     localAiManager.trainHook(buildLocalAiTrainHookPayload(payload))
   )
 )
 
 handleTrusted(
   'localAi.trainEpoch',
-  withLocalAiEnabled('trainEpoch', async (_event, payload) =>
+  withLocalAiTrainingEnabled('trainEpoch', async (_event, payload) =>
     localAiManager.trainEpoch(buildLocalAiTrainHookPayload(payload))
   )
 )
 
 handleTrusted(
   'localAi.buildManifest',
-  withLocalAiEnabled('buildManifest', async (_event, payload) =>
+  withLocalAiTrainingEnabled('buildManifest', async (_event, payload) =>
     localAiManager.buildManifest(buildLocalAiEpochPayload(payload))
   )
 )
 
 handleTrusted(
   'localAi.registerAdapterArtifact',
-  withLocalAiEnabled('registerAdapterArtifact', async (_event, payload) =>
-    localAiManager.registerAdapterArtifact(
-      buildLocalAiTrainHookPayload(payload)
-    )
+  withLocalAiTrainingEnabled(
+    'registerAdapterArtifact',
+    async (_event, payload) =>
+      localAiManager.registerAdapterArtifact(
+        buildLocalAiTrainHookPayload(payload)
+      )
   )
 )
 
@@ -2066,16 +2151,18 @@ handleTrusted(
 
 handleTrusted(
   'localAi.buildTrainingCandidatePackage',
-  withLocalAiEnabled('buildTrainingCandidatePackage', async (_event, payload) =>
-    localAiManager.buildTrainingCandidatePackage(
-      buildLocalAiTrainHookPayload(payload)
-    )
+  withLocalAiTrainingEnabled(
+    'buildTrainingCandidatePackage',
+    async (_event, payload) =>
+      localAiManager.buildTrainingCandidatePackage(
+        buildLocalAiTrainHookPayload(payload)
+      )
   )
 )
 
 handleTrusted(
   'localAi.updateTrainingCandidatePackageReview',
-  withLocalAiEnabled(
+  withLocalAiTrainingEnabled(
     'updateTrainingCandidatePackageReview',
     async (_event, payload) =>
       localAiManager.updateTrainingCandidatePackageReview(payload)
@@ -2084,21 +2171,21 @@ handleTrusted(
 
 handleTrusted(
   'localAi.buildBundle',
-  withLocalAiEnabled('buildBundle', async (_event, epoch) =>
+  withLocalAiFederatedEnabled('buildBundle', async (_event, epoch) =>
     localAiFederated.buildUpdateBundle(epoch)
   )
 )
 
 handleTrusted(
   'localAi.importBundle',
-  withLocalAiEnabled('importBundle', async (_event, filePath) =>
+  withLocalAiFederatedEnabled('importBundle', async (_event, filePath) =>
     localAiFederated.importUpdateBundle(filePath)
   )
 )
 
 handleTrusted(
   'localAi.aggregate',
-  withLocalAiEnabled('aggregate', async () =>
+  withLocalAiFederatedEnabled('aggregate', async () =>
     localAiFederated.aggregateAcceptedBundles()
   )
 )
@@ -2106,6 +2193,7 @@ handleTrusted(
 onTrusted('localAi.captureFlip', (_event, payload) => {
   try {
     assertLocalAiEnabled('captureFlip')
+    assertLocalAiCaptureEnabled('captureFlip')
   } catch {
     return
   }

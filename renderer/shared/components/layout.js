@@ -86,13 +86,14 @@ import {useValidationToast} from '../../screens/validation/hooks/use-validation-
 import {useIdentityState} from '../providers/identity-context'
 import {OfflineBanner} from './layout/offline'
 import {TroubleshootingScreen} from '../../screens/troubleshooting'
+import {getAppBridge} from '../utils/app-bridge'
 
 global.getZoomLevel = global.getZoomLevel || (() => 0)
 global.setZoomLevel = global.setZoomLevel || (() => {})
 
 const AVAILABLE_TIMEOUT = global.isDev || global.isTest ? 0 : 1000 * 5
 
-const sendConfirmQuit = () => global.ipcRenderer.send('confirm-quit')
+const sendConfirmQuit = () => getAppBridge().requestConfirmQuit()
 
 export default function Layout({
   loading,
@@ -188,11 +189,7 @@ export default function Layout({
       }
     }
 
-    global.ipcRenderer.on('confirm-quit', handleRequestQuit)
-
-    return () => {
-      global.ipcRenderer.removeListener('confirm-quit', handleRequestQuit)
-    }
+    return getAppBridge().onConfirmQuit(handleRequestQuit)
   }, [isReady, onOpenConfirmQuit, runInternalNode])
 
   const {onOpen: onOpenSignInDialog, ...dnaSignInDisclosure} = useDisclosure()
@@ -303,7 +300,7 @@ function NormalApp({children}) {
       t('Idena validation will start soon'),
       t('Keep your app opened'),
       () => {
-        global.ipcRenderer.send('showMainWindow')
+        getAppBridge().showMainWindow()
       }
     )
     const newEpoch = epoch.epoch + 1

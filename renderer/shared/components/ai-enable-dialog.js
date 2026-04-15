@@ -20,6 +20,7 @@ import {useTranslation} from 'react-i18next'
 import {Input, Select, Toast} from './components'
 import {PrimaryButton, SecondaryButton} from './button'
 import {EyeIcon, EyeOffIcon} from './icons'
+import {isLocalAiProvider} from '../utils/ai-provider-readiness'
 
 function ensureBridge() {
   if (!global.aiSolver) {
@@ -60,6 +61,7 @@ export function AiEnableDialog({
   }
 
   const trimmedApiKey = String(apiKey || '').trim()
+  const isLocalProvider = isLocalAiProvider(provider)
   const selectedProvidersLabel = useMemo(
     () => savedProviders.map(String).join(', '),
     [savedProviders]
@@ -67,6 +69,10 @@ export function AiEnableDialog({
 
   const persistCurrentProviderKey = async () => {
     const nextKey = String(apiKey || '').trim()
+    if (isLocalProvider) {
+      throw new Error('Local AI does not use a session API key.')
+    }
+
     if (!nextKey) {
       throw new Error('Paste an API key first.')
     }
@@ -88,7 +94,7 @@ export function AiEnableDialog({
     try {
       let providers = savedProviders
 
-      if (trimmedApiKey) {
+      if (!isLocalProvider && trimmedApiKey) {
         await persistCurrentProviderKey()
         providers = savedProviders.includes(provider)
           ? savedProviders
@@ -97,9 +103,15 @@ export function AiEnableDialog({
 
       if (providers.length === 0) {
         const bridge = ensureBridge()
-        const result = await bridge.hasProviderKey({provider})
-        if (!result || !result.hasKey) {
-          throw new Error('Load at least one provider key before enabling AI.')
+        if (isLocalProvider) {
+          await bridge.testProvider({provider})
+        } else {
+          const result = await bridge.hasProviderKey({provider})
+          if (!result || !result.hasKey) {
+            throw new Error(
+              'Load at least one provider key before enabling AI.'
+            )
+          }
         }
         providers = [provider]
       }
@@ -130,7 +142,7 @@ export function AiEnableDialog({
           <Stack spacing={4}>
             <Text color="muted" fontSize="sm">
               {t(
-                'Choose one or more AI providers and load a session API key for each provider you want to use.'
+                'Choose one or more AI providers. Cloud providers need a session API key for this desktop session. Local AI uses the runtime configured on the AI settings page.'
               )}
             </Text>
 
@@ -154,73 +166,79 @@ export function AiEnableDialog({
                   ))}
                 </Select>
                 <Text color="muted" fontSize="xs">
-                  {t(
-                    'You can save one provider now, then switch provider and add another before finishing.'
-                  )}
+                  {isLocalProvider
+                    ? t(
+                        'Local AI does not need a session key. Finish setup, then make sure the Local AI runtime is enabled and reachable on the AI settings page.'
+                      )
+                    : t(
+                        'You can save one provider now, then switch provider and add another before finishing.'
+                      )}
                 </Text>
               </Stack>
             </Box>
 
-            <Box
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="md"
-              p={3}
-            >
-              <Stack spacing={3}>
-                <Text fontWeight={500}>{t('Session API key')}</Text>
-                <InputGroup w="full">
-                  <Input
-                    value={apiKey}
-                    type={isApiKeyVisible ? 'text' : 'password'}
-                    placeholder={t('Paste API key for the selected provider')}
-                    onChange={(e) => setApiKey(e.target.value)}
-                  />
-                  <InputRightElement w="6" h="6" m="1">
-                    <IconButton
-                      size="xs"
-                      icon={isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />}
-                      bg={isApiKeyVisible ? 'gray.300' : 'white'}
-                      fontSize={20}
-                      _hover={{
-                        bg: isApiKeyVisible ? 'gray.300' : 'white',
-                      }}
-                      onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
+            {!isLocalProvider ? (
+              <Box
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="md"
+                p={3}
+              >
+                <Stack spacing={3}>
+                  <Text fontWeight={500}>{t('Session API key')}</Text>
+                  <InputGroup w="full">
+                    <Input
+                      value={apiKey}
+                      type={isApiKeyVisible ? 'text' : 'password'}
+                      placeholder={t('Paste API key for the selected provider')}
+                      onChange={(e) => setApiKey(e.target.value)}
                     />
-                  </InputRightElement>
-                </InputGroup>
-                <Stack isInline justify="flex-end">
-                  <SecondaryButton
-                    isDisabled={!trimmedApiKey}
-                    isLoading={isSaving}
-                    onClick={async () => {
-                      setIsSaving(true)
-                      try {
-                        await persistCurrentProviderKey()
-                        notify(
-                          t('Provider key saved'),
-                          t('{{provider}} is ready for this session.', {
-                            provider,
-                          })
-                        )
-                      } catch (error) {
-                        notify(
-                          t('Unable to save provider key'),
-                          String(
-                            (error && error.message) || error || ''
-                          ).trim(),
-                          'error'
-                        )
-                      } finally {
-                        setIsSaving(false)
-                      }
-                    }}
-                  >
-                    {t('Save provider key')}
-                  </SecondaryButton>
+                    <InputRightElement w="6" h="6" m="1">
+                      <IconButton
+                        size="xs"
+                        icon={isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />}
+                        bg={isApiKeyVisible ? 'gray.300' : 'white'}
+                        fontSize={20}
+                        _hover={{
+                          bg: isApiKeyVisible ? 'gray.300' : 'white',
+                        }}
+                        onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
+                      />
+                    </InputRightElement>
+                  </InputGroup>
+                  <Stack isInline justify="flex-end">
+                    <SecondaryButton
+                      isDisabled={!trimmedApiKey}
+                      isLoading={isSaving}
+                      onClick={async () => {
+                        setIsSaving(true)
+                        try {
+                          await persistCurrentProviderKey()
+                          notify(
+                            t('Provider key saved'),
+                            t('{{provider}} is ready for this session.', {
+                              provider,
+                            })
+                          )
+                        } catch (error) {
+                          notify(
+                            t('Unable to save provider key'),
+                            String(
+                              (error && error.message) || error || ''
+                            ).trim(),
+                            'error'
+                          )
+                        } finally {
+                          setIsSaving(false)
+                        }
+                      }}
+                    >
+                      {t('Save provider key')}
+                    </SecondaryButton>
+                  </Stack>
                 </Stack>
-              </Stack>
-            </Box>
+              </Box>
+            ) : null}
 
             <Box
               borderWidth="1px"

@@ -34,6 +34,7 @@ import {DEFAULT_FLIP_ORDER} from '../../screens/flips/utils'
 import Layout from '../../shared/components/layout'
 import {useChainState} from '../../shared/providers/chain-context'
 import {DeleteIcon} from '../../shared/components/icons'
+import {getFlipsBridge} from '../../shared/utils/flips-bridge'
 
 export default function ViewFlipPage() {
   const {t, i18n} = useTranslation()
@@ -59,7 +60,7 @@ export default function ViewFlipPage() {
       // eslint-disable-next-line no-shadow
       loadFlip: async ({id}) => {
         const {hint, pics, compressedPics, ...flip} =
-          global.flipStore?.getFlip(id) ?? {}
+          getFlipsBridge().getFlip(id) ?? {}
 
         return hint
           ? {

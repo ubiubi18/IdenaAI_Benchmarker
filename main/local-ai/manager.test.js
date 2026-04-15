@@ -685,6 +685,95 @@ describe('local-ai manager', () => {
     )
   })
 
+  it('starts the managed Ollama runtime when the configured backend is unavailable', async () => {
+    const sidecar = {
+      getHealth: jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 'error',
+          reachable: false,
+          runtime: 'ollama',
+          runtimeBackend: 'ollama-direct',
+          runtimeType: 'ollama',
+          baseUrl: 'http://127.0.0.1:11434',
+          endpoint: 'http://127.0.0.1:11434/api/version',
+          lastError: 'connect ECONNREFUSED 127.0.0.1:11434',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 'ok',
+          reachable: true,
+          runtime: 'ollama',
+          runtimeBackend: 'ollama-direct',
+          runtimeType: 'ollama',
+          baseUrl: 'http://127.0.0.1:11434',
+          endpoint: 'http://127.0.0.1:11434/api/version',
+          data: {version: '0.7.0'},
+          lastError: null,
+        }),
+      listModels: jest.fn(async () => ({
+        ok: true,
+        reachable: true,
+        runtimeBackend: 'ollama-direct',
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        endpoint: 'http://127.0.0.1:11434/api/tags',
+        models: ['llama3.1:8b'],
+        total: 1,
+        lastError: null,
+      })),
+      chat: jest.fn(),
+      flipToText: jest.fn(),
+      checkFlipSequence: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(),
+    }
+    const runtimeController = {
+      start: jest.fn(async () => ({
+        started: true,
+        managed: true,
+        pid: 4242,
+      })),
+      stop: jest.fn(async () => ({
+        stopped: true,
+        managed: true,
+        pid: 4242,
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      runtimeController,
+    })
+
+    await expect(
+      manager.start({
+        runtimeBackend: 'ollama-direct',
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      runtimeBackend: 'ollama-direct',
+      runtimeType: 'ollama',
+      baseUrl: 'http://127.0.0.1:11434',
+      sidecarReachable: true,
+      sidecarModelCount: 1,
+      runtimeManaged: true,
+    })
+
+    expect(runtimeController.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeBackend: 'ollama-direct',
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+      })
+    )
+  })
+
   it('derives the legacy runtime type from runtimeBackend for Local AI flip text requests', async () => {
     const sidecar = {
       getHealth: jest.fn(),

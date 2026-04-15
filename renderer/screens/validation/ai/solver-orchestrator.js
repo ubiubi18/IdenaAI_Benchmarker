@@ -456,7 +456,9 @@ export async function solveValidationSessionWithAi({
   const bridge = ensureBridge()
 
   const profile = normalizeProfile(aiSolver)
-  const provider = aiSolver.provider || 'openai'
+  const provider = String(aiSolver.provider || 'openai')
+    .trim()
+    .toLowerCase()
   const model = aiSolver.model || 'gpt-5.4'
   const providerConfig = buildProviderConfig(aiSolver)
   const consultProviders = buildConsultProviders(aiSolver, providerConfig)
@@ -475,7 +477,8 @@ export async function solveValidationSessionWithAi({
   const startedAt = Date.now()
   const buildDeadlineAt = Date.now() + profile.deadlineMs
   const payloadFlips = []
-  const useFrameVision = profile.flipVisionMode !== 'composite'
+  const useFrameVision =
+    profile.flipVisionMode !== 'composite' || provider === 'local-ai'
 
   for (
     let candidateIndex = 0;

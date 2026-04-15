@@ -83,7 +83,9 @@ import {
 import {
   checkAiProviderReadiness,
   formatMissingAiProviders,
+  isLocalAiProvider,
 } from '../../shared/utils/ai-provider-readiness'
+import {getFlipsBridge} from '../../shared/utils/flips-bridge'
 
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
@@ -998,6 +1000,13 @@ function formatAiRunError(error) {
     return `Session API key missing for ${providers}. Open AI settings, load the required provider keys, then retry.`
   }
 
+  if (
+    /local_ai_disabled|local_ai_unavailable|Local AI/i.test(message) &&
+    /runtime|provider|review/i.test(message)
+  ) {
+    return 'Local AI runtime is not ready. Open AI settings, enable Local AI, check the runtime, then retry.'
+  }
+
   if (/AI helper is disabled/i.test(message)) {
     return 'AI helper is disabled. Open AI settings, enable AI helper, then retry.'
   }
@@ -1297,7 +1306,7 @@ const AiBenchmarkQuickStartModal = React.memo(
               </Text>
               <Text fontSize="sm" color="muted" mt={1}>
                 {t(
-                  'To run the IdenaAI benchmark helper, choose your preferred AI provider, insert a session API key for that provider, and keep advanced settings hidden unless you really need them.'
+                  'To run the IdenaAI benchmark helper, choose your preferred AI provider and complete its setup. Cloud providers need a session API key; Local AI needs the local runtime to be enabled and reachable.'
                 )}
               </Text>
             </Box>
@@ -1824,6 +1833,8 @@ export default function NewFlipPage() {
     try {
       const nextState = await checkAiProviderReadiness({
         bridge: global.aiSolver,
+        localBridge: global.localAi,
+        localAi: settings.localAi,
         aiSolver: aiSolverSettings,
       })
       setAiProviderKeyStatus(nextState)
@@ -1843,17 +1854,14 @@ export default function NewFlipPage() {
       setAiProviderKeyStatus(fallbackState)
       return fallbackState
     }
-  }, [aiSolverSettings, isLegacyOnlyMode])
+  }, [aiSolverSettings, isLegacyOnlyMode, settings.localAi])
 
   useEffect(() => {
     let cancelled = false
 
     async function loadProviderKeyStatus() {
       try {
-        const state = await refreshAiProviderKeyStatus()
-        if (!cancelled) {
-          setAiProviderKeyStatus(state)
-        }
+        await refreshAiProviderKeyStatus()
       } catch (error) {
         if (!cancelled) {
           setAiProviderKeyStatus((prev) => ({
@@ -2227,7 +2235,7 @@ export default function NewFlipPage() {
             didShowBadFlip,
           }
 
-        const persistedFlips = global.flipStore?.getFlips()
+        const persistedFlips = getFlipsBridge().getFlips()
 
         // eslint-disable-next-line no-shadow
         const availableKeywords = flipKeyWordPairs.filter(
@@ -4100,6 +4108,10 @@ export default function NewFlipPage() {
     [selectedStoryId, storyOptions]
   )
   const aiProviderKeyStatusUi = useMemo(() => {
+    const isLocalAiPrimaryProvider = isLocalAiProvider(
+      aiSolverSettings.provider
+    )
+
     if (isLegacyOnlyMode) {
       return {
         label: t('Not required in legacy-only mode'),
@@ -4114,29 +4126,47 @@ export default function NewFlipPage() {
       const providerCount = Array.isArray(aiProviderKeyStatus.requiredProviders)
         ? aiProviderKeyStatus.requiredProviders.length
         : 0
+      let readyDetail = t('Active provider key is loaded.')
+
+      if (providerCount > 1) {
+        readyDetail = t('All required AI providers are ready.')
+      } else if (isLocalAiPrimaryProvider) {
+        readyDetail = t('Local AI runtime is reachable.')
+      }
+
       return {
         label:
           providerCount > 1
             ? t('Ready ({{count}}/{{count}})', {count: providerCount})
             : t('Ready'),
         color: 'green.500',
-        detail:
-          providerCount > 1
-            ? t('All required provider keys are loaded.')
-            : t('Active provider key is loaded.'),
+        detail: readyDetail,
       }
     }
     const missingProviders = formatMissingAiProviders(
       aiProviderKeyStatus.missingProviders
     )
+    let missingDetail = t(
+      'Open AI settings and load the required provider key.'
+    )
+
+    if (isLocalAiPrimaryProvider) {
+      missingDetail = t(
+        'Enable Local AI and check the runtime on the AI settings page before starting AI generation or solver runs.'
+      )
+    } else if (missingProviders) {
+      missingDetail = t('Missing for: {{providers}}', {
+        providers: missingProviders,
+      })
+    }
+
     return {
       label: t('Missing'),
       color: 'orange.500',
-      detail: missingProviders
-        ? t('Missing for: {{providers}}', {providers: missingProviders})
-        : t('Open AI settings and load the required provider key.'),
+      detail: missingDetail,
     }
   }, [
+    aiSolverSettings.provider,
     aiProviderKeyStatus.checked,
     aiProviderKeyStatus.checking,
     aiProviderKeyStatus.allReady,
@@ -5362,7 +5392,7 @@ export default function NewFlipPage() {
                                   </Text>
                                   <Text fontSize="xs" color="muted">
                                     {t(
-                                      '1. Choose provider and set a session API key. 2. Pick Create or Solve below. 3. Keep advanced controls hidden unless you really need them.'
+                                      '1. Choose provider and complete its setup. 2. Pick Create or Solve below. 3. Keep advanced controls hidden unless you really need them.'
                                     )}
                                   </Text>
                                 </Box>
@@ -5458,7 +5488,7 @@ export default function NewFlipPage() {
                                     <Text fontSize="xs" color="muted">
                                       {aiProviderKeyStatusUi.detail ||
                                         t(
-                                          'Load the required session API key before starting AI generation or solver runs.'
+                                          'Finish the required AI provider setup before starting AI generation or solver runs.'
                                         )}
                                     </Text>
                                     <Stack

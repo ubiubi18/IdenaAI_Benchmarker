@@ -5,6 +5,7 @@ import {FillCenter} from '../screens/oracles/components'
 import Layout from '../shared/components/layout'
 import {PrimaryButton} from '../shared/components/button'
 import {Page} from '../shared/components/components'
+import {getAppBridge} from '../shared/utils/app-bridge'
 
 export default function Custom404() {
   const {t} = useTranslation()
@@ -31,9 +32,7 @@ export default function Custom404() {
                 {t('Go back to My Idena to continue')}
               </Text>
               <Box>
-                <PrimaryButton
-                  onClick={() => global.ipcRenderer.send('reload')}
-                >
+                <PrimaryButton onClick={() => getAppBridge().reload()}>
                   {t('Go to My Idena')}
                 </PrimaryButton>
               </Box>

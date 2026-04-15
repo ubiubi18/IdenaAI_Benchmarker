@@ -14,7 +14,6 @@ const sub = require('subleveldown')
 
 const flips = require('./stores/flips')
 const invites = require('./stores/invites')
-const contacts = require('./stores/contacts')
 const logger = require('./logger')
 const {toIpcCloneable} = require('./utils/ipc-cloneable')
 const {prepareDb, dbPath} = require('./stores/setup')
@@ -37,27 +36,20 @@ const isDev =
 
 const isTest = process.env.NODE_ENV === 'e2e'
 
-const allowedSendChannels = new Set([
-  'confirm-quit',
-  'reload',
-  'showMainWindow',
-  'localAi.captureFlip',
-  NODE_COMMAND,
-  AUTO_UPDATE_COMMAND,
-])
-
-const allowedInvokeChannels = new Set(['CHECK_DNA_LINK', 'search-image'])
-
-const allowedSubscribeChannels = new Set([
-  'confirm-quit',
-  'DNA_LINK',
-  NODE_EVENT,
-  AUTO_UPDATE_EVENT,
-])
-
-const ipcListenerRegistry = new Map()
 const aiTestUnitListenerRegistry = new WeakMap()
+const appListenerRegistry = new WeakMap()
+const nodeEventListenerRegistry = new WeakMap()
+const updateEventListenerRegistry = new WeakMap()
+const dnaLinkListenerRegistry = new WeakMap()
 const dbRegistry = new Map()
+const persistenceStoreNames = {
+  settings: 'settings',
+  flipFilter: 'flipFilter',
+  validationSession: 'validation2',
+  validationResults: 'validationResults',
+  flipArchive: 'flipArchive',
+  validationNotification: 'validationNotification',
+}
 
 function getAppInfo() {
   try {
@@ -67,98 +59,136 @@ function getAppInfo() {
   }
 }
 
-function getListenerStore(channel) {
-  if (!ipcListenerRegistry.has(channel)) {
-    ipcListenerRegistry.set(channel, new WeakMap())
+function subscribeToChannel(channel, handler, registry, projector) {
+  if (typeof handler !== 'function') {
+    return () => {}
   }
 
-  return ipcListenerRegistry.get(channel)
+  let wrapped = registry.get(handler)
+
+  if (!wrapped) {
+    wrapped = (_event, ...args) => projector(...args)
+    registry.set(handler, wrapped)
+  }
+
+  ipcRenderer.on(channel, wrapped)
+
+  return () => ipcRenderer.removeListener(channel, wrapped)
 }
 
-function createIpcBridge() {
+function createAppBridge() {
   return {
-    send(channel, ...args) {
-      if (!allowedSendChannels.has(channel)) {
-        throw new Error(`Unsupported IPC send channel: ${channel}`)
-      }
-
-      ipcRenderer.send(channel, ...args.map((arg) => toIpcCloneable(arg)))
+    reload() {
+      ipcRenderer.send('reload')
     },
-    invoke(channel, ...args) {
-      if (!allowedInvokeChannels.has(channel)) {
-        throw new Error(`Unsupported IPC invoke channel: ${channel}`)
-      }
-
-      return ipcRenderer.invoke(
-        channel,
-        ...args.map((arg) => toIpcCloneable(arg))
+    requestConfirmQuit() {
+      ipcRenderer.send('confirm-quit')
+    },
+    showMainWindow() {
+      ipcRenderer.send('showMainWindow')
+    },
+    onConfirmQuit(handler) {
+      return subscribeToChannel(
+        'confirm-quit',
+        handler,
+        appListenerRegistry,
+        () => handler()
       )
     },
-    on(channel, handler) {
-      if (!allowedSubscribeChannels.has(channel)) {
-        throw new Error(`Unsupported IPC subscribe channel: ${channel}`)
-      }
+  }
+}
 
-      if (typeof handler !== 'function') {
-        return () => {}
-      }
-
-      const store = getListenerStore(channel)
-      let wrapped = store.get(handler)
-
-      if (!wrapped) {
-        wrapped = (_event, ...args) => handler(undefined, ...args)
-        store.set(handler, wrapped)
-      }
-
-      ipcRenderer.on(channel, wrapped)
-
-      return () => ipcRenderer.removeListener(channel, wrapped)
+function createNodeBridge() {
+  return {
+    onEvent(handler) {
+      return subscribeToChannel(
+        NODE_EVENT,
+        handler,
+        nodeEventListenerRegistry,
+        (event, data) => handler(event, data)
+      )
     },
-    removeListener(channel, handler) {
-      const wrapped =
-        typeof handler === 'function'
-          ? getListenerStore(channel).get(handler)
-          : undefined
-
-      if (wrapped) {
-        ipcRenderer.removeListener(channel, wrapped)
-      }
+    getLastLogs() {
+      ipcRenderer.send(NODE_COMMAND, 'get-last-logs')
+    },
+    restartNode() {
+      ipcRenderer.send(NODE_COMMAND, 'restart-node')
+    },
+    startLocalNode(payload) {
+      ipcRenderer.send(
+        NODE_COMMAND,
+        'start-local-node',
+        toIpcCloneable(payload)
+      )
+    },
+    initLocalNode() {
+      ipcRenderer.send(NODE_COMMAND, 'init-local-node')
+    },
+    stopLocalNode() {
+      ipcRenderer.send(NODE_COMMAND, 'stop-local-node')
+    },
+    cleanState() {
+      ipcRenderer.send(NODE_COMMAND, 'clean-state')
+    },
+    troubleshootingRestartNode() {
+      ipcRenderer.send(NODE_COMMAND, 'troubleshooting-restart-node')
+    },
+    troubleshootingUpdateNode() {
+      ipcRenderer.send(NODE_COMMAND, 'troubleshooting-update-node')
+    },
+    troubleshootingResetNode() {
+      ipcRenderer.send(NODE_COMMAND, 'troubleshooting-reset-node')
     },
   }
 }
 
-function resolveDbDescriptor(descriptor = {}) {
-  const nextDescriptor =
-    descriptor && typeof descriptor === 'object' ? descriptor : {}
-  const sublevels = Array.isArray(nextDescriptor.sublevels)
-    ? nextDescriptor.sublevels
-        .map((entry) => {
-          const nextEntry = entry && typeof entry === 'object' ? entry : {}
-          const prefix =
-            typeof nextEntry.prefix === 'string' ? nextEntry.prefix.trim() : ''
-
-          if (!prefix) {
-            return null
-          }
-
-          return {
-            prefix,
-            options:
-              nextEntry.options && typeof nextEntry.options === 'object'
-                ? nextEntry.options
-                : {},
-          }
-        })
-        .filter(Boolean)
-    : []
-
+function createAutoUpdateBridge() {
   return {
-    name:
-      typeof nextDescriptor.name === 'string' && nextDescriptor.name.trim()
-        ? nextDescriptor.name.trim()
-        : 'db',
-    sublevels,
+    onEvent(handler) {
+      return subscribeToChannel(
+        AUTO_UPDATE_EVENT,
+        handler,
+        updateEventListenerRegistry,
+        (event, data) => handler(event, data)
+      )
+    },
+    startChecking(payload) {
+      ipcRenderer.send(
+        AUTO_UPDATE_COMMAND,
+        'start-checking',
+        toIpcCloneable(payload)
+      )
+    },
+    updateUi() {
+      ipcRenderer.send(AUTO_UPDATE_COMMAND, 'update-ui')
+    },
+    updateNode() {
+      ipcRenderer.send(AUTO_UPDATE_COMMAND, 'update-node')
+    },
+  }
+}
+
+function createDnaBridge() {
+  return {
+    checkLink() {
+      return ipcRenderer.invoke('CHECK_DNA_LINK')
+    },
+    onLink(handler) {
+      return subscribeToChannel(
+        'DNA_LINK',
+        handler,
+        dnaLinkListenerRegistry,
+        (url) => handler(url)
+      )
+    },
+  }
+}
+
+function createImageSearchBridge() {
+  return {
+    search(query) {
+      return ipcRenderer.invoke('search-image', String(query || ''))
+    },
   }
 }
 
@@ -170,13 +200,101 @@ function getDb(name = 'db') {
   return dbRegistry.get(name)
 }
 
-function resolveTargetDb(descriptor = {}) {
-  const nextDescriptor = resolveDbDescriptor(descriptor)
+function createKeyValueStore(targetDb) {
+  return {
+    get(key) {
+      return targetDb.get(key)
+    },
+    put(key, value) {
+      return targetDb.put(key, value)
+    },
+    clear() {
+      return targetDb.clear()
+    },
+    batchWrite(operations = []) {
+      let batch = targetDb.batch()
 
-  return nextDescriptor.sublevels.reduce(
-    (targetDb, {prefix, options}) => sub(targetDb, prefix, options),
-    getDb(nextDescriptor.name)
-  )
+      for (const operation of Array.isArray(operations) ? operations : []) {
+        const nextOperation =
+          operation && typeof operation === 'object' ? operation : {}
+
+        if (nextOperation.type === 'put') {
+          batch = batch.put(nextOperation.key, nextOperation.value)
+        } else if (nextOperation.type === 'del') {
+          batch = batch.del(nextOperation.key)
+        }
+      }
+
+      return batch.write()
+    },
+  }
+}
+
+function createPersistenceStore(storeName) {
+  return {
+    loadState() {
+      return prepareDb(storeName).getState()
+    },
+    loadValue(key) {
+      const state = prepareDb(storeName).getState()
+      return state ? state[key] : null
+    },
+    persistItem(key, value) {
+      prepareDb(storeName).set(key, value).write()
+      return true
+    },
+    persistState(state) {
+      prepareDb(storeName).setState(state).write()
+      return true
+    },
+  }
+}
+
+function createSublevelStore(prefix, options) {
+  return createKeyValueStore(sub(getDb('db'), prefix, options))
+}
+
+function createEpochStore(prefix, options) {
+  const rootStore = sub(getDb('db'), prefix)
+
+  return {
+    ...createKeyValueStore(rootStore),
+    epoch(epoch) {
+      const numericEpoch = Number(epoch)
+      const normalizedEpoch = Number.isFinite(numericEpoch)
+        ? Math.trunc(numericEpoch)
+        : -1
+
+      return createKeyValueStore(
+        sub(rootStore, `epoch${normalizedEpoch}`, options)
+      )
+    },
+  }
+}
+
+function createStorageBridge() {
+  return {
+    settings: createPersistenceStore(persistenceStoreNames.settings),
+    flipFilter: createPersistenceStore(persistenceStoreNames.flipFilter),
+    validationSession: createPersistenceStore(
+      persistenceStoreNames.validationSession
+    ),
+    validationResults: createPersistenceStore(
+      persistenceStoreNames.validationResults
+    ),
+    flipArchive: createPersistenceStore(persistenceStoreNames.flipArchive),
+    validationNotification: createPersistenceStore(
+      persistenceStoreNames.validationNotification
+    ),
+    flips: createSublevelStore('flips'),
+    votings: {
+      ...createEpochStore('votings', {valueEncoding: 'json'}),
+      json: createSublevelStore('votings', {valueEncoding: 'json'}),
+    },
+    updates: createSublevelStore('updates'),
+    profile: createSublevelStore('profile'),
+    onboarding: createSublevelStore('onboarding', {valueEncoding: 'json'}),
+  }
 }
 
 function sanitizeImageSize(value, fallback) {
@@ -224,9 +342,14 @@ function resizeImageDataUrl(
 
 const appInfo = getAppInfo()
 const [locale] = String(appInfo.locale || 'en').split('-')
-const ipcBridge = createIpcBridge()
+const appBridge = createAppBridge()
+const nodeBridge = createNodeBridge()
+const autoUpdateBridge = createAutoUpdateBridge()
+const dnaBridge = createDnaBridge()
+const imageSearchBridge = createImageSearchBridge()
 const invokeCloneable = (channel, ...args) =>
   ipcRenderer.invoke(channel, ...args.map((arg) => toIpcCloneable(arg)))
+const storageBridge = createStorageBridge()
 
 const bridge = {
   globals: {
@@ -324,21 +447,11 @@ const bridge = {
       importBundle: (filePath) =>
         invokeCloneable('localAi.importBundle', filePath),
       aggregate: () => invokeCloneable('localAi.aggregate'),
+      captureFlip: (payload) =>
+        ipcRenderer.send('localAi.captureFlip', toIpcCloneable(payload)),
     },
-    ipcRenderer: ipcBridge,
     openExternal: (url) =>
       invokeCloneable('shell.openExternal.safe', {url: String(url || '')}),
-    flipStore: {
-      getFlips: flips.getFlips,
-      getFlip: flips.getFlip,
-      saveFlips: flips.saveFlips,
-      addDraft: flips.addDraft,
-      updateDraft: flips.updateDraft,
-      deleteDraft: flips.deleteDraft,
-      clear: flips.clear,
-    },
-    invitesDb: invites,
-    contactsDb: contacts,
     logger: {
       debug: (...args) => logger.debug(...args),
       info: (...args) => logger.info(...args),
@@ -364,50 +477,12 @@ const bridge = {
         logger.warn('Cannot toggle fullscreen', error && error.message)
       ),
   },
-  persistence: {
-    loadState(dbName) {
-      return prepareDb(dbName).getState()
-    },
-    loadValue(dbName, key) {
-      const state = prepareDb(dbName).getState()
-      return state ? state[key] : null
-    },
-    persistItem(dbName, key, value) {
-      prepareDb(dbName).set(key, value).write()
-      return true
-    },
-    persistState(dbName, state) {
-      prepareDb(dbName).setState(state).write()
-      return true
-    },
-  },
-  db: {
-    get(descriptor, key) {
-      return resolveTargetDb(descriptor).get(key)
-    },
-    put(descriptor, key, value) {
-      return resolveTargetDb(descriptor).put(key, value)
-    },
-    clear(descriptor) {
-      return resolveTargetDb(descriptor).clear()
-    },
-    batchWrite(descriptor, operations = []) {
-      let batch = resolveTargetDb(descriptor).batch()
-
-      for (const operation of Array.isArray(operations) ? operations : []) {
-        const nextOperation =
-          operation && typeof operation === 'object' ? operation : {}
-
-        if (nextOperation.type === 'put') {
-          batch = batch.put(nextOperation.key, nextOperation.value)
-        } else if (nextOperation.type === 'del') {
-          batch = batch.del(nextOperation.key)
-        }
-      }
-
-      return batch.write()
-    },
-  },
+  app: appBridge,
+  node: nodeBridge,
+  updates: autoUpdateBridge,
+  dna: dnaBridge,
+  imageSearch: imageSearchBridge,
+  storage: storageBridge,
   clipboard: {
     readText: () => clipboard.readText(),
     readImageDataUrl(options) {
@@ -458,6 +533,16 @@ const bridge = {
   rpc: {
     call: (payload) => invokeCloneable('rpc.call', payload),
   },
+  flips: {
+    getFlips: flips.getFlips,
+    getFlip: flips.getFlip,
+    saveFlips: flips.saveFlips,
+    addDraft: flips.addDraft,
+    updateDraft: flips.updateDraft,
+    deleteDraft: flips.deleteDraft,
+    clear: flips.clear,
+  },
+  invites,
 }
 
 contextBridge.exposeInMainWorld('idena', bridge)

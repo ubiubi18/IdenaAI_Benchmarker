@@ -3,22 +3,30 @@ const LEGACY_LOCAL_AI_RUNTIME_FAMILY = 'phi-3.5-vision'
 const LEGACY_LOCAL_AI_MODEL = 'phi-3.5-vision-instruct'
 const LEGACY_LOCAL_AI_VISION_MODEL = 'phi-3.5-vision'
 const LEGACY_LOCAL_AI_CONTRACT_VERSION = 'phi-sidecar/v1'
+const LEGACY_LOCAL_AI_BASE_URL = 'http://127.0.0.1:5000'
 const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
+const DEFAULT_LOCAL_AI_SIDECAR_BASE_URL = LEGACY_LOCAL_AI_BASE_URL
+const DEFAULT_LOCAL_AI_OLLAMA_MODEL = 'llama3.1:8b'
+const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'moondream:latest'
+const LEGACY_LOCAL_AI_PUBLIC_MODEL_ID = 'idena-multimodal-v1'
+const LEGACY_LOCAL_AI_PUBLIC_VISION_ID = 'idena-vision-v1'
+const DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID = 'Idena-text-v1'
+const DEFAULT_LOCAL_AI_PUBLIC_VISION_ID = 'Idena-multimodal-v1'
 
 const DEFAULT_LOCAL_AI_SETTINGS = {
   enabled: false,
   runtimeMode: 'sidecar',
-  runtimeBackend: 'sidecar-http',
+  runtimeBackend: 'ollama-direct',
   reasonerBackend: 'local-reasoner',
   visionBackend: 'local-vision',
-  publicModelId: 'idena-core-v1',
-  publicVisionId: 'idena-vision-v1',
-  baseUrl: 'http://127.0.0.1:5000',
-  endpoint: 'http://127.0.0.1:5000',
+  publicModelId: DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
+  publicVisionId: DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
+  baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+  endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   runtimeType: '',
   runtimeFamily: '',
-  model: '',
-  visionModel: '',
+  model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
+  visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
   adapterStrategy: 'lora-first',
   trainingPolicy: 'approved-post-consensus-only',
   contractVersion: 'idena-local/v1',
@@ -41,6 +49,95 @@ function trimString(value) {
   return String(value || '').trim()
 }
 
+function trimTrailingSlash(value) {
+  return String(value || '').replace(/\/+$/, '')
+}
+
+function parseLocalAiUrl(value) {
+  const text = trimString(value)
+
+  if (!text) {
+    return null
+  }
+
+  try {
+    return new URL(text)
+  } catch {
+    return null
+  }
+}
+
+function isLoopbackHostname(value) {
+  const hostname = trimString(value).toLowerCase()
+
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  )
+}
+
+function getLocalAiEndpointSafety(value) {
+  const text = trimString(value)
+
+  if (!text) {
+    return {
+      safe: false,
+      reason: 'endpoint_required',
+      message: 'Local AI endpoint is required.',
+      normalizedBaseUrl: '',
+    }
+  }
+
+  const url = parseLocalAiUrl(text)
+
+  if (!url || !/^https?:$/i.test(url.protocol)) {
+    return {
+      safe: false,
+      reason: 'invalid_url',
+      message: 'Local AI endpoint must be a valid http(s) URL.',
+      normalizedBaseUrl: text,
+    }
+  }
+
+  if (url.username || url.password) {
+    return {
+      safe: false,
+      reason: 'credentials_not_allowed',
+      message: 'Local AI endpoint must not include embedded credentials.',
+      normalizedBaseUrl: trimTrailingSlash(url.toString()),
+    }
+  }
+
+  if (url.search || url.hash) {
+    return {
+      safe: false,
+      reason: 'query_not_allowed',
+      message:
+        'Local AI endpoint must not include query parameters or URL fragments.',
+      normalizedBaseUrl: trimTrailingSlash(url.toString()),
+    }
+  }
+
+  if (!isLoopbackHostname(url.hostname)) {
+    return {
+      safe: false,
+      reason: 'loopback_only',
+      message:
+        'Local AI endpoint must stay on this machine (localhost, 127.0.0.1, or ::1).',
+      normalizedBaseUrl: trimTrailingSlash(url.toString()),
+    }
+  }
+
+  return {
+    safe: true,
+    reason: '',
+    message: '',
+    normalizedBaseUrl: trimTrailingSlash(url.toString()),
+  }
+}
+
 function normalizeRuntimeBackend(source = {}) {
   const explicit = trimString(source.runtimeBackend).toLowerCase()
   switch (explicit) {
@@ -52,7 +149,7 @@ function normalizeRuntimeBackend(source = {}) {
     case 'sidecar-http':
     case 'local-ai-sidecar':
     case LEGACY_LOCAL_AI_RUNTIME_TYPE:
-      return DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
+      return 'sidecar-http'
     default:
       if (explicit) {
         return explicit
@@ -70,7 +167,7 @@ function normalizeRuntimeBackend(source = {}) {
 function defaultBaseUrlForRuntimeBackend(runtimeBackend) {
   return runtimeBackend === 'ollama-direct'
     ? DEFAULT_LOCAL_AI_OLLAMA_BASE_URL
-    : DEFAULT_LOCAL_AI_SETTINGS.baseUrl
+    : DEFAULT_LOCAL_AI_SIDECAR_BASE_URL
 }
 
 function normalizeContractVersion(value) {
@@ -97,13 +194,13 @@ function normalizeBaseUrl(source = {}) {
 
   if (
     runtimeBackend === 'ollama-direct' &&
-    explicit === DEFAULT_LOCAL_AI_SETTINGS.baseUrl
+    explicit === DEFAULT_LOCAL_AI_SIDECAR_BASE_URL
   ) {
     return defaultBaseUrl
   }
 
   if (
-    runtimeBackend === DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend &&
+    runtimeBackend === 'sidecar-http' &&
     explicit === DEFAULT_LOCAL_AI_OLLAMA_BASE_URL
   ) {
     return defaultBaseUrl
@@ -129,6 +226,32 @@ function normalizeLegacyRuntimeFamily(source = {}) {
   return DEFAULT_LOCAL_AI_SETTINGS.runtimeFamily
 }
 
+function normalizePublicModelId(value) {
+  const nextValue = trimString(value)
+
+  if (
+    !nextValue ||
+    nextValue.toLowerCase() === LEGACY_LOCAL_AI_PUBLIC_MODEL_ID.toLowerCase()
+  ) {
+    return DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID
+  }
+
+  return nextValue
+}
+
+function normalizePublicVisionId(value) {
+  const nextValue = trimString(value)
+
+  if (
+    !nextValue ||
+    nextValue.toLowerCase() === LEGACY_LOCAL_AI_PUBLIC_VISION_ID.toLowerCase()
+  ) {
+    return DEFAULT_LOCAL_AI_PUBLIC_VISION_ID
+  }
+
+  return nextValue
+}
+
 function resolveLocalAiWireRuntimeType(settings = {}) {
   const explicit = trimString(settings.runtimeType)
   if (explicit) {
@@ -146,11 +269,77 @@ function resolveLocalAiWireRuntimeType(settings = {}) {
   }
 }
 
+function buildLocalAiRuntimePreset(runtimeBackend = 'ollama-direct') {
+  const nextRuntimeBackend = normalizeRuntimeBackend({runtimeBackend})
+
+  if (nextRuntimeBackend === 'sidecar-http') {
+    return {
+      runtimeBackend: nextRuntimeBackend,
+      baseUrl: DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
+      endpoint: DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
+      runtimeType: 'sidecar',
+      runtimeFamily: '',
+      model: '',
+      visionModel: '',
+    }
+  }
+
+  return {
+    runtimeBackend: 'ollama-direct',
+    baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+    endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+    runtimeType: 'ollama',
+    runtimeFamily: '',
+    model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
+    visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  }
+}
+
+function isLegacySidecarDefaultConfig(source = {}) {
+  const runtimeBackend = trimString(source.runtimeBackend).toLowerCase()
+  const runtimeType = trimString(source.runtimeType).toLowerCase()
+  const runtimeFamily = trimString(source.runtimeFamily).toLowerCase()
+  const baseUrl = trimString(source.baseUrl || source.endpoint)
+  const model = trimString(source.model)
+  const visionModel = trimString(source.visionModel)
+  const contractVersion = trimString(source.contractVersion).toLowerCase()
+  const usesLegacyRuntimeBackend =
+    !runtimeBackend ||
+    runtimeBackend === 'sidecar' ||
+    runtimeBackend === 'sidecar-http' ||
+    runtimeBackend === 'local-ai-sidecar'
+  const usesLegacyRuntimeType =
+    !runtimeType ||
+    runtimeType === 'sidecar' ||
+    runtimeType === LEGACY_LOCAL_AI_RUNTIME_TYPE
+
+  if (!usesLegacyRuntimeBackend && !usesLegacyRuntimeType) {
+    return false
+  }
+
+  return (
+    (!baseUrl || baseUrl === LEGACY_LOCAL_AI_BASE_URL) &&
+    usesLegacyRuntimeType &&
+    (!runtimeFamily || runtimeFamily === LEGACY_LOCAL_AI_RUNTIME_FAMILY) &&
+    (!model || model === LEGACY_LOCAL_AI_MODEL) &&
+    (!visionModel || visionModel === LEGACY_LOCAL_AI_VISION_MODEL) &&
+    (!contractVersion ||
+      contractVersion === LEGACY_LOCAL_AI_CONTRACT_VERSION ||
+      contractVersion === DEFAULT_LOCAL_AI_SETTINGS.contractVersion)
+  )
+}
+
 function buildLocalAiSettings(settings = {}) {
-  const source =
+  const rawSource =
     settings && typeof settings === 'object' && !Array.isArray(settings)
       ? settings
       : {}
+  const source = isLegacySidecarDefaultConfig(rawSource)
+    ? {
+        ...rawSource,
+        ...buildLocalAiRuntimePreset('ollama-direct'),
+      }
+    : rawSource
 
   const normalizedSettings = {
     ...DEFAULT_LOCAL_AI_SETTINGS,
@@ -162,18 +351,22 @@ function buildLocalAiSettings(settings = {}) {
     visionBackend:
       trimString(source.visionBackend) ||
       DEFAULT_LOCAL_AI_SETTINGS.visionBackend,
-    publicModelId:
-      trimString(source.publicModelId) ||
-      DEFAULT_LOCAL_AI_SETTINGS.publicModelId,
-    publicVisionId:
-      trimString(source.publicVisionId) ||
-      DEFAULT_LOCAL_AI_SETTINGS.publicVisionId,
+    publicModelId: normalizePublicModelId(source.publicModelId),
+    publicVisionId: normalizePublicVisionId(source.publicVisionId),
     baseUrl: normalizeBaseUrl(source),
     endpoint: normalizeEndpoint(source),
     runtimeType: trimString(source.runtimeType),
     runtimeFamily: normalizeLegacyRuntimeFamily(source),
-    model: trimString(source.model),
-    visionModel: trimString(source.visionModel),
+    model:
+      trimString(source.model) ||
+      (normalizeRuntimeBackend(source) === 'ollama-direct'
+        ? DEFAULT_LOCAL_AI_OLLAMA_MODEL
+        : ''),
+    visionModel:
+      trimString(source.visionModel) ||
+      (normalizeRuntimeBackend(source) === 'ollama-direct'
+        ? DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL
+        : ''),
     adapterStrategy:
       trimString(source.adapterStrategy) ||
       DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy,
@@ -216,7 +409,15 @@ module.exports = {
   LEGACY_LOCAL_AI_VISION_MODEL,
   LEGACY_LOCAL_AI_CONTRACT_VERSION,
   DEFAULT_LOCAL_AI_SETTINGS,
+  DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+  DEFAULT_LOCAL_AI_OLLAMA_MODEL,
+  DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
+  DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
+  DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
+  getLocalAiEndpointSafety,
   resolveLocalAiWireRuntimeType,
+  buildLocalAiRuntimePreset,
   buildLocalAiSettings,
   mergeLocalAiSettings,
 }

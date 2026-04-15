@@ -19,6 +19,7 @@ import {submitFlip} from '../../shared/api/dna'
 import {signNonce} from '../dna/utils'
 import i18n from '../../i18n'
 import ImageAccess from './ImageAccess'
+import {getFlipsBridge} from '../../shared/utils/flips-bridge'
 
 const convert = require('color-convert')
 const StackBlur = require('stackblur-canvas')
@@ -52,7 +53,7 @@ export function didArchiveFlips(epoch) {
 }
 
 export function archiveFlips() {
-  const {getFlips, saveFlips} = global.flipStore
+  const {getFlips, saveFlips} = getFlipsBridge()
   saveFlips(
     getFlips().map((flip) =>
       flip.type === FlipType.Archived
@@ -69,7 +70,7 @@ export const outdatedFlip = ({createdAt, modifiedAt = createdAt}) =>
   dayjs().diff(modifiedAt, 'day') >= 30
 
 export function handleOutdatedFlips() {
-  const {getFlips, saveFlips} = global.flipStore
+  const {getFlips, saveFlips} = getFlipsBridge()
   const flips = getFlips()
   if (flips.filter(outdatedFlip).length > 0) saveFlips(flips.filter(freshFlip))
 }
@@ -188,7 +189,7 @@ export async function publishFlip({
   if (protectedImages.some((x) => !x))
     throw new Error(i18n.t('You must use 4 images for a flip'))
 
-  const flips = global.flipStore.getFlips()
+  const flips = getFlipsBridge().getFlips()
 
   if (
     flips.some(

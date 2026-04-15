@@ -35,16 +35,24 @@ import {
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
 import {
   checkAiProviderReadiness,
+  formatAiProviderLabel,
   formatMissingAiProviders,
+  isLocalAiProvider,
+  resolveLocalAiProviderState,
 } from '../../shared/utils/ai-provider-readiness'
 import {AiEnableDialog} from '../../shared/components/ai-enable-dialog'
 import {
   DEFAULT_LOCAL_AI_SETTINGS,
+  DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
+  DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
+  buildLocalAiRuntimePreset,
   buildLocalAiSettings,
+  getLocalAiEndpointSafety,
   resolveLocalAiWireRuntimeType,
 } from '../../shared/utils/local-ai-settings'
 
 const DEFAULT_MODELS = {
+  'local-ai': '',
   openai: 'gpt-5.4',
   'openai-compatible': 'gpt-4o-mini',
   gemini: 'gemini-2.0-flash',
@@ -57,6 +65,7 @@ const DEFAULT_MODELS = {
 }
 
 const MODEL_PRESETS = {
+  'local-ai': [],
   openai: [
     'gpt-5.4',
     'gpt-5.3-chat-latest',
@@ -100,7 +109,8 @@ const MODEL_PRESETS = {
   ],
 }
 
-const PROVIDER_OPTIONS = [
+const MAIN_PROVIDER_OPTIONS = [
+  {value: 'local-ai', label: 'Local AI runtime'},
   {value: 'openai', label: 'OpenAI'},
   {value: 'anthropic', label: 'Anthropic Claude'},
   {value: 'gemini', label: 'Google Gemini'},
@@ -110,6 +120,18 @@ const PROVIDER_OPTIONS = [
   {value: 'deepseek', label: 'DeepSeek'},
   {value: 'openrouter', label: 'OpenRouter'},
   {value: 'openai-compatible', label: 'OpenAI-compatible (custom)'},
+]
+
+const CONSULT_PROVIDER_OPTIONS = MAIN_PROVIDER_OPTIONS.filter(
+  ({value}) => value !== 'local-ai'
+)
+
+const LOCAL_AI_RUNTIME_OPTIONS = [
+  {
+    value: 'ollama-direct',
+    label: 'Local runtime via Ollama (current default)',
+  },
+  {value: 'sidecar-http', label: 'Legacy HTTP sidecar'},
 ]
 
 const DEFAULT_AI_SETTINGS = {
@@ -194,6 +216,34 @@ function buildProviderConfigForBridge(aiSolver, provider) {
     baseUrl: aiSolver.customProviderBaseUrl,
     chatPath: aiSolver.customProviderChatPath,
   }
+}
+
+function resolveDefaultModelForProvider(provider, localAi = {}) {
+  if (isLocalAiProvider(provider)) {
+    return String(localAi && localAi.model ? localAi.model : '').trim()
+  }
+
+  return DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai
+}
+
+function formatLocalAiRuntimeRequirement(error, t) {
+  const message = String(error || '').trim()
+
+  if (message === 'local_ai_disabled') {
+    return t(
+      'Enable Local AI in the Local AI section below, then check the runtime status.'
+    )
+  }
+
+  if (message === 'local_ai_bridge_unavailable') {
+    return t('Local AI bridge is unavailable in this build.')
+  }
+
+  if (message === 'local_ai_unavailable') {
+    return t('The configured Local AI runtime is not reachable yet.')
+  }
+
+  return message || t('The configured Local AI runtime is not reachable yet.')
 }
 
 function formatErrorForToast(error) {
@@ -531,6 +581,10 @@ export default function AiSettingsPage() {
 
     return DEFAULT_LOCAL_AI_SETTINGS.endpoint
   }, [localAi.baseUrl, localAi.endpoint])
+  const localAiEndpointSafety = useMemo(
+    () => getLocalAiEndpointSafety(localAiRuntimeUrl),
+    [localAiRuntimeUrl]
+  )
 
   const [apiKey, setApiKey] = useState('')
   const [isUpdatingKey, setIsUpdatingKey] = useState(false)
@@ -640,12 +694,34 @@ export default function AiSettingsPage() {
   }
 
   const updateProvider = (provider) => {
-    const fallbackModel = DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai
+    const fallbackModel = resolveDefaultModelForProvider(provider, localAi)
     updateAiSolverSettings({
       provider,
       model: fallbackModel,
     })
   }
+
+  const applyLocalAiRuntimeBackend = useCallback(
+    (runtimeBackend) => {
+      updateLocalAiSettings(buildLocalAiRuntimePreset(runtimeBackend))
+    },
+    [updateLocalAiSettings]
+  )
+
+  const applyRecommendedLocalAiSetup = useCallback(() => {
+    updateLocalAiSettings({
+      enabled: true,
+      ...buildLocalAiRuntimePreset('ollama-direct'),
+    })
+
+    notify(
+      t('Recommended IdenaAI setup applied'),
+      t(
+        'The app now brands the local stack as Idena-text-v1 and Idena-multimodal-v1. Ollama remains the local transport underneath, with compatibility overrides available for backend swaps.'
+      ),
+      'success'
+    )
+  }, [notify, t, updateLocalAiSettings])
 
   const enableAutomaticNextValidationSession = useCallback(() => {
     updateAiSolverSettings({
@@ -674,7 +750,7 @@ export default function AiSettingsPage() {
     return global.localAi
   }
 
-  const buildLocalAiRuntimePayload = useCallback(
+  const localAiRuntimePayload = useMemo(
     () => ({
       mode: localAi.runtimeMode,
       runtimeType: localAiWireRuntimeType,
@@ -729,7 +805,7 @@ export default function AiSettingsPage() {
     try {
       const result = normalizeLocalAiStatusResult(
         await ensureLocalAiBridge().status({
-          ...buildLocalAiRuntimePayload(),
+          ...localAiRuntimePayload,
           refresh: true,
         }),
         localAiRuntimeUrl
@@ -755,8 +831,8 @@ export default function AiSettingsPage() {
       setIsCheckingLocalAi(false)
     }
   }, [
-    buildLocalAiRuntimePayload,
     localAi.enabled,
+    localAiRuntimePayload,
     localAi.runtimeBackend,
     localAiRuntimeUrl,
   ])
@@ -781,6 +857,33 @@ export default function AiSettingsPage() {
       return
     }
 
+    if (!localAiEndpointSafety.safe) {
+      setLocalAiStatusResult((current) => {
+        if (
+          current &&
+          current.enabled !== false &&
+          current.lastError === localAiEndpointSafety.message
+        ) {
+          return current
+        }
+
+        return normalizeLocalAiStatusResult(
+          {
+            enabled: true,
+            status: 'error',
+            runtime:
+              localAi.runtimeBackend ||
+              DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
+            baseUrl: localAiRuntimeUrl,
+            error: localAiEndpointSafety.message,
+            lastError: localAiEndpointSafety.message,
+          },
+          localAiRuntimeUrl
+        )
+      })
+      return
+    }
+
     setLocalAiStatusResult((current) => {
       if (current && current.enabled !== false) {
         return current
@@ -799,7 +902,13 @@ export default function AiSettingsPage() {
         localAiRuntimeUrl
       )
     })
-  }, [localAi.enabled, localAi.runtimeBackend, localAiRuntimeUrl])
+  }, [
+    localAi.enabled,
+    localAi.runtimeBackend,
+    localAiEndpointSafety.message,
+    localAiEndpointSafety.safe,
+    localAiRuntimeUrl,
+  ])
 
   const localAiRuntimeStatus = useMemo(
     () =>
@@ -836,7 +945,7 @@ export default function AiSettingsPage() {
 
     try {
       const result = await ensureLocalAiBridge().chat({
-        ...buildLocalAiRuntimePayload(),
+        ...localAiRuntimePayload,
         input: prompt,
       })
       setLocalAiChatResult(result)
@@ -850,7 +959,7 @@ export default function AiSettingsPage() {
     } finally {
       setIsRunningLocalAiChat(false)
     }
-  }, [buildLocalAiRuntimePayload, localAiDebugChatPrompt, t])
+  }, [localAiDebugChatPrompt, localAiRuntimePayload, t])
 
   const runLocalAiFlipTest = useCallback(
     async (method) => {
@@ -885,7 +994,7 @@ export default function AiSettingsPage() {
             ? bridge.flipToText.bind(bridge)
             : bridge.checkFlipSequence.bind(bridge)
         const result = await handler({
-          ...buildLocalAiRuntimePayload(),
+          ...localAiRuntimePayload,
           ...parsedInput.value,
         })
 
@@ -915,7 +1024,7 @@ export default function AiSettingsPage() {
         }
       }
     },
-    [buildLocalAiRuntimePayload, localAiDebugFlipInput]
+    [localAiDebugFlipInput, localAiRuntimePayload]
   )
 
   const runLocalAiTrainingPackageAction = useCallback(
@@ -1071,7 +1180,7 @@ export default function AiSettingsPage() {
 
     try {
       const result = await ensureLocalAiBridge().registerAdapterArtifact({
-        ...buildLocalAiRuntimePayload(),
+        ...localAiRuntimePayload,
         epoch,
         sourcePath,
       })
@@ -1083,12 +1192,7 @@ export default function AiSettingsPage() {
     } finally {
       setIsRegisteringLocalAiAdapter(false)
     }
-  }, [
-    buildLocalAiRuntimePayload,
-    localAiAdapterSourcePath,
-    localAiPackageEpoch,
-    t,
-  ])
+  }, [localAiAdapterSourcePath, localAiRuntimePayload, localAiPackageEpoch, t])
 
   const runLocalAiLoadAdapterArtifact = useCallback(async () => {
     const epoch = String(localAiPackageEpoch || '').trim()
@@ -1105,7 +1209,7 @@ export default function AiSettingsPage() {
 
     try {
       const result = await ensureLocalAiBridge().loadAdapterArtifact({
-        ...buildLocalAiRuntimePayload(),
+        ...localAiRuntimePayload,
         epoch,
       })
 
@@ -1123,7 +1227,7 @@ export default function AiSettingsPage() {
     } finally {
       setIsLoadingLocalAiAdapter(false)
     }
-  }, [buildLocalAiRuntimePayload, localAiPackageEpoch, t])
+  }, [localAiPackageEpoch, localAiRuntimePayload, t])
 
   const runLocalAiBuildBundle = useCallback(async () => {
     const epoch = String(localAiPackageEpoch || '').trim()
@@ -1189,32 +1293,71 @@ export default function AiSettingsPage() {
   }, [])
 
   const hasSessionKeyForProvider = async (provider) => {
+    if (isLocalAiProvider(provider)) {
+      const localState = await resolveLocalAiProviderState({
+        localBridge: global.localAi,
+        localAi,
+      })
+
+      return Boolean(localState && localState.hasKey)
+    }
+
     const bridge = ensureBridge()
-    const result = await bridge.hasProviderKey({provider})
-    return Boolean(result && result.hasKey)
+    const keyStatus = await bridge.hasProviderKey({provider})
+    return Boolean(keyStatus && keyStatus.hasKey)
   }
 
   const refreshModelsForProvider = async (provider) => {
+    if (isLocalAiProvider(provider)) {
+      const localResult = await ensureLocalAiBridge().listModels(
+        localAiRuntimePayload
+      )
+      const message = String(
+        (localResult && (localResult.lastError || localResult.error)) || ''
+      ).trim()
+
+      if (localResult && localResult.ok === false) {
+        throw new Error(message || 'Local AI runtime is unavailable')
+      }
+
+      const localModels = Array.isArray(localResult && localResult.models)
+        ? localResult.models
+        : []
+
+      setLatestModelsByProvider((prev) => ({
+        ...prev,
+        [provider]: localModels,
+      }))
+
+      return {
+        provider,
+        count: localModels.length,
+      }
+    }
+
     const bridge = ensureBridge()
-    const result = await bridge.listModels({
+    const bridgeResult = await bridge.listModels({
       provider,
       providerConfig: buildProviderConfigForBridge(aiSolver, provider),
     })
 
-    const models = Array.isArray(result && result.models) ? result.models : []
+    const remoteModels = Array.isArray(bridgeResult && bridgeResult.models)
+      ? bridgeResult.models
+      : []
 
     setLatestModelsByProvider((prev) => ({
       ...prev,
-      [provider]: models,
+      [provider]: remoteModels,
     }))
 
     return {
       provider,
-      count: models.length,
+      count: remoteModels.length,
     }
   }
 
   const activeProvider = aiSolver.provider || 'openai'
+  const isLocalAiPrimaryProvider = isLocalAiProvider(activeProvider)
   const staticModelPresets = MODEL_PRESETS[activeProvider] || []
   const dynamicModelPresets = latestModelsByProvider[activeProvider] || []
   const modelPresets = Array.from(
@@ -1225,7 +1368,8 @@ export default function AiSettingsPage() {
         .filter(Boolean)
     )
   )
-  const activeModel = aiSolver.model || DEFAULT_MODELS[activeProvider]
+  const activeModel =
+    aiSolver.model || resolveDefaultModelForProvider(activeProvider, localAi)
   const presetValue = modelPresets.includes(activeModel)
     ? activeModel
     : 'custom'
@@ -1280,6 +1424,8 @@ export default function AiSettingsPage() {
     try {
       const nextState = await checkAiProviderReadiness({
         bridge,
+        localBridge: global.localAi,
+        localAi,
         aiSolver,
       })
       setProviderKeyStatus(nextState)
@@ -1299,7 +1445,7 @@ export default function AiSettingsPage() {
       setProviderKeyStatus(fallbackState)
       return fallbackState
     }
-  }, [activeProvider, aiSolver])
+  }, [activeProvider, aiSolver, localAi])
 
   useEffect(() => {
     refreshProviderKeyStatus()
@@ -1353,16 +1499,21 @@ export default function AiSettingsPage() {
       const requiredCount = Array.isArray(providerKeyStatus.requiredProviders)
         ? providerKeyStatus.requiredProviders.length
         : 0
+      let readyDetail = t('Active provider key is loaded.')
+
+      if (requiredCount > 1) {
+        readyDetail = t('All required AI providers are ready.')
+      } else if (isLocalAiPrimaryProvider) {
+        readyDetail = t('Local AI runtime is reachable.')
+      }
+
       return {
         label:
           requiredCount > 1
             ? t('Ready ({{count}}/{{count}})', {count: requiredCount})
             : t('Ready'),
         color: 'green.500',
-        detail:
-          requiredCount > 1
-            ? t('All required provider keys are loaded.')
-            : t('Active provider key is loaded.'),
+        detail: readyDetail,
       }
     }
 
@@ -1370,17 +1521,30 @@ export default function AiSettingsPage() {
       providerKeyStatus.missingProviders
     )
 
+    let missingDetail = t('Load the required provider key below.')
+
+    if (isLocalAiPrimaryProvider) {
+      missingDetail = formatLocalAiRuntimeRequirement(
+        providerKeyStatus.error,
+        t
+      )
+    } else if (missingProviders) {
+      missingDetail = t('Missing for: {{providers}}', {
+        providers: missingProviders,
+      })
+    }
+
     return {
       label: t('Missing'),
       color: 'orange.500',
-      detail: missingProviders
-        ? t('Missing for: {{providers}}', {providers: missingProviders})
-        : t('Load the required provider key below.'),
+      detail: missingDetail,
     }
   }, [
+    isLocalAiPrimaryProvider,
     providerKeyStatus.allReady,
     providerKeyStatus.checked,
     providerKeyStatus.checking,
+    providerKeyStatus.error,
     providerKeyStatus.missingProviders,
     providerKeyStatus.requiredProviders,
     t,
@@ -1483,7 +1647,7 @@ export default function AiSettingsPage() {
                 <Text fontWeight={600}>{t('Step 1: Set up AI access')}</Text>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'First choose one main provider and load its API key. If you want multi-provider runs later, enable more providers in Advanced settings.'
+                    'First choose one main provider and complete its setup. Cloud providers use session API keys. Local AI uses the runtime in the Local AI section below. If you want multi-provider runs later, enable more providers in Advanced settings.'
                   )}
                 </Text>
                 <UnorderedList spacing={1} color="muted" fontSize="sm">
@@ -1491,7 +1655,7 @@ export default function AiSettingsPage() {
                   <ListItem>{t('Second: choose one main provider.')}</ListItem>
                   <ListItem>
                     {t(
-                      'Third: paste a session API key and test the connection.'
+                      'Third: either load a session API key or make sure the Local AI runtime is reachable, then test the connection.'
                     )}
                   </ListItem>
                   <ListItem>
@@ -1507,7 +1671,7 @@ export default function AiSettingsPage() {
                     </Text>
                     <Text color="muted">
                       {t(
-                        'When enabled, a setup popup asks for provider and API key.'
+                        'When enabled, a setup popup asks for provider setup. Cloud providers use session API keys; Local AI uses the runtime below.'
                       )}
                     </Text>
                   </Box>
@@ -1532,7 +1696,7 @@ export default function AiSettingsPage() {
                 onChange={(e) => updateProvider(e.target.value)}
                 w="xs"
               >
-                {PROVIDER_OPTIONS.map((item) => (
+                {MAIN_PROVIDER_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>
                     {item.label}
                   </option>
@@ -1545,7 +1709,7 @@ export default function AiSettingsPage() {
                 <Text fontWeight={500}>{t('Current setup state')}</Text>
                 <Text color="muted">
                   {providerKeyStatusUi.detail ||
-                    t('Choose a provider and load a session API key.')}
+                    t('Choose a provider and complete its required setup.')}
                 </Text>
               </Box>
               <Text fontWeight={600} color={providerKeyStatusUi.color}>
@@ -1643,7 +1807,7 @@ export default function AiSettingsPage() {
                 </Text>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'After the key works, you can use one AI page for all flows: AI Flip Builder, AI Solver, off-chain benchmark, and on-chain automatic flow.'
+                    'After the provider setup works, you can use one AI page for all flows: AI Flip Builder, AI Solver, off-chain benchmark, and on-chain automatic flow.'
                   )}
                 </Text>
                 <UnorderedList spacing={1} color="muted" fontSize="sm">
@@ -1753,7 +1917,7 @@ export default function AiSettingsPage() {
                     onClick={async () => {
                       setIsRefreshingAllModels(true)
                       try {
-                        const providers = PROVIDER_OPTIONS.map(
+                        const providers = MAIN_PROVIDER_OPTIONS.map(
                           (item) => item.value
                         )
                         let loaded = 0
@@ -1787,7 +1951,7 @@ export default function AiSettingsPage() {
                           t('Latest model scan finished'),
                           [
                             t(
-                              '{{loaded}} loaded, {{skipped}} skipped (no session key), {{failed}} failed',
+                              '{{loaded}} loaded, {{skipped}} skipped (provider not ready), {{failed}} failed',
                               {
                                 loaded,
                                 skipped,
@@ -1796,12 +1960,16 @@ export default function AiSettingsPage() {
                             ),
                             skipped > 0
                               ? t(
-                                  'Keys are stored per provider. Switch provider and load a key for each provider you want to scan.'
+                                  'Cloud providers need a session API key. Local AI needs the local runtime to be enabled and reachable.'
                                 )
                               : null,
                             failedProviders.length > 0
                               ? t('Failed: {{providers}}', {
-                                  providers: failedProviders.join(', '),
+                                  providers: failedProviders
+                                    .map((provider) =>
+                                      formatAiProviderLabel(provider)
+                                    )
+                                    .join(', '),
                                 })
                               : null,
                           ]
@@ -1975,7 +2143,7 @@ export default function AiSettingsPage() {
                             }
                             w="sm"
                           >
-                            {PROVIDER_OPTIONS.map((item) => (
+                            {CONSULT_PROVIDER_OPTIONS.map((item) => (
                               <option
                                 key={`ensemble2-provider-${item.value}`}
                                 value={item.value}
@@ -2075,7 +2243,7 @@ export default function AiSettingsPage() {
                             }
                             w="sm"
                           >
-                            {PROVIDER_OPTIONS.map((item) => (
+                            {CONSULT_PROVIDER_OPTIONS.map((item) => (
                               <option
                                 key={`ensemble3-provider-${item.value}`}
                                 value={item.value}
@@ -2512,7 +2680,7 @@ export default function AiSettingsPage() {
           <Stack spacing={4}>
             <Text color="muted" fontSize="sm">
               {t(
-                'These settings are local-only and opt-in. Existing cloud provider behavior stays unchanged unless you explicitly enable Local AI.'
+                'These settings are local-only and opt-in. IdenaAI should expose its own branded text and multimodal identities here; the runtime backend below is only the local transport and compatibility layer.'
               )}
             </Text>
 
@@ -2548,17 +2716,23 @@ export default function AiSettingsPage() {
 
             <SettingsFormControl>
               <SettingsFormLabel>{t('Runtime backend')}</SettingsFormLabel>
-              <Input
-                value={localAi.runtimeBackend || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({runtimeBackend: e.target.value})
+              <Select
+                value={
+                  localAi.runtimeBackend ||
+                  DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
                 }
-                placeholder="sidecar-http"
+                onChange={(e) => applyLocalAiRuntimeBackend(e.target.value)}
                 w="xl"
-              />
+              >
+                {LOCAL_AI_RUNTIME_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {t(option.label)}
+                  </option>
+                ))}
+              </Select>
               <Text color="muted" fontSize="sm" mt={1}>
                 {t(
-                  'Neutral product-side backend identifier. This is separate from any current wire/runtime compatibility override.'
+                  'Use the local runtime via Ollama unless you are intentionally running a custom legacy sidecar on another local port.'
                 )}
               </Text>
             </SettingsFormControl>
@@ -2588,27 +2762,41 @@ export default function AiSettingsPage() {
             </SettingsFormControl>
 
             <SettingsFormControl>
-              <SettingsFormLabel>{t('Public model ID')}</SettingsFormLabel>
+              <SettingsFormLabel>
+                {t('Branded text model name')}
+              </SettingsFormLabel>
               <Input
                 value={localAi.publicModelId || ''}
                 onChange={(e) =>
                   updateLocalAiSettings({publicModelId: e.target.value})
                 }
-                placeholder="idena-core-v1"
+                placeholder={DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID}
                 w="xl"
               />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {t(
+                  'This is the product-facing text identity exposed by IdenaAI, independent of the backend model override.'
+                )}
+              </Text>
             </SettingsFormControl>
 
             <SettingsFormControl>
-              <SettingsFormLabel>{t('Public vision ID')}</SettingsFormLabel>
+              <SettingsFormLabel>
+                {t('Branded multimodal model name')}
+              </SettingsFormLabel>
               <Input
                 value={localAi.publicVisionId || ''}
                 onChange={(e) =>
                   updateLocalAiSettings({publicVisionId: e.target.value})
                 }
-                placeholder="idena-vision-v1"
+                placeholder={DEFAULT_LOCAL_AI_PUBLIC_VISION_ID}
                 w="xl"
               />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {t(
+                  'Use this for the image-aware and flip-aware IdenaAI identity that sits above the local transport.'
+                )}
+              </Text>
             </SettingsFormControl>
 
             <SettingsFormControl>
@@ -2638,7 +2826,27 @@ export default function AiSettingsPage() {
                 placeholder="http://127.0.0.1:11434"
                 w="xl"
               />
+              <Text color="muted" fontSize="sm" mt={1}>
+                {localAi.runtimeBackend === 'ollama-direct'
+                  ? t(
+                      'Recommended local runtime endpoint: http://127.0.0.1:11434. Backend compatibility defaults on this machine are llama3.1:8b for text and moondream:latest for vision until you choose stronger overrides.'
+                    )
+                  : t(
+                      'Use a loopback URL for a custom local sidecar, for example http://127.0.0.1:5000.'
+                    )}
+              </Text>
+              {!localAiEndpointSafety.safe && (
+                <Text color="red.500" fontSize="sm" mt={1}>
+                  {localAiEndpointSafety.message}
+                </Text>
+              )}
             </SettingsFormControl>
+
+            <Stack isInline spacing={2}>
+              <SecondaryButton onClick={applyRecommendedLocalAiSetup}>
+                {t('Use recommended IdenaAI setup')}
+              </SecondaryButton>
+            </Stack>
 
             <Stack spacing={2} align="flex-start">
               <SecondaryButton
@@ -2815,7 +3023,7 @@ export default function AiSettingsPage() {
                       try {
                         const result = normalizeLocalAiStatusResult(
                           await ensureLocalAiBridge().start(
-                            buildLocalAiRuntimePayload()
+                            localAiRuntimePayload
                           ),
                           localAiRuntimeUrl
                         )
@@ -2839,7 +3047,7 @@ export default function AiSettingsPage() {
                       }
                     }}
                   >
-                    {t('Start local AI')}
+                    {t('Start local runtime')}
                   </SecondaryButton>
                   <SecondaryButton
                     isDisabled={!localAi.enabled || isStoppingLocalAi}
@@ -2882,7 +3090,7 @@ export default function AiSettingsPage() {
                       }
                     }}
                   >
-                    {t('Stop local AI')}
+                    {t('Stop local runtime')}
                   </SecondaryButton>
                   <SecondaryButton
                     isDisabled={!localAi.enabled || isCheckingLocalAi}
@@ -2913,7 +3121,7 @@ export default function AiSettingsPage() {
                 </Stack>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'To route the existing solver through a local OpenAI-compatible runtime later, choose OpenAI-compatible (custom) in the provider section and point it at this local runtime endpoint.'
+                    'Choose Local AI as the main provider above to route the solver through this runtime. OpenAI-compatible (custom) remains available for third-party compatible endpoints.'
                   )}
                 </Text>
               </Stack>
@@ -3628,17 +3836,31 @@ export default function AiSettingsPage() {
           </Stack>
         </SettingsSection>
 
-        <SettingsSection title={t('Provider key (session only)')}>
+        <SettingsSection
+          title={
+            isLocalAiPrimaryProvider
+              ? t('Local AI runtime')
+              : t('Provider key (session only)')
+          }
+        >
           <Stack spacing={3}>
             <Text color="muted" fontSize="sm">
-              {t(
-                'The API key is kept in memory only for this desktop run and is not persisted to settings by default.'
-              )}
+              {isLocalAiPrimaryProvider
+                ? t(
+                    'Local AI uses the runtime configured in the Local AI section below. No session API key is required for the main provider.'
+                  )
+                : t(
+                    'The API key is kept in memory only for this desktop run and is not persisted to settings by default.'
+                  )}
             </Text>
             <Text color="muted" fontSize="sm">
-              {t(
-                'Keys are stored separately per provider. Setting an OpenAI key does not automatically enable Gemini, Anthropic, xAI, Groq, OpenRouter, or other providers.'
-              )}
+              {isLocalAiPrimaryProvider
+                ? t(
+                    'If setup still shows Missing, enable Local AI and make sure the configured runtime endpoint responds before testing again.'
+                  )
+                : t(
+                    'Keys are stored separately per provider. Setting an OpenAI key does not automatically enable Gemini, Anthropic, xAI, Groq, OpenRouter, or other providers.'
+                  )}
             </Text>
             <Box
               borderWidth="1px"
@@ -3648,7 +3870,9 @@ export default function AiSettingsPage() {
             >
               <Stack spacing={1}>
                 <Text color="muted" fontSize="xs">
-                  {t('Current key status')}
+                  {isLocalAiPrimaryProvider
+                    ? t('Current runtime status')
+                    : t('Current key status')}
                 </Text>
                 <Text
                   fontSize="sm"
@@ -3665,92 +3889,117 @@ export default function AiSettingsPage() {
               </Stack>
             </Box>
 
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('API key')}</SettingsFormLabel>
-              <InputGroup w="full" maxW="xl">
-                <Input
-                  value={apiKey}
-                  type={isApiKeyVisible ? 'text' : 'password'}
-                  placeholder={t('Paste provider API key')}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
-                <InputRightElement w="6" h="6" m="1">
-                  <IconButton
-                    size="xs"
-                    icon={isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />}
-                    bg={isApiKeyVisible ? 'gray.300' : 'white'}
-                    fontSize={20}
-                    _hover={{
-                      bg: isApiKeyVisible ? 'gray.300' : 'white',
-                    }}
-                    onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
+            {!isLocalAiPrimaryProvider ? (
+              <SettingsFormControl>
+                <SettingsFormLabel>{t('API key')}</SettingsFormLabel>
+                <InputGroup w="full" maxW="xl">
+                  <Input
+                    value={apiKey}
+                    type={isApiKeyVisible ? 'text' : 'password'}
+                    placeholder={t('Paste provider API key')}
+                    onChange={(e) => setApiKey(e.target.value)}
                   />
-                </InputRightElement>
-              </InputGroup>
-            </SettingsFormControl>
+                  <InputRightElement w="6" h="6" m="1">
+                    <IconButton
+                      size="xs"
+                      icon={isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />}
+                      bg={isApiKeyVisible ? 'gray.300' : 'white'}
+                      fontSize={20}
+                      _hover={{
+                        bg: isApiKeyVisible ? 'gray.300' : 'white',
+                      }}
+                      onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
+                    />
+                  </InputRightElement>
+                </InputGroup>
+              </SettingsFormControl>
+            ) : (
+              <Box
+                borderWidth="1px"
+                borderColor="blue.050"
+                borderRadius="md"
+                p={3}
+              >
+                <Text color="muted" fontSize="sm">
+                  {t(
+                    'Model selection, runtime URL, and runtime health checks live in the Local AI section above. Use Test connection here to verify the current Local AI provider setup.'
+                  )}
+                </Text>
+              </Box>
+            )}
 
             <Stack isInline justify="flex-end" spacing={2}>
-              <SecondaryButton
-                isLoading={isUpdatingKey}
-                onClick={async () => {
-                  setIsUpdatingKey(true)
-                  try {
-                    const bridge = ensureBridge()
-                    await bridge.clearProviderKey({provider: activeProvider})
-                    setApiKey('')
-                    await refreshProviderKeyStatus()
-                    notify(
-                      t('Provider key cleared'),
-                      t('The session key has been removed from memory.')
-                    )
-                  } catch (error) {
-                    notify(
-                      t('Unable to clear key'),
-                      formatErrorForToast(error),
-                      'error'
-                    )
-                  } finally {
-                    setIsUpdatingKey(false)
-                  }
-                }}
-              >
-                {t('Clear key')}
-              </SecondaryButton>
+              {!isLocalAiPrimaryProvider ? (
+                <>
+                  <SecondaryButton
+                    isLoading={isUpdatingKey}
+                    onClick={async () => {
+                      setIsUpdatingKey(true)
+                      try {
+                        const bridge = ensureBridge()
+                        await bridge.clearProviderKey({
+                          provider: activeProvider,
+                        })
+                        setApiKey('')
+                        await refreshProviderKeyStatus()
+                        notify(
+                          t('Provider key cleared'),
+                          t('The session key has been removed from memory.')
+                        )
+                      } catch (error) {
+                        notify(
+                          t('Unable to clear key'),
+                          formatErrorForToast(error),
+                          'error'
+                        )
+                      } finally {
+                        setIsUpdatingKey(false)
+                      }
+                    }}
+                  >
+                    {t('Clear key')}
+                  </SecondaryButton>
 
-              <SecondaryButton
-                isDisabled={!trimmedApiKey}
-                isLoading={isUpdatingKey}
-                onClick={async () => {
-                  setIsUpdatingKey(true)
-                  try {
-                    const bridge = ensureBridge()
-                    await bridge.setProviderKey({
-                      provider: activeProvider,
-                      apiKey: trimmedApiKey,
-                    })
-                    setApiKey('')
-                    setIsApiKeyVisible(false)
-                    await refreshProviderKeyStatus()
-                    notify(
-                      t('Provider key set'),
-                      t('The session key was loaded and is ready for requests.')
-                    )
-                  } catch (error) {
-                    notify(
-                      t('Unable to set key'),
-                      formatErrorForToast(error),
-                      'error'
-                    )
-                  } finally {
-                    setIsUpdatingKey(false)
-                  }
-                }}
-              >
-                {t('Set key')}
-              </SecondaryButton>
+                  <SecondaryButton
+                    isDisabled={!trimmedApiKey}
+                    isLoading={isUpdatingKey}
+                    onClick={async () => {
+                      setIsUpdatingKey(true)
+                      try {
+                        const bridge = ensureBridge()
+                        await bridge.setProviderKey({
+                          provider: activeProvider,
+                          apiKey: trimmedApiKey,
+                        })
+                        setApiKey('')
+                        setIsApiKeyVisible(false)
+                        await refreshProviderKeyStatus()
+                        notify(
+                          t('Provider key set'),
+                          t(
+                            'The session key was loaded and is ready for requests.'
+                          )
+                        )
+                      } catch (error) {
+                        notify(
+                          t('Unable to set key'),
+                          formatErrorForToast(error),
+                          'error'
+                        )
+                      } finally {
+                        setIsUpdatingKey(false)
+                      }
+                    }}
+                  >
+                    {t('Set key')}
+                  </SecondaryButton>
+                </>
+              ) : null}
 
               <PrimaryButton
-                isDisabled={!providerKeyStatus.primaryReady}
+                isDisabled={
+                  !isLocalAiPrimaryProvider && !providerKeyStatus.primaryReady
+                }
                 isLoading={isTesting}
                 onClick={async () => {
                   setIsTesting(true)
@@ -3764,8 +4013,10 @@ export default function AiSettingsPage() {
                     notify(
                       t('Provider is reachable'),
                       t('{{provider}} {{model}} in {{latency}} ms', {
-                        provider: result.provider,
-                        model: result.model,
+                        provider: formatAiProviderLabel(result.provider),
+                        model:
+                          String(result.model || '').trim() ||
+                          t('default model'),
                         latency: result.latencyMs,
                       })
                     )
@@ -3791,12 +4042,12 @@ export default function AiSettingsPage() {
         isOpen={isEnableDialogOpen}
         onClose={() => setIsEnableDialogOpen(false)}
         defaultProvider={activeProvider}
-        providerOptions={PROVIDER_OPTIONS}
+        providerOptions={MAIN_PROVIDER_OPTIONS}
         onComplete={async ({provider}) => {
           updateAiSolverSettings({
             enabled: true,
             provider,
-            model: DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai,
+            model: resolveDefaultModelForProvider(provider, localAi),
           })
           setIsEnableDialogOpen(false)
           await refreshProviderKeyStatus()

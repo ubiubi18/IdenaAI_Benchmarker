@@ -4,6 +4,7 @@ import NextLink from 'next/link'
 import {useRouter} from 'next/router'
 import {Trans, useTranslation} from 'react-i18next'
 import {
+  Badge,
   Box,
   Flex,
   Button,
@@ -55,7 +56,9 @@ import {ExternalLink, Tooltip} from './components'
 import {useTimingState} from '../providers/timing-context'
 import {TodoVotingCountBadge} from '../../screens/oracles/components'
 import {
+  ChatIcon,
   ClockIcon,
+  CommunityIcon,
   ContactsIcon,
   GlobeIcon,
   GalleryIcon,
@@ -301,6 +304,16 @@ function Navbar() {
       <NavItem href="/home" icon={ProfileIcon}>
         {t('My Idena')}
       </NavItem>
+      <NavSectionTitle>{t('Discover')}</NavSectionTitle>
+      <NavItem href="/ai-chat" icon={ChatIcon} featured badge={t('AI')}>
+        {t('Chat with IdenaAI')}
+      </NavItem>
+      <NavItem href="/social" icon={GlobeIcon} featured badge={t('Live')}>
+        {t('idena.social')}
+      </NavItem>
+      <NavItem href="/dao" icon={CommunityIcon} featured badge={t('DAO')}>
+        {t('IdenaDAO')}
+      </NavItem>
       <NavItem href="/wallets" icon={WalletIcon}>
         {t('Wallets')}
       </NavItem>
@@ -309,9 +322,6 @@ function Navbar() {
       </NavItem>
       <NavItem href="/contacts" icon={ContactsIcon}>
         {t('Contacts')}
-      </NavItem>
-      <NavItem href="/social" icon={GlobeIcon}>
-        {t('Social')}
       </NavItem>
       <NavItem href="/oracles/list" icon={OracleIcon} display>
         {todoCount > 0 ? (
@@ -336,9 +346,38 @@ function Nav(props) {
   return <Flex direction="column" w="full" {...props} />
 }
 
-function NavItem({href, icon, children}) {
+function NavSectionTitle({children}) {
+  return (
+    <Text
+      color="xwhite.040"
+      fontSize="xs"
+      fontWeight={600}
+      textTransform="uppercase"
+      letterSpacing="0.06em"
+      mt={4}
+      mb={1}
+      px={2}
+    >
+      {children}
+    </Text>
+  )
+}
+
+function NavItem({href, icon, children, badge, featured = false}) {
   const {pathname} = useRouter()
   const isActive = pathname.startsWith(href)
+  let backgroundColor = 'transparent'
+  let hoverBackgroundColor = 'gray.10'
+
+  if (featured) {
+    backgroundColor = 'xwhite.010'
+    hoverBackgroundColor = 'xwhite.016'
+  }
+
+  if (isActive) {
+    backgroundColor = 'xblack.016'
+    hoverBackgroundColor = 'xblack.016'
+  }
 
   return (
     <LinkBox
@@ -346,13 +385,18 @@ function NavItem({href, icon, children}) {
       direction="row"
       spacing="2"
       alignItems="center"
-      bg={isActive ? 'xblack.016' : 'transparent'}
+      bg={backgroundColor}
+      borderWidth="1px"
+      borderColor={featured ? 'xwhite.016' : 'transparent'}
       borderRadius="md"
       color={isActive ? 'white' : 'xwhite.050'}
       fontWeight={500}
       minH={8}
       px={2}
-      _hover={{bg: isActive ? 'xblack.016' : 'gray.10', color: 'white'}}
+      _hover={{
+        bg: hoverBackgroundColor,
+        color: 'white',
+      }}
       _active={{
         bg: 'xblack.016',
       }}
@@ -361,7 +405,27 @@ function NavItem({href, icon, children}) {
       <Icon as={icon} boxSize="5" />
       <NextLink href={href} passHref>
         <LinkOverlay display="block" w="full">
-          {children}
+          {badge ? (
+            <Flex align="center" justify="space-between" w="full" gap={2}>
+              <Text as="span" noOfLines={1}>
+                {children}
+              </Text>
+              <Badge
+                bg={isActive ? 'whiteAlpha.300' : 'whiteAlpha.200'}
+                color="white"
+                borderRadius="full"
+                px={2}
+                py="0.5"
+                fontSize="2xs"
+                fontWeight={600}
+                textTransform="uppercase"
+              >
+                {badge}
+              </Badge>
+            </Flex>
+          ) : (
+            children
+          )}
         </LinkOverlay>
       </NextLink>
     </LinkBox>

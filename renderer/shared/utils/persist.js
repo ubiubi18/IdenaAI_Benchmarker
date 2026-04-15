@@ -1,15 +1,15 @@
 import {getSharedGlobal} from './shared-global'
 
-function getPersistenceBridge() {
-  if (
-    typeof window !== 'undefined' &&
-    window.idena &&
-    window.idena.persistence &&
-    typeof window.idena.persistence === 'object'
-  ) {
-    return window.idena.persistence
-  }
+const PERSISTENCE_STORE_MAP = {
+  settings: 'settings',
+  flipFilter: 'flipFilter',
+  validation2: 'validationSession',
+  validationResults: 'validationResults',
+  flipArchive: 'flipArchive',
+  validationNotification: 'validationNotification',
+}
 
+function createFallbackPersistenceStore() {
   return {
     loadState: () => ({}),
     loadValue: () => null,
@@ -18,9 +18,27 @@ function getPersistenceBridge() {
   }
 }
 
+function getPersistenceStore(dbName) {
+  const storeKey = PERSISTENCE_STORE_MAP[String(dbName || '').trim()]
+
+  if (
+    storeKey &&
+    typeof window !== 'undefined' &&
+    window.idena &&
+    window.idena.storage &&
+    typeof window.idena.storage === 'object' &&
+    window.idena.storage[storeKey] &&
+    typeof window.idena.storage[storeKey] === 'object'
+  ) {
+    return window.idena.storage[storeKey]
+  }
+
+  return createFallbackPersistenceStore()
+}
+
 export function loadPersistentState(dbName) {
   try {
-    const value = getPersistenceBridge().loadState(dbName)
+    const value = getPersistenceStore(dbName).loadState()
     return Object.keys(value).length === 0 ? null : value || null
   } catch (error) {
     return null
@@ -32,7 +50,7 @@ export function loadPersistentStateValue(dbName, key) {
     throw new Error('loadItem requires key to be passed')
   }
   try {
-    return getPersistenceBridge().loadValue(dbName, key) || null
+    return getPersistenceStore(dbName).loadValue(key) || null
   } catch {
     const state = loadPersistentState(dbName)
     return (state && state[key]) || null
@@ -41,7 +59,7 @@ export function loadPersistentStateValue(dbName, key) {
 
 export function persistItem(dbName, key, value) {
   try {
-    getPersistenceBridge().persistItem(dbName, key, value)
+    getPersistenceStore(dbName).persistItem(key, value)
   } catch {
     getSharedGlobal('logger', console).error(
       'error writing to file: ',
@@ -54,7 +72,7 @@ export function persistItem(dbName, key, value) {
 
 export function persistState(name, state) {
   try {
-    getPersistenceBridge().persistState(name, state)
+    getPersistenceStore(name).persistState(state)
   } catch {
     getSharedGlobal('logger', console).error(
       'error writing to file: ',

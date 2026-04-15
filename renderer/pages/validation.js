@@ -80,6 +80,7 @@ import {solveValidationSessionWithAi} from '../screens/validation/ai/solver-orch
 import {
   checkAiProviderReadiness,
   formatMissingAiProviders,
+  isLocalAiProvider,
 } from '../shared/utils/ai-provider-readiness'
 
 const previewAiSampleSet = require('../../samples/flips/flip-challenge-test-5-decoded-labeled.json')
@@ -152,11 +153,24 @@ function formatAiProviderReadinessError(status, t) {
     return t('AI solver bridge is unavailable in this build.')
   }
 
+  if (status && status.error === 'local_ai_bridge_unavailable') {
+    return t('Local AI bridge is unavailable in this build.')
+  }
+
   const missingProviders = formatMissingAiProviders(
     status && status.missingProviders
   )
 
   if (missingProviders) {
+    if (isLocalAiProvider(status && status.activeProvider)) {
+      return t(
+        'Local AI runtime is not ready for: {{providers}}. Open AI settings, enable Local AI, and check the runtime before starting live solving.',
+        {
+          providers: missingProviders,
+        }
+      )
+    }
+
     return t(
       'Missing AI provider key for: {{providers}}. Open AI settings and load the session key before starting live solving.',
       {
@@ -171,7 +185,9 @@ function formatAiProviderReadinessError(status, t) {
   }
 
   return t(
-    'AI provider setup is not ready. Open AI settings and load the session key before starting live solving.'
+    isLocalAiProvider(status && status.activeProvider)
+      ? 'Local AI runtime setup is not ready. Open AI settings, enable Local AI, and check the runtime before starting live solving.'
+      : 'AI provider setup is not ready. Open AI settings and load the session key before starting live solving.'
   )
 }
 
@@ -633,14 +649,14 @@ function ValidationSession({
       onDecodedFlip: ({flipHash, epoch: epochNumber, sessionType, images}) => {
         if (
           !localAiCaptureEnabled ||
-          !global.ipcRenderer ||
-          typeof global.ipcRenderer.send !== 'function'
+          !global.localAi ||
+          typeof global.localAi.captureFlip !== 'function'
         ) {
           return
         }
 
         try {
-          global.ipcRenderer.send('localAi.captureFlip', {
+          global.localAi.captureFlip({
             flipHash,
             epoch: epochNumber,
             sessionType,
@@ -831,6 +847,8 @@ function ValidationSession({
     try {
       const nextState = await checkAiProviderReadiness({
         bridge: global.aiSolver,
+        localBridge: global.localAi,
+        localAi: settings.localAi,
         aiSolver: aiSolverSettings,
       })
       setAiProviderStatus(nextState)
@@ -851,7 +869,7 @@ function ValidationSession({
       setAiProviderStatus(fallbackState)
       return fallbackState
     }
-  }, [aiSolverSettings])
+  }, [aiSolverSettings, settings.localAi])
 
   useEffect(() => {
     refreshAiProviderStatus()
@@ -1175,6 +1193,17 @@ function ValidationSession({
       notifyAi(
         t('AI auto-report unavailable'),
         t('This build does not expose the keyword review bridge.'),
+        'error'
+      )
+      return
+    }
+
+    if (isLocalAiProvider(aiSolverSettings.provider)) {
+      notifyAi(
+        t('AI auto-report unavailable'),
+        t(
+          'Local AI does not support validation report review yet. Switch to a cloud provider for automatic report review.'
+        ),
         'error'
       )
       return

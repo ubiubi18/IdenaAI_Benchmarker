@@ -4,6 +4,12 @@ export type DesktopBootstrap = {
     indexerApiUrl?: string;
     sendingTxs?: string;
     findingPastPosts?: string;
+    proposalMode?: boolean;
+    proposalTag?: string;
+    proposalPublishingEnabled?: boolean;
+    composerPlaceholder?: string;
+    composerPrefillText?: string;
+    composerHint?: string;
 };
 
 declare global {

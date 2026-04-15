@@ -1,4 +1,5 @@
 const {
+  buildLocalAiRuntimePayload,
   checkAiProviderReadiness,
   formatMissingAiProviders,
   getRequiredAiProviders,
@@ -65,5 +66,51 @@ describe('ai-provider-readiness', () => {
     expect(formatMissingAiProviders(['openai', 'gemini', 'openai', ''])).toBe(
       'openai, gemini'
     )
+  })
+
+  it('keeps the local AI enabled flag in the runtime payload', () => {
+    expect(
+      buildLocalAiRuntimePayload({
+        enabled: true,
+        runtimeBackend: 'ollama-direct',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+      })
+    ).toMatchObject({
+      enabled: true,
+      runtimeBackend: 'ollama-direct',
+      baseUrl: 'http://127.0.0.1:11434',
+      endpoint: 'http://127.0.0.1:11434',
+      model: 'llama3.1:8b',
+    })
+  })
+
+  it('rejects unsafe local AI endpoints before checking the bridge', async () => {
+    const localBridge = {
+      status: jest.fn(),
+    }
+
+    await expect(
+      checkAiProviderReadiness({
+        localBridge,
+        localAi: {
+          enabled: true,
+          runtimeBackend: 'ollama-direct',
+          baseUrl: 'https://example.com:11434',
+          model: 'llama3.1:8b',
+        },
+        aiSolver: {
+          provider: 'local-ai',
+        },
+      })
+    ).resolves.toMatchObject({
+      allReady: false,
+      primaryReady: false,
+      missingProviders: ['local-ai'],
+      error:
+        'Local AI endpoint must stay on this machine (localhost, 127.0.0.1, or ::1).',
+    })
+
+    expect(localBridge.status).not.toHaveBeenCalled()
   })
 })

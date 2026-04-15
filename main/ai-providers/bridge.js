@@ -264,6 +264,108 @@ function supportsImageGenerationProvider(provider) {
   return isOpenAiCompatibleProvider(provider) || provider === PROVIDERS.Gemini
 }
 
+function isLocalAiProvider(provider) {
+  return provider === PROVIDERS.LocalAI
+}
+
+function normalizeLocalAiConfidenceBand(value) {
+  const confidence = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  switch (confidence) {
+    case 'high':
+      return 0.9
+    case 'medium':
+      return 0.66
+    case 'low':
+      return 0.42
+    default:
+      return 0
+  }
+}
+
+function normalizeLocalAiClassificationScore(value) {
+  const classification = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  switch (classification) {
+    case 'consistent':
+      return 1
+    case 'ambiguous':
+      return 0.45
+    case 'inconsistent':
+      return 0
+    default:
+      return 0
+  }
+}
+
+function summarizeLocalAiCheckSide(label, result = {}) {
+  const classification = String(result.classification || 'unknown').trim()
+  const confidence = String(result.confidence || 'unknown').trim()
+  const detail = String(result.reason || result.lastError || '').trim()
+
+  return `${label}: ${classification} (${confidence})${
+    detail ? `, ${detail}` : ''
+  }`
+}
+
+function buildLocalAiDecisionFromChecks(left = {}, right = {}) {
+  const leftConfidence = normalizeLocalAiConfidenceBand(left.confidence)
+  const rightConfidence = normalizeLocalAiConfidenceBand(right.confidence)
+  const leftScore =
+    normalizeLocalAiClassificationScore(left.classification) * leftConfidence
+  const rightScore =
+    normalizeLocalAiClassificationScore(right.classification) * rightConfidence
+  const leftClassification = String(left.classification || '')
+    .trim()
+    .toLowerCase()
+  const rightClassification = String(right.classification || '')
+    .trim()
+    .toLowerCase()
+
+  let answer = 'skip'
+
+  if (
+    leftClassification === 'consistent' &&
+    rightClassification !== 'consistent'
+  ) {
+    answer = 'left'
+  } else if (
+    rightClassification === 'consistent' &&
+    leftClassification !== 'consistent'
+  ) {
+    answer = 'right'
+  } else if (leftScore > rightScore + 0.12) {
+    answer = 'left'
+  } else if (rightScore > leftScore + 0.12) {
+    answer = 'right'
+  }
+
+  const confidence =
+    answer === 'skip'
+      ? Math.min(0.45, Math.max(leftConfidence, rightConfidence) * 0.5)
+      : Math.min(
+          0.95,
+          Math.max(
+            0.35,
+            Math.max(leftScore, rightScore),
+            Math.abs(leftScore - rightScore) + 0.45
+          )
+        )
+
+  return {
+    answer,
+    confidence,
+    reasoning: [
+      summarizeLocalAiCheckSide('left', left),
+      summarizeLocalAiCheckSide('right', right),
+    ].join(' | '),
+  }
+}
+
 function resolveProviderConfig(provider, providerConfig = null) {
   const defaults =
     PROVIDER_CONFIG_DEFAULTS &&
@@ -5027,6 +5129,10 @@ function buildProviderFlipForVision({
   if (visionMode === 'composite') {
     return {
       ...baseFlip,
+      leftFrames: Array.isArray(baseFlip.leftFrames) ? baseFlip.leftFrames : [],
+      rightFrames: Array.isArray(baseFlip.rightFrames)
+        ? baseFlip.rightFrames
+        : [],
       images: [baseFlip.leftImage, baseFlip.rightImage].filter(Boolean),
     }
   }
@@ -5350,6 +5456,11 @@ function createAiProviderBridge(logger, dependencies = {}) {
   const storyValidatorHooks = createStoryValidatorHooks(
     dependencies.storyValidatorHooks
   )
+  const localAiManager = dependencies.localAiManager || null
+  const getLocalAiPayload =
+    typeof dependencies.getLocalAiPayload === 'function'
+      ? dependencies.getLocalAiPayload
+      : (payload = {}) => payload
 
   const sleep =
     typeof dependencies.sleep === 'function'
@@ -5367,8 +5478,74 @@ function createAiProviderBridge(logger, dependencies = {}) {
     return key
   }
 
+  function ensureLocalAiManager() {
+    if (
+      !localAiManager ||
+      typeof localAiManager.checkFlipSequence !== 'function'
+    ) {
+      throw new Error('Local AI runtime bridge is not available')
+    }
+
+    return localAiManager
+  }
+
+  function buildLocalAiPayload(payload = {}) {
+    return getLocalAiPayload(payload)
+  }
+
+  async function runLocalAiProvider({model, flip, profile}) {
+    const manager = ensureLocalAiManager()
+    const leftImages =
+      Array.isArray(flip.leftFrames) && flip.leftFrames.length
+        ? flip.leftFrames
+        : [flip.leftImage].filter(Boolean)
+    const rightImages =
+      Array.isArray(flip.rightFrames) && flip.rightFrames.length
+        ? flip.rightFrames
+        : [flip.rightImage].filter(Boolean)
+
+    if (!leftImages.length || !rightImages.length) {
+      throw new Error('Local AI provider requires left/right flip images')
+    }
+
+    const runtimePayload = buildLocalAiPayload({
+      model,
+      timeoutMs: profile.requestTimeoutMs,
+    })
+
+    const [left, right] = await Promise.all([
+      manager.checkFlipSequence({
+        ...runtimePayload,
+        images: leftImages,
+      }),
+      manager.checkFlipSequence({
+        ...runtimePayload,
+        images: rightImages,
+      }),
+    ])
+
+    const decision = buildLocalAiDecisionFromChecks(left, right)
+
+    return {
+      content: JSON.stringify({
+        answer: decision.answer,
+        confidence: decision.confidence,
+        reasoning: decision.reasoning,
+      }),
+      meta: {
+        left,
+        right,
+      },
+    }
+  }
+
   function setProviderKey({provider, apiKey}) {
     const normalized = normalizeProvider(provider)
+
+    if (isLocalAiProvider(normalized)) {
+      throw new Error('Local AI does not use session API keys')
+    }
+
     const key = String(apiKey || '').trim()
 
     if (!key) {
@@ -5383,6 +5560,11 @@ function createAiProviderBridge(logger, dependencies = {}) {
 
   function clearProviderKey({provider}) {
     const normalized = normalizeProvider(provider)
+
+    if (isLocalAiProvider(normalized)) {
+      return {ok: true, provider: normalized}
+    }
+
     providerKeys.set(normalized, null)
     logger.info('AI provider key cleared', {provider: normalized})
     return {ok: true, provider: normalized}
@@ -5390,6 +5572,16 @@ function createAiProviderBridge(logger, dependencies = {}) {
 
   function hasProviderKey({provider}) {
     const normalized = normalizeProvider(provider)
+
+    if (isLocalAiProvider(normalized)) {
+      return {
+        ok: true,
+        provider: normalized,
+        hasKey: false,
+        error: 'local_ai_uses_runtime',
+      }
+    }
+
     const key = providerKeys.get(normalized)
     return {
       ok: true,
@@ -5408,6 +5600,14 @@ function createAiProviderBridge(logger, dependencies = {}) {
     promptText = '',
     promptOptions = {},
   }) {
+    if (isLocalAiProvider(provider)) {
+      return runLocalAiProvider({
+        model,
+        flip,
+        profile,
+      })
+    }
+
     const resolvedApiKey = apiKey || getApiKey(provider)
     const resolvedProviderConfig = resolveProviderConfig(
       provider,
@@ -5519,6 +5719,32 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const finalModel = String(model || DEFAULT_MODELS[normalized]).trim()
     const startedAt = now()
     const profile = sanitizeBenchmarkProfile()
+
+    if (isLocalAiProvider(normalized)) {
+      const manager = ensureLocalAiManager()
+      const result = await manager.status({
+        ...buildLocalAiPayload({
+          model: finalModel,
+          timeoutMs: profile.requestTimeoutMs,
+        }),
+        refresh: true,
+      })
+
+      if (!result || result.sidecarReachable !== true) {
+        throw new Error(
+          String((result && (result.lastError || result.error)) || '').trim() ||
+            'Local AI runtime is unavailable'
+        )
+      }
+
+      return {
+        ok: true,
+        provider: normalized,
+        model: finalModel,
+        latencyMs: now() - startedAt,
+      }
+    }
+
     const apiKey = getApiKey(normalized)
     const resolvedProviderConfig = resolveProviderConfig(
       normalized,
@@ -5599,6 +5825,34 @@ function createAiProviderBridge(logger, dependencies = {}) {
 
   async function listModels({provider, providerConfig}) {
     const normalized = normalizeProvider(provider)
+
+    if (isLocalAiProvider(normalized)) {
+      const manager = ensureLocalAiManager()
+      const result = await manager.listModels(buildLocalAiPayload({}))
+      const message = String(
+        (result && (result.lastError || result.error)) || ''
+      ).trim()
+
+      if (result && result.ok === false) {
+        throw new Error(message || 'Local AI runtime is unavailable')
+      }
+
+      const unique = Array.from(
+        new Set(
+          (Array.isArray(result && result.models) ? result.models : [])
+            .map((item) => String(item || '').trim())
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b))
+
+      return {
+        ok: true,
+        provider: normalized,
+        total: unique.length,
+        models: unique,
+      }
+    }
+
     const profile = sanitizeBenchmarkProfile()
     const apiKey = getApiKey(normalized)
     const resolvedProviderConfig = resolveProviderConfig(
@@ -8591,7 +8845,8 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const consultProvidersWithKeys = consultProviders.map((consultant) => ({
       ...consultant,
       apiKey:
-        consultant.internalStrategy === LEGACY_HEURISTIC_STRATEGY
+        consultant.internalStrategy === LEGACY_HEURISTIC_STRATEGY ||
+        isLocalAiProvider(consultant.provider)
           ? null
           : getApiKey(consultant.provider),
     }))
@@ -9130,10 +9385,23 @@ function createAiProviderBridge(logger, dependencies = {}) {
     const flips = Array.isArray(payload.flips) ? payload.flips : []
     const providerConfig = payload.providerConfig || null
     const consultProviders = normalizeConsultProviders(payload, provider, model)
+
+    if (
+      isLocalAiProvider(provider) ||
+      consultProviders.some((consultant) =>
+        isLocalAiProvider(consultant.provider)
+      )
+    ) {
+      throw new Error(
+        'Local AI is not supported for validation report review yet. Use a cloud provider for automatic report review.'
+      )
+    }
+
     const consultProvidersWithKeys = consultProviders.map((consultant) => ({
       ...consultant,
       apiKey:
-        consultant.internalStrategy === LEGACY_HEURISTIC_STRATEGY
+        consultant.internalStrategy === LEGACY_HEURISTIC_STRATEGY ||
+        isLocalAiProvider(consultant.provider)
           ? null
           : getApiKey(consultant.provider),
     }))

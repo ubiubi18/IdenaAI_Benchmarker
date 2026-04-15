@@ -6,6 +6,7 @@ import {FillCenter} from '../screens/oracles/components'
 import Layout from '../shared/components/layout'
 import {PrimaryButton} from '../shared/components/button'
 import {Page} from '../shared/components/components'
+import {getAppBridge} from '../shared/utils/app-bridge'
 
 global.logger = global.logger || {
   error() {},
@@ -43,9 +44,7 @@ function MyError({statusCode, hasGetInitialPropsRun, err}) {
                   : t('An error occurred on client')}
               </Heading>
               <Box>
-                <PrimaryButton
-                  onClick={() => global.ipcRenderer.send('reload')}
-                >
+                <PrimaryButton onClick={() => getAppBridge().reload()}>
                   {t('Go to My Idena')}
                 </PrimaryButton>
               </Box>

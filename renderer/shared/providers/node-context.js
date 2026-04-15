@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useMemo} from 'react'
-import {NODE_EVENT, NODE_COMMAND} from '../../../main/channels'
 import {useSettingsState} from './settings-context'
 import useLogger from '../hooks/use-logger'
+import {getNodeBridge} from '../utils/node-bridge'
 
 const NODE_READY = 'NODE_READY'
 const NODE_FAILED = 'NODE_FAILED'
@@ -82,13 +82,8 @@ function nodeReducer(state, action) {
 const NodeStateContext = React.createContext()
 const NodeDispatchContext = React.createContext()
 
-function hasIpcRenderer() {
-  return (
-    global.ipcRenderer &&
-    typeof global.ipcRenderer.on === 'function' &&
-    typeof global.ipcRenderer.send === 'function' &&
-    typeof global.ipcRenderer.removeListener === 'function'
-  )
+function hasNodeBridge() {
+  return !getNodeBridge().__idenaFallback
 }
 
 // eslint-disable-next-line react/prop-types
@@ -100,11 +95,11 @@ export function NodeProvider({children}) {
   )
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasNodeBridge()) {
       return undefined
     }
 
-    const onEvent = (_sender, event, data) => {
+    const onEvent = (event, data) => {
       switch (event) {
         case 'node-failed':
           dispatch({type: NODE_FAILED})
@@ -128,7 +123,7 @@ export function NodeProvider({children}) {
 
         case 'troubleshooting-restart-node': {
           dispatch({type: TROUBLESHOOTING_RESTART_NODE})
-          return global.ipcRenderer.send(NODE_COMMAND, 'start-local-node', {
+          return getNodeBridge().startLocalNode({
             rpcPort: settings.internalPort,
             tcpPort: settings.tcpPort,
             ipfsPort: settings.ipfsPort,
@@ -140,7 +135,7 @@ export function NodeProvider({children}) {
         }
         case 'troubleshooting-reset-node': {
           dispatch({type: TROUBLESHOOTING_RESET_NODE})
-          return global.ipcRenderer.send(NODE_COMMAND, 'init-local-node')
+          return getNodeBridge().initLocalNode()
         }
 
         default:
@@ -148,11 +143,7 @@ export function NodeProvider({children}) {
       }
     }
 
-    global.ipcRenderer.on(NODE_EVENT, onEvent)
-
-    return () => {
-      global.ipcRenderer.removeListener(NODE_EVENT, onEvent)
-    }
+    return getNodeBridge().onEvent(onEvent)
   }, [
     dispatch,
     settings.autoActivateMining,
@@ -166,7 +157,7 @@ export function NodeProvider({children}) {
   }, [settings.runInternalNode, dispatch])
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasNodeBridge()) {
       return
     }
 
@@ -176,7 +167,7 @@ export function NodeProvider({children}) {
       !state.nodeStarted &&
       settings.runInternalNode
     ) {
-      global.ipcRenderer.send(NODE_COMMAND, 'start-local-node', {
+      getNodeBridge().startLocalNode({
         rpcPort: settings.internalPort,
         tcpPort: settings.tcpPort,
         ipfsPort: settings.ipfsPort,
@@ -195,7 +186,7 @@ export function NodeProvider({children}) {
   ])
 
   useEffect(() => {
-    if (!hasIpcRenderer()) {
+    if (!hasNodeBridge()) {
       return
     }
 
@@ -204,10 +195,10 @@ export function NodeProvider({children}) {
     }
     if (settings.runInternalNode) {
       if (!state.nodeStarted) {
-        global.ipcRenderer.send(NODE_COMMAND, 'init-local-node')
+        getNodeBridge().initLocalNode()
       }
     } else if (state.nodeStarted) {
-      global.ipcRenderer.send(NODE_COMMAND, 'stop-local-node')
+      getNodeBridge().stopLocalNode()
     }
   }, [
     settings.runInternalNode,
@@ -222,14 +213,15 @@ export function NodeProvider({children}) {
   }, [dispatch])
 
   const importNodeKey = (shouldResetNode) => {
-    if (!hasIpcRenderer()) {
+    if (!hasNodeBridge()) {
       return
     }
 
-    global.ipcRenderer.send(
-      NODE_COMMAND,
-      shouldResetNode ? 'clean-state' : 'restart-node'
-    )
+    if (shouldResetNode) {
+      getNodeBridge().cleanState()
+    } else {
+      getNodeBridge().restartNode()
+    }
   }
 
   return (

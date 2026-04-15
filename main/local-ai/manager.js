@@ -1,15 +1,27 @@
+const {spawn} = require('child_process')
+const fs = require('fs')
 const path = require('path')
 
 const {createLocalAiStorage} = require('./storage')
 const {resolveAdapterContract} = require('./adapter-contract')
 const {createLocalAiSidecar} = require('./sidecar')
 const {resolveModelReference} = require('./model-reference')
-const {resolveLocalAiRuntimeAdapter} = require('./runtime-adapter')
+const {
+  LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
+  resolveLocalAiRuntimeAdapter,
+} = require('./runtime-adapter')
 
 const CAPTURE_INDEX_VERSION = 1
 const TRAINING_CANDIDATE_PACKAGE_VERSION = 1
 const MAX_CAPTURE_INDEX_ITEMS = 1000
 const MAX_RECENT_CAPTURES = 20
+const DEFAULT_RUNTIME_START_TIMEOUT_MS = 10 * 1000
+const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
+const OLLAMA_COMMAND_CANDIDATES = [
+  '/opt/homebrew/bin/ollama',
+  '/usr/local/bin/ollama',
+  'ollama',
+]
 const ELIGIBLE_CONSENSUS_ANSWERS = new Set(['left', 'right'])
 
 function normalizeMode(value, fallback = 'sidecar') {
@@ -20,6 +32,139 @@ function normalizeMode(value, fallback = 'sidecar') {
 function normalizeBaseUrl(value, fallback = 'http://localhost:5000') {
   const baseUrl = String(value || fallback).trim()
   return baseUrl || fallback
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function resolveOllamaCommand() {
+  const explicit = String(process.env.OLLAMA_PATH || '').trim()
+
+  if (explicit) {
+    return explicit
+  }
+
+  return (
+    OLLAMA_COMMAND_CANDIDATES.find(
+      (candidate) => candidate === 'ollama' || fs.existsSync(candidate)
+    ) || 'ollama'
+  )
+}
+
+function resolveOllamaHostEnv(baseUrl) {
+  const nextBaseUrl = normalizeBaseUrl(baseUrl, '')
+
+  if (!nextBaseUrl) {
+    return null
+  }
+
+  try {
+    const parsed = new URL(nextBaseUrl)
+    return parsed.host || null
+  } catch {
+    return null
+  }
+}
+
+function createDefaultRuntimeController({logger, isDev = false} = {}) {
+  let managedProcess = null
+
+  return {
+    async start(payload = {}) {
+      if (payload.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
+        return {started: false, managed: false}
+      }
+
+      if (
+        managedProcess &&
+        managedProcess.exitCode == null &&
+        !managedProcess.killed
+      ) {
+        return {
+          started: false,
+          managed: true,
+          pid: managedProcess.pid,
+        }
+      }
+
+      const command = resolveOllamaCommand()
+      const env = {...process.env}
+      const host = resolveOllamaHostEnv(payload.baseUrl)
+
+      if (host) {
+        env.OLLAMA_HOST = host
+      }
+
+      const child = await new Promise((resolve, reject) => {
+        const nextChild = spawn(command, ['serve'], {
+          detached: true,
+          stdio: 'ignore',
+          env,
+        })
+
+        nextChild.once('error', reject)
+        nextChild.once('spawn', () => resolve(nextChild))
+      })
+
+      child.unref()
+      managedProcess = child
+      child.once('exit', () => {
+        if (managedProcess === child) {
+          managedProcess = null
+        }
+      })
+
+      if (isDev && logger && typeof logger.debug === 'function') {
+        logger.debug('Managed Local AI runtime spawned', {
+          command,
+          host,
+          pid: child.pid,
+        })
+      }
+
+      return {
+        started: true,
+        managed: true,
+        pid: child.pid,
+        command,
+        host,
+      }
+    },
+
+    async stop(payload = {}) {
+      if (
+        payload.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND ||
+        !managedProcess ||
+        managedProcess.exitCode != null ||
+        managedProcess.killed
+      ) {
+        return {stopped: false, managed: false}
+      }
+
+      const {pid} = managedProcess
+
+      try {
+        process.kill(pid, 'SIGTERM')
+      } finally {
+        managedProcess = null
+      }
+
+      if (isDev && logger && typeof logger.debug === 'function') {
+        logger.debug('Managed Local AI runtime stopped', {
+          pid,
+        })
+      }
+
+      return {
+        stopped: true,
+        managed: true,
+        pid,
+      }
+    },
+  }
 }
 
 function normalizeRuntimePayload(payload, fallbackRuntime = {}) {
@@ -340,6 +485,7 @@ function createLocalAiManager({
   storage,
   sidecar,
   getModelReference,
+  runtimeController,
 } = {}) {
   const localAiStorage = storage || createLocalAiStorage()
   const localAiSidecar =
@@ -348,10 +494,13 @@ function createLocalAiManager({
       logger,
       isDev,
     })
+  const localAiRuntimeController =
+    runtimeController || createDefaultRuntimeController({logger, isDev})
   const initialRuntime = resolveLocalAiRuntimeAdapter()
   const state = {
     available: true,
     running: false,
+    runtimeManaged: false,
     mode: 'sidecar',
     runtime: initialRuntime.runtime,
     runtimeBackend: initialRuntime.runtimeBackend,
@@ -375,6 +524,7 @@ function createLocalAiManager({
     return {
       available: state.available,
       running: state.running,
+      runtimeManaged: state.runtimeManaged,
       mode: state.mode,
       runtime: state.runtime,
       runtimeBackend: state.runtimeBackend,
@@ -402,6 +552,21 @@ function createLocalAiManager({
     state.runtimeBackend = next.runtimeBackend || state.runtimeBackend
     state.runtimeType = next.runtimeType || state.runtimeType
     state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+  }
+
+  async function waitForRuntimeReady(payload) {
+    const startedAt = Date.now()
+    let result = await refreshSidecarStatus(payload)
+
+    while (
+      !result.ok &&
+      Date.now() - startedAt < DEFAULT_RUNTIME_START_TIMEOUT_MS
+    ) {
+      await delay(DEFAULT_RUNTIME_START_RETRY_DELAY_MS)
+      result = await refreshSidecarStatus(payload)
+    }
+
+    return result
   }
 
   async function hydrate() {
@@ -530,17 +695,69 @@ function createLocalAiManager({
     if (isDev && logger && typeof logger.debug === 'function') {
       logger.debug('Local AI runtime marked as started', {
         mode: state.mode,
+        runtimeBackend: state.runtimeBackend,
         capturedCount: state.capturedCount,
       })
     }
 
-    return refreshSidecarStatus(next)
+    const initialStatus = await refreshSidecarStatus(next)
+
+    if (
+      initialStatus.ok ||
+      next.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+    ) {
+      state.runtimeManaged = false
+      return initialStatus
+    }
+
+    try {
+      const runtimeStart = await localAiRuntimeController.start(next)
+      state.runtimeManaged = Boolean(runtimeStart && runtimeStart.managed)
+
+      const readyStatus = await waitForRuntimeReady(next)
+
+      if (!readyStatus.ok && runtimeStart && runtimeStart.started) {
+        return {
+          ...readyStatus,
+          error: readyStatus.error || 'runtime_start_timeout',
+          lastError:
+            readyStatus.lastError ||
+            'Ollama was started but is not responding yet.',
+        }
+      }
+
+      return readyStatus
+    } catch (error) {
+      state.runtimeManaged = false
+      state.lastError = String((error && error.message) || error || '').trim()
+      state.sidecarReachable = false
+      state.sidecarCheckedAt = new Date().toISOString()
+      state.sidecarModels = []
+
+      return {
+        ok: false,
+        status: 'error',
+        error: 'runtime_start_failed',
+        lastError:
+          state.lastError || 'Unable to start the configured Local AI runtime.',
+        ...currentStatus(),
+      }
+    }
   }
 
   async function stop() {
     await hydrate()
 
+    try {
+      await localAiRuntimeController.stop({
+        runtimeBackend: state.runtimeBackend,
+      })
+    } catch (error) {
+      state.lastError = String((error && error.message) || error || '').trim()
+    }
+
     state.running = false
+    state.runtimeManaged = false
     state.lastError = null
     state.sidecarReachable = null
     state.sidecarCheckedAt = new Date().toISOString()
@@ -594,6 +811,7 @@ function createLocalAiManager({
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       model: next.model,
+      visionModel: next.visionModel,
       messages: next.messages,
       message: next.message,
       prompt: next.prompt,

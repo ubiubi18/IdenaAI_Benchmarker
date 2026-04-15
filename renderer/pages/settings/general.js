@@ -23,16 +23,22 @@ import {
   LocaleSwitcher,
 } from '../../screens/settings/containers'
 import {PrivateKeyIcon} from '../../shared/components/icons'
+import {getFlipsBridge} from '../../shared/utils/flips-bridge'
+import {getInvitesBridge} from '../../shared/utils/invites-bridge'
 
 function clearFlips() {
-  if (global.flipStore && typeof global.flipStore.clear === 'function') {
-    global.flipStore.clear()
+  const flipsBridge = getFlipsBridge()
+
+  if (typeof flipsBridge.clear === 'function') {
+    flipsBridge.clear()
   }
 }
 
 function clearInvites() {
-  if (global.invitesDb && typeof global.invitesDb.clearInvites === 'function') {
-    global.invitesDb.clearInvites()
+  const invitesBridge = getInvitesBridge()
+
+  if (typeof invitesBridge.clearInvites === 'function') {
+    invitesBridge.clearInvites()
   }
 }
 

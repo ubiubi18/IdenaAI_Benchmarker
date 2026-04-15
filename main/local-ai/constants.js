@@ -1,19 +1,20 @@
 const LOCAL_AI_PROVIDER = 'local-ai'
 const LOCAL_AI_RUNTIME_MODE = 'sidecar'
 const LOCAL_AI_RUNTIME = 'idena-local-runtime'
-const LOCAL_AI_RUNTIME_BACKEND = 'sidecar-http'
+const LOCAL_AI_RUNTIME_BACKEND = 'ollama-direct'
 const LOCAL_AI_REASONER_BACKEND = 'local-reasoner'
 const LOCAL_AI_VISION_BACKEND = 'local-vision'
 const LOCAL_AI_RUNTIME_FAMILY = 'local-reasoner'
-const LOCAL_AI_DEFAULT_BASE_URL = 'http://127.0.0.1:5000'
-const LOCAL_AI_DEFAULT_MODEL = ''
-const LOCAL_AI_DEFAULT_VISION_MODEL = ''
-const LOCAL_AI_PUBLIC_MODEL_ID = 'idena-core-v1'
-const LOCAL_AI_PUBLIC_VISION_ID = 'idena-vision-v1'
+const LOCAL_AI_DEFAULT_BASE_URL = 'http://127.0.0.1:11434'
+const LOCAL_AI_DEFAULT_MODEL = 'llama3.1:8b'
+const LOCAL_AI_DEFAULT_VISION_MODEL = 'moondream:latest'
+const LOCAL_AI_PUBLIC_MODEL_ID = 'Idena-text-v1'
+const LOCAL_AI_PUBLIC_VISION_ID = 'Idena-multimodal-v1'
 const LOCAL_AI_ADAPTER_STRATEGY = 'lora-first'
 const LOCAL_AI_TRAINING_POLICY = 'approved-post-consensus-only'
 const LOCAL_AI_CONTRACT_VERSION = 'idena-local/v1'
-const LOCAL_AI_BASE_MODEL_ID = 'idena-local:idena-core-v1:adapter-lora-first-v1'
+const LOCAL_AI_BASE_MODEL_ID =
+  'idena-local:Idena-multimodal-v1:adapter-lora-first-v1'
 
 module.exports = {
   LOCAL_AI_PROVIDER,

@@ -1161,6 +1161,7 @@ function App() {
                         setMainComposerCostEstimateLoading,
                         inputSendingTxs,
                         embeddedDesktopOnchainMode: isDesktopOnchainMode,
+                        desktopBootstrap,
                     }}
                 />
                 </div>

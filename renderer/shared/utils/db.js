@@ -1,6 +1,7 @@
 import nanoid from 'nanoid'
 
 const rootDbRegistry = new Map()
+const epochPrefixPattern = /^epoch(-?\d+)$/i
 
 function createNotFoundError() {
   const error = new Error('NotFound')
@@ -18,6 +19,7 @@ function createInMemoryDb() {
       nextPrefix ? `${nextPrefix}:${String(key || '')}` : String(key || '')
 
     return {
+      __idenaFallback: true,
       async get(key) {
         const nextKey = withPrefix(key)
 
@@ -59,7 +61,11 @@ function createInMemoryDb() {
       },
       async clear() {
         for (const key of Array.from(store.keys())) {
-          if (!nextPrefix || key.startsWith(`${nextPrefix}:`) || key === nextPrefix) {
+          if (
+            !nextPrefix ||
+            key.startsWith(`${nextPrefix}:`) ||
+            key === nextPrefix
+          ) {
             store.delete(key)
           }
         }
@@ -85,14 +91,14 @@ function createInMemoryDb() {
   return createSubDb('')
 }
 
-function getDbBridge() {
+function getStorageBridge() {
   if (
     typeof window !== 'undefined' &&
     window.idena &&
-    window.idena.db &&
-    typeof window.idena.db === 'object'
+    window.idena.storage &&
+    typeof window.idena.storage === 'object'
   ) {
-    return window.idena.db
+    return window.idena.storage
   }
 
   return null
@@ -102,49 +108,16 @@ function normalizeOptions(options) {
   return options && typeof options === 'object' ? options : {}
 }
 
-function normalizeDescriptor(descriptor = {}) {
-  const nextDescriptor =
-    descriptor && typeof descriptor === 'object' ? descriptor : {}
-
-  return {
-    name:
-      typeof nextDescriptor.name === 'string' && nextDescriptor.name.trim()
-        ? nextDescriptor.name.trim()
-        : 'db',
-    sublevels: Array.isArray(nextDescriptor.sublevels)
-      ? nextDescriptor.sublevels
-          .map((entry) => {
-            const nextEntry = entry && typeof entry === 'object' ? entry : {}
-            const prefix =
-              typeof nextEntry.prefix === 'string' ? nextEntry.prefix.trim() : ''
-
-            if (!prefix) {
-              return null
-            }
-
-            return {
-              prefix,
-              options: normalizeOptions(nextEntry.options),
-            }
-          })
-          .filter(Boolean)
-      : [],
-  }
+function hasJsonEncoding(options) {
+  return normalizeOptions(options).valueEncoding === 'json'
 }
 
-function createBridgeDb(descriptor = {}) {
-  const dbBridge = getDbBridge()
-
-  if (!dbBridge) {
-    return createInMemoryDb()
-  }
-
-  const nextDescriptor = normalizeDescriptor(descriptor)
-
+function wrapStore(store, {epochFactory} = {}) {
   return {
+    __idenaFallback: false,
     async get(key) {
       try {
-        return await dbBridge.get(nextDescriptor, key)
+        return await store.get(key)
       } catch (error) {
         if (
           error &&
@@ -159,7 +132,7 @@ function createBridgeDb(descriptor = {}) {
       }
     },
     async put(key, value) {
-      return dbBridge.put(nextDescriptor, key, value)
+      return store.put(key, value)
     },
     batch() {
       const ops = []
@@ -174,12 +147,12 @@ function createBridgeDb(descriptor = {}) {
           return this
         },
         async write() {
-          return dbBridge.batchWrite(nextDescriptor, ops)
+          return store.batchWrite(ops)
         },
       }
     },
     async clear() {
-      return dbBridge.clear(nextDescriptor)
+      return store.clear()
     },
     isOpen() {
       return true
@@ -188,16 +161,62 @@ function createBridgeDb(descriptor = {}) {
       return undefined
     },
     sub(prefix, options = {}) {
-      return createBridgeDb({
-        ...nextDescriptor,
-        sublevels: [
-          ...nextDescriptor.sublevels,
-          {
-            prefix: String(prefix || ''),
-            options: normalizeOptions(options),
-          },
-        ],
-      })
+      if (typeof epochFactory === 'function') {
+        const match = epochPrefixPattern.exec(String(prefix || '').trim())
+
+        if (match) {
+          if (!hasJsonEncoding(options)) {
+            throw new Error(`Epoch storage requires JSON encoding: ${prefix}`)
+          }
+
+          return wrapStore(epochFactory(Number(match[1])))
+        }
+      }
+
+      throw new Error(`Unsupported storage scope: ${prefix || 'unknown'}`)
+    },
+  }
+}
+
+function createRootBridgeDb() {
+  const storageBridge = getStorageBridge()
+
+  if (!storageBridge) {
+    return createInMemoryDb()
+  }
+
+  return {
+    __idenaFallback: false,
+    isOpen() {
+      return true
+    },
+    async close() {
+      return undefined
+    },
+    sub(prefix, options = {}) {
+      const normalizedPrefix = String(prefix || '').trim()
+
+      switch (normalizedPrefix) {
+        case 'flips':
+          return wrapStore(storageBridge.flips)
+        case 'votings':
+          return wrapStore(
+            hasJsonEncoding(options)
+              ? storageBridge.votings.json
+              : storageBridge.votings,
+            {
+              epochFactory: storageBridge.votings.epoch,
+            }
+          )
+        case 'updates':
+          return wrapStore(storageBridge.updates)
+        case 'profile':
+          return wrapStore(storageBridge.profile)
+        case 'onboarding':
+          return wrapStore(storageBridge.onboarding)
+        default:
+          throw new Error(`Unsupported storage namespace: ${normalizedPrefix}`)
+      }
     },
   }
 }
@@ -206,8 +225,20 @@ export function requestDb(name = 'db') {
   const normalizedName =
     typeof name === 'string' && name.trim() ? name.trim() : 'db'
 
-  if (!rootDbRegistry.has(normalizedName)) {
-    rootDbRegistry.set(normalizedName, createBridgeDb({name: normalizedName}))
+  const cachedDb = rootDbRegistry.get(normalizedName)
+
+  if (
+    cachedDb &&
+    cachedDb.__idenaFallback &&
+    normalizedName === 'db' &&
+    getStorageBridge()
+  ) {
+    rootDbRegistry.set(normalizedName, createRootBridgeDb())
+  } else if (!rootDbRegistry.has(normalizedName)) {
+    rootDbRegistry.set(
+      normalizedName,
+      normalizedName === 'db' ? createRootBridgeDb() : createInMemoryDb()
+    )
   }
 
   return rootDbRegistry.get(normalizedName)
@@ -242,6 +273,7 @@ export const epochDb = (db, epoch = -1, options = {}) => {
         return await loadPersistedItems(targetDb)
       } catch (error) {
         if (error.notFound) return []
+        throw error
       }
     },
     load(id) {
@@ -329,7 +361,10 @@ export async function updatePersistedItem(db, id, item) {
 export async function deletePersistedItem(db, id) {
   return db
     .batch()
-    .put('ids', (await safeReadIds(db)).filter((x) => x !== id))
+    .put(
+      'ids',
+      (await safeReadIds(db)).filter((x) => x !== id)
+    )
     .del(id)
     .write()
 }

@@ -1,5 +1,6 @@
 const PROVIDERS = {
   OpenAI: 'openai',
+  LocalAI: 'local-ai',
   OpenAICompatible: 'openai-compatible',
   Gemini: 'gemini',
   Anthropic: 'anthropic',
@@ -12,6 +13,7 @@ const PROVIDERS = {
 
 const DEFAULT_MODELS = {
   [PROVIDERS.OpenAI]: 'gpt-5.4',
+  [PROVIDERS.LocalAI]: '',
   [PROVIDERS.OpenAICompatible]: 'gpt-4o-mini',
   [PROVIDERS.Gemini]: 'gemini-2.0-flash',
   [PROVIDERS.Anthropic]: 'claude-3-7-sonnet-latest',

@@ -4,6 +4,7 @@ const {
   LOCAL_AI_OLLAMA_DEFAULT_BASE_URL,
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
   resolveLocalAiRuntimeAdapter,
+  validateLocalAiBaseUrl,
 } = require('./runtime-adapter')
 
 const DEFAULT_BASE_URL = 'http://localhost:5000'
@@ -14,6 +15,15 @@ const DEFAULT_OLLAMA_ENDPOINT = LOCAL_AI_OLLAMA_DEFAULT_BASE_URL
 const DEFAULT_VISION_MODEL = 'moondream'
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_FLIP_IMAGES = 8
+const MIN_TIMEOUT_MS = 1000
+const MAX_TIMEOUT_MS = 30 * 1000
+const MAX_MODEL_NAME_LENGTH = 160
+const MAX_CHAT_MESSAGES = 24
+const MAX_CHAT_MESSAGE_CHARS = 6000
+const MAX_TOTAL_CHAT_CHARS = 24 * 1000
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
+const ALLOWED_CHAT_ROLES = new Set(['system', 'user', 'assistant'])
 const CHECKER_CLASSIFICATIONS = new Set([
   'consistent',
   'ambiguous',
@@ -91,6 +101,81 @@ function normalizeModelList(data) {
     .filter(Boolean)
 }
 
+function normalizeTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
+  const timeoutMs = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(timeoutMs)) {
+    return fallback
+  }
+
+  return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, timeoutMs))
+}
+
+function estimateBase64Bytes(value) {
+  const normalized = String(value || '')
+    .replace(/\s+/g, '')
+    .replace(/=+$/, '')
+
+  return Math.max(0, Math.floor((normalized.length * 3) / 4))
+}
+
+function validateModelName(value, fallbackMessage) {
+  const model = String(value || '').trim()
+
+  if (!model) {
+    return {
+      ok: false,
+      reason: 'model_required',
+      message: fallbackMessage,
+    }
+  }
+
+  if (model.length > MAX_MODEL_NAME_LENGTH) {
+    return {
+      ok: false,
+      reason: 'model_invalid',
+      message: 'Local AI model identifier is too long.',
+    }
+  }
+
+  if (!/^[A-Za-z0-9._:/-]+$/.test(model)) {
+    return {
+      ok: false,
+      reason: 'model_invalid',
+      message: 'Local AI model identifier contains unsupported characters.',
+    }
+  }
+
+  return {
+    ok: true,
+    model,
+  }
+}
+
+function buildValidationError({
+  runtimeBackend,
+  runtimeType,
+  model = '',
+  baseUrl = null,
+  endpoint = null,
+  error,
+  lastError,
+}) {
+  return {
+    ok: false,
+    status: 'validation_error',
+    provider: 'local-ai',
+    runtimeBackend,
+    runtimeType,
+    model,
+    baseUrl,
+    endpoint,
+    text: null,
+    error,
+    lastError,
+  }
+}
+
 function isNotFoundError(error) {
   return Number(error && error.response && error.response.status) === 404
 }
@@ -120,7 +205,25 @@ function normalizeChatMessage(item) {
     textContent = item.text.trim()
   }
 
-  return textContent ? {role, content: textContent} : null
+  const images = normalizeFlipImages(item.images || item.attachments)
+
+  if (!textContent && images.length === 0) {
+    return null
+  }
+
+  const normalized = {
+    role: ALLOWED_CHAT_ROLES.has(role) ? role : 'user',
+    content: (textContent || 'Describe the attached images.').slice(
+      0,
+      MAX_CHAT_MESSAGE_CHARS
+    ),
+  }
+
+  if (images.length > 0) {
+    normalized.images = images
+  }
+
+  return normalized
 }
 
 function normalizeChatMessages({messages, message, prompt, input} = {}) {
@@ -230,6 +333,87 @@ function normalizeFlipImages(input) {
     .map((item) => normalizeFlipImageItem(item))
     .filter(Boolean)
     .slice(0, MAX_FLIP_IMAGES)
+}
+
+function validateChatMessages(messages) {
+  const nextMessages = Array.isArray(messages) ? messages : []
+
+  if (nextMessages.length === 0) {
+    return {
+      ok: false,
+      error: 'message_required',
+      lastError: 'Local AI text input is required',
+    }
+  }
+
+  if (nextMessages.length > MAX_CHAT_MESSAGES) {
+    return {
+      ok: false,
+      error: 'too_many_messages',
+      lastError: `Local AI chat accepts at most ${MAX_CHAT_MESSAGES} messages per request.`,
+    }
+  }
+
+  let totalChars = 0
+  let totalImageBytes = 0
+
+  for (const message of nextMessages) {
+    const content = String(message && message.content ? message.content : '')
+
+    if (!content.trim()) {
+      return {
+        ok: false,
+        error: 'message_required',
+        lastError: 'Local AI text input is required',
+      }
+    }
+
+    if (content.length > MAX_CHAT_MESSAGE_CHARS) {
+      return {
+        ok: false,
+        error: 'message_too_large',
+        lastError: `Local AI chat accepts at most ${MAX_CHAT_MESSAGE_CHARS} characters per message.`,
+      }
+    }
+
+    totalChars += content.length
+
+    if (Array.isArray(message && message.images)) {
+      for (const image of message.images) {
+        const imageBytes = estimateBase64Bytes(image)
+
+        if (imageBytes > MAX_IMAGE_BYTES) {
+          return {
+            ok: false,
+            error: 'image_too_large',
+            lastError: 'One Local AI image attachment is too large.',
+          }
+        }
+
+        totalImageBytes += imageBytes
+      }
+    }
+  }
+
+  if (totalChars > MAX_TOTAL_CHAT_CHARS) {
+    return {
+      ok: false,
+      error: 'conversation_too_large',
+      lastError: `Local AI chat accepts at most ${MAX_TOTAL_CHAT_CHARS} characters per request.`,
+    }
+  }
+
+  if (totalImageBytes > MAX_TOTAL_IMAGE_BYTES) {
+    return {
+      ok: false,
+      error: 'images_too_large',
+      lastError: 'Local AI image attachments are too large for one request.',
+    }
+  }
+
+  return {
+    ok: true,
+  }
 }
 
 function buildPanelCaptionMessages(image, index) {
@@ -361,6 +545,30 @@ function buildFlipPipelineConfigError({
     error,
     lastError,
   }
+}
+
+function buildUnsafeEndpointError({
+  baseUrl,
+  runtimeBackend,
+  runtimeType,
+  visionModel = '',
+  model = '',
+  validation,
+}) {
+  return buildFlipPipelineConfigError({
+    baseUrl:
+      (validation && validation.normalizedBaseUrl) ||
+      String(baseUrl || '').trim() ||
+      null,
+    runtimeBackend,
+    runtimeType,
+    visionModel,
+    model,
+    error: (validation && validation.reason) || 'unsafe_endpoint',
+    lastError:
+      (validation && validation.message) ||
+      'Local AI endpoint must stay on this machine.',
+  })
 }
 
 async function requestWithFallback(candidates, request) {
@@ -587,6 +795,7 @@ function createLocalAiSidecar({
     runtimeBackend,
     runtimeType,
     model = '',
+    visionModel = '',
     messages = [],
     timeoutMs = 15 * 1000,
   } = {}) {
@@ -598,7 +807,15 @@ function createLocalAiSidecar({
     const nextRuntimeType = runtimeAdapter.runtimeType
     const nextBaseUrl = runtimeAdapter.baseUrl
     const nextModel = String(model || '').trim()
+    const nextVisionModel = normalizeVisionModel(visionModel, '')
     const nextMessages = Array.isArray(messages) ? messages : []
+    const includesImages = nextMessages.some(
+      (item) => Array.isArray(item && item.images) && item.images.length > 0
+    )
+    const selectedModel =
+      includesImages && nextVisionModel ? nextVisionModel : nextModel
+    const normalizedTimeoutMs = normalizeTimeoutMs(timeoutMs, 15 * 1000)
+    const baseUrlValidation = validateLocalAiBaseUrl(nextBaseUrl)
 
     if (nextRuntimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
       return {
@@ -607,7 +824,7 @@ function createLocalAiSidecar({
         provider: 'local-ai',
         runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
-        model: nextModel,
+        model: selectedModel,
         baseUrl: nextBaseUrl || null,
         endpoint: null,
         text: null,
@@ -632,7 +849,25 @@ function createLocalAiSidecar({
       }
     }
 
-    if (!nextModel) {
+    if (!baseUrlValidation.ok) {
+      return buildUnsafeEndpointError({
+        baseUrl: nextBaseUrl,
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        visionModel: nextVisionModel,
+        model: selectedModel,
+        validation: baseUrlValidation,
+      })
+    }
+
+    const modelValidation = validateModelName(
+      selectedModel,
+      includesImages
+        ? 'Local AI vision model is required for Ollama image requests'
+        : 'Local AI model is required for Ollama requests'
+    )
+
+    if (!modelValidation.ok) {
       return {
         ok: false,
         status: 'config_error',
@@ -643,25 +878,23 @@ function createLocalAiSidecar({
         baseUrl: nextBaseUrl,
         endpoint: null,
         text: null,
-        error: 'model_required',
-        lastError: 'Local AI model is required for Ollama requests',
+        error: modelValidation.reason,
+        lastError: modelValidation.message,
       }
     }
 
-    if (nextMessages.length === 0) {
-      return {
-        ok: false,
-        status: 'validation_error',
-        provider: 'local-ai',
+    const messageValidation = validateChatMessages(nextMessages)
+
+    if (!messageValidation.ok) {
+      return buildValidationError({
         runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
-        model: nextModel,
+        model: modelValidation.model,
         baseUrl: nextBaseUrl,
         endpoint: null,
-        text: null,
-        error: 'message_required',
-        lastError: 'Local AI text input is required',
-      }
+        error: messageValidation.error,
+        lastError: messageValidation.lastError,
+      })
     }
 
     const endpoint = buildEndpoint(nextBaseUrl, '/api/chat')
@@ -670,12 +903,12 @@ function createLocalAiSidecar({
       const response = await httpClient.post(
         endpoint,
         {
-          model: nextModel,
+          model: selectedModel,
           messages: nextMessages,
           stream: false,
         },
         {
-          timeout: timeoutMs,
+          timeout: normalizedTimeoutMs,
         }
       )
       const data =
@@ -691,7 +924,7 @@ function createLocalAiSidecar({
           provider: 'local-ai',
           runtimeBackend: nextRuntimeBackend,
           runtimeType: nextRuntimeType,
-          model: nextModel,
+          model: selectedModel,
           baseUrl: nextBaseUrl,
           endpoint,
           text: null,
@@ -707,8 +940,9 @@ function createLocalAiSidecar({
         runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
         model:
-          String(data && data.model ? data.model : nextModel).trim() ||
-          nextModel,
+          String(
+            data && data.model ? data.model : modelValidation.model
+          ).trim() || modelValidation.model,
         baseUrl: nextBaseUrl,
         endpoint: response && response.config && response.config.url,
         text,
@@ -721,7 +955,7 @@ function createLocalAiSidecar({
         provider: 'local-ai',
         runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
-        model: nextModel,
+        model: modelValidation.model,
         baseUrl: nextBaseUrl,
         endpoint,
         text: null,
@@ -744,6 +978,28 @@ function createLocalAiSidecar({
     const nextRuntimeBackend = runtimeAdapter.runtimeBackend
     const nextRuntimeType = runtimeAdapter.runtimeType
     const nextBaseUrl = runtimeAdapter.baseUrl
+    const normalizedTimeoutMs = normalizeTimeoutMs(
+      timeoutMs,
+      DEFAULT_TIMEOUT_MS
+    )
+    const baseUrlValidation = validateLocalAiBaseUrl(nextBaseUrl)
+
+    if (!baseUrlValidation.ok) {
+      return {
+        ok: false,
+        status: 'config_error',
+        reachable: false,
+        runtime: runtimeAdapter.runtime,
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        baseUrl: baseUrlValidation.normalizedBaseUrl || nextBaseUrl || null,
+        endpoint: null,
+        data: null,
+        error: baseUrlValidation.reason,
+        lastError: baseUrlValidation.message,
+      }
+    }
+
     const endpoint = buildEndpoint(
       nextBaseUrl,
       nextRuntimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
@@ -753,7 +1009,7 @@ function createLocalAiSidecar({
 
     try {
       const response = await httpClient.get(endpoint, {
-        timeout: timeoutMs,
+        timeout: normalizedTimeoutMs,
       })
 
       return {
@@ -807,12 +1063,32 @@ function createLocalAiSidecar({
     const nextRuntimeBackend = runtimeAdapter.runtimeBackend
     const nextRuntimeType = runtimeAdapter.runtimeType
     const nextBaseUrl = runtimeAdapter.baseUrl
+    const normalizedTimeoutMs = normalizeTimeoutMs(
+      timeoutMs,
+      DEFAULT_TIMEOUT_MS
+    )
+    const baseUrlValidation = validateLocalAiBaseUrl(nextBaseUrl)
+
+    if (!baseUrlValidation.ok) {
+      return {
+        ok: false,
+        reachable: false,
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        baseUrl: baseUrlValidation.normalizedBaseUrl || nextBaseUrl || null,
+        endpoint: null,
+        models: [],
+        total: 0,
+        error: baseUrlValidation.reason,
+        lastError: baseUrlValidation.message,
+      }
+    }
 
     try {
       const response =
         nextRuntimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
           ? await httpClient.get(buildEndpoint(nextBaseUrl, '/api/tags'), {
-              timeout: timeoutMs,
+              timeout: normalizedTimeoutMs,
             })
           : await requestWithFallback(
               ['/v1/models', '/models'].map((candidate) =>
@@ -820,7 +1096,7 @@ function createLocalAiSidecar({
               ),
               (endpoint) =>
                 httpClient.get(endpoint, {
-                  timeout: timeoutMs,
+                  timeout: normalizedTimeoutMs,
                 })
             )
       const models = normalizeModelList(response && response.data)
@@ -859,6 +1135,7 @@ function createLocalAiSidecar({
     runtimeBackend,
     runtimeType,
     model = '',
+    visionModel = '',
     messages = [],
     message,
     prompt,
@@ -876,6 +1153,7 @@ function createLocalAiSidecar({
       runtimeBackend,
       runtimeType,
       model,
+      visionModel,
       messages: nextMessages,
       timeoutMs,
     })
@@ -1012,21 +1290,38 @@ function createLocalAiSidecar({
     timeoutMs = 20 * 1000,
     action = 'Local AI sidecar request',
   } = {}) {
-    const endpoint = buildEndpoint(baseUrl, endpointPath)
+    const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+    const normalizedTimeoutMs = normalizeTimeoutMs(timeoutMs, 20 * 1000)
+    const baseUrlValidation = validateLocalAiBaseUrl(normalizedBaseUrl)
+
+    if (!baseUrlValidation.ok) {
+      return {
+        ok: false,
+        status: 'config_error',
+        baseUrl:
+          baseUrlValidation.normalizedBaseUrl || normalizedBaseUrl || null,
+        endpoint: null,
+        data: null,
+        error: baseUrlValidation.reason,
+        lastError: baseUrlValidation.message,
+      }
+    }
+
+    const endpoint = buildEndpoint(normalizedBaseUrl, endpointPath)
 
     try {
       const response = await httpClient.post(
         endpoint,
         payload && typeof payload === 'object' ? payload : {},
         {
-          timeout: timeoutMs,
+          timeout: normalizedTimeoutMs,
         }
       )
 
       return {
         ok: true,
         status: 'ok',
-        baseUrl: normalizeBaseUrl(baseUrl),
+        baseUrl: normalizedBaseUrl,
         endpoint,
         data:
           response && response.data && typeof response.data === 'object'
@@ -1039,7 +1334,7 @@ function createLocalAiSidecar({
         return {
           ok: false,
           status: 'not_implemented',
-          baseUrl: normalizeBaseUrl(baseUrl),
+          baseUrl: normalizedBaseUrl,
           endpoint,
           data: null,
           lastError: `${action} is not implemented by this Local AI sidecar`,
@@ -1049,7 +1344,7 @@ function createLocalAiSidecar({
       return {
         ok: false,
         status: 'error',
-        baseUrl: normalizeBaseUrl(baseUrl),
+        baseUrl: normalizedBaseUrl,
         endpoint,
         data: null,
         lastError: createErrorMessage(error, `${action} failed`),

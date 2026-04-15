@@ -2,6 +2,7 @@ import {useRouter} from 'next/router'
 import * as React from 'react'
 import {areSameCaseInsensitive} from '../oracles/utils'
 import {dnaLinkMethod, extractQueryParams, isValidDnaUrl} from './utils'
+import {getDnaBridge} from '../../shared/utils/dna-bridge'
 
 export const DnaLinkMethod = {
   SignIn: 'signin',
@@ -16,20 +17,12 @@ export function useDnaLink({onInvalidLink}) {
 
   React.useEffect(() => {
     if (!sessionStorage.getItem('didCheckDnaLink')) {
-      global.ipcRenderer.invoke('CHECK_DNA_LINK').then(setUrl)
+      getDnaBridge().checkLink().then(setUrl)
       sessionStorage.setItem('didCheckDnaLink', 1)
     }
   }, [])
 
-  React.useEffect(() => {
-    const handleDnaLink = (_, e) => setUrl(e)
-
-    global.ipcRenderer.on('DNA_LINK', handleDnaLink)
-
-    return () => {
-      global.ipcRenderer.removeListener('DNA_LINK', handleDnaLink)
-    }
-  }, [])
+  React.useEffect(() => getDnaBridge().onLink(setUrl), [])
 
   const [method, setMethod] = React.useState()
 
