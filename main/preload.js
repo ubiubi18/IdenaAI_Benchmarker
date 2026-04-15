@@ -512,6 +512,376 @@ function sanitizeImageSize(value, fallback) {
     : fallback
 }
 
+function sanitizeBoundedString(value, fallback = '', maxLength = 4096) {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+
+  return value.slice(0, maxLength)
+}
+
+function sanitizeOptionalBoundedString(value, maxLength = 4096) {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  const next = value.slice(0, maxLength)
+  return next || undefined
+}
+
+function sanitizeBoolean(value, fallback = false) {
+  return typeof value === 'boolean' ? value : fallback
+}
+
+function sanitizeInteger(
+  value,
+  fallback,
+  min = 0,
+  max = Number.MAX_SAFE_INTEGER
+) {
+  const next = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(next)) {
+    return fallback
+  }
+
+  return Math.max(min, Math.min(max, next))
+}
+
+function sanitizeFiniteNumber(value, fallback, min = 0, max = 1) {
+  const next = Number(value)
+
+  if (!Number.isFinite(next)) {
+    return fallback
+  }
+
+  return Math.max(min, Math.min(max, next))
+}
+
+function sanitizeDataImageList(value, maxItems = 8) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .slice(0, maxItems)
+    .map((item) =>
+      typeof item === 'string' && item.startsWith('data:image/')
+        ? item.slice(0, 8 * 1024 * 1024)
+        : null
+    )
+    .filter(Boolean)
+}
+
+function sanitizeLocalAiMessages(value) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.slice(0, 24).map((message) => ({
+    role: ['system', 'user', 'assistant'].includes(
+      String(message && message.role)
+        .trim()
+        .toLowerCase()
+    )
+      ? String(message.role).trim().toLowerCase()
+      : 'user',
+    content: sanitizeBoundedString(message && message.content, '', 10000),
+    images: sanitizeDataImageList(message && message.images, 8),
+  }))
+}
+
+function sanitizeLocalAiGenerationOptions(value) {
+  const source = isPlainObject(value) ? value : {}
+
+  return {
+    temperature: sanitizeFiniteNumber(source.temperature, 0, 0, 2),
+    num_predict: sanitizeInteger(source.num_predict, 256, 1, 2048),
+  }
+}
+
+function sanitizeLocalAiRuntimePayload(payload = {}) {
+  const source = isPlainObject(payload) ? payload : {}
+
+  return {
+    model: sanitizeOptionalBoundedString(source.model, 256),
+    visionModel: sanitizeOptionalBoundedString(source.visionModel, 256),
+    runtimeBackend: sanitizeOptionalBoundedString(source.runtimeBackend, 64),
+    runtimeType: sanitizeOptionalBoundedString(source.runtimeType, 64),
+    reasonerBackend: sanitizeOptionalBoundedString(source.reasonerBackend, 64),
+    visionBackend: sanitizeOptionalBoundedString(source.visionBackend, 64),
+    endpoint: sanitizeOptionalBoundedString(source.endpoint, 2048),
+    baseUrl: sanitizeOptionalBoundedString(source.baseUrl, 2048),
+    timeoutMs: sanitizeInteger(source.timeoutMs, 15000, 1000, 120000),
+    responseFormat: sanitizeOptionalBoundedString(source.responseFormat, 32),
+    prompt: sanitizeOptionalBoundedString(source.prompt, 10000),
+    message: sanitizeOptionalBoundedString(source.message, 10000),
+    messages: sanitizeLocalAiMessages(source.messages),
+    generationOptions: sanitizeLocalAiGenerationOptions(
+      source.generationOptions
+    ),
+    input: {
+      images: sanitizeDataImageList(
+        source.input && source.input.images
+          ? source.input.images
+          : source.images,
+        8
+      ),
+    },
+  }
+}
+
+function sanitizeLocalAiEpochPayload(payload = {}) {
+  if (typeof payload === 'number' || typeof payload === 'string') {
+    return sanitizeInteger(payload, null, 0)
+  }
+
+  const source = isPlainObject(payload) ? payload : {}
+  return {
+    epoch: sanitizeInteger(source.epoch, null, 0),
+    includePackage: sanitizeBoolean(source.includePackage, false),
+    refreshPublicFallback: sanitizeBoolean(source.refreshPublicFallback, false),
+    fetchFlipPayloads: sanitizeBoolean(source.fetchFlipPayloads, false),
+    requireFlipPayloads: sanitizeBoolean(source.requireFlipPayloads, false),
+    allowPublicIndexerFallback: sanitizeBoolean(
+      source.allowPublicIndexerFallback,
+      true
+    ),
+    rpcUrl: sanitizeOptionalBoundedString(source.rpcUrl, 2048),
+    rpcKey: sanitizeOptionalBoundedString(source.rpcKey, 512),
+    adapterStrategy: sanitizeOptionalBoundedString(source.adapterStrategy, 64),
+    trainingPolicy: sanitizeOptionalBoundedString(source.trainingPolicy, 64),
+  }
+}
+
+function sanitizeLocalAiRegisterAdapterPayload(payload = {}) {
+  const source = isPlainObject(payload) ? payload : {}
+  const adapterArtifact = isPlainObject(source.adapterArtifact)
+    ? source.adapterArtifact
+    : {}
+
+  return {
+    epoch: sanitizeInteger(source.epoch, null, 0),
+    sourcePath: sanitizeOptionalBoundedString(
+      source.sourcePath || source.artifactPath || adapterArtifact.sourcePath,
+      4096
+    ),
+    publicModelId: sanitizeOptionalBoundedString(source.publicModelId, 256),
+    publicVisionId: sanitizeOptionalBoundedString(source.publicVisionId, 256),
+    runtimeBackend: sanitizeOptionalBoundedString(source.runtimeBackend, 64),
+    reasonerBackend: sanitizeOptionalBoundedString(source.reasonerBackend, 64),
+    visionBackend: sanitizeOptionalBoundedString(source.visionBackend, 64),
+    contractVersion: sanitizeOptionalBoundedString(source.contractVersion, 64),
+    baseModelId: sanitizeOptionalBoundedString(source.baseModelId, 256),
+    baseModelHash: sanitizeOptionalBoundedString(source.baseModelHash, 256),
+    trainingConfigHash: sanitizeOptionalBoundedString(
+      source.trainingConfigHash,
+      256
+    ),
+  }
+}
+
+function sanitizeLocalAiCapturePayload(payload = {}) {
+  const source = isPlainObject(payload) ? payload : {}
+
+  return {
+    flipHash: sanitizeOptionalBoundedString(source.flipHash, 512),
+    epoch: sanitizeInteger(source.epoch, null, 0),
+    sessionType: sanitizeOptionalBoundedString(source.sessionType, 64),
+    images: sanitizeDataImageList(source.images, 8),
+    panelCount: sanitizeInteger(source.panelCount, 0, 0, 16),
+    orders: Array.isArray(source.orders)
+      ? source.orders
+          .slice(0, 4)
+          .map((order) =>
+            Array.isArray(order)
+              ? order.slice(0, 4).map((item) => sanitizeInteger(item, 0, 0, 16))
+              : []
+          )
+      : [],
+    words: Array.isArray(source.words)
+      ? source.words.slice(0, 2).map((entry) => ({
+          name: sanitizeOptionalBoundedString(entry && entry.name, 256),
+          desc: sanitizeOptionalBoundedString(entry && entry.desc, 512),
+        }))
+      : [],
+    selectedOrder: Array.isArray(source.selectedOrder)
+      ? source.selectedOrder
+          .slice(0, 4)
+          .map((item) => sanitizeInteger(item, 0, 0, 16))
+      : [],
+    relevance: sanitizeOptionalBoundedString(source.relevance, 64),
+    best: sanitizeBoolean(source.best, false),
+    consensus: isPlainObject(source.consensus)
+      ? {
+          finalAnswer: sanitizeOptionalBoundedString(
+            source.consensus.finalAnswer,
+            64
+          ),
+          reported: sanitizeBoolean(source.consensus.reported, false),
+          strength: sanitizeOptionalBoundedString(
+            source.consensus.strength,
+            64
+          ),
+        }
+      : undefined,
+  }
+}
+
+function sanitizeBoundedCloneable(
+  value,
+  {
+    maxDepth = 6,
+    maxArrayLength = 64,
+    maxObjectKeys = 64,
+    maxStringLength = 20000,
+    maxDataUrlLength = 8 * 1024 * 1024,
+  } = {},
+  depth = 0,
+  seen = new WeakSet()
+) {
+  if (value === null || typeof value === 'undefined') {
+    return value
+  }
+
+  if (typeof value === 'string') {
+    return value.startsWith('data:image/')
+      ? value.slice(0, maxDataUrlLength)
+      : value.slice(0, maxStringLength)
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  if (typeof value === 'bigint') {
+    return value.toString()
+  }
+
+  if (typeof value === 'function' || typeof value === 'symbol') {
+    return undefined
+  }
+
+  if (depth >= maxDepth) {
+    if (Array.isArray(value)) {
+      return []
+    }
+
+    if (isPlainObject(value)) {
+      return {}
+    }
+
+    return null
+  }
+
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.toISOString() : null
+  }
+
+  if (value instanceof Error) {
+    return {
+      name: sanitizeBoundedString(value.name, 'Error', 128),
+      message: sanitizeBoundedString(value.message, '', 2000),
+      stack: sanitizeOptionalBoundedString(value.stack, 4000),
+    }
+  }
+
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) {
+    return value.toString('base64').slice(0, maxDataUrlLength)
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    return Array.from(value).slice(0, maxArrayLength)
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return Array.from(new Uint8Array(value)).slice(0, maxArrayLength)
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return []
+    }
+
+    seen.add(value)
+    const next = value
+      .slice(0, maxArrayLength)
+      .map((item) =>
+        sanitizeBoundedCloneable(
+          item,
+          {
+            maxDepth,
+            maxArrayLength,
+            maxObjectKeys,
+            maxStringLength,
+            maxDataUrlLength,
+          },
+          depth + 1,
+          seen
+        )
+      )
+      .filter((item) => typeof item !== 'undefined')
+    seen.delete(value)
+    return next
+  }
+
+  if (!isPlainObject(value)) {
+    return undefined
+  }
+
+  if (seen.has(value)) {
+    return {}
+  }
+
+  seen.add(value)
+
+  const next = Object.entries(value)
+    .slice(0, maxObjectKeys)
+    .reduce((result, [key, entryValue]) => {
+      const normalizedKey = sanitizeBoundedString(key, '', 128)
+
+      if (!normalizedKey) {
+        return result
+      }
+
+      const normalizedValue = sanitizeBoundedCloneable(
+        entryValue,
+        {
+          maxDepth,
+          maxArrayLength,
+          maxObjectKeys,
+          maxStringLength,
+          maxDataUrlLength,
+        },
+        depth + 1,
+        seen
+      )
+
+      if (typeof normalizedValue !== 'undefined') {
+        result[normalizedKey] = normalizedValue
+      }
+
+      return result
+    }, {})
+
+  seen.delete(value)
+  return next
+}
+
+function sanitizeAiSolverPayload(payload = {}) {
+  return sanitizeBoundedCloneable(payload, {
+    maxDepth: 7,
+    maxArrayLength: 64,
+    maxObjectKeys: 96,
+    maxStringLength: 20000,
+    maxDataUrlLength: 8 * 1024 * 1024,
+  })
+}
+
 function resizeImageDataUrl(
   dataUrl,
   {maxWidth = 400, maxHeight = 300, softResize = true} = {}
@@ -558,6 +928,211 @@ const imageSearchBridge = createImageSearchBridge()
 const storageBridge = createStorageBridge()
 const flipsBridge = createFlipsBridge()
 const invitesBridge = createInvitesBridge()
+const aiTestUnitBridge = Object.freeze({
+  addFlips: (payload) =>
+    invokeCloneable(
+      AI_TEST_UNIT_COMMAND,
+      'addFlips',
+      sanitizeBoundedCloneable(payload, {
+        maxDepth: 7,
+        maxArrayLength: 64,
+        maxObjectKeys: 96,
+        maxStringLength: 20000,
+        maxDataUrlLength: 8 * 1024 * 1024,
+      })
+    ),
+  listFlips: (payload) =>
+    invokeCloneable(
+      AI_TEST_UNIT_COMMAND,
+      'listFlips',
+      sanitizeBoundedCloneable(payload, {
+        maxDepth: 4,
+        maxArrayLength: 32,
+        maxObjectKeys: 32,
+        maxStringLength: 2000,
+        maxDataUrlLength: 8 * 1024 * 1024,
+      })
+    ),
+  clearFlips: (payload) =>
+    invokeCloneable(
+      AI_TEST_UNIT_COMMAND,
+      'clearFlips',
+      sanitizeBoundedCloneable(payload, {
+        maxDepth: 4,
+        maxArrayLength: 32,
+        maxObjectKeys: 32,
+        maxStringLength: 2000,
+        maxDataUrlLength: 8 * 1024 * 1024,
+      })
+    ),
+  run: (payload) =>
+    invokeCloneable(
+      AI_TEST_UNIT_COMMAND,
+      'run',
+      sanitizeBoundedCloneable(payload, {
+        maxDepth: 7,
+        maxArrayLength: 64,
+        maxObjectKeys: 96,
+        maxStringLength: 20000,
+        maxDataUrlLength: 8 * 1024 * 1024,
+      })
+    ),
+  onEvent(handler) {
+    if (typeof handler !== 'function') {
+      return () => {}
+    }
+
+    let wrapped = aiTestUnitListenerRegistry.get(handler)
+
+    if (!wrapped) {
+      wrapped = (_event, first, second) =>
+        handler(typeof second === 'undefined' ? first : second)
+      aiTestUnitListenerRegistry.set(handler, wrapped)
+    }
+
+    ipcRenderer.on(AI_TEST_UNIT_EVENT, wrapped)
+
+    return () => ipcRenderer.removeListener(AI_TEST_UNIT_EVENT, wrapped)
+  },
+  offEvent(handler) {
+    const wrapped =
+      typeof handler === 'function'
+        ? aiTestUnitListenerRegistry.get(handler)
+        : undefined
+
+    if (wrapped) {
+      ipcRenderer.removeListener(AI_TEST_UNIT_EVENT, wrapped)
+    }
+  },
+})
+const aiSolverBridge = Object.freeze({
+  setProviderKey: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'setProviderKey',
+      sanitizeAiSolverPayload(payload)
+    ),
+  clearProviderKey: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'clearProviderKey',
+      sanitizeAiSolverPayload(payload)
+    ),
+  hasProviderKey: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'hasProviderKey',
+      sanitizeAiSolverPayload(payload)
+    ),
+  testProvider: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'testProvider',
+      sanitizeAiSolverPayload(payload)
+    ),
+  listModels: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'listModels',
+      sanitizeAiSolverPayload(payload)
+    ),
+  generateImageSearchResults: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'generateImageSearchResults',
+      sanitizeAiSolverPayload(payload)
+    ),
+  generateStoryOptions: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'generateStoryOptions',
+      sanitizeAiSolverPayload(payload)
+    ),
+  generateFlipPanels: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'generateFlipPanels',
+      sanitizeAiSolverPayload(payload)
+    ),
+  solveFlipBatch: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'solveFlipBatch',
+      sanitizeAiSolverPayload(payload)
+    ),
+  reviewValidationReports: (payload) =>
+    invokeCloneable(
+      AI_SOLVER_COMMAND,
+      'reviewValidationReports',
+      sanitizeAiSolverPayload(payload)
+    ),
+})
+
+const localAiBridge = Object.freeze({
+  status: (payload) =>
+    invokeCloneable('localAi.status', sanitizeLocalAiRuntimePayload(payload)),
+  start: (payload) =>
+    invokeCloneable('localAi.start', sanitizeLocalAiRuntimePayload(payload)),
+  stop: () => invokeCloneable('localAi.stop'),
+  listModels: (payload) =>
+    invokeCloneable(
+      'localAi.listModels',
+      sanitizeLocalAiRuntimePayload(payload)
+    ),
+  chat: (payload) =>
+    invokeCloneable('localAi.chat', sanitizeLocalAiRuntimePayload(payload)),
+  checkFlipSequence: (payload) =>
+    invokeCloneable(
+      'localAi.checkFlipSequence',
+      sanitizeLocalAiRuntimePayload(payload)
+    ),
+  flipToText: (payload) =>
+    invokeCloneable(
+      'localAi.flipToText',
+      sanitizeLocalAiRuntimePayload(payload)
+    ),
+  registerAdapterArtifact: (payload) =>
+    invokeCloneable(
+      'localAi.registerAdapterArtifact',
+      sanitizeLocalAiRegisterAdapterPayload(payload)
+    ),
+  loadAdapterArtifact: (payload) =>
+    invokeCloneable(
+      'localAi.loadAdapterArtifact',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  loadTrainingCandidatePackage: (payload) =>
+    invokeCloneable(
+      'localAi.loadTrainingCandidatePackage',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  buildTrainingCandidatePackage: (payload) =>
+    invokeCloneable(
+      'localAi.buildTrainingCandidatePackage',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  updateTrainingCandidatePackageReview: (payload) =>
+    invokeCloneable('localAi.updateTrainingCandidatePackageReview', {
+      epoch: sanitizeInteger(payload && payload.epoch, null, 0),
+      reviewStatus: sanitizeOptionalBoundedString(
+        payload && payload.reviewStatus,
+        64
+      ),
+    }),
+  buildBundle: (epoch) =>
+    invokeCloneable('localAi.buildBundle', sanitizeInteger(epoch, null, 0)),
+  importBundle: (filePath) =>
+    invokeCloneable(
+      'localAi.importBundle',
+      sanitizeBoundedString(filePath, '', 4096)
+    ),
+  aggregate: () => invokeCloneable('localAi.aggregate'),
+  captureFlip: (payload) =>
+    ipcRenderer.send(
+      'localAi.captureFlip',
+      toIpcCloneable(sanitizeLocalAiCapturePayload(payload))
+    ),
+})
 
 const consoleLogger = {
   debug: (...args) => console.debug(...args),
@@ -568,103 +1143,9 @@ const consoleLogger = {
 
 const bridge = {
   globals: {
-    aiSolver: {
-      setProviderKey: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'setProviderKey', payload),
-      clearProviderKey: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'clearProviderKey', payload),
-      hasProviderKey: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'hasProviderKey', payload),
-      testProvider: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'testProvider', payload),
-      listModels: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'listModels', payload),
-      generateImageSearchResults: (payload) =>
-        invokeCloneable(
-          AI_SOLVER_COMMAND,
-          'generateImageSearchResults',
-          payload
-        ),
-      generateStoryOptions: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'generateStoryOptions', payload),
-      generateFlipPanels: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'generateFlipPanels', payload),
-      solveFlipBatch: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'solveFlipBatch', payload),
-      reviewValidationReports: (payload) =>
-        invokeCloneable(AI_SOLVER_COMMAND, 'reviewValidationReports', payload),
-    },
-    aiTestUnit: {
-      addFlips: (payload) =>
-        invokeCloneable(AI_TEST_UNIT_COMMAND, 'addFlips', payload),
-      listFlips: (payload) =>
-        invokeCloneable(AI_TEST_UNIT_COMMAND, 'listFlips', payload),
-      clearFlips: (payload) =>
-        invokeCloneable(AI_TEST_UNIT_COMMAND, 'clearFlips', payload),
-      run: (payload) => invokeCloneable(AI_TEST_UNIT_COMMAND, 'run', payload),
-      onEvent(handler) {
-        if (typeof handler !== 'function') {
-          return () => {}
-        }
-
-        let wrapped = aiTestUnitListenerRegistry.get(handler)
-
-        if (!wrapped) {
-          wrapped = (_event, first, second) =>
-            handler(typeof second === 'undefined' ? first : second)
-          aiTestUnitListenerRegistry.set(handler, wrapped)
-        }
-
-        ipcRenderer.on(AI_TEST_UNIT_EVENT, wrapped)
-
-        return () => ipcRenderer.removeListener(AI_TEST_UNIT_EVENT, wrapped)
-      },
-      offEvent(handler) {
-        const wrapped =
-          typeof handler === 'function'
-            ? aiTestUnitListenerRegistry.get(handler)
-            : undefined
-
-        if (wrapped) {
-          ipcRenderer.removeListener(AI_TEST_UNIT_EVENT, wrapped)
-        }
-      },
-    },
-    localAi: {
-      status: (payload) => invokeCloneable('localAi.status', payload),
-      start: (payload) => invokeCloneable('localAi.start', payload),
-      stop: () => invokeCloneable('localAi.stop'),
-      listModels: (payload) => invokeCloneable('localAi.listModels', payload),
-      info: (payload) => invokeCloneable('localAi.info', payload),
-      chat: (payload) => invokeCloneable('localAi.chat', payload),
-      flipJudge: (payload) => invokeCloneable('localAi.flipJudge', payload),
-      trainHook: (payload) => invokeCloneable('localAi.trainHook', payload),
-      checkFlipSequence: (payload) =>
-        invokeCloneable('localAi.checkFlipSequence', payload),
-      flipToText: (payload) => invokeCloneable('localAi.flipToText', payload),
-      captionFlip: (payload) => invokeCloneable('localAi.captionFlip', payload),
-      ocrImage: (payload) => invokeCloneable('localAi.ocrImage', payload),
-      trainEpoch: (payload) => invokeCloneable('localAi.trainEpoch', payload),
-      registerAdapterArtifact: (payload) =>
-        invokeCloneable('localAi.registerAdapterArtifact', payload),
-      loadAdapterArtifact: (payload) =>
-        invokeCloneable('localAi.loadAdapterArtifact', payload),
-      loadTrainingCandidatePackage: (payload) =>
-        invokeCloneable('localAi.loadTrainingCandidatePackage', payload),
-      buildTrainingCandidatePackage: (payload) =>
-        invokeCloneable('localAi.buildTrainingCandidatePackage', payload),
-      updateTrainingCandidatePackageReview: (payload) =>
-        invokeCloneable(
-          'localAi.updateTrainingCandidatePackageReview',
-          payload
-        ),
-      buildBundle: (epoch) => invokeCloneable('localAi.buildBundle', epoch),
-      importBundle: (filePath) =>
-        invokeCloneable('localAi.importBundle', filePath),
-      aggregate: () => invokeCloneable('localAi.aggregate'),
-      captureFlip: (payload) =>
-        ipcRenderer.send('localAi.captureFlip', toIpcCloneable(payload)),
-    },
+    aiSolver: aiSolverBridge,
+    aiTestUnit: aiTestUnitBridge,
+    localAi: localAiBridge,
     openExternal: (url) =>
       invokeCloneable('shell.openExternal.safe', {url: String(url || '')}),
     logger: consoleLogger,

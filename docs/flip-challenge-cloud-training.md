@@ -64,11 +64,11 @@ If the goal is a local or federated `IdenaAI` runtime, the training path should 
 ## What to move to the cloud
 
 The dataset prep script can already stay mostly the same:
-- [`/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/scripts/prepare_flip_challenge_mlx_vlm.py`](/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/scripts/prepare_flip_challenge_mlx_vlm.py)
+- [prepare_flip_challenge_mlx_vlm.py](../scripts/prepare_flip_challenge_mlx_vlm.py)
 
 The part that must change is the trainer:
 - current local trainer:
-  [`/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/scripts/train_flip_challenge_mlx_vlm.py`](/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/scripts/train_flip_challenge_mlx_vlm.py)
+  [train_flip_challenge_mlx_vlm.py](../scripts/train_flip_challenge_mlx_vlm.py)
 
 Why:
 - `mlx_vlm` is Apple-Silicon-specific
@@ -130,7 +130,7 @@ Instead:
 3. use the estimator script in this repo
 
 Estimator:
-- [`/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/scripts/estimate_flip_training_budget.py`](/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/scripts/estimate_flip_training_budget.py)
+- [estimate_flip_training_budget.py](../scripts/estimate_flip_training_budget.py)
 
 Example:
 

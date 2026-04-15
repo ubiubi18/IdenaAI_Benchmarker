@@ -26,7 +26,7 @@ You should:
 This workflow is for experimentation. Use it carefully and at your own risk.
 
 If your machine becomes too hot or the longer runs are not practical, use the optional cloud path instead:
-- [`/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/docs/flip-challenge-cloud-training.md`](/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/docs/flip-challenge-cloud-training.md)
+- [flip-challenge-cloud-training.md](./flip-challenge-cloud-training.md)
 
 ## Important limitation
 
