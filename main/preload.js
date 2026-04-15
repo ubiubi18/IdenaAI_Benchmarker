@@ -8,26 +8,19 @@ const {
 } = require('electron')
 /* eslint-enable import/no-extraneous-dependencies */
 
-const levelup = require('levelup')
-const leveldown = require('leveldown')
-const sub = require('subleveldown')
-
-const flips = require('./stores/flips')
-const invites = require('./stores/invites')
-const logger = require('./logger')
-const {toIpcCloneable} = require('./utils/ipc-cloneable')
-const {prepareDb, dbPath} = require('./stores/setup')
-const {
-  APP_INFO_COMMAND,
-  AI_SOLVER_COMMAND,
-  AI_TEST_UNIT_COMMAND,
-  AI_TEST_UNIT_EVENT,
-  AUTO_UPDATE_COMMAND,
-  AUTO_UPDATE_EVENT,
-  NODE_COMMAND,
-  NODE_EVENT,
-  WINDOW_COMMAND,
-} = require('./channels')
+const APP_INFO_COMMAND = 'app-info/command'
+const AI_SOLVER_COMMAND = 'ai-solver/command'
+const AI_TEST_UNIT_COMMAND = 'ai-test-unit/command'
+const AI_TEST_UNIT_EVENT = 'ai-test-unit/event'
+const AUTO_UPDATE_COMMAND = 'auto-update/command'
+const AUTO_UPDATE_EVENT = 'auto-update/event'
+const NODE_COMMAND = 'node/command'
+const NODE_EVENT = 'node/event'
+const WINDOW_COMMAND = 'window/command'
+const FLIPS_SYNC_COMMAND = 'flips-sync/command'
+const INVITES_SYNC_COMMAND = 'invites-sync/command'
+const PERSISTENCE_SYNC_COMMAND = 'persistence-sync/command'
+const STORAGE_COMMAND = 'storage/command'
 
 const isDev =
   process.env.NODE_ENV === 'development' ||
@@ -41,7 +34,6 @@ const appListenerRegistry = new WeakMap()
 const nodeEventListenerRegistry = new WeakMap()
 const updateEventListenerRegistry = new WeakMap()
 const dnaLinkListenerRegistry = new WeakMap()
-const dbRegistry = new Map()
 const persistenceStoreNames = {
   settings: 'settings',
   flipFilter: 'flipFilter',
@@ -51,10 +43,160 @@ const persistenceStoreNames = {
   validationNotification: 'validationNotification',
 }
 
+function isPlainObject(value) {
+  if (!value || Object.prototype.toString.call(value) !== '[object Object]') {
+    return false
+  }
+
+  const prototype = Object.getPrototypeOf(value)
+
+  return prototype === Object.prototype || prototype === null
+}
+
+function toIpcCloneable(value, seen = new WeakSet()) {
+  if (value === null || typeof value === 'undefined') {
+    return value
+  }
+
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value
+  }
+
+  if (typeof value === 'bigint') {
+    return value.toString()
+  }
+
+  if (typeof value === 'function' || typeof value === 'symbol') {
+    return undefined
+  }
+
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.toISOString() : null
+  }
+
+  if (value instanceof Error) {
+    return {
+      name: String(value.name || 'Error'),
+      message: String(value.message || ''),
+      stack: String(value.stack || ''),
+    }
+  }
+
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) {
+    return value.toString('base64')
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    return Array.from(value)
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return Array.from(new Uint8Array(value))
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return null
+    }
+
+    seen.add(value)
+
+    const normalizedArray = value.map((item) => {
+      const normalized = toIpcCloneable(item, seen)
+      return typeof normalized === 'undefined' ? null : normalized
+    })
+
+    seen.delete(value)
+
+    return normalizedArray
+  }
+
+  if (!isPlainObject(value)) {
+    return undefined
+  }
+
+  if (seen.has(value)) {
+    return null
+  }
+
+  seen.add(value)
+
+  const normalizedObject = Object.entries(value).reduce(
+    (result, [key, entryValue]) => {
+      const normalized = toIpcCloneable(entryValue, seen)
+
+      if (typeof normalized !== 'undefined') {
+        result[key] = normalized
+      }
+
+      return result
+    },
+    {}
+  )
+
+  seen.delete(value)
+
+  return normalizedObject
+}
+
+function createIpcError(error = {}) {
+  const nextError = new Error(String(error.message || 'IPC bridge error'))
+  nextError.name = String(error.name || 'Error')
+
+  if (error.notFound) {
+    nextError.notFound = true
+  }
+
+  if (typeof error.code !== 'undefined') {
+    nextError.code = error.code
+  }
+
+  return nextError
+}
+
+function unwrapIpcResponse(response) {
+  if (!response || typeof response !== 'object') {
+    return response
+  }
+
+  if (response.ok) {
+    return response.value
+  }
+
+  throw createIpcError(response.error)
+}
+
+function sendSyncCloneable(channel, action, payload) {
+  const response = ipcRenderer.sendSync(
+    channel,
+    action,
+    toIpcCloneable(payload)
+  )
+
+  return unwrapIpcResponse(response)
+}
+
+async function invokeCloneable(channel, ...args) {
+  return ipcRenderer.invoke(channel, ...args.map((arg) => toIpcCloneable(arg)))
+}
+
+async function invokeStorage(payload) {
+  const response = await ipcRenderer.invoke(
+    STORAGE_COMMAND,
+    toIpcCloneable(payload)
+  )
+
+  return unwrapIpcResponse(response)
+}
+
 function getAppInfo() {
   try {
     return ipcRenderer.sendSync(APP_INFO_COMMAND) || {}
-  } catch (error) {
+  } catch {
     return {}
   }
 }
@@ -192,83 +334,78 @@ function createImageSearchBridge() {
   }
 }
 
-function getDb(name = 'db') {
-  if (!dbRegistry.has(name)) {
-    dbRegistry.set(name, levelup(leveldown(dbPath(name))))
-  }
-
-  return dbRegistry.get(name)
-}
-
-function createKeyValueStore(targetDb) {
-  return {
-    get(key) {
-      return targetDb.get(key)
-    },
-    put(key, value) {
-      return targetDb.put(key, value)
-    },
-    clear() {
-      return targetDb.clear()
-    },
-    batchWrite(operations = []) {
-      let batch = targetDb.batch()
-
-      for (const operation of Array.isArray(operations) ? operations : []) {
-        const nextOperation =
-          operation && typeof operation === 'object' ? operation : {}
-
-        if (nextOperation.type === 'put') {
-          batch = batch.put(nextOperation.key, nextOperation.value)
-        } else if (nextOperation.type === 'del') {
-          batch = batch.del(nextOperation.key)
-        }
-      }
-
-      return batch.write()
-    },
-  }
-}
-
 function createPersistenceStore(storeName) {
   return {
     loadState() {
-      return prepareDb(storeName).getState()
+      return (
+        sendSyncCloneable(PERSISTENCE_SYNC_COMMAND, 'loadState', {storeName}) ||
+        {}
+      )
     },
     loadValue(key) {
-      const state = prepareDb(storeName).getState()
-      return state ? state[key] : null
+      return sendSyncCloneable(PERSISTENCE_SYNC_COMMAND, 'loadValue', {
+        storeName,
+        key,
+      })
     },
     persistItem(key, value) {
-      prepareDb(storeName).set(key, value).write()
-      return true
+      return sendSyncCloneable(PERSISTENCE_SYNC_COMMAND, 'persistItem', {
+        storeName,
+        key,
+        value,
+      })
     },
     persistState(state) {
-      prepareDb(storeName).setState(state).write()
-      return true
+      return sendSyncCloneable(PERSISTENCE_SYNC_COMMAND, 'persistState', {
+        storeName,
+        state,
+      })
     },
   }
 }
 
-function createSublevelStore(prefix, options) {
-  return createKeyValueStore(sub(getDb('db'), prefix, options))
-}
-
-function createEpochStore(prefix, options) {
-  const rootStore = sub(getDb('db'), prefix)
+function createStorageNamespaceBridge(namespace, options = {}) {
+  const payload = {
+    namespace,
+    valueEncoding: options.valueEncoding,
+    epoch: options.epoch,
+  }
 
   return {
-    ...createKeyValueStore(rootStore),
+    get(key) {
+      return invokeStorage({...payload, action: 'get', key})
+    },
+    put(key, value) {
+      return invokeStorage({...payload, action: 'put', key, value})
+    },
+    clear() {
+      return invokeStorage({...payload, action: 'clear'})
+    },
+    batchWrite(operations = []) {
+      return invokeStorage({
+        ...payload,
+        action: 'batchWrite',
+        operations: Array.isArray(operations) ? operations : [],
+      })
+    },
+  }
+}
+
+function createVotingsBridge() {
+  return {
+    ...createStorageNamespaceBridge('votings'),
     epoch(epoch) {
       const numericEpoch = Number(epoch)
       const normalizedEpoch = Number.isFinite(numericEpoch)
         ? Math.trunc(numericEpoch)
         : -1
 
-      return createKeyValueStore(
-        sub(rootStore, `epoch${normalizedEpoch}`, options)
-      )
+      return createStorageNamespaceBridge('votings', {
+        valueEncoding: 'json',
+        epoch: normalizedEpoch,
+      })
     },
+    json: createStorageNamespaceBridge('votings', {valueEncoding: 'json'}),
   }
 }
 
@@ -286,14 +423,85 @@ function createStorageBridge() {
     validationNotification: createPersistenceStore(
       persistenceStoreNames.validationNotification
     ),
-    flips: createSublevelStore('flips'),
-    votings: {
-      ...createEpochStore('votings', {valueEncoding: 'json'}),
-      json: createSublevelStore('votings', {valueEncoding: 'json'}),
+    flips: createStorageNamespaceBridge('flips'),
+    votings: createVotingsBridge(),
+    updates: createStorageNamespaceBridge('updates'),
+    profile: createStorageNamespaceBridge('profile'),
+    onboarding: createStorageNamespaceBridge('onboarding', {
+      valueEncoding: 'json',
+    }),
+  }
+}
+
+function createFlipsBridge() {
+  return {
+    getFlips() {
+      return sendSyncCloneable(FLIPS_SYNC_COMMAND, 'getFlips')
     },
-    updates: createSublevelStore('updates'),
-    profile: createSublevelStore('profile'),
-    onboarding: createSublevelStore('onboarding', {valueEncoding: 'json'}),
+    getFlip(id) {
+      return sendSyncCloneable(FLIPS_SYNC_COMMAND, 'getFlip', {id})
+    },
+    saveFlips(flips) {
+      return sendSyncCloneable(FLIPS_SYNC_COMMAND, 'saveFlips', {flips})
+    },
+    addDraft(draft) {
+      return sendSyncCloneable(FLIPS_SYNC_COMMAND, 'addDraft', {draft})
+    },
+    updateDraft(draft) {
+      return sendSyncCloneable(FLIPS_SYNC_COMMAND, 'updateDraft', {draft})
+    },
+    deleteDraft(id) {
+      return sendSyncCloneable(FLIPS_SYNC_COMMAND, 'deleteDraft', {id})
+    },
+    clear() {
+      return sendSyncCloneable(FLIPS_SYNC_COMMAND, 'clear')
+    },
+  }
+}
+
+function createInvitesBridge() {
+  return {
+    getInvites() {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'getInvites')
+    },
+    getInvite(id) {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'getInvite', {id})
+    },
+    addInvite(invite) {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'addInvite', {invite})
+    },
+    updateInvite(id, invite) {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'updateInvite', {
+        id,
+        invite,
+      })
+    },
+    removeInvite(invite) {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'removeInvite', {invite})
+    },
+    clearInvites() {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'clearInvites')
+    },
+    getActivationTx() {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'getActivationTx')
+    },
+    setActivationTx(hash) {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'setActivationTx', {hash})
+    },
+    clearActivationTx() {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'clearActivationTx')
+    },
+    getActivationCode() {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'getActivationCode')
+    },
+    setActivationCode(code) {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'setActivationCode', {
+        code,
+      })
+    },
+    clearActivationCode() {
+      return sendSyncCloneable(INVITES_SYNC_COMMAND, 'clearActivationCode')
+    },
   }
 }
 
@@ -347,9 +555,16 @@ const nodeBridge = createNodeBridge()
 const autoUpdateBridge = createAutoUpdateBridge()
 const dnaBridge = createDnaBridge()
 const imageSearchBridge = createImageSearchBridge()
-const invokeCloneable = (channel, ...args) =>
-  ipcRenderer.invoke(channel, ...args.map((arg) => toIpcCloneable(arg)))
 const storageBridge = createStorageBridge()
+const flipsBridge = createFlipsBridge()
+const invitesBridge = createInvitesBridge()
+
+const consoleLogger = {
+  debug: (...args) => console.debug(...args),
+  info: (...args) => console.info(...args),
+  warn: (...args) => console.warn(...args),
+  error: (...args) => console.error(...args),
+}
 
 const bridge = {
   globals: {
@@ -452,12 +667,7 @@ const bridge = {
     },
     openExternal: (url) =>
       invokeCloneable('shell.openExternal.safe', {url: String(url || '')}),
-    logger: {
-      debug: (...args) => logger.debug(...args),
-      info: (...args) => logger.info(...args),
-      warn: (...args) => logger.warn(...args),
-      error: (...args) => logger.error(...args),
-    },
+    logger: consoleLogger,
     isDev,
     isTest,
     isMac: process.platform === 'darwin',
@@ -474,7 +684,7 @@ const bridge = {
     setZoomLevel: (level) => webFrame.setZoomLevel(level),
     toggleFullScreen: () =>
       invokeCloneable(WINDOW_COMMAND, 'toggleFullScreen').catch((error) =>
-        logger.warn('Cannot toggle fullscreen', error && error.message)
+        console.warn('Cannot toggle fullscreen', error && error.message)
       ),
   },
   app: appBridge,
@@ -533,16 +743,8 @@ const bridge = {
   rpc: {
     call: (payload) => invokeCloneable('rpc.call', payload),
   },
-  flips: {
-    getFlips: flips.getFlips,
-    getFlip: flips.getFlip,
-    saveFlips: flips.saveFlips,
-    addDraft: flips.addDraft,
-    updateDraft: flips.updateDraft,
-    deleteDraft: flips.deleteDraft,
-    clear: flips.clear,
-  },
-  invites,
+  flips: flipsBridge,
+  invites: invitesBridge,
 }
 
 contextBridge.exposeInMainWorld('idena', bridge)

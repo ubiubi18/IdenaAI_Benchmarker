@@ -74,6 +74,7 @@ const {
   AI_TEST_UNIT_EVENT,
   WINDOW_COMMAND,
 } = require('./channels')
+const {registerRendererDataBridge} = require('./renderer-data-bridge')
 const {createAiProviderBridge} = require('./ai-providers')
 const {createAiTestUnitBridge} = require('./ai-test-unit')
 const {prepareDb} = require('./stores/setup')
@@ -238,6 +239,8 @@ function onTrusted(channel, listener) {
     return listener(event, ...args)
   })
 }
+
+registerRendererDataBridge({onTrusted, handleTrusted})
 
 function normalizeExternalUrl(value) {
   try {
@@ -1241,10 +1244,7 @@ const createMainWindow = () => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      // Keep the preload outside Chromium sandbox for now. The current bridge
-      // still depends on local DB/native modules (levelup stores) that are not
-      // available from a sandboxed preload on Electron 30.
-      sandbox: false,
+      sandbox: true,
       webSecurity: true,
       preload: join(__dirname, 'preload.js'),
     },
