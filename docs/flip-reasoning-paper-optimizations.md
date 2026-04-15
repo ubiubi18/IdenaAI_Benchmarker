@@ -9,6 +9,8 @@
 - Subset/weighted combinations outperform naive all-model majority voting.
 - Extended backlog derived from the later prompt/pipeline PDF review:
   - [flip-prompt-pipeline-backlog.md](./flip-prompt-pipeline-backlog.md)
+- Concrete next-step model/runtime benchmark plan:
+  - [flip-model-benchmark-matrix.md](./flip-model-benchmark-matrix.md)
 
 ## Applied in app
 

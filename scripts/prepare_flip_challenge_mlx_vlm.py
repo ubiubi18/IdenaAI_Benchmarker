@@ -101,6 +101,32 @@ DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE = (
     "If neither story tells a coherent story, or the flip should be reported, answer skip.\n"
     "Reply with exactly one lowercase token: a, b, or skip."
 )
+RUNTIME_ALIGNED_NATIVE_FRAMES_PROMPT_TEMPLATE = (
+    "You are solving an Idena FLIP validation challenge. "
+    "You are given eight native frame images in order.\n"
+    "Images 1-4 belong to the first shown candidate: OPTION {first_candidate_label} in temporal order.\n"
+    "Images 5-8 belong to the second shown candidate: OPTION {second_candidate_label} in temporal order.\n"
+    "Important:\n"
+    "- Candidate labels are randomized across examples. OPTION A or OPTION B may be shown first. Do not use label identity or first-vs-second position as a hint.\n"
+    "- Your answer token refers to candidate identity, not position. If OPTION B is better, answer b even when it is shown first.\n"
+    "Required thinking steps:\n"
+    "1) Inspect every frame separately and identify the main actors, action, and visible state.\n"
+    '2) If readable text exists, transcribe it as TEXT:\"...\" and translate it to English if needed.\n'
+    "3) Build one short factual story summary for OPTION A and one for OPTION B.\n"
+    "4) Compare the two candidate stories using chronology, visible cause -> effect, and consistent entities across frames.\n"
+    "5) Prefer the candidate that shows a clearer event sequence rather than a loose collection of related pictures.\n"
+    "Reportability rules:\n"
+    "- If solving clearly requires reading text, answer skip.\n"
+    "- If visible order labels, letters, numbers, arrows, captions, or sequence markers are drawn on the images, answer skip.\n"
+    "- If inappropriate, NSFW, or graphic violent content is present, answer skip.\n"
+    "If both candidates are similarly weak, ambiguous, or clearly report-worthy, answer skip.\n"
+    "Reply with exactly one lowercase token: a, b, or skip."
+)
+PROMPT_FAMILIES = {
+    "default_composite": DEFAULT_COMPOSITE_PROMPT_TEMPLATE,
+    "default_native_frames": DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE,
+    "runtime_aligned_native_frames_v2": RUNTIME_ALIGNED_NATIVE_FRAMES_PROMPT_TEMPLATE,
+}
 COMPOSITE_MAX_SIZE = (448, 448)
 NATIVE_FRAME_MAX_SIZE = (128, 128)
 
@@ -327,6 +353,25 @@ def normalize_image_mode(value: str) -> str:
     raise ValueError(f"Unsupported image mode: {value}")
 
 
+def resolve_prompt_template(
+    *,
+    prompt_family: str,
+    prompt_template: str,
+    image_mode: str,
+) -> Tuple[str, str]:
+    family = str(prompt_family or "").strip().lower()
+    if family == "auto":
+        if prompt_template != DEFAULT_COMPOSITE_PROMPT_TEMPLATE:
+            return prompt_template, "custom"
+        if normalize_image_mode(image_mode) == "native_frames":
+            return DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE, "default_native_frames"
+        return DEFAULT_COMPOSITE_PROMPT_TEMPLATE, "default_composite"
+
+    if family not in PROMPT_FAMILIES:
+        raise ValueError(f"Unsupported prompt family: {prompt_family}")
+    return PROMPT_FAMILIES[family], family
+
+
 def build_candidate_frame_images(
     *,
     saved_images: List[str],
@@ -368,6 +413,7 @@ def build_training_record(
     image_bytes: Dict[str, bytes],
     images_dir: Path,
     prompt_template: str,
+    prompt_family: str,
     image_mode: str,
 ) -> List[dict]:
     images_map = task_data.get("images") or {}
@@ -473,6 +519,7 @@ def build_training_record(
         "sample_id": task_id,
         "flip_hash": task_id,
         "prompt_variant": "canonical",
+        "prompt_family": prompt_family,
         "images": training_images,
         "panel_images": saved_images,
         "left_frame_images": left_frame_images,
@@ -579,6 +626,7 @@ def process_parquet_files(
     skip_flips: int,
     images_dir: Path,
     prompt_template: str,
+    prompt_family: str,
     image_mode: str,
     augment_swap_orders: bool,
 ) -> Tuple[List[dict], int]:
@@ -631,6 +679,7 @@ def process_parquet_files(
                             record["image_bytes"],
                             images_dir,
                             prompt_template,
+                            prompt_family,
                             image_mode,
                         )
                         if augment_swap_orders:
@@ -748,6 +797,12 @@ def main() -> int:
         help="prompt template used for each training example",
     )
     parser.add_argument(
+        "--prompt-family",
+        choices=sorted(PROMPT_FAMILIES.keys()) + ["auto"],
+        default="auto",
+        help="named prompt family to use instead of a raw template (default: auto)",
+    )
+    parser.add_argument(
         "--image-mode",
         choices=["composite", "native_frames"],
         default="composite",
@@ -779,12 +834,11 @@ def main() -> int:
         print("--skip-flips must be >= 0", file=sys.stderr)
         return 2
 
-    prompt_template = args.prompt_template
-    if (
-        selected_image_mode == "native_frames"
-        and prompt_template == DEFAULT_COMPOSITE_PROMPT_TEMPLATE
-    ):
-        prompt_template = DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE
+    prompt_template, prompt_family = resolve_prompt_template(
+        prompt_family=args.prompt_family,
+        prompt_template=args.prompt_template,
+        image_mode=selected_image_mode,
+    )
 
     parquet_paths = list_parquet_paths(args.split)
     if not parquet_paths:
@@ -813,6 +867,7 @@ def main() -> int:
         args.skip_flips,
         images_dir,
         prompt_template,
+        prompt_family,
         selected_image_mode,
         args.augment_swap_orders,
     )
@@ -869,6 +924,7 @@ def main() -> int:
         "promptAugmentation": {
             "swapOrders": bool(args.augment_swap_orders),
         },
+        "promptFamily": prompt_family,
         "balancing": balancing_summary
         or {
             "enabled": False,
