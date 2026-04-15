@@ -1,3 +1,99 @@
+// @ts-check
+
+/**
+ * @typedef {Object} LocalAiRuntimePayload
+ * @property {boolean} enabled
+ * @property {boolean} refresh
+ * @property {string} mode
+ * @property {string} runtimeType
+ * @property {string} runtimeBackend
+ * @property {string} reasonerBackend
+ * @property {string} visionBackend
+ * @property {string} publicModelId
+ * @property {string} publicVisionId
+ * @property {string} contractVersion
+ * @property {string} baseUrl
+ * @property {string} endpoint
+ * @property {string} model
+ * @property {string} visionModel
+ */
+
+/**
+ * @typedef {Object} LocalAiSettingsLike
+ * @property {boolean=} enabled
+ * @property {string=} endpoint
+ * @property {string=} baseUrl
+ * @property {string=} runtimeMode
+ * @property {string=} runtimeType
+ * @property {string=} runtimeBackend
+ * @property {string=} reasonerBackend
+ * @property {string=} visionBackend
+ * @property {string=} publicModelId
+ * @property {string=} publicVisionId
+ * @property {string=} contractVersion
+ * @property {string=} model
+ * @property {string=} visionModel
+ */
+
+/**
+ * @typedef {Object} AiSolverLike
+ * @property {string=} provider
+ * @property {boolean=} legacyHeuristicEnabled
+ * @property {boolean=} legacyHeuristicOnly
+ * @property {boolean=} ensembleEnabled
+ * @property {boolean=} ensembleProvider2Enabled
+ * @property {string=} ensembleProvider2
+ * @property {boolean=} ensembleProvider3Enabled
+ * @property {string=} ensembleProvider3
+ */
+
+/**
+ * @typedef {Object} ProviderState
+ * @property {string} provider
+ * @property {boolean} hasKey
+ * @property {string} error
+ */
+
+/**
+ * @typedef {Object} LocalBridgeStatusResult
+ * @property {boolean=} enabled
+ * @property {boolean=} sidecarReachable
+ * @property {string=} error
+ * @property {string=} lastError
+ */
+
+/**
+ * @typedef {Object} AiBridge
+ * @property {(args: {provider: string}) => Promise<{hasKey?: boolean}>} hasProviderKey
+ */
+
+/**
+ * @typedef {Object} LocalAiBridge
+ * @property {(payload: LocalAiRuntimePayload) => Promise<LocalBridgeStatusResult>} status
+ */
+
+/**
+ * @typedef {Object} ProviderReadinessResult
+ * @property {true} checked
+ * @property {false} checking
+ * @property {string} activeProvider
+ * @property {string[]} requiredProviders
+ * @property {string[]} missingProviders
+ * @property {boolean} hasKey
+ * @property {boolean} allReady
+ * @property {boolean} primaryReady
+ * @property {Record<string, ProviderState>} providerStates
+ * @property {string} error
+ */
+
+/**
+ * @typedef {Object} LocalAiProviderStateCache
+ * @property {string} key
+ * @property {number} expiresAt
+ * @property {ProviderState | null} result
+ * @property {Promise<ProviderState> | null} inFlight
+ */
+
 const {
   DEFAULT_LOCAL_AI_SETTINGS,
   getLocalAiEndpointSafety,
@@ -7,6 +103,7 @@ const {
 const LOCAL_AI_PROVIDER = 'local-ai'
 const LOCAL_AI_STATUS_TTL_MS = 3000
 
+/** @type {LocalAiProviderStateCache} */
 let localAiProviderStateCache = {
   key: '',
   expiresAt: 0,
@@ -14,6 +111,11 @@ let localAiProviderStateCache = {
   inFlight: null,
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} [fallback='openai']
+ * @returns {string}
+ */
 function normalizeAiProviderId(value, fallback = 'openai') {
   const provider = String(value || '')
     .trim()
@@ -22,10 +124,18 @@ function normalizeAiProviderId(value, fallback = 'openai') {
   return provider || fallback
 }
 
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
 function isLocalAiProvider(value) {
   return normalizeAiProviderId(value, '') === LOCAL_AI_PROVIDER
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function formatAiProviderLabel(value) {
   const provider = normalizeAiProviderId(value, '')
 
@@ -43,6 +153,10 @@ function formatAiProviderLabel(value) {
   }
 }
 
+/**
+ * @param {LocalAiSettingsLike} [localAi={}]
+ * @returns {LocalAiRuntimePayload}
+ */
 function buildLocalAiRuntimePayload(localAi = {}) {
   const source =
     localAi && typeof localAi === 'object' && !Array.isArray(localAi)
@@ -76,6 +190,10 @@ function buildLocalAiRuntimePayload(localAi = {}) {
   }
 }
 
+/**
+ * @param {{localBridge?: LocalAiBridge, localAi?: LocalAiSettingsLike}} [params={}]
+ * @returns {Promise<ProviderState>}
+ */
 async function resolveLocalAiProviderState({localBridge, localAi} = {}) {
   const payload = buildLocalAiRuntimePayload(localAi)
   const cacheKey = JSON.stringify(payload)
@@ -171,6 +289,10 @@ async function resolveLocalAiProviderState({localBridge, localAi} = {}) {
   return request
 }
 
+/**
+ * @param {AiSolverLike} [aiSolver={}]
+ * @returns {string[]}
+ */
 function getRequiredAiProviders(aiSolver = {}) {
   const providers = []
   const legacyOnlyMode = Boolean(
@@ -197,6 +319,10 @@ function getRequiredAiProviders(aiSolver = {}) {
   return Array.from(new Set(providers.filter(Boolean)))
 }
 
+/**
+ * @param {string[]} [missingProviders=[]]
+ * @returns {string}
+ */
 function formatMissingAiProviders(missingProviders = []) {
   const uniqueProviders = Array.from(
     new Set(
@@ -215,6 +341,10 @@ function formatMissingAiProviders(missingProviders = []) {
     .join(', ')
 }
 
+/**
+ * @param {{bridge?: AiBridge, localBridge?: LocalAiBridge, localAi?: LocalAiSettingsLike, aiSolver?: AiSolverLike}} [params={}]
+ * @returns {Promise<ProviderReadinessResult>}
+ */
 async function checkAiProviderReadiness({
   bridge,
   localBridge,
@@ -239,6 +369,7 @@ async function checkAiProviderReadiness({
     }
   }
 
+  /** @type {Record<string, ProviderState>} */
   const providerStates = {}
   let statusError = ''
 

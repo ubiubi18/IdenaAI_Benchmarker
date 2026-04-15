@@ -47,7 +47,7 @@ except ModuleNotFoundError:
     raise
 
 try:
-    from PIL import Image, ImageOps
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
 except ModuleNotFoundError:
     print(
         "Missing dependency: pillow\n"
@@ -173,6 +173,51 @@ def resize_to_fit(image: Image.Image, size: Tuple[int, int]) -> Image.Image:
     return resized
 
 
+def load_number_overlay_font(size: int) -> ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype("DejaVuSans-Bold.ttf", size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def draw_panel_number_overlays(image: Image.Image) -> Image.Image:
+    draw = ImageDraw.Draw(image)
+    width, height = image.size
+    cell_width = width / 2
+    cell_height = height / 2
+    padding = max(8, int(min(width, height) * 0.025))
+    font_size = max(18, int(min(cell_width, cell_height) * 0.14))
+    font = load_number_overlay_font(font_size)
+
+    for index in range(4):
+        row, column = divmod(index, 2)
+        label = str(index + 1)
+        bbox = draw.textbbox((0, 0), label, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        badge_width = text_width + padding * 2
+        badge_height = text_height + padding
+        x0 = int(column * cell_width + padding)
+        y0 = int(row * cell_height + padding)
+        x1 = x0 + badge_width
+        y1 = y0 + badge_height
+        draw.rounded_rectangle(
+            (x0, y0, x1, y1),
+            radius=max(6, padding // 2),
+            fill=(0, 0, 0),
+            outline=(255, 255, 255),
+            width=max(1, padding // 5),
+        )
+        draw.text(
+            (x0 + padding, y0 + max(2, padding // 4)),
+            label,
+            font=font,
+            fill=(255, 255, 255),
+        )
+
+    return image
+
+
 def build_flip_composite(raw_panels: List[bytes]) -> Image.Image:
     panels = [load_panel_image(raw) for raw in raw_panels]
     cell_width = max(image.width for image in panels)
@@ -186,7 +231,33 @@ def build_flip_composite(raw_panels: List[bytes]) -> Image.Image:
         y = row * cell_height + (cell_height - fitted.height) // 2
         canvas.paste(fitted, (x, y))
 
-    return resize_to_fit(canvas, COMPOSITE_MAX_SIZE)
+    composite = resize_to_fit(canvas, COMPOSITE_MAX_SIZE)
+    return draw_panel_number_overlays(composite)
+
+
+def build_training_messages(
+    prompt_template: str,
+    left_stack: List[int],
+    right_stack: List[int],
+    expected_answer: str,
+) -> List[dict]:
+    prompt = prompt_template.format(
+        left_order=format_order(left_stack),
+        right_order=format_order(right_stack),
+    )
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": prompt},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": expected_answer}],
+        },
+    ]
 
 
 def build_training_record(
@@ -195,7 +266,7 @@ def build_training_record(
     image_bytes: Dict[str, bytes],
     images_dir: Path,
     prompt_template: str,
-) -> dict:
+) -> List[dict]:
     images_map = task_data.get("images") or {}
     if not isinstance(images_map, dict):
         raise ValueError(f"Invalid images map for {task_id}")
@@ -248,30 +319,20 @@ def build_training_record(
     if not composite_path.exists():
         build_flip_composite(panel_bytes).save(composite_path, format="PNG")
 
-    prompt = prompt_template.format(
-        left_order=format_order(left_stack),
-        right_order=format_order(right_stack),
-    )
     ranking = build_historical_signals(task_id, task_data)
-
-    return {
+    canonical_record = {
         "schema_version": "idena.flip-training.v1",
+        "sample_id": task_id,
         "flip_hash": task_id,
+        "prompt_variant": "canonical",
         "images": [str(composite_path.resolve())],
         "panel_images": saved_images,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": prompt},
-                ],
-            },
-            {
-                "role": "assistant",
-                "content": [{"type": "text", "text": expected_answer}],
-            },
-        ],
+        "messages": build_training_messages(
+            prompt_template,
+            left_stack,
+            right_stack,
+            expected_answer,
+        ),
         "expected_answer": expected_answer,
         "expected_strength": expected_strength or "",
         "left_order": left_stack,
@@ -285,6 +346,35 @@ def build_training_record(
         },
         "audit": ranking.to_dict(),
     }
+    return [canonical_record]
+
+
+def build_swapped_training_record(record: dict, prompt_template: str) -> dict:
+    expected_answer = record["expected_answer"]
+    if expected_answer == "left":
+        swapped_answer = "right"
+    elif expected_answer == "right":
+        swapped_answer = "left"
+    else:
+        swapped_answer = expected_answer
+
+    left_order = list(record["right_order"])
+    right_order = list(record["left_order"])
+    swapped = {
+        **record,
+        "sample_id": f'{record["flip_hash"]}::swap',
+        "prompt_variant": "swapped-orders",
+        "messages": build_training_messages(
+            prompt_template,
+            left_order,
+            right_order,
+            swapped_answer,
+        ),
+        "expected_answer": swapped_answer,
+        "left_order": left_order,
+        "right_order": right_order,
+    }
+    return swapped
 
 
 def process_parquet_files(
@@ -293,6 +383,7 @@ def process_parquet_files(
     skip_flips: int,
     images_dir: Path,
     prompt_template: str,
+    augment_swap_orders: bool,
 ) -> Tuple[List[dict], int]:
     tasks: Dict[str, dict] = {}
     completed: List[dict] = []
@@ -334,21 +425,26 @@ def process_parquet_files(
                 needed = set(images_map.values())
                 if needed and needed.issubset(record["image_bytes"].keys()):
                     try:
-                        flip = build_training_record(
+                        flip_records = build_training_record(
                             task_id,
                             record["task_data"],
                             record["image_bytes"],
                             images_dir,
                             prompt_template,
                         )
+                        if augment_swap_orders:
+                            flip_records.extend(
+                                build_swapped_training_record(item, prompt_template)
+                                for item in list(flip_records)
+                            )
                         if produced >= skip_flips:
-                            completed.append(flip)
+                            completed.extend(flip_records)
                         produced += 1
                     except Exception:
                         malformed += 1
                     del tasks[task_id]
 
-                    if len(completed) >= max_flips:
+                    if produced >= max_flips:
                         return completed, malformed
 
     return completed, malformed
@@ -401,6 +497,14 @@ def main() -> int:
         default=DEFAULT_PROMPT_TEMPLATE,
         help="prompt template used for each training example",
     )
+    parser.add_argument(
+        "--augment-swap-orders",
+        action="store_true",
+        help=(
+            "duplicate each flip with left/right orders swapped so the model "
+            "cannot rely on a fixed option position shortcut"
+        ),
+    )
     args = parser.parse_args()
 
     if args.max_flips < 1:
@@ -437,6 +541,7 @@ def main() -> int:
         args.skip_flips,
         images_dir,
         args.prompt_template,
+        args.augment_swap_orders,
     )
 
     if not records:
@@ -474,6 +579,9 @@ def main() -> int:
         "skip": args.skip_flips,
         "max": args.max_flips,
         "malformedRows": malformed,
+        "promptAugmentation": {
+            "swapOrders": bool(args.augment_swap_orders),
+        },
         "countsByAnswer": counts_by_answer,
         "rankingSources": ranking_sources,
         "trainingWeight": training_weight_summary,

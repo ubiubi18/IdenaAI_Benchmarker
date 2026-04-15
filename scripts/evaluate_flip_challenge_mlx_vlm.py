@@ -15,6 +15,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import mlx.core as mx
 from datasets import load_from_disk
 from transformers.models.qwen2.tokenization_qwen2 import Qwen2Tokenizer
 
@@ -88,6 +89,69 @@ def build_generation_inputs(model, processor, example: Dict[str, Any]) -> Dict[s
     return payload
 
 
+def score_answer_candidates(
+    model,
+    processor,
+    prepared_inputs: Dict[str, Any],
+    answer_labels: list[str],
+) -> Dict[str, Dict[str, Any]]:
+    candidate_scores: Dict[str, Dict[str, Any]] = {}
+    extra_kwargs = {
+        key: value
+        for key, value in prepared_inputs.items()
+        if key not in {"prompt", "pixel_values", "input_ids", "mask"}
+    }
+
+    for label in answer_labels:
+        token_ids = processor.tokenizer.encode(label, add_special_tokens=False)
+        if not token_ids:
+            continue
+
+        current_input_ids = prepared_inputs["input_ids"]
+        current_mask = prepared_inputs["mask"]
+        total_logprob = 0.0
+
+        for token_id in token_ids:
+            outputs = model(
+                current_input_ids,
+                prepared_inputs["pixel_values"],
+                current_mask,
+                **extra_kwargs,
+            )
+            logits = outputs.logits.astype(mx.float32)
+            next_logits = logits[0, -1]
+            next_logprob = float(next_logits[token_id] - mx.logsumexp(next_logits))
+            total_logprob += next_logprob
+
+            token_array = mx.array([[token_id]], dtype=current_input_ids.dtype)
+            current_input_ids = mx.concatenate([current_input_ids, token_array], axis=1)
+            current_mask = mx.concatenate(
+                [current_mask, mx.ones((1, 1), dtype=current_mask.dtype)], axis=1
+            )
+
+        token_count = len(token_ids)
+        candidate_scores[label] = {
+            "sum_logprob": round(total_logprob, 6),
+            "avg_logprob": round(total_logprob / max(token_count, 1), 6),
+            "token_count": token_count,
+        }
+
+    return candidate_scores
+
+
+def predict_from_candidate_scores(candidate_scores: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    if not candidate_scores:
+        return None
+
+    return max(
+        candidate_scores.items(),
+        key=lambda item: (
+            item[1].get("avg_logprob", float("-inf")),
+            item[1].get("sum_logprob", float("-inf")),
+        ),
+    )[0]
+
+
 def evaluate(args) -> int:
     dataset_path = Path(args.dataset_path).resolve()
     adapter_path = normalize_adapter_path(args.adapter_path)
@@ -117,23 +181,45 @@ def evaluate(args) -> int:
     for index, example in enumerate(raw_dataset, start=1):
         prepared_inputs = build_generation_inputs(model, processor, example)
         expected = normalize_answer(example.get("expected_answer"))
-        response = generate(
-            model,
-            processor,
-            prepared_inputs["prompt"],
-            pixel_values=prepared_inputs["pixel_values"],
-            input_ids=prepared_inputs["input_ids"],
-            mask=prepared_inputs["mask"],
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            verbose=False,
-            **{
-                key: value
-                for key, value in prepared_inputs.items()
-                if key not in {"prompt", "pixel_values", "input_ids", "mask"}
-            },
+        response = ""
+        candidate_scores = {}
+
+        if args.mode in {"generate", "both"}:
+            response = generate(
+                model,
+                processor,
+                prepared_inputs["prompt"],
+                pixel_values=prepared_inputs["pixel_values"],
+                input_ids=prepared_inputs["input_ids"],
+                mask=prepared_inputs["mask"],
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                verbose=False,
+                **{
+                    key: value
+                    for key, value in prepared_inputs.items()
+                    if key not in {"prompt", "pixel_values", "input_ids", "mask"}
+                },
+            )
+
+        generated_prediction = normalize_answer(response)
+
+        if args.mode in {"score", "both"}:
+            candidate_scores = score_answer_candidates(
+                model,
+                processor,
+                prepared_inputs,
+                ["left", "right", "skip"],
+            )
+
+        scored_prediction = predict_from_candidate_scores(candidate_scores)
+        predicted = (
+            scored_prediction
+            if args.mode == "score"
+            else generated_prediction
+            if args.mode == "generate"
+            else scored_prediction or generated_prediction
         )
-        predicted = normalize_answer(response)
         is_correct = expected is not None and predicted == expected
 
         if predicted is not None:
@@ -148,7 +234,10 @@ def evaluate(args) -> int:
             "flipHash": example.get("flip_hash"),
             "expected": expected,
             "predicted": predicted,
+            "generatedPrediction": generated_prediction,
+            "scoredPrediction": scored_prediction,
             "rawResponse": response,
+            "candidateScores": candidate_scores,
             "correct": is_correct,
             "trainingWeight": example.get("training_weight"),
             "rankingSource": example.get("ranking_source"),
@@ -226,6 +315,15 @@ if __name__ == "__main__":
         "--output",
         default="",
         help="Optional JSON report output path",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["generate", "score", "both"],
+        default="score",
+        help=(
+            "Evaluation mode: generate free-form answer, score fixed candidates, "
+            "or do both and prefer scored prediction"
+        ),
     )
 
     raise SystemExit(evaluate(parser.parse_args()))
