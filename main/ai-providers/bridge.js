@@ -5470,6 +5470,28 @@ function createAiProviderBridge(logger, dependencies = {}) {
             setTimeout(resolve, ms)
           })
 
+  function withOperationTimeout(promise, timeoutMs, message) {
+    const normalizedTimeoutMs = Number(timeoutMs)
+    if (!Number.isFinite(normalizedTimeoutMs) || normalizedTimeoutMs <= 0) {
+      return promise
+    }
+
+    let timeoutId = null
+
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(message))
+        }, normalizedTimeoutMs)
+      }),
+    ]).finally(() => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    })
+  }
+
   function getApiKey(provider) {
     const key = providerKeys.get(provider)
     if (!key) {
@@ -5493,6 +5515,221 @@ function createAiProviderBridge(logger, dependencies = {}) {
     return getLocalAiPayload(payload)
   }
 
+  function buildLocalAiNeutralFramePrompt({
+    hash,
+    forceDecision,
+    optionALabel,
+    optionBLabel,
+  }) {
+    return `
+You are solving an Idena short-session flip benchmark.
+You are given 8 ordered frame images:
+- Images 1-4 belong to OPTION ${optionALabel} (in temporal order)
+- Images 5-8 belong to OPTION ${optionBLabel} (in temporal order)
+
+Task:
+1) Analyze each frame separately.
+2) Compare the two candidate stories.
+3) Choose the more coherent chronological story.
+4) Return JSON only.
+
+Allowed JSON schema:
+{"answer":"a|b|skip","confidence":0.0,"reasoning":"short optional note"}
+
+Rules:
+- Use only ${forceDecision ? 'a|b' : 'a|b|skip'} for "answer"
+- "confidence" must be between 0 and 1
+- Keep reasoning concise and factual
+${
+  forceDecision
+    ? '- You must choose a or b. Do not return skip.'
+    : '- If uncertain, return "skip".'
+}
+
+Flip hash: ${hash}
+`.trim()
+  }
+
+  function normalizeLocalAiCandidateAnswer(answer) {
+    const value = String(answer || '')
+      .trim()
+      .toLowerCase()
+
+    if (['a', 'option a', 'candidate a'].includes(value)) {
+      return 'a'
+    }
+
+    if (['b', 'option b', 'candidate b'].includes(value)) {
+      return 'b'
+    }
+
+    if (['left', 'l', '1'].includes(value)) {
+      return 'a'
+    }
+
+    if (['right', 'r', '2'].includes(value)) {
+      return 'b'
+    }
+
+    return 'skip'
+  }
+
+  function extractLocalAiCandidateAnswerFromText(rawText) {
+    const text = String(rawText || '')
+      .trim()
+      .toLowerCase()
+
+    if (!text) {
+      throw new Error('Empty local AI multimodal response')
+    }
+
+    const answerFieldMatch = text.match(
+      /"answer"\s*:\s*"?(a|b|skip|left|right|option a|option b|candidate a|candidate b)"?/i
+    )
+    if (answerFieldMatch && answerFieldMatch[1]) {
+      return answerFieldMatch[1]
+    }
+
+    const explicitPhraseMatch = text.match(
+      /\b(answer|choose|pick|select|option)\b[^.\n:]*\b(a|b|skip|left|right)\b/i
+    )
+    if (explicitPhraseMatch && explicitPhraseMatch[2]) {
+      return explicitPhraseMatch[2]
+    }
+
+    const compactTokenMatch = text.match(/^\s*(a|b|skip|left|right)\b/i)
+    if (compactTokenMatch && compactTokenMatch[1]) {
+      return compactTokenMatch[1]
+    }
+
+    throw new Error('Provider response does not contain a recognizable answer')
+  }
+
+  function translateLocalAiCandidateDecision(parsed, optionAMapsTo) {
+    const candidateAnswer = normalizeLocalAiCandidateAnswer(
+      parsed && parsed.answer
+    )
+    const confidence = normalizeConfidence(parsed && parsed.confidence)
+    const reasoning =
+      typeof (parsed && parsed.reasoning) === 'string'
+        ? parsed.reasoning.slice(0, 240)
+        : undefined
+
+    if (candidateAnswer === 'skip') {
+      return {
+        answer: 'skip',
+        confidence,
+        reasoning,
+      }
+    }
+
+    const oppositeOption = optionAMapsTo === 'left' ? 'right' : 'left'
+    const answer = candidateAnswer === 'a' ? optionAMapsTo : oppositeOption
+
+    return {
+      answer,
+      confidence,
+      reasoning,
+    }
+  }
+
+  function parseLocalAiCandidateDecision(rawText, optionAMapsTo) {
+    try {
+      const parsed = extractJsonBlock(rawText)
+      return translateLocalAiCandidateDecision(parsed, optionAMapsTo)
+    } catch {
+      const fallbackAnswer = extractLocalAiCandidateAnswerFromText(rawText)
+      return translateLocalAiCandidateDecision(
+        {answer: fallbackAnswer, confidence: 0.5, reasoning: rawText},
+        optionAMapsTo
+      )
+    }
+  }
+
+  async function runLocalAiDirectMultimodalProvider({
+    manager,
+    runtimePayload,
+    flip,
+    profile,
+    leftImages,
+    rightImages,
+  }) {
+    const optionAMapsTo =
+      hashScore(`${flip.hash}:candidate-a`) % 2 === 0 ? 'left' : 'right'
+    const optionAImages = optionAMapsTo === 'left' ? leftImages : rightImages
+    const optionBImages = optionAMapsTo === 'left' ? rightImages : leftImages
+    const prompt = buildLocalAiNeutralFramePrompt({
+      hash: flip.hash,
+      forceDecision: profile.forceDecision,
+      optionALabel: 'A',
+      optionBLabel: 'B',
+    })
+    const images = optionAImages.concat(optionBImages)
+    const preferredVisionModels = [
+      'qwen2.5vl:7b',
+      String(runtimePayload.visionModel || '').trim(),
+    ].filter(Boolean)
+    const triedVisionModels = new Set()
+    let lastError = null
+
+    for (const visionModel of preferredVisionModels) {
+      if (!triedVisionModels.has(visionModel)) {
+        triedVisionModels.add(visionModel)
+
+        const directResponse = await withOperationTimeout(
+          manager.chat({
+            ...runtimePayload,
+            visionModel,
+            responseFormat: 'json',
+            generationOptions: {
+              temperature: 0,
+              num_predict: 96,
+            },
+            messages: [
+              {
+                role: 'user',
+                content: prompt,
+                images,
+              },
+            ],
+          }),
+          runtimePayload.timeoutMs,
+          `Local AI direct multimodal request timed out after ${runtimePayload.timeoutMs}ms`
+        )
+
+        if (directResponse.ok && String(directResponse.text || '').trim()) {
+          try {
+            const translatedDecision = parseLocalAiCandidateDecision(
+              directResponse.text,
+              optionAMapsTo
+            )
+
+            return {
+              content: JSON.stringify(translatedDecision),
+              meta: {
+                mode: 'direct_multimodal',
+                runtime: directResponse,
+                visionModel,
+                optionAMapsTo,
+              },
+            }
+          } catch (error) {
+            lastError = error.toString()
+          }
+        }
+
+        if (!lastError) {
+          lastError =
+            directResponse.lastError ||
+            directResponse.error ||
+            `Local AI direct multimodal request failed for ${visionModel}`
+        }
+      }
+    }
+
+    throw new Error(lastError || 'Local AI direct multimodal request failed')
+  }
+
   async function runLocalAiProvider({model, flip, profile}) {
     const manager = ensureLocalAiManager()
     const leftImages =
@@ -5513,15 +5750,37 @@ function createAiProviderBridge(logger, dependencies = {}) {
       timeoutMs: profile.requestTimeoutMs,
     })
 
+    if (
+      profile.flipVisionMode === 'frames_single_pass' ||
+      profile.flipVisionMode === 'frames_two_pass'
+    ) {
+      return runLocalAiDirectMultimodalProvider({
+        manager,
+        runtimePayload,
+        flip,
+        profile,
+        leftImages,
+        rightImages,
+      })
+    }
+
     const [left, right] = await Promise.all([
-      manager.checkFlipSequence({
-        ...runtimePayload,
-        images: leftImages,
-      }),
-      manager.checkFlipSequence({
-        ...runtimePayload,
-        images: rightImages,
-      }),
+      withOperationTimeout(
+        manager.checkFlipSequence({
+          ...runtimePayload,
+          images: leftImages,
+        }),
+        runtimePayload.timeoutMs,
+        `Local AI left sequence check timed out after ${runtimePayload.timeoutMs}ms`
+      ),
+      withOperationTimeout(
+        manager.checkFlipSequence({
+          ...runtimePayload,
+          images: rightImages,
+        }),
+        runtimePayload.timeoutMs,
+        `Local AI right sequence check timed out after ${runtimePayload.timeoutMs}ms`
+      ),
     ])
 
     const decision = buildLocalAiDecisionFromChecks(left, right)

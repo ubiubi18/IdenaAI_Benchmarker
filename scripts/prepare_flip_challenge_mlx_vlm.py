@@ -60,7 +60,7 @@ DATASET_ID = "aplesner-eth/FLIP-Challenge"
 TREE_URL = f"https://huggingface.co/api/datasets/{DATASET_ID}/tree/main?recursive=true"
 RESOLVE_BASE = f"https://huggingface.co/datasets/{DATASET_ID}/resolve/main"
 
-DEFAULT_PROMPT_TEMPLATE = (
+DEFAULT_COMPOSITE_PROMPT_TEMPLATE = (
     "You are solving an Idena FLIP validation challenge. "
     "There are four candidate panels for one flip shown in a single 2x2 composite image. "
     "Panel 1 is top-left, panel 2 is top-right, panel 3 is bottom-left, and panel 4 is bottom-right. "
@@ -68,6 +68,15 @@ DEFAULT_PROMPT_TEMPLATE = (
     "LEFT order: panels {left_order}.\n"
     "RIGHT order: panels {right_order}.\n"
     "If neither order tells a coherent story, or the flip should be reported, answer skip.\n"
+    "Reply with exactly one lowercase word: left, right, or skip."
+)
+DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE = (
+    "You are solving an Idena FLIP validation challenge. "
+    "You are given eight native frame images in order.\n"
+    "Images 1-4 belong to the LEFT story in temporal order.\n"
+    "Images 5-8 belong to the RIGHT story in temporal order.\n"
+    "Choose the more coherent chronological story.\n"
+    "If neither story tells a coherent story, or the flip should be reported, answer skip.\n"
     "Reply with exactly one lowercase word: left, right, or skip."
 )
 COMPOSITE_MAX_SIZE = (448, 448)
@@ -240,6 +249,7 @@ def build_training_messages(
     left_stack: List[int],
     right_stack: List[int],
     expected_answer: str,
+    image_count: int,
 ) -> List[dict]:
     prompt = prompt_template.format(
         left_order=format_order(left_stack),
@@ -248,10 +258,8 @@ def build_training_messages(
     return [
         {
             "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": prompt},
-            ],
+            "content": [{"type": "image"} for _ in range(max(1, image_count))]
+            + [{"type": "text", "text": prompt}],
         },
         {
             "role": "assistant",
@@ -260,12 +268,50 @@ def build_training_messages(
     ]
 
 
+def normalize_image_mode(value: str) -> str:
+    mode = str(value or "").strip().lower().replace("-", "_")
+    if mode in {"composite", "native_frames"}:
+        return mode
+    raise ValueError(f"Unsupported image mode: {value}")
+
+
+def build_training_images(
+    *,
+    image_mode: str,
+    composite_path: Path,
+    saved_images: List[str],
+    left_stack: List[int],
+    right_stack: List[int],
+) -> Tuple[List[str], List[str], List[str]]:
+    normalized_mode = normalize_image_mode(image_mode)
+    left_frame_images = [
+        saved_images[index]
+        for index in left_stack
+        if 0 <= index < len(saved_images)
+    ]
+    right_frame_images = [
+        saved_images[index]
+        for index in right_stack
+        if 0 <= index < len(saved_images)
+    ]
+
+    if normalized_mode == "native_frames":
+        return (
+            left_frame_images + right_frame_images,
+            left_frame_images,
+            right_frame_images,
+        )
+
+    return ([str(composite_path.resolve())], left_frame_images, right_frame_images)
+
+
 def build_training_record(
     task_id: str,
     task_data: dict,
     image_bytes: Dict[str, bytes],
     images_dir: Path,
     prompt_template: str,
+    image_mode: str,
 ) -> List[dict]:
     images_map = task_data.get("images") or {}
     if not isinstance(images_map, dict):
@@ -319,19 +365,31 @@ def build_training_record(
     if not composite_path.exists():
         build_flip_composite(panel_bytes).save(composite_path, format="PNG")
 
+    training_images, left_frame_images, right_frame_images = build_training_images(
+        image_mode=image_mode,
+        composite_path=composite_path,
+        saved_images=saved_images,
+        left_stack=left_stack,
+        right_stack=right_stack,
+    )
+
     ranking = build_historical_signals(task_id, task_data)
     canonical_record = {
         "schema_version": "idena.flip-training.v1",
         "sample_id": task_id,
         "flip_hash": task_id,
         "prompt_variant": "canonical",
-        "images": [str(composite_path.resolve())],
+        "images": training_images,
         "panel_images": saved_images,
+        "left_frame_images": left_frame_images,
+        "right_frame_images": right_frame_images,
+        "training_image_mode": normalize_image_mode(image_mode),
         "messages": build_training_messages(
             prompt_template,
             left_stack,
             right_stack,
             expected_answer,
+            len(training_images),
         ),
         "expected_answer": expected_answer,
         "expected_strength": expected_strength or "",
@@ -360,15 +418,29 @@ def build_swapped_training_record(record: dict, prompt_template: str) -> dict:
 
     left_order = list(record["right_order"])
     right_order = list(record["left_order"])
+    left_frame_images = list(record.get("right_frame_images") or [])
+    right_frame_images = list(record.get("left_frame_images") or [])
+    training_image_mode = normalize_image_mode(
+        record.get("training_image_mode", "composite")
+    )
+    images = (
+        left_frame_images + right_frame_images
+        if training_image_mode == "native_frames"
+        else list(record["images"])
+    )
     swapped = {
         **record,
         "sample_id": f'{record["flip_hash"]}::swap',
         "prompt_variant": "swapped-orders",
+        "images": images,
+        "left_frame_images": left_frame_images,
+        "right_frame_images": right_frame_images,
         "messages": build_training_messages(
             prompt_template,
             left_order,
             right_order,
             swapped_answer,
+            len(images),
         ),
         "expected_answer": swapped_answer,
         "left_order": left_order,
@@ -383,6 +455,7 @@ def process_parquet_files(
     skip_flips: int,
     images_dir: Path,
     prompt_template: str,
+    image_mode: str,
     augment_swap_orders: bool,
 ) -> Tuple[List[dict], int]:
     tasks: Dict[str, dict] = {}
@@ -431,6 +504,7 @@ def process_parquet_files(
                             record["image_bytes"],
                             images_dir,
                             prompt_template,
+                            image_mode,
                         )
                         if augment_swap_orders:
                             flip_records.extend(
@@ -494,8 +568,14 @@ def main() -> int:
     parser.add_argument(
         "--prompt-template",
         type=str,
-        default=DEFAULT_PROMPT_TEMPLATE,
+        default=DEFAULT_COMPOSITE_PROMPT_TEMPLATE,
         help="prompt template used for each training example",
+    )
+    parser.add_argument(
+        "--image-mode",
+        choices=["composite", "native_frames"],
+        default="composite",
+        help="training image mode: composite or native_frames (default: composite)",
     )
     parser.add_argument(
         "--augment-swap-orders",
@@ -506,6 +586,7 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
+    selected_image_mode = normalize_image_mode(args.image_mode)
 
     if args.max_flips < 1:
         print("--max-flips must be >= 1", file=sys.stderr)
@@ -513,6 +594,13 @@ def main() -> int:
     if args.skip_flips < 0:
         print("--skip-flips must be >= 0", file=sys.stderr)
         return 2
+
+    prompt_template = args.prompt_template
+    if (
+        selected_image_mode == "native_frames"
+        and prompt_template == DEFAULT_COMPOSITE_PROMPT_TEMPLATE
+    ):
+        prompt_template = DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE
 
     parquet_paths = list_parquet_paths(args.split)
     if not parquet_paths:
@@ -540,7 +628,8 @@ def main() -> int:
         args.max_flips,
         args.skip_flips,
         images_dir,
-        args.prompt_template,
+        prompt_template,
+        selected_image_mode,
         args.augment_swap_orders,
     )
 
@@ -582,6 +671,7 @@ def main() -> int:
         "promptAugmentation": {
             "swapOrders": bool(args.augment_swap_orders),
         },
+        "imageMode": selected_image_mode,
         "countsByAnswer": counts_by_answer,
         "rankingSources": ranking_sources,
         "trainingWeight": training_weight_summary,

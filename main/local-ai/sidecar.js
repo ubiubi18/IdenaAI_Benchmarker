@@ -1,5 +1,6 @@
 const axios = require('axios')
 const {LOCAL_AI_RUNTIME, LOCAL_AI_RUNTIME_BACKEND} = require('./constants')
+const {extractRawImages, runAppleVisionOcr} = require('./apple-ocr')
 const {
   LOCAL_AI_OLLAMA_DEFAULT_BASE_URL,
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
@@ -30,6 +31,10 @@ const CHECKER_CLASSIFICATIONS = new Set([
   'inconsistent',
 ])
 const CHECKER_CONFIDENCES = new Set(['low', 'medium', 'high'])
+const ALLOWED_RESPONSE_FORMATS = new Set(['json'])
+const PREFERRED_OLLAMA_MULTIMODAL_MODELS = ['qwen2.5vl:7b']
+const OCR_FIRST_CHAT_PATTERN =
+  /\b(text|read|ocr|screenshot|transcribe|quote|what does it say|what should i answer)\b/i
 
 function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '')
@@ -109,6 +114,52 @@ function normalizeTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
   }
 
   return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, timeoutMs))
+}
+
+function normalizeResponseFormat(value) {
+  const format = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  if (!format) {
+    return null
+  }
+
+  return ALLOWED_RESPONSE_FORMATS.has(format) ? format : null
+}
+
+function normalizeGenerationOptions(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null
+  }
+
+  const options = {}
+  const temperature = Number.parseFloat(input.temperature)
+  const numPredict = Number.parseInt(input.num_predict ?? input.numPredict, 10)
+
+  if (Number.isFinite(temperature)) {
+    options.temperature = Math.min(1, Math.max(0, temperature))
+  }
+
+  if (Number.isFinite(numPredict)) {
+    options.num_predict = Math.min(256, Math.max(1, numPredict))
+  }
+
+  return Object.keys(options).length > 0 ? options : null
+}
+
+function buildVisionModelCandidates(model, includesImages) {
+  const primary = String(model || '').trim()
+
+  if (!includesImages) {
+    return primary ? [primary] : []
+  }
+
+  return [
+    ...new Set(
+      [...PREFERRED_OLLAMA_MULTIMODAL_MODELS, primary].filter(Boolean)
+    ),
+  ]
 }
 
 function estimateBase64Bytes(value) {
@@ -240,6 +291,39 @@ function normalizeChatMessages({messages, message, prompt, input} = {}) {
   )
 
   return singleInput ? [{role: 'user', content: singleInput.trim()}] : []
+}
+
+function buildOcrRetryMessages(messages = [], ocrText = '') {
+  const textOnlyMessages = Array.isArray(messages)
+    ? messages.map(({role, content}) => ({role, content}))
+    : []
+
+  return [
+    {
+      role: 'system',
+      content:
+        'The user attached one or more images. Use the following OCR transcript as the primary source of truth for visible text in those images.',
+    },
+    {
+      role: 'system',
+      content: `OCR transcript from attached images:\n${ocrText}`,
+    },
+    ...textOnlyMessages,
+  ]
+}
+
+function shouldPreferOcrFirst(messages = []) {
+  const reversed = Array.isArray(messages) ? [...messages].reverse() : []
+  const latestUserMessage = reversed.find(
+    (item) => item && item.role === 'user' && String(item.content || '').trim()
+  )
+
+  return Boolean(
+    latestUserMessage &&
+      OCR_FIRST_CHAT_PATTERN.test(
+        String(latestUserMessage.content || '').trim()
+      )
+  )
 }
 
 function normalizeOllamaContent(data) {
@@ -798,6 +882,8 @@ function createLocalAiSidecar({
     visionModel = '',
     messages = [],
     timeoutMs = 15 * 1000,
+    responseFormat = null,
+    generationOptions = null,
   } = {}) {
     const runtimeAdapter = resolveRuntimeAdapter(
       {baseUrl, runtimeBackend, runtimeType},
@@ -815,6 +901,9 @@ function createLocalAiSidecar({
     const selectedModel =
       includesImages && nextVisionModel ? nextVisionModel : nextModel
     const normalizedTimeoutMs = normalizeTimeoutMs(timeoutMs, 15 * 1000)
+    const normalizedResponseFormat = normalizeResponseFormat(responseFormat)
+    const normalizedGenerationOptions =
+      normalizeGenerationOptions(generationOptions)
     const baseUrlValidation = validateLocalAiBaseUrl(nextBaseUrl)
 
     if (nextRuntimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
@@ -906,6 +995,12 @@ function createLocalAiSidecar({
           model: selectedModel,
           messages: nextMessages,
           stream: false,
+          ...(normalizedResponseFormat
+            ? {format: normalizedResponseFormat}
+            : {}),
+          ...(normalizedGenerationOptions
+            ? {options: normalizedGenerationOptions}
+            : {}),
         },
         {
           timeout: normalizedTimeoutMs,
@@ -1141,22 +1236,94 @@ function createLocalAiSidecar({
     prompt,
     input,
     timeoutMs = 15 * 1000,
+    responseFormat = null,
+    generationOptions = null,
   } = {}) {
+    const rawMessages = Array.isArray(messages) ? messages : []
     const nextMessages = normalizeChatMessages({
       messages,
       message,
       prompt,
       input,
     })
-    const result = await requestOllamaChat({
-      baseUrl,
-      runtimeBackend,
-      runtimeType,
-      model,
+    const includesImages = nextMessages.some(
+      (item) => Array.isArray(item && item.images) && item.images.length > 0
+    )
+    const visionModelCandidates = buildVisionModelCandidates(
       visionModel,
-      messages: nextMessages,
-      timeoutMs,
-    })
+      includesImages
+    )
+    const rawImages = includesImages ? extractRawImages(rawMessages) : []
+    let result = null
+
+    async function runOcrTextRetry() {
+      const ocrResult = await runAppleVisionOcr(rawImages)
+
+      if (!ocrResult.ok || !String(ocrResult.text || '').trim()) {
+        return null
+      }
+
+      return requestOllamaChat({
+        baseUrl,
+        runtimeBackend,
+        runtimeType,
+        model,
+        visionModel: '',
+        messages: buildOcrRetryMessages(nextMessages, ocrResult.text),
+        timeoutMs,
+        generationOptions,
+      })
+    }
+
+    if (
+      includesImages &&
+      rawImages.length > 0 &&
+      shouldPreferOcrFirst(nextMessages)
+    ) {
+      result = await runOcrTextRetry()
+      if (result && result.ok && String(result.text || '').trim()) {
+        return {
+          ...result,
+          content: result.text,
+        }
+      }
+    }
+
+    for (const candidateVisionModel of visionModelCandidates.length
+      ? visionModelCandidates
+      : ['']) {
+      // eslint-disable-next-line no-await-in-loop
+      result = await requestOllamaChat({
+        baseUrl,
+        runtimeBackend,
+        runtimeType,
+        model,
+        visionModel: candidateVisionModel,
+        messages: nextMessages,
+        timeoutMs,
+        responseFormat,
+        generationOptions,
+      })
+
+      if (result.ok && String(result.text || '').trim()) {
+        break
+      }
+    }
+
+    if (
+      includesImages &&
+      rawImages.length > 0 &&
+      (!result || !result.ok || !String(result.text || '').trim())
+    ) {
+      const ocrRetryResult = await runOcrTextRetry()
+      if (
+        ocrRetryResult &&
+        ocrRetryResult.ok &&
+        String(ocrRetryResult.text || '').trim()
+      ) {
+        result = ocrRetryResult
+      }
+    }
 
     return {
       ...result,

@@ -19,6 +19,13 @@ const DEFAULT_PROFILE = {
   flipVisionMode: 'composite',
 }
 
+const LOCAL_AI_STRICT_PROFILE_OVERRIDES = {
+  deadlineMs: 80 * 1000,
+  requestTimeoutMs: 15 * 1000,
+  interFlipDelayMs: 0,
+  flipVisionMode: 'frames_single_pass',
+}
+
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
@@ -119,6 +126,28 @@ function normalizeProfile(input = {}) {
   }
 }
 
+function buildEffectiveProfile(profile, provider) {
+  if (
+    String(provider || '')
+      .trim()
+      .toLowerCase() !== 'local-ai' ||
+    profile.benchmarkProfile === 'custom'
+  ) {
+    return profile
+  }
+
+  return {
+    ...profile,
+    deadlineMs: LOCAL_AI_STRICT_PROFILE_OVERRIDES.deadlineMs,
+    requestTimeoutMs: LOCAL_AI_STRICT_PROFILE_OVERRIDES.requestTimeoutMs,
+    interFlipDelayMs: LOCAL_AI_STRICT_PROFILE_OVERRIDES.interFlipDelayMs,
+    flipVisionMode:
+      profile.flipVisionMode === 'composite'
+        ? LOCAL_AI_STRICT_PROFILE_OVERRIDES.flipVisionMode
+        : profile.flipVisionMode,
+  }
+}
+
 function loadImage(source) {
   return new Promise((resolve, reject) => {
     const image = new Image()
@@ -145,7 +174,12 @@ function drawContain(context, image, target) {
   context.drawImage(image, offsetX, offsetY, drawWidth, drawHeight)
 }
 
-async function composeFlipVariant({flip, variant}) {
+async function composeFlipVariant({
+  flip,
+  variant,
+  frameWidth = 512,
+  frameHeight = 384,
+}) {
   const imageOrder = Array.isArray(flip.orders?.[variant - 1])
     ? flip.orders[variant - 1]
     : []
@@ -164,8 +198,6 @@ async function composeFlipVariant({flip, variant}) {
     orderedSources.map((source) => loadImage(source))
   )
 
-  const frameWidth = 512
-  const frameHeight = 384
   const canvas = document.createElement('canvas')
   canvas.width = frameWidth
   canvas.height = frameHeight * loadedImages.length
@@ -186,7 +218,12 @@ async function composeFlipVariant({flip, variant}) {
   return canvas.toDataURL('image/png')
 }
 
-async function composeFlipFrames({flip, variant}) {
+async function composeFlipFrames({
+  flip,
+  variant,
+  frameWidth = 512,
+  frameHeight = 384,
+}) {
   const imageOrder = Array.isArray(flip.orders?.[variant - 1])
     ? flip.orders[variant - 1]
     : []
@@ -204,9 +241,6 @@ async function composeFlipFrames({flip, variant}) {
   const loadedImages = await Promise.all(
     orderedSources.map((source) => loadImage(source))
   )
-
-  const frameWidth = 512
-  const frameHeight = 384
 
   return loadedImages.map((image) => {
     const canvas = document.createElement('canvas')
@@ -459,6 +493,7 @@ export async function solveValidationSessionWithAi({
   const provider = String(aiSolver.provider || 'openai')
     .trim()
     .toLowerCase()
+  const effectiveProfile = buildEffectiveProfile(profile, provider)
   const model = aiSolver.model || 'gpt-5.4'
   const providerConfig = buildProviderConfig(aiSolver)
   const consultProviders = buildConsultProviders(aiSolver, providerConfig)
@@ -475,10 +510,14 @@ export async function solveValidationSessionWithAi({
   }
 
   const startedAt = Date.now()
-  const buildDeadlineAt = Date.now() + profile.deadlineMs
+  const buildDeadlineAt = Date.now() + effectiveProfile.deadlineMs
   const payloadFlips = []
   const useFrameVision =
-    profile.flipVisionMode !== 'composite' || provider === 'local-ai'
+    effectiveProfile.flipVisionMode !== 'composite' || provider === 'local-ai'
+  const frameRenderSize =
+    provider === 'local-ai'
+      ? {frameWidth: 384, frameHeight: 288}
+      : {frameWidth: 512, frameHeight: 384}
 
   for (
     let candidateIndex = 0;
@@ -487,24 +526,34 @@ export async function solveValidationSessionWithAi({
   ) {
     if (Date.now() >= buildDeadlineAt) break
     const flip = candidateFlips[candidateIndex]
-    const leftImage = await composeFlipVariant({
-      flip,
-      variant: AnswerType.Left,
-    })
-    const rightImage = await composeFlipVariant({
-      flip,
-      variant: AnswerType.Right,
-    })
+    const leftImage =
+      effectiveProfile.flipVisionMode === 'composite'
+        ? await composeFlipVariant({
+            flip,
+            variant: AnswerType.Left,
+            ...frameRenderSize,
+          })
+        : null
+    const rightImage =
+      effectiveProfile.flipVisionMode === 'composite'
+        ? await composeFlipVariant({
+            flip,
+            variant: AnswerType.Right,
+            ...frameRenderSize,
+          })
+        : null
     const leftFrames = useFrameVision
       ? await composeFlipFrames({
           flip,
           variant: AnswerType.Left,
+          ...frameRenderSize,
         })
       : []
     const rightFrames = useFrameVision
       ? await composeFlipFrames({
           flip,
           variant: AnswerType.Right,
+          ...frameRenderSize,
         })
       : []
     const payload = {
@@ -565,20 +614,22 @@ export async function solveValidationSessionWithAi({
       legacyHeuristicOnly: Boolean(aiSolver.legacyHeuristicOnly),
       consultProviders,
       benchmarkProfile: profile.benchmarkProfile,
-      deadlineMs: profile.deadlineMs,
-      requestTimeoutMs: profile.requestTimeoutMs,
+      deadlineMs: effectiveProfile.deadlineMs,
+      requestTimeoutMs: effectiveProfile.requestTimeoutMs,
       maxConcurrency: 1,
-      maxRetries: profile.maxRetries,
-      maxOutputTokens: profile.maxOutputTokens,
-      temperature: profile.temperature,
-      forceDecision: profile.forceDecision,
-      uncertaintyRepromptEnabled: profile.uncertaintyRepromptEnabled,
-      uncertaintyConfidenceThreshold: profile.uncertaintyConfidenceThreshold,
+      maxRetries: effectiveProfile.maxRetries,
+      maxOutputTokens: effectiveProfile.maxOutputTokens,
+      temperature: effectiveProfile.temperature,
+      forceDecision: effectiveProfile.forceDecision,
+      uncertaintyRepromptEnabled: effectiveProfile.uncertaintyRepromptEnabled,
+      uncertaintyConfidenceThreshold:
+        effectiveProfile.uncertaintyConfidenceThreshold,
       uncertaintyRepromptMinRemainingMs:
-        profile.uncertaintyRepromptMinRemainingMs,
-      uncertaintyRepromptInstruction: profile.uncertaintyRepromptInstruction,
-      promptTemplateOverride: profile.promptTemplateOverride,
-      flipVisionMode: profile.flipVisionMode,
+        effectiveProfile.uncertaintyRepromptMinRemainingMs,
+      uncertaintyRepromptInstruction:
+        effectiveProfile.uncertaintyRepromptInstruction,
+      promptTemplateOverride: effectiveProfile.promptTemplateOverride,
+      flipVisionMode: effectiveProfile.flipVisionMode,
       flips: [payloadFlip],
       session: {
         ...(sessionMeta || {}),
@@ -634,7 +685,10 @@ export async function solveValidationSessionWithAi({
       await onDecision(decision)
     }
 
-    const delayMs = Math.max(0, toNumberOrFallback(profile.interFlipDelayMs, 0))
+    const delayMs = Math.max(
+      0,
+      toNumberOrFallback(effectiveProfile.interFlipDelayMs, 0)
+    )
     if (delayMs > 0 && index < payloadFlips.length - 1) {
       if (onProgress) {
         onProgress({
@@ -676,7 +730,7 @@ export async function solveValidationSessionWithAi({
   return {
     provider,
     model,
-    profile,
+    profile: effectiveProfile,
     summary,
     results,
     answers,

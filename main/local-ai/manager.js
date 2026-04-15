@@ -951,6 +951,8 @@ function createLocalAiManager({
       prompt: next.prompt,
       input: next.input,
       timeoutMs: next.timeoutMs,
+      responseFormat: next.responseFormat,
+      generationOptions: next.generationOptions,
     })
 
     updateSidecarState({

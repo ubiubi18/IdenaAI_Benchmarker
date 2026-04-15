@@ -57,10 +57,25 @@ def extract_images(example: Dict[str, Any]) -> list[str]:
     return [str(item) for item in images]
 
 
+def count_user_image_placeholders(messages: list[dict]) -> int:
+    count = 0
+    for message in messages:
+        for item in message.get("content") or []:
+            if isinstance(item, dict) and item.get("type") == "image":
+                count += 1
+    return count
+
+
 def build_generation_inputs(model, processor, example: Dict[str, Any]) -> Dict[str, Any]:
     user_messages = [message for message in (example.get("messages") or []) if message.get("role") == "user"]
     if not user_messages:
         raise ValueError("Example is missing user messages")
+    images = extract_images(example)
+    image_count = count_user_image_placeholders(user_messages)
+    if image_count and image_count != len(images):
+        raise ValueError(
+            f"Example image count mismatch: prompt expects {image_count}, dataset provides {len(images)}"
+        )
 
     prompt = processor.apply_chat_template(
         user_messages,
@@ -69,7 +84,7 @@ def build_generation_inputs(model, processor, example: Dict[str, Any]) -> Dict[s
     )
     prepared = prepare_inputs(
         processor,
-        extract_images(example),
+        images,
         prompt,
         model.config.image_token_index,
     )

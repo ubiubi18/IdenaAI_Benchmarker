@@ -61,6 +61,11 @@ const SYSTEM_CHAT_MESSAGE = {
   content:
     'You are a concise, practical assistant inside the Idena desktop app. Keep answers short and actionable.',
 }
+const OCR_IMAGE_CHAT_SYSTEM_MESSAGE = {
+  role: 'system',
+  content:
+    'If attached images contain text, read the visible text carefully before answering. For screenshots, prioritize OCR and the textual content over generic visual description. Quote or summarize the relevant text first when it matters for the answer.',
+}
 const QUICK_PROMPTS = [
   'Explain this node error in plain English.',
   'Help me draft better flips for the next validation.',
@@ -85,6 +90,7 @@ function createChatMessage(role, content, options = {}) {
     role,
     content: String(content || '').trim(),
     createdAt: new Date().toISOString(),
+    persistLocally: options.persistLocally !== false,
     attachments: Array.isArray(options.attachments)
       ? options.attachments
           .map((item, index) => {
@@ -137,6 +143,7 @@ function normalizeStoredChatHistory(value) {
         role,
         content,
         createdAt,
+        persistLocally: item?.persistLocally !== false,
         flipContext: String(item?.flipContext || '').trim() || null,
       }
     })
@@ -163,21 +170,26 @@ function persistStoredChatHistory(messages) {
     return
   }
 
-  const normalizedMessages = normalizeStoredChatHistory(messages)
+  const normalizedMessages = normalizeStoredChatHistory(messages).filter(
+    (message) => message && message.persistLocally !== false
+  )
 
   window.localStorage.setItem(
     CHAT_HISTORY_STORAGE_KEY,
     JSON.stringify(
-      normalizedMessages.map(({id, role, content, createdAt, flipContext}) => ({
-        id,
-        role,
-        content,
-        createdAt,
-        flipContext:
-          typeof flipContext === 'string' && flipContext.trim()
-            ? flipContext.trim()
-            : null,
-      }))
+      normalizedMessages.map(
+        ({id, role, content, createdAt, flipContext, persistLocally}) => ({
+          id,
+          role,
+          content,
+          createdAt,
+          persistLocally: persistLocally !== false,
+          flipContext:
+            typeof flipContext === 'string' && flipContext.trim()
+              ? flipContext.trim()
+              : null,
+        })
+      )
     )
   )
 }
@@ -735,6 +747,7 @@ export default function AiChatPage() {
 
     const userMessage = createChatMessage('user', effectivePrompt, {
       attachments: outgoingAttachments,
+      persistLocally: outgoingAttachments.length === 0,
     })
     const nextHistory = [...messages, userMessage].slice(-CHAT_HISTORY_LIMIT)
 
@@ -817,8 +830,18 @@ export default function AiChatPage() {
                 },
               ]
             : []),
+          ...(outgoingAttachments.length > 0
+            ? [OCR_IMAGE_CHAT_SYSTEM_MESSAGE]
+            : []),
           ...bridgeMessages,
         ],
+        generationOptions:
+          outgoingAttachments.length > 0
+            ? {
+                temperature: 0,
+                num_predict: 256,
+              }
+            : null,
       })
       const assistantContent = extractChatContent(result)
 
@@ -846,6 +869,7 @@ export default function AiChatPage() {
           createChatMessage('assistant', displayText, {
             flipAnalysis,
             flipContext: currentFlipContext || followUpFlipContext || null,
+            persistLocally: outgoingAttachments.length === 0,
           }),
         ].slice(-CHAT_HISTORY_LIMIT)
       )
@@ -1424,7 +1448,7 @@ export default function AiChatPage() {
                       <Text color="muted" fontSize="sm">
                         {attachments.length > 0
                           ? t(
-                              'Attached images stay local to this desktop session. Text history is stored only in this desktop profile.'
+                              'Attached images and image-derived AI replies stay only in this live session. They are not saved into chat history.'
                             )
                           : t(
                               'Conversation history is stored only in this desktop profile.'
