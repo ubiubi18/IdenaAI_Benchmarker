@@ -110,6 +110,10 @@ function createChatMessage(role, content, options = {}) {
       options.flipAnalysis && typeof options.flipAnalysis === 'object'
         ? options.flipAnalysis
         : null,
+    flipContext:
+      typeof options.flipContext === 'string' && options.flipContext.trim()
+        ? options.flipContext.trim()
+        : null,
   }
 }
 
@@ -133,6 +137,7 @@ function normalizeStoredChatHistory(value) {
         role,
         content,
         createdAt,
+        flipContext: String(item?.flipContext || '').trim() || null,
       }
     })
     .filter(Boolean)
@@ -158,17 +163,21 @@ function persistStoredChatHistory(messages) {
     return
   }
 
+  const normalizedMessages = normalizeStoredChatHistory(messages)
+
   window.localStorage.setItem(
     CHAT_HISTORY_STORAGE_KEY,
     JSON.stringify(
-      normalizeStoredChatHistory(messages).map(
-        ({id, role, content, createdAt}) => ({
-          id,
-          role,
-          content,
-          createdAt,
-        })
-      )
+      normalizedMessages.map(({id, role, content, createdAt, flipContext}) => ({
+        id,
+        role,
+        content,
+        createdAt,
+        flipContext:
+          typeof flipContext === 'string' && flipContext.trim()
+            ? flipContext.trim()
+            : null,
+      }))
     )
   )
 }
@@ -191,7 +200,7 @@ function persistStoredDraft(value) {
 
 function formatRuntimeStatusError(result, t) {
   const message = String(
-    (result && (result.error || result.lastError)) || ''
+    (result && (result.lastError || result.error)) || ''
   ).trim()
 
   if (message === 'local_ai_disabled') {
@@ -204,6 +213,12 @@ function formatRuntimeStatusError(result, t) {
 
   if (message === 'local_ai_unavailable') {
     return t('The configured Local AI runtime is not reachable yet.')
+  }
+
+  if (message === 'invalid_response') {
+    return t(
+      'The Local AI runtime returned an empty reply. Try sending the images again or ask a shorter follow-up.'
+    )
   }
 
   return message || t('The configured Local AI runtime is not reachable yet.')
@@ -336,13 +351,82 @@ function formatBundledSampleFlipNotice(meta, t) {
   })
 }
 
-function toBridgeMessage(message) {
+function buildFlipContextSummary({
+  prompt,
+  attachments,
+  bundledSampleMeta,
+  flipAnalysis,
+}) {
+  const lines = []
+  const nextPrompt = String(prompt || '').trim()
+
+  if (bundledSampleMeta?.sampleIndex) {
+    lines.push(`Bundled sample flip: #${bundledSampleMeta.sampleIndex}`)
+  }
+
+  if (bundledSampleMeta?.hash) {
+    lines.push(`Bundled sample hash: ${bundledSampleMeta.hash}`)
+  }
+
+  if (bundledSampleMeta?.expectedAnswer) {
+    lines.push(
+      `Bundled sample expected answer: ${bundledSampleMeta.expectedAnswer}`
+    )
+  }
+
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    lines.push(`Attached panel count: ${attachments.length}`)
+  }
+
+  if (nextPrompt) {
+    lines.push(`Original user ask: ${nextPrompt}`)
+  }
+
+  const analysisText = formatFlipAnalysisForPrompt(flipAnalysis)
+  if (analysisText) {
+    lines.push(`Local flip analysis:\n${analysisText}`)
+  }
+
+  return lines.join('\n').trim()
+}
+
+function findLatestFlipContext(messages = []) {
+  const reversed = Array.isArray(messages) ? [...messages].reverse() : []
+
+  return (
+    reversed.find(
+      (message) =>
+        message &&
+        typeof message.flipContext === 'string' &&
+        message.flipContext.trim()
+    ) || null
+  )
+}
+
+function getFlipContextSourceLabel(flipContext) {
+  const text = String(flipContext || '').trim()
+
+  if (!text) {
+    return ''
+  }
+
+  const firstLine = text.split('\n').find((line) => String(line || '').trim())
+
+  return String(firstLine || '').trim()
+}
+
+function toBridgeMessage(message, options = {}) {
+  const includeImages = Boolean(options.includeImages)
   const next = {
     role: message.role,
     content: message.content,
   }
 
-  if (Array.isArray(message.attachments) && message.attachments.length > 0) {
+  if (
+    includeImages &&
+    Array.isArray(message.attachments) &&
+    message.attachments.length > 0
+  ) {
     next.images = message.attachments
       .map(({dataUrl}) => dataUrl)
       .filter(Boolean)
@@ -510,6 +594,24 @@ export default function AiChatPage() {
     })
   }, [messages, isSending])
 
+  const latestFlipContextMessage = React.useMemo(
+    () => findLatestFlipContext(messages),
+    [messages]
+  )
+  const draftText = String(draft || '').trim()
+  const willUseRetainedFlipContext = React.useMemo(
+    () =>
+      attachments.length === 0 &&
+      FLIP_REQUEST_PATTERN.test(draftText) &&
+      Boolean(latestFlipContextMessage?.flipContext),
+    [attachments.length, draftText, latestFlipContextMessage]
+  )
+  const retainedFlipContextSource = React.useMemo(
+    () => getFlipContextSourceLabel(latestFlipContextMessage?.flipContext),
+    [latestFlipContextMessage]
+  )
+  const hasRetainedFlipContext = Boolean(latestFlipContextMessage?.flipContext)
+
   const refreshRuntimeStatus = React.useCallback(async () => {
     setIsCheckingStatus(true)
 
@@ -671,10 +773,42 @@ export default function AiChatPage() {
       }
 
       const analysisContext = formatFlipAnalysisForPrompt(flipAnalysis)
+      const followUpFlipContext =
+        outgoingAttachments.length === 0 &&
+        FLIP_REQUEST_PATTERN.test(effectivePrompt) &&
+        latestFlipContextMessage?.flipContext
+          ? latestFlipContextMessage.flipContext
+          : ''
+      const currentFlipContext = buildFlipContextSummary({
+        prompt: effectivePrompt,
+        attachments: outgoingAttachments,
+        bundledSampleMeta: bundledSampleFlip?.meta,
+        flipAnalysis,
+      })
+      const bridgeMessages = nextHistory.map((entry) =>
+        toBridgeMessage(entry, {
+          // Keep raw image payloads only for the current turn. Older image
+          // attachments stay visible in the UI but are represented by their
+          // textual chat history on follow-up turns, which avoids empty
+          // multimodal responses from the local runtime on stale image context.
+          includeImages:
+            outgoingAttachments.length > 0 && entry.id === userMessage.id,
+        })
+      )
       const result = await bridge.chat({
         ...runtimePayload,
         messages: [
           SYSTEM_CHAT_MESSAGE,
+          ...(followUpFlipContext
+            ? [
+                {
+                  role: 'system',
+                  content:
+                    `The user is asking about the last discussed flip without reattaching images. ` +
+                    `Use the following retained flip context instead of expecting image payloads:\n${followUpFlipContext}`,
+                },
+              ]
+            : []),
           ...(analysisContext
             ? [
                 {
@@ -683,7 +817,7 @@ export default function AiChatPage() {
                 },
               ]
             : []),
-          ...nextHistory.map(toBridgeMessage),
+          ...bridgeMessages,
         ],
       })
       const assistantContent = extractChatContent(result)
@@ -709,7 +843,10 @@ export default function AiChatPage() {
       setMessages((current) =>
         [
           ...current,
-          createChatMessage('assistant', displayText, {flipAnalysis}),
+          createChatMessage('assistant', displayText, {
+            flipAnalysis,
+            flipContext: currentFlipContext || followUpFlipContext || null,
+          }),
         ].slice(-CHAT_HISTORY_LIMIT)
       )
       setStatusResult(result)
@@ -725,6 +862,7 @@ export default function AiChatPage() {
     attachments,
     draft,
     isSending,
+    latestFlipContextMessage,
     messages,
     runtimePayload,
     t,
@@ -751,6 +889,17 @@ export default function AiChatPage() {
 
   const handleQuickPrompt = React.useCallback((value) => {
     setDraft(value)
+  }, [])
+
+  const handleClearFlipContext = React.useCallback(() => {
+    setMessages((current) =>
+      current.map((message) =>
+        message && message.flipContext
+          ? {...message, flipContext: null}
+          : message
+      )
+    )
+    setLastError('')
   }, [])
 
   const handleEnableLocalAi = React.useCallback(() => {
@@ -1128,6 +1277,69 @@ export default function AiChatPage() {
                         )}
                       </HStack>
                     </Flex>
+
+                    {hasRetainedFlipContext && (
+                      <Box
+                        bg="gray.50"
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="lg"
+                        px={3}
+                        py={3}
+                      >
+                        <Flex
+                          justify="space-between"
+                          align={['flex-start', 'center']}
+                          direction={['column', 'row']}
+                          gap={3}
+                        >
+                          <Stack spacing={1}>
+                            <Badge variant="subtle" colorScheme="gray">
+                              {t('Retained flip context')}
+                            </Badge>
+                            {retainedFlipContextSource && (
+                              <Text color="muted" fontSize="xs">
+                                {t('Context source')}:{' '}
+                                {retainedFlipContextSource}
+                              </Text>
+                            )}
+                          </Stack>
+                          <SecondaryButton onClick={handleClearFlipContext}>
+                            {t('Clear flip context')}
+                          </SecondaryButton>
+                        </Flex>
+                      </Box>
+                    )}
+
+                    {willUseRetainedFlipContext && (
+                      <Box
+                        bg="blue.50"
+                        borderWidth="1px"
+                        borderColor="blue.100"
+                        borderRadius="lg"
+                        px={3}
+                        py={3}
+                      >
+                        <HStack spacing={3} align="flex-start">
+                          <Badge colorScheme="blue">
+                            {t('Using last flip context')}
+                          </Badge>
+                          <Stack spacing={1}>
+                            <Text color="brandGray.500" fontSize="sm">
+                              {t(
+                                'This message will use the last discussed flip as retained context instead of resending the earlier image panels.'
+                              )}
+                            </Text>
+                            {retainedFlipContextSource && (
+                              <Text color="muted" fontSize="xs">
+                                {t('Context source')}:{' '}
+                                {retainedFlipContextSource}
+                              </Text>
+                            )}
+                          </Stack>
+                        </HStack>
+                      </Box>
+                    )}
 
                     {attachments.length > 0 && (
                       <Box
