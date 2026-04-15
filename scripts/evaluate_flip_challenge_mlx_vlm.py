@@ -27,18 +27,53 @@ def patch_qwen_tokenizer_vocab() -> None:
         Qwen2Tokenizer.vocab = property(lambda self: self.get_vocab())
 
 
-def normalize_answer(value: Any) -> Optional[str]:
+def normalize_candidate_answer(value: Any) -> Optional[str]:
     text = str(value or "").strip().lower()
     if not text:
         return None
 
     first_token = text.split()[0]
+    if first_token in {"a", "option", "candidate"}:
+        if text.startswith("option a") or text.startswith("candidate a"):
+            return "a"
+        if text.startswith("option b") or text.startswith("candidate b"):
+            return "b"
+        if first_token == "a":
+            return "a"
+    if first_token in {"b"}:
+        return "b"
     if first_token in {"left", "l"}:
         return "left"
     if first_token in {"right", "r"}:
         return "right"
     if first_token in {"skip", "report", "reported", "inappropriate"}:
         return "skip"
+    return None
+
+
+def get_option_mapping(example: Dict[str, Any]) -> tuple[str, str]:
+    option_a_maps_to = str(example.get("option_a_maps_to") or "").strip().lower()
+    option_b_maps_to = str(example.get("option_b_maps_to") or "").strip().lower()
+
+    if option_a_maps_to in {"left", "right"} and option_b_maps_to in {"left", "right"}:
+        return option_a_maps_to, option_b_maps_to
+
+    return "left", "right"
+
+
+def to_canonical_answer(candidate_answer: Optional[str], example: Dict[str, Any]) -> Optional[str]:
+    if candidate_answer in {None, ""}:
+        return None
+    if candidate_answer == "skip":
+        return "skip"
+    if candidate_answer in {"left", "right"}:
+        return candidate_answer
+
+    option_a_maps_to, option_b_maps_to = get_option_mapping(example)
+    if candidate_answer == "a":
+        return option_a_maps_to
+    if candidate_answer == "b":
+        return option_b_maps_to
     return None
 
 
@@ -195,7 +230,10 @@ def evaluate(args) -> int:
     print(f"Evaluating {len(raw_dataset)} example(s)")
     for index, example in enumerate(raw_dataset, start=1):
         prepared_inputs = build_generation_inputs(model, processor, example)
-        expected = normalize_answer(example.get("expected_answer"))
+        expected = to_canonical_answer(
+            normalize_candidate_answer(example.get("expected_answer")),
+            example,
+        )
         response = ""
         candidate_scores = {}
 
@@ -217,23 +255,29 @@ def evaluate(args) -> int:
                 },
             )
 
-        generated_prediction = normalize_answer(response)
+        generated_candidate = normalize_candidate_answer(response)
 
         if args.mode in {"score", "both"}:
+            answer_labels = (
+                ["a", "b", "skip"]
+                if example.get("option_a_maps_to") and example.get("option_b_maps_to")
+                else ["left", "right", "skip"]
+            )
             candidate_scores = score_answer_candidates(
                 model,
                 processor,
                 prepared_inputs,
-                ["left", "right", "skip"],
+                answer_labels,
             )
 
-        scored_prediction = predict_from_candidate_scores(candidate_scores)
+        scored_candidate = predict_from_candidate_scores(candidate_scores)
         predicted = (
-            scored_prediction
+            to_canonical_answer(scored_candidate, example)
             if args.mode == "score"
-            else generated_prediction
+            else to_canonical_answer(generated_candidate, example)
             if args.mode == "generate"
-            else scored_prediction or generated_prediction
+            else to_canonical_answer(scored_candidate, example)
+            or to_canonical_answer(generated_candidate, example)
         )
         is_correct = expected is not None and predicted == expected
 
@@ -249,13 +293,17 @@ def evaluate(args) -> int:
             "flipHash": example.get("flip_hash"),
             "expected": expected,
             "predicted": predicted,
-            "generatedPrediction": generated_prediction,
-            "scoredPrediction": scored_prediction,
+            "generatedPrediction": to_canonical_answer(generated_candidate, example),
+            "scoredPrediction": to_canonical_answer(scored_candidate, example),
+            "generatedCandidate": generated_candidate,
+            "scoredCandidate": scored_candidate,
             "rawResponse": response,
             "candidateScores": candidate_scores,
             "correct": is_correct,
             "trainingWeight": example.get("training_weight"),
             "rankingSource": example.get("ranking_source"),
+            "optionAMapsTo": example.get("option_a_maps_to"),
+            "optionBMapsTo": example.get("option_b_maps_to"),
         }
         results.append(item)
         print(json.dumps(item, ensure_ascii=False))

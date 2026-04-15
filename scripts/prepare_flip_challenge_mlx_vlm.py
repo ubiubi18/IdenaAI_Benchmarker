@@ -65,19 +65,19 @@ DEFAULT_COMPOSITE_PROMPT_TEMPLATE = (
     "There are four candidate panels for one flip shown in a single 2x2 composite image. "
     "Panel 1 is top-left, panel 2 is top-right, panel 3 is bottom-left, and panel 4 is bottom-right. "
     "Two possible story orders are proposed.\n"
-    "LEFT order: panels {left_order}.\n"
-    "RIGHT order: panels {right_order}.\n"
+    "OPTION A: panels {option_a_order}.\n"
+    "OPTION B: panels {option_b_order}.\n"
     "If neither order tells a coherent story, or the flip should be reported, answer skip.\n"
-    "Reply with exactly one lowercase word: left, right, or skip."
+    "Reply with exactly one lowercase token: a, b, or skip."
 )
 DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE = (
     "You are solving an Idena FLIP validation challenge. "
     "You are given eight native frame images in order.\n"
-    "Images 1-4 belong to the LEFT story in temporal order.\n"
-    "Images 5-8 belong to the RIGHT story in temporal order.\n"
+    "Images 1-4 belong to OPTION A in temporal order.\n"
+    "Images 5-8 belong to OPTION B in temporal order.\n"
     "Choose the more coherent chronological story.\n"
     "If neither story tells a coherent story, or the flip should be reported, answer skip.\n"
-    "Reply with exactly one lowercase word: left, right, or skip."
+    "Reply with exactly one lowercase token: a, b, or skip."
 )
 COMPOSITE_MAX_SIZE = (448, 448)
 
@@ -170,6 +170,11 @@ def format_order(order: List[int]) -> str:
     return ", ".join(str(index + 1) for index in order)
 
 
+def choose_option_a_mapping(task_id: str) -> str:
+    score = sum(ord(character) for character in str(task_id or ""))
+    return "left" if score % 2 == 0 else "right"
+
+
 def load_panel_image(raw: bytes) -> Image.Image:
     image = Image.open(BytesIO(raw))
     image = ImageOps.exif_transpose(image)
@@ -246,14 +251,14 @@ def build_flip_composite(raw_panels: List[bytes]) -> Image.Image:
 
 def build_training_messages(
     prompt_template: str,
-    left_stack: List[int],
-    right_stack: List[int],
-    expected_answer: str,
+    option_a_order: List[int],
+    option_b_order: List[int],
+    training_target: str,
     image_count: int,
 ) -> List[dict]:
     prompt = prompt_template.format(
-        left_order=format_order(left_stack),
-        right_order=format_order(right_stack),
+        option_a_order=format_order(option_a_order),
+        option_b_order=format_order(option_b_order),
     )
     return [
         {
@@ -263,7 +268,7 @@ def build_training_messages(
         },
         {
             "role": "assistant",
-            "content": [{"type": "text", "text": expected_answer}],
+            "content": [{"type": "text", "text": training_target}],
         },
     ]
 
@@ -280,29 +285,29 @@ def build_training_images(
     image_mode: str,
     composite_path: Path,
     saved_images: List[str],
-    left_stack: List[int],
-    right_stack: List[int],
+    option_a_stack: List[int],
+    option_b_stack: List[int],
 ) -> Tuple[List[str], List[str], List[str]]:
     normalized_mode = normalize_image_mode(image_mode)
-    left_frame_images = [
+    option_a_frame_images = [
         saved_images[index]
-        for index in left_stack
+        for index in option_a_stack
         if 0 <= index < len(saved_images)
     ]
-    right_frame_images = [
+    option_b_frame_images = [
         saved_images[index]
-        for index in right_stack
+        for index in option_b_stack
         if 0 <= index < len(saved_images)
     ]
 
     if normalized_mode == "native_frames":
         return (
-            left_frame_images + right_frame_images,
-            left_frame_images,
-            right_frame_images,
+            option_a_frame_images + option_b_frame_images,
+            option_a_frame_images,
+            option_b_frame_images,
         )
 
-    return ([str(composite_path.resolve())], left_frame_images, right_frame_images)
+    return ([str(composite_path.resolve())], option_a_frame_images, option_b_frame_images)
 
 
 def build_training_record(
@@ -374,6 +379,17 @@ def build_training_record(
     )
 
     ranking = build_historical_signals(task_id, task_data)
+    option_a_maps_to = choose_option_a_mapping(task_id)
+    option_b_maps_to = "right" if option_a_maps_to == "left" else "left"
+    option_a_order = left_stack if option_a_maps_to == "left" else right_stack
+    option_b_order = right_stack if option_a_maps_to == "left" else left_stack
+    training_target = (
+        "a"
+        if expected_answer == option_a_maps_to
+        else "b"
+        if expected_answer == option_b_maps_to
+        else "skip"
+    )
     canonical_record = {
         "schema_version": "idena.flip-training.v1",
         "sample_id": task_id,
@@ -386,15 +402,26 @@ def build_training_record(
         "training_image_mode": normalize_image_mode(image_mode),
         "messages": build_training_messages(
             prompt_template,
-            left_stack,
-            right_stack,
-            expected_answer,
+            option_a_order,
+            option_b_order,
+            training_target,
             len(training_images),
         ),
+        "training_target": training_target,
         "expected_answer": expected_answer,
         "expected_strength": expected_strength or "",
         "left_order": left_stack,
         "right_order": right_stack,
+        "option_a_maps_to": option_a_maps_to,
+        "option_b_maps_to": option_b_maps_to,
+        "option_a_order": option_a_order,
+        "option_b_order": option_b_order,
+        "option_a_frame_images": left_frame_images
+        if option_a_maps_to == "left"
+        else right_frame_images,
+        "option_b_frame_images": right_frame_images
+        if option_a_maps_to == "left"
+        else left_frame_images,
         "training_weight": ranking.training_weight,
         "ranking_source": ranking.ranking_source,
         "source": {
@@ -408,23 +435,25 @@ def build_training_record(
 
 
 def build_swapped_training_record(record: dict, prompt_template: str) -> dict:
+    option_a_maps_to = record["option_b_maps_to"]
+    option_b_maps_to = record["option_a_maps_to"]
+    option_a_order = list(record["option_b_order"])
+    option_b_order = list(record["option_a_order"])
+    option_a_frame_images = list(record.get("option_b_frame_images") or [])
+    option_b_frame_images = list(record.get("option_a_frame_images") or [])
     expected_answer = record["expected_answer"]
-    if expected_answer == "left":
-        swapped_answer = "right"
-    elif expected_answer == "right":
-        swapped_answer = "left"
-    else:
-        swapped_answer = expected_answer
-
-    left_order = list(record["right_order"])
-    right_order = list(record["left_order"])
-    left_frame_images = list(record.get("right_frame_images") or [])
-    right_frame_images = list(record.get("left_frame_images") or [])
+    swapped_target = (
+        "a"
+        if expected_answer == option_a_maps_to
+        else "b"
+        if expected_answer == option_b_maps_to
+        else "skip"
+    )
     training_image_mode = normalize_image_mode(
         record.get("training_image_mode", "composite")
     )
     images = (
-        left_frame_images + right_frame_images
+        option_a_frame_images + option_b_frame_images
         if training_image_mode == "native_frames"
         else list(record["images"])
     )
@@ -433,18 +462,22 @@ def build_swapped_training_record(record: dict, prompt_template: str) -> dict:
         "sample_id": f'{record["flip_hash"]}::swap',
         "prompt_variant": "swapped-orders",
         "images": images,
-        "left_frame_images": left_frame_images,
-        "right_frame_images": right_frame_images,
+        "left_frame_images": list(record["left_frame_images"]),
+        "right_frame_images": list(record["right_frame_images"]),
+        "option_a_frame_images": option_a_frame_images,
+        "option_b_frame_images": option_b_frame_images,
         "messages": build_training_messages(
             prompt_template,
-            left_order,
-            right_order,
-            swapped_answer,
+            option_a_order,
+            option_b_order,
+            swapped_target,
             len(images),
         ),
-        "expected_answer": swapped_answer,
-        "left_order": left_order,
-        "right_order": right_order,
+        "training_target": swapped_target,
+        "option_a_maps_to": option_a_maps_to,
+        "option_b_maps_to": option_b_maps_to,
+        "option_a_order": option_a_order,
+        "option_b_order": option_b_order,
     }
     return swapped
 
@@ -642,11 +675,16 @@ def main() -> int:
     write_jsonl(jsonl_path, records)
 
     counts_by_answer: Dict[str, int] = {}
+    counts_by_training_target: Dict[str, int] = {}
     ranking_sources: Dict[str, int] = {}
     training_weights: List[float] = []
     for item in records:
         answer = item["expected_answer"]
         counts_by_answer[answer] = counts_by_answer.get(answer, 0) + 1
+        training_target = item.get("training_target") or "unknown"
+        counts_by_training_target[training_target] = (
+            counts_by_training_target.get(training_target, 0) + 1
+        )
         ranking_source = item.get("ranking_source") or "unknown"
         ranking_sources[ranking_source] = ranking_sources.get(ranking_source, 0) + 1
         try:
@@ -673,6 +711,7 @@ def main() -> int:
         },
         "imageMode": selected_image_mode,
         "countsByAnswer": counts_by_answer,
+        "countsByTrainingTarget": counts_by_training_target,
         "rankingSources": ranking_sources,
         "trainingWeight": training_weight_summary,
         "hfDatasetPath": str(hf_dataset_dir),
@@ -690,6 +729,7 @@ def main() -> int:
                 "jsonlPath": str(jsonl_path),
                 "manifestPath": str(manifest_path),
                 "countsByAnswer": counts_by_answer,
+                "countsByTrainingTarget": counts_by_training_target,
             },
             indent=2,
         )
