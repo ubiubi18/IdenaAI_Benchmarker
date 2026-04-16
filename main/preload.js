@@ -643,9 +643,13 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
   return {
     epoch: sanitizeInteger(source.epoch, null, 0),
     currentEpoch: sanitizeInteger(source.currentEpoch, null, 0),
+    currentPeriod: sanitizeOptionalBoundedString(source.currentPeriod, 64),
+    offset: sanitizeInteger(source.offset, 0, 0),
     sampleName: sanitizeOptionalBoundedString(source.sampleName, 128),
     batchSize: sanitizeInteger(source.batchSize, null, 1, 50),
     includePackage: sanitizeBoolean(source.includePackage, false),
+    trainNow: sanitizeBoolean(source.trainNow, false),
+    advance: sanitizeBoolean(source.advance, false),
     refreshPublicFallback: sanitizeBoolean(source.refreshPublicFallback, false),
     fetchFlipPayloads: sanitizeBoolean(source.fetchFlipPayloads, false),
     requireFlipPayloads: sanitizeBoolean(source.requireFlipPayloads, false),
@@ -1164,9 +1168,19 @@ const localAiBridge = Object.freeze({
       'localAi.loadHumanTeacherDemoWorkspace',
       sanitizeLocalAiEpochPayload(payload)
     ),
+  loadHumanTeacherDeveloperSession: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherDeveloperSession',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
   loadHumanTeacherDemoTask: (payload) =>
     invokeCloneable(
       'localAi.loadHumanTeacherDemoTask',
+      sanitizeLocalAiAnnotationPayload(payload)
+    ),
+  loadHumanTeacherDeveloperTask: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherDeveloperTask',
       sanitizeLocalAiAnnotationPayload(payload)
     ),
   loadHumanTeacherAnnotationWorkspace: (payload) =>
@@ -1193,6 +1207,16 @@ const localAiBridge = Object.freeze({
     invokeCloneable(
       'localAi.saveHumanTeacherDemoDraft',
       sanitizeLocalAiAnnotationPayload(payload)
+    ),
+  saveHumanTeacherDeveloperDraft: (payload) =>
+    invokeCloneable(
+      'localAi.saveHumanTeacherDeveloperDraft',
+      sanitizeLocalAiAnnotationPayload(payload)
+    ),
+  finalizeHumanTeacherDeveloperChunk: (payload) =>
+    invokeCloneable(
+      'localAi.finalizeHumanTeacherDeveloperChunk',
+      sanitizeLocalAiEpochPayload(payload)
     ),
   importHumanTeacherAnnotations: (payload) =>
     invokeCloneable(

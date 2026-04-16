@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import React from 'react'
 import {useMachine} from '@xstate/react'
+import {useRouter} from 'next/router'
 import {
   Flex,
   Box,
@@ -50,6 +51,7 @@ import {flipsMachine} from '../../screens/flips/machines'
 import {useIdentityState} from '../../shared/providers/identity-context'
 import {loadPersistentState} from '../../shared/utils/persist'
 import {useChainState} from '../../shared/providers/chain-context'
+import {EpochPeriod, useEpochState} from '../../shared/providers/epoch-context'
 import Layout from '../../shared/components/layout'
 import {useOnboarding} from '../../shared/providers/onboarding-context'
 import {
@@ -118,7 +120,9 @@ function pickFlipImagesForAiQueue(flip) {
 
 export default function FlipListPage() {
   const {t} = useTranslation()
+  const router = useRouter()
   const toast = useToast()
+  const epoch = useEpochState()
 
   const {
     isOpen: isOpenDeleteForm,
@@ -239,6 +243,10 @@ export default function FlipListPage() {
   })
 
   const {flips, missingFlips, filter} = current.context
+  const isValidationRunning = [
+    EpochPeriod.ShortSession,
+    EpochPeriod.LongSession,
+  ].includes(String(epoch?.currentPeriod || '').trim())
 
   const filterFlips = () => {
     switch (filter) {
@@ -310,48 +318,62 @@ export default function FlipListPage() {
               {t('Archived')}
             </Button>
           </HStack>
-          <Box alignSelf="flex-end">
-            <OnboardingPopover
-              isOpen={eitherOnboardingState(
-                onboardingShowingStep(OnboardingStep.CreateFlips)
-              )}
-            >
-              <PopoverTrigger>
-                <Box>
-                  <IconLink
-                    href="/flips/new"
-                    icon={<PlusSolidIcon boxSize="5" />}
-                    bg="white"
-                    position="relative"
-                    zIndex={2}
-                  >
-                    {t('New flip')}
-                  </IconLink>
-                </Box>
-              </PopoverTrigger>
-              <OnboardingPopoverContent
-                title={t('Create required flips')}
-                onDismiss={dismissCurrentTask}
+          <HStack spacing="3" alignSelf="flex-end">
+            {!isValidationRunning ? (
+              <Button
+                variant="outline"
+                onClick={() =>
+                  router.push(
+                    '/settings/ai-human-teacher?developer=1&action=start'
+                  )
+                }
               >
-                <Stack>
-                  <Text>
-                    {t(`You need to create at least 3 flips per epoch to participate
+                {t('Train your AI on flips')}
+              </Button>
+            ) : null}
+            <Box alignSelf="flex-end">
+              <OnboardingPopover
+                isOpen={eitherOnboardingState(
+                  onboardingShowingStep(OnboardingStep.CreateFlips)
+                )}
+              >
+                <PopoverTrigger>
+                  <Box>
+                    <IconLink
+                      href="/flips/new"
+                      icon={<PlusSolidIcon boxSize="5" />}
+                      bg="white"
+                      position="relative"
+                      zIndex={2}
+                    >
+                      {t('New flip')}
+                    </IconLink>
+                  </Box>
+                </PopoverTrigger>
+                <OnboardingPopoverContent
+                  title={t('Create required flips')}
+                  onDismiss={dismissCurrentTask}
+                >
+                  <Stack>
+                    <Text>
+                      {t(`You need to create at least 3 flips per epoch to participate
                     in the next validation ceremony. Follow step-by-step
                     instructions.`)}
-                  </Text>
-                  <OnboardingPopoverContentIconRow icon={RewardIcon}>
-                    {t(
-                      `You'll get rewarded for every successfully qualified flip.`
-                    )}
-                  </OnboardingPopoverContentIconRow>
-                  <OnboardingPopoverContentIconRow icon={PenaltyIcon}>
-                    {t(`Read carefully "What is a bad flip" rules to avoid
+                    </Text>
+                    <OnboardingPopoverContentIconRow icon={RewardIcon}>
+                      {t(
+                        `You'll get rewarded for every successfully qualified flip.`
+                      )}
+                    </OnboardingPopoverContentIconRow>
+                    <OnboardingPopoverContentIconRow icon={PenaltyIcon}>
+                      {t(`Read carefully "What is a bad flip" rules to avoid
                       penalty.`)}
-                  </OnboardingPopoverContentIconRow>
-                </Stack>
-              </OnboardingPopoverContent>
-            </OnboardingPopover>
-          </Box>
+                    </OnboardingPopoverContentIconRow>
+                  </Stack>
+                </OnboardingPopoverContent>
+              </OnboardingPopover>
+            </Box>
+          </HStack>
         </Flex>
 
         {current.matches('ready.dirty.active') &&

@@ -46,11 +46,15 @@ function normalizeConfidence(value) {
 }
 
 function normalizeCaptions(value) {
-  if (!Array.isArray(value)) {
-    return []
+  const captions = Array.isArray(value)
+    ? value.slice(0, 4).map((item) => trimText(item, 400))
+    : []
+
+  while (captions.length < 4) {
+    captions.push('')
   }
 
-  return value.slice(0, 4).map((item) => trimText(item, 400))
+  return captions
 }
 
 function validateFinalAnswer(value) {
@@ -81,10 +85,6 @@ async function loadJsonl(filePath) {
 
 function normalizeAnnotation(taskRow, annotationRow) {
   const frameCaptions = normalizeCaptions(annotationRow.frame_captions)
-
-  if (frameCaptions.length !== 4) {
-    throw new Error('frame_captions must contain 4 entries')
-  }
 
   return {
     task_id: taskRow.task_id,

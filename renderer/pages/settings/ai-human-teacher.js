@@ -5,15 +5,18 @@ import {
   Box,
   Flex,
   Image,
+  Progress,
   SimpleGrid,
   Stack,
   Text,
+  useToast,
 } from '@chakra-ui/react'
 import {useRouter} from 'next/router'
 import {useTranslation} from 'react-i18next'
 import SettingsLayout from '../../screens/settings/layout'
 import {SettingsSection} from '../../screens/settings/components'
 import {PrimaryButton, SecondaryButton} from '../../shared/components/button'
+import {rewardWithConfetti} from '../../shared/utils/onboarding'
 import {
   Checkbox,
   FormLabel,
@@ -22,6 +25,8 @@ import {
   Textarea,
 } from '../../shared/components/components'
 import {useEpochState} from '../../shared/providers/epoch-context'
+
+const HUMAN_TEACHER_SET_LIMIT = 30
 
 function formatErrorMessage(error) {
   const raw = String((error && error.message) || error || '').trim()
@@ -38,6 +43,14 @@ function formatErrorMessage(error) {
 
   if (/Local AI human-teacher bridge is unavailable/i.test(message)) {
     return 'The human-teacher bridge is unavailable in this build. Fully restart IdenaAI and try again.'
+  }
+
+  if (
+    /Developer human-teacher .* blocked while a validation session is running/i.test(
+      message
+    )
+  ) {
+    return 'Developer flip training is unavailable while a validation session is running. Save your notes and return after validation ends.'
   }
 
   return message || 'Unknown error'
@@ -71,7 +84,7 @@ function describeHumanTeacherPackage(t, result = {}) {
     return {
       label: t('Unavailable'),
       tone: 'gray',
-      detail: t('No human-teacher package exists for this epoch yet.'),
+      detail: t('No human-teacher annotation set exists for this epoch yet.'),
     }
   }
 
@@ -80,7 +93,7 @@ function describeHumanTeacherPackage(t, result = {}) {
       label: t('Skipped'),
       tone: 'gray',
       detail: t(
-        'You chose not to annotate this epoch. Federated updates still work normally; you just do not contribute annotation learnings for this batch.'
+        'You chose not to annotate this epoch. Federated updates still work normally; you just do not contribute annotation learnings for this annotation set.'
       ),
     }
   }
@@ -96,7 +109,7 @@ function describeHumanTeacherPackage(t, result = {}) {
           ? 'green'
           : 'orange',
       detail: t(
-        'Consensus-backed flips are available for voluntary human annotation.'
+        'Consensus-backed flips are available for voluntary human annotation one flip at a time.'
       ),
     }
   }
@@ -116,16 +129,16 @@ function describeHumanTeacherPackage(t, result = {}) {
       label: t('Waiting for payloads'),
       tone: 'blue',
       detail: t(
-        'Consensus is available, but payload-backed tasks are not ready yet for export.'
+        'Consensus is available, but payload-backed flips are not ready yet for export.'
       ),
     }
   }
 
   return {
-    label: t('No eligible tasks'),
+    label: t('No eligible flips'),
     tone: 'gray',
     detail: t(
-      'No voluntary annotation batch is available for this epoch right now.'
+      'No voluntary annotation set is available for this epoch right now.'
     ),
   }
 }
@@ -214,6 +227,14 @@ function getOrderedPanels(task = {}, order = []) {
 }
 
 function getDraftStatusLabel(annotation, t) {
+  if (annotation && typeof annotation === 'object' && annotation.isComplete) {
+    return t('Complete')
+  }
+
+  if (annotation && typeof annotation === 'object' && annotation.hasDraft) {
+    return t('Draft')
+  }
+
   const nextAnnotation = annotation || {}
 
   if (isCompleteDraft(nextAnnotation)) {
@@ -228,14 +249,22 @@ function getDraftStatusLabel(annotation, t) {
 }
 
 function getDraftHelperText(annotation, t) {
+  if (annotation && typeof annotation === 'object' && annotation.isComplete) {
+    return t('This flip looks complete.')
+  }
+
+  if (annotation && typeof annotation === 'object' && annotation.hasDraft) {
+    return t('This flip has unsaved or incomplete draft content.')
+  }
+
   const nextAnnotation = annotation || {}
 
   if (isCompleteDraft(nextAnnotation)) {
-    return t('This task looks complete.')
+    return t('This flip looks complete.')
   }
 
   if (hasDraftContent(nextAnnotation)) {
-    return t('This task has unsaved or incomplete draft content.')
+    return t('This flip has unsaved or incomplete draft content.')
   }
 
   return t('No annotation content yet.')
@@ -251,6 +280,17 @@ const DEMO_SAMPLE_OPTIONS = [
     label: 'Larger demo (20 flips)',
   },
 ]
+const DEVELOPER_TRAINING_SAMPLE_OPTIONS = [
+  {
+    value: 'flip-challenge-test-20-decoded-labeled',
+    label: 'Bundled FLIP sample (20 flips)',
+  },
+  {
+    value: 'flip-challenge-test-5-decoded-labeled',
+    label: 'Small bundled sample (5 flips)',
+  },
+]
+const DEVELOPER_TRAINING_CHUNK_SIZE = 5
 
 function pickPreferredTaskId(workspace, preferredTaskId = '') {
   const tasks =
@@ -275,6 +315,64 @@ function formatOrder(order = []) {
   return Array.isArray(order) && order.length
     ? order.map((item) => Number(item) + 1).join(', ')
     : 'n/a'
+}
+
+function getCurrentFlipLabel(t, index, total) {
+  if (
+    !Number.isFinite(index) ||
+    index < 0 ||
+    !Number.isFinite(total) ||
+    total <= 0
+  ) {
+    return t('No flip selected')
+  }
+
+  return t('Flip {{current}} of {{total}}', {
+    current: index + 1,
+    total,
+  })
+}
+
+function getWorkspaceCountsAfterSave(
+  workspace,
+  selectedTaskId,
+  annotation = {}
+) {
+  const tasks =
+    workspace && Array.isArray(workspace.tasks) ? workspace.tasks : []
+
+  if (!tasks.length || !selectedTaskId) {
+    return {
+      total: 0,
+      draftedCount: 0,
+      completedCount: 0,
+      remainingCount: 0,
+      allComplete: false,
+    }
+  }
+
+  const hasDraft = hasDraftContent(annotation)
+  const isComplete = isCompleteDraft(annotation)
+  const nextTasks = tasks.map((task) =>
+    task.taskId === selectedTaskId
+      ? {
+          ...task,
+          hasDraft,
+          isComplete,
+        }
+      : task
+  )
+  const draftedCount = nextTasks.filter((task) => task.hasDraft).length
+  const completedCount = nextTasks.filter((task) => task.isComplete).length
+  const total = nextTasks.length
+
+  return {
+    total,
+    draftedCount,
+    completedCount,
+    remainingCount: Math.max(total - completedCount, 0),
+    allComplete: total > 0 && completedCount === total,
+  }
 }
 
 function InterviewPrompt({title, children}) {
@@ -302,6 +400,7 @@ function InterviewPrompt({title, children}) {
 export default function AiHumanTeacherPage() {
   const {t} = useTranslation()
   const router = useRouter()
+  const toast = useToast()
   const epochState = useEpochState()
   const queryEpoch = String(router.query?.epoch || '').trim()
   const fallbackEpoch = React.useMemo(() => {
@@ -314,9 +413,19 @@ export default function AiHumanTeacherPage() {
     const nextEpoch = Number(epochState?.epoch)
     return Number.isFinite(nextEpoch) ? nextEpoch : null
   }, [epochState?.epoch])
+  const currentPeriod = React.useMemo(
+    () => String(epochState?.currentPeriod || '').trim(),
+    [epochState?.currentPeriod]
+  )
   const queryAction = String(router.query?.action || '')
     .trim()
     .toLowerCase()
+  const isDeveloperMode = React.useMemo(() => {
+    const raw = String(router.query?.developer || '')
+      .trim()
+      .toLowerCase()
+    return ['1', 'true', 'yes', 'developer'].includes(raw)
+  }, [router.query?.developer])
   const queryDemoSample = String(router.query?.sample || '').trim()
   const autoStartKeyRef = React.useRef('')
 
@@ -327,7 +436,10 @@ export default function AiHumanTeacherPage() {
   const [annotationSourceMode, setAnnotationSourceMode] =
     React.useState('epoch')
   const [demoSampleName, setDemoSampleName] = React.useState(
-    queryDemoSample || DEMO_SAMPLE_OPTIONS[0].value
+    queryDemoSample ||
+      (isDeveloperMode
+        ? DEVELOPER_TRAINING_SAMPLE_OPTIONS[0].value
+        : DEMO_SAMPLE_OPTIONS[0].value)
   )
   const [workspace, setWorkspace] = React.useState(null)
   const [selectedTaskId, setSelectedTaskId] = React.useState('')
@@ -343,7 +455,12 @@ export default function AiHumanTeacherPage() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = React.useState(false)
   const [isTaskLoading, setIsTaskLoading] = React.useState(false)
   const [isSavingTask, setIsSavingTask] = React.useState(false)
+  const [isFinalizingDeveloperChunk, setIsFinalizingDeveloperChunk] =
+    React.useState(false)
   const [showAdvancedFields, setShowAdvancedFields] = React.useState(false)
+  const [developerSessionState, setDeveloperSessionState] = React.useState(null)
+  const [developerOffset, setDeveloperOffset] = React.useState(0)
+  const [developerActionResult, setDeveloperActionResult] = React.useState(null)
 
   React.useEffect(() => {
     if (queryEpoch) {
@@ -358,6 +475,20 @@ export default function AiHumanTeacherPage() {
       setDemoSampleName(queryDemoSample)
     }
   }, [queryDemoSample])
+
+  React.useEffect(() => {
+    if (queryDemoSample) {
+      return
+    }
+
+    setDemoSampleName(
+      (current) =>
+        current ||
+        (isDeveloperMode
+          ? DEVELOPER_TRAINING_SAMPLE_OPTIONS[0].value
+          : DEMO_SAMPLE_OPTIONS[0].value)
+    )
+  }, [isDeveloperMode, queryDemoSample])
 
   const ensureBridge = React.useCallback(() => {
     if (
@@ -375,7 +506,9 @@ export default function AiHumanTeacherPage() {
       const nextEpoch = String(epoch || '').trim()
 
       if (!nextEpoch) {
-        setError(t('Enter an epoch before loading a human-teacher batch.'))
+        setError(
+          t('Enter an epoch before loading a human-teacher annotation set.')
+        )
         setResult(null)
         return
       }
@@ -412,7 +545,7 @@ export default function AiHumanTeacherPage() {
           nextResult = await bridge.buildHumanTeacherPackage({
             epoch: nextEpoch,
             currentEpoch,
-            batchSize: 30,
+            batchSize: HUMAN_TEACHER_SET_LIMIT,
             includePackage: true,
             fetchFlipPayloads: true,
             requireFlipPayloads: true,
@@ -431,10 +564,10 @@ export default function AiHumanTeacherPage() {
   )
 
   React.useEffect(() => {
-    if (epoch) {
+    if (!isDeveloperMode && epoch) {
       loadPackage()
     }
-  }, [epoch, loadPackage])
+  }, [epoch, isDeveloperMode, loadPackage])
 
   const updateReviewStatus = React.useCallback(
     async (nextReviewStatus) => {
@@ -470,7 +603,7 @@ export default function AiHumanTeacherPage() {
     const nextEpoch = String(epoch || '').trim()
 
     if (!nextEpoch) {
-      setError(t('Enter an epoch before exporting annotation tasks.'))
+      setError(t('Enter an epoch before exporting the fallback workspace.'))
       return
     }
 
@@ -517,7 +650,7 @@ export default function AiHumanTeacherPage() {
     const nextEpoch = String(epoch || '').trim()
 
     if (!nextEpoch) {
-      setError(t('Enter an epoch before opening annotation tasks.'))
+      setError(t('Enter an epoch before opening the annotation set.'))
       return
     }
 
@@ -574,6 +707,53 @@ export default function AiHumanTeacherPage() {
       setIsWorkspaceLoading(false)
     }
   }, [demoSampleName, ensureBridge, queryAction, router, selectedTaskId])
+
+  const loadDeveloperSession = React.useCallback(
+    async ({offsetOverride} = {}) => {
+      setIsWorkspaceLoading(true)
+      setError('')
+      setImportResult(null)
+
+      try {
+        const nextResult =
+          await ensureBridge().loadHumanTeacherDeveloperSession({
+            sampleName: demoSampleName,
+            offset: offsetOverride,
+            currentPeriod,
+          })
+        const nextWorkspace = nextResult.workspace || null
+        setAnnotationSourceMode('developer')
+        setWorkspace(nextWorkspace)
+        setResult(nextResult)
+        setDeveloperSessionState(nextResult.state || null)
+        setDeveloperOffset(Number(nextResult.offset) || 0)
+        setDeveloperActionResult(null)
+        setSelectedTaskId(pickPreferredTaskId(nextWorkspace, selectedTaskId))
+
+        if (queryAction === 'start') {
+          router.replace('/settings/ai-human-teacher?developer=1')
+        }
+      } catch (nextError) {
+        setWorkspace(null)
+        setSelectedTaskId('')
+        setTaskDetail(null)
+        setAnnotationDraft(createEmptyAnnotationDraft())
+        setDeveloperSessionState(null)
+        setDeveloperActionResult(null)
+        setError(formatErrorMessage(nextError))
+      } finally {
+        setIsWorkspaceLoading(false)
+      }
+    },
+    [
+      currentPeriod,
+      demoSampleName,
+      ensureBridge,
+      queryAction,
+      router,
+      selectedTaskId,
+    ]
+  )
 
   const startAnnotationFlow = React.useCallback(async () => {
     const nextEpoch = String(epoch || '').trim()
@@ -650,17 +830,28 @@ export default function AiHumanTeacherPage() {
       setError('')
 
       try {
-        const nextResult =
-          annotationSourceMode === 'demo'
-            ? await ensureBridge().loadHumanTeacherDemoTask({
-                sampleName: demoSampleName,
-                taskId,
-              })
-            : await ensureBridge().loadHumanTeacherAnnotationTask({
-                epoch: nextEpoch,
-                currentEpoch,
-                taskId,
-              })
+        let nextResult = null
+
+        if (annotationSourceMode === 'developer') {
+          nextResult = await ensureBridge().loadHumanTeacherDeveloperTask({
+            sampleName: demoSampleName,
+            offset: developerOffset,
+            currentPeriod,
+            taskId,
+          })
+        } else if (annotationSourceMode === 'demo') {
+          nextResult = await ensureBridge().loadHumanTeacherDemoTask({
+            sampleName: demoSampleName,
+            taskId,
+          })
+        } else {
+          nextResult = await ensureBridge().loadHumanTeacherAnnotationTask({
+            epoch: nextEpoch,
+            currentEpoch,
+            taskId,
+          })
+        }
+
         setTaskDetail(nextResult.task || null)
         setAnnotationDraft(
           normalizeAnnotationDraft(nextResult.task?.annotation || {})
@@ -674,7 +865,15 @@ export default function AiHumanTeacherPage() {
         setIsTaskLoading(false)
       }
     },
-    [annotationSourceMode, currentEpoch, demoSampleName, ensureBridge, epoch]
+    [
+      annotationSourceMode,
+      currentEpoch,
+      currentPeriod,
+      demoSampleName,
+      developerOffset,
+      ensureBridge,
+      epoch,
+    ]
   )
 
   const taskIds = React.useMemo(
@@ -688,6 +887,22 @@ export default function AiHumanTeacherPage() {
     () => taskIds.indexOf(selectedTaskId),
     [selectedTaskId, taskIds]
   )
+  const totalTaskCount = Number(workspace?.taskCount) || taskIds.length || 0
+  const currentFlipLabel = React.useMemo(
+    () => getCurrentFlipLabel(t, selectedTaskIndex, totalTaskCount),
+    [selectedTaskIndex, t, totalTaskCount]
+  )
+  const completionPercent = React.useMemo(() => {
+    if (!totalTaskCount) {
+      return 0
+    }
+
+    const completedCount = Number(workspace?.completedCount) || 0
+    return Math.max(
+      0,
+      Math.min(100, Math.round((completedCount / totalTaskCount) * 100))
+    )
+  }, [totalTaskCount, workspace?.completedCount])
   const previousTaskId =
     selectedTaskIndex > 0 ? taskIds[selectedTaskIndex - 1] : ''
   const nextTaskId = React.useMemo(() => {
@@ -719,36 +934,58 @@ export default function AiHumanTeacherPage() {
   )
   const hasDecision = Boolean(annotationDraft.final_answer)
   const hasReason = Boolean(String(annotationDraft.why_answer || '').trim())
+  const completionPreview = React.useMemo(
+    () =>
+      getWorkspaceCountsAfterSave(workspace, selectedTaskId, annotationDraft),
+    [annotationDraft, selectedTaskId, workspace]
+  )
 
   const saveTaskDraft = React.useCallback(
     async (options = {}) => {
-      const {advance = false} = options
+      const {advance = false, quiet = false} = options
       const nextEpoch = String(epoch || '').trim()
 
       if ((!nextEpoch && annotationSourceMode !== 'demo') || !selectedTaskId) {
-        setError(t('Select a task before saving annotation notes.'))
-        return
+        setError(t('Select a flip before saving annotation notes.'))
+        return null
       }
 
       setIsSavingTask(true)
       setError('')
 
       try {
-        const nextResult =
-          annotationSourceMode === 'demo'
-            ? await ensureBridge().saveHumanTeacherDemoDraft({
-                sampleName: demoSampleName,
-                taskId: selectedTaskId,
-                annotation: annotationDraft,
-              })
-            : await ensureBridge().saveHumanTeacherAnnotationDraft({
-                epoch: nextEpoch,
-                currentEpoch,
-                taskId: selectedTaskId,
-                annotation: annotationDraft,
-              })
+        let nextResult = null
+
+        if (annotationSourceMode === 'developer') {
+          nextResult = await ensureBridge().saveHumanTeacherDeveloperDraft({
+            sampleName: demoSampleName,
+            offset: developerOffset,
+            currentPeriod,
+            taskId: selectedTaskId,
+            annotation: annotationDraft,
+          })
+        } else if (annotationSourceMode === 'demo') {
+          nextResult = await ensureBridge().saveHumanTeacherDemoDraft({
+            sampleName: demoSampleName,
+            taskId: selectedTaskId,
+            annotation: annotationDraft,
+          })
+        } else {
+          nextResult = await ensureBridge().saveHumanTeacherAnnotationDraft({
+            epoch: nextEpoch,
+            currentEpoch,
+            taskId: selectedTaskId,
+            annotation: annotationDraft,
+          })
+        }
+
         const nextStatus = String(
           nextResult?.task?.annotationStatus || 'pending'
+        )
+        const completionState = getWorkspaceCountsAfterSave(
+          workspace,
+          selectedTaskId,
+          annotationDraft
         )
         setTaskDetail((current) =>
           current
@@ -762,16 +999,8 @@ export default function AiHumanTeacherPage() {
           current
             ? {
                 ...current,
-                draftedCount: current.tasks.filter((task) =>
-                  task.taskId === selectedTaskId
-                    ? hasDraftContent(annotationDraft)
-                    : task.hasDraft
-                ).length,
-                completedCount: current.tasks.filter((task) =>
-                  task.taskId === selectedTaskId
-                    ? isCompleteDraft(annotationDraft)
-                    : task.isComplete
-                ).length,
+                draftedCount: completionState.draftedCount,
+                completedCount: completionState.completedCount,
                 tasks: current.tasks.map((task) =>
                   task.taskId === selectedTaskId
                     ? {
@@ -797,11 +1026,35 @@ export default function AiHumanTeacherPage() {
             : current
         )
 
+        if (!quiet) {
+          if (isCompleteDraft(annotationDraft)) {
+            rewardWithConfetti({particleCount: 70})
+          }
+          toast({
+            title: isCompleteDraft(annotationDraft)
+              ? t('Flip saved')
+              : t('Flip draft saved'),
+            description:
+              advance && nextTaskId
+                ? t('Saved. Moving to the next flip.')
+                : t('Your annotation was saved locally.'),
+            status: 'success',
+            duration: 2500,
+            isClosable: true,
+          })
+        }
+
         if (advance && nextTaskId) {
           setSelectedTaskId(nextTaskId)
         }
+
+        return {
+          task: nextResult?.task || null,
+          completionState,
+        }
       } catch (nextError) {
         setError(formatErrorMessage(nextError))
+        return null
       } finally {
         setIsSavingTask(false)
       }
@@ -810,12 +1063,136 @@ export default function AiHumanTeacherPage() {
       annotationSourceMode,
       annotationDraft,
       currentEpoch,
+      currentPeriod,
       demoSampleName,
+      developerOffset,
       ensureBridge,
       epoch,
       nextTaskId,
       selectedTaskId,
       t,
+      toast,
+      workspace,
+    ]
+  )
+
+  const finalizeDeveloperChunk = React.useCallback(
+    async ({trainNow = false, advance = false, exitAfter = false} = {}) => {
+      const saved = await saveTaskDraft({quiet: true})
+
+      if (!saved) {
+        return null
+      }
+
+      if (!saved.completionState.allComplete) {
+        toast({
+          title: t('Flip saved'),
+          description: exitAfter
+            ? t(
+                'Your draft was saved. Complete the remaining flips in this 5-flip chunk before training or moving on.'
+              )
+            : t(
+                'Complete all 5 flips in this chunk before training or loading the next chunk.'
+              ),
+          status: 'info',
+          duration: 3500,
+          isClosable: true,
+        })
+
+        if (exitAfter) {
+          router.push('/ai-chat')
+        }
+
+        return null
+      }
+
+      setIsFinalizingDeveloperChunk(true)
+      setError('')
+
+      try {
+        const nextResult =
+          await ensureBridge().finalizeHumanTeacherDeveloperChunk({
+            sampleName: demoSampleName,
+            offset: developerOffset,
+            currentPeriod,
+            trainNow,
+            advance,
+          })
+        setDeveloperActionResult(nextResult)
+        setDeveloperSessionState(nextResult.state || null)
+
+        if (advance) {
+          await loadDeveloperSession({offsetOverride: nextResult.nextOffset})
+          toast({
+            title: t('Next 5 flips loaded'),
+            description: t(
+              'The finished chunk was saved locally. You can keep annotating the next 5 flips now.'
+            ),
+            status: 'success',
+            duration: 3500,
+            isClosable: true,
+          })
+          return nextResult
+        }
+
+        if (trainNow) {
+          if (nextResult?.training?.ok) {
+            toast({
+              title: t('Training started'),
+              description: t(
+                'This 5-flip chunk was added to your local training set and the local AI runtime accepted the training request.'
+              ),
+              status: 'success',
+              duration: 4500,
+              isClosable: true,
+            })
+          } else {
+            toast({
+              title: t('Chunk saved for training'),
+              description: t(
+                'Your 5 annotated flips were stored locally, but the current Local AI runtime did not complete training yet.'
+              ),
+              status: 'warning',
+              duration: 5000,
+              isClosable: true,
+            })
+          }
+        } else {
+          toast({
+            title: t('Chunk saved'),
+            description: t(
+              'These 5 annotated flips were stored locally. You can train later or continue with the next chunk.'
+            ),
+            status: 'success',
+            duration: 3500,
+            isClosable: true,
+          })
+        }
+
+        await loadDeveloperSession({offsetOverride: nextResult.nextOffset})
+
+        if (exitAfter) {
+          router.push('/ai-chat')
+        }
+
+        return nextResult
+      } catch (nextError) {
+        setError(formatErrorMessage(nextError))
+        return null
+      } finally {
+        setIsFinalizingDeveloperChunk(false)
+      }
+    },
+    [
+      demoSampleName,
+      developerOffset,
+      ensureBridge,
+      currentPeriod,
+      loadDeveloperSession,
+      router,
+      saveTaskDraft,
+      t,
+      toast,
     ]
   )
 
@@ -862,11 +1239,132 @@ export default function AiHumanTeacherPage() {
     t,
   ])
 
+  const finishAnnotationSet = React.useCallback(async () => {
+    const saved = await saveTaskDraft({quiet: true})
+
+    if (!saved) {
+      return
+    }
+
+    if (annotationSourceMode === 'demo') {
+      toast({
+        title: t('Demo flip saved'),
+        description: saved.completionState.allComplete
+          ? t('The demo set is complete. Demo annotations stay local.')
+          : t('{{count}} demo flips are still incomplete in this set.', {
+              count: saved.completionState.remainingCount,
+            }),
+        status: 'success',
+        duration: 3500,
+        isClosable: true,
+      })
+      return
+    }
+
+    if (!saved.completionState.allComplete) {
+      toast({
+        title: t('Last flip saved'),
+        description: t(
+          '{{count}} flips are still incomplete before submission.',
+          {count: saved.completionState.remainingCount}
+        ),
+        status: 'info',
+        duration: 3500,
+        isClosable: true,
+      })
+      return
+    }
+
+    await importAnnotations()
+    toast({
+      title: t('Annotations submitted'),
+      description: t(
+        'The completed annotation set was imported for later training ingestion.'
+      ),
+      status: 'success',
+      duration: 3500,
+      isClosable: true,
+    })
+  }, [annotationSourceMode, importAnnotations, saveTaskDraft, t, toast])
+
   const packageSummary = describeHumanTeacherPackage(t, result)
   const reviewStatus = normalizeReviewStatus(result?.package?.reviewStatus)
   const eligibleCount = Number(result?.eligibleCount) || 0
   const importedAnnotations = result?.package?.importedAnnotations || null
+  const isDeveloperSourceMode = annotationSourceMode === 'developer'
   const isDemoMode = annotationSourceMode === 'demo'
+  const developerPendingCount =
+    Number(developerSessionState?.pendingTrainingCount) || 0
+  const developerAnnotatedCount =
+    Number(developerSessionState?.annotatedCount) || 0
+  const developerTrainedCount = Number(developerSessionState?.trainedCount) || 0
+  const developerRemainingCount =
+    Number(developerSessionState?.remainingTaskCount) || 0
+  const developerComparison = developerSessionState?.comparison100 || null
+  const developerCanAdvance =
+    isDeveloperMode &&
+    totalTaskCount > 0 &&
+    completionPreview.allComplete &&
+    developerRemainingCount > 0 &&
+    developerOffset + DEVELOPER_TRAINING_CHUNK_SIZE <
+      Number(developerSessionState?.totalAvailableTasks || 0)
+  const savePrimaryLabel = nextTaskId ? t('Save flip draft') : t('Save flip')
+  const finishButtonLabel = React.useMemo(() => {
+    if (isDeveloperSourceMode) {
+      if (nextTaskId) {
+        return t('Save and next flip')
+      }
+
+      return t('Train your AI now')
+    }
+
+    if (nextTaskId) {
+      return t('Save and next flip')
+    }
+
+    if (isDemoMode) {
+      return t('Save and finish demo')
+    }
+
+    return t('Save and submit set')
+  }, [isDemoMode, isDeveloperSourceMode, nextTaskId, t])
+  const finalFlipHint = React.useMemo(() => {
+    if (isDeveloperSourceMode) {
+      if (developerCanAdvance) {
+        return t(
+          'This 5-flip chunk is complete. You can train now or load the next 5 flips.'
+        )
+      }
+
+      return t(
+        'This 5-flip chunk is complete. You can train your AI now or save and come back later.'
+      )
+    }
+
+    if (isDemoMode) {
+      return t(
+        'This is the last flip in the demo set. Save it here to finish the demo.'
+      )
+    }
+
+    if (completionPreview.allComplete) {
+      return t(
+        'This is the last flip in the current queue. Save it here and the completed set will be submitted automatically.'
+      )
+    }
+
+    return t(
+      'This is the last flip in the current queue. Save it here first; {{count}} flips are still incomplete before submission.',
+      {count: completionPreview.remainingCount}
+    )
+  }, [
+    completionPreview.allComplete,
+    completionPreview.remainingCount,
+    developerCanAdvance,
+    isDeveloperSourceMode,
+    isDemoMode,
+    t,
+  ])
 
   React.useEffect(() => {
     if (selectedTaskId) {
@@ -879,7 +1377,23 @@ export default function AiHumanTeacherPage() {
 
   React.useEffect(() => {
     const nextEpoch = String(epoch || '').trim()
-    const autoStartKey = `${nextEpoch}:${queryAction}`
+    const autoStartKey = `${
+      isDeveloperMode ? 'developer' : nextEpoch
+    }:${queryAction}:${demoSampleName}`
+
+    if (isDeveloperMode) {
+      if (queryAction !== 'start') {
+        return
+      }
+
+      if (autoStartKeyRef.current === autoStartKey) {
+        return
+      }
+
+      autoStartKeyRef.current = autoStartKey
+      loadDeveloperSession()
+      return
+    }
 
     if (queryAction === 'demo') {
       if (autoStartKeyRef.current === autoStartKey) {
@@ -901,140 +1415,272 @@ export default function AiHumanTeacherPage() {
 
     autoStartKeyRef.current = autoStartKey
     startAnnotationFlow()
-  }, [epoch, loadOfflineDemoWorkspace, queryAction, startAnnotationFlow])
+  }, [
+    demoSampleName,
+    epoch,
+    isDeveloperMode,
+    loadDeveloperSession,
+    loadOfflineDemoWorkspace,
+    queryAction,
+    startAnnotationFlow,
+  ])
 
   return (
     <SettingsLayout>
       <Stack spacing={8} mt={8} maxW="3xl">
-        <SettingsSection title={t('Human teacher loop')}>
+        <SettingsSection
+          title={
+            isDeveloperMode
+              ? t('Train your AI on flips')
+              : t('Human teacher loop')
+          }
+        >
           <Stack spacing={4}>
-            <Alert status="info" borderRadius="md">
-              <Stack spacing={2}>
-                <Text fontWeight={600}>
-                  {t('Voluntary post-session teaching')}
-                </Text>
-                <Text fontSize="sm">
-                  {t(
-                    'This batch starts only after the validation session is over and final consensus exists. Skipping it does not block incoming federated updates; it only means you do not share annotation learnings for this epoch.'
-                  )}
-                </Text>
-                <Text fontSize="sm">
-                  {t(
-                    'You can now annotate directly in the app after the batch is approved. The exported workspace remains available as a fallback and import path.'
-                  )}
-                </Text>
-                <Text fontSize="sm">
-                  {t(
-                    'You can also load an offline demo batch from bundled sample flips. Demo annotations stay local and are never used for training.'
-                  )}
-                </Text>
-              </Stack>
-            </Alert>
+            {isDeveloperMode ? (
+              <>
+                <Alert status="info" borderRadius="md">
+                  <Stack spacing={2}>
+                    <Text fontWeight={600}>{t('Developer flip training')}</Text>
+                    <Text fontSize="sm">
+                      {t(
+                        'This mode uses a bundled FLIP dataset sample inside the app. You annotate 5 flips at a time, then either train your AI immediately or load the next 5 flips.'
+                      )}
+                    </Text>
+                    <Text fontSize="sm">
+                      {t(
+                        'Annotated flips are stored locally with a record of which ones were already used for training. This is separate from the real post-session human-teacher loop.'
+                      )}
+                    </Text>
+                  </Stack>
+                </Alert>
 
-            {isDemoMode ? (
-              <Alert status="warning" borderRadius="md">
-                <Stack spacing={1}>
-                  <Text fontWeight={600}>{t('Offline demo mode')}</Text>
-                  <Text fontSize="sm">
-                    {t(
-                      'This annotator session uses bundled sample flips for testing only. Drafts are stored locally in a separate demo workspace and are not imported into training data.'
-                    )}
-                  </Text>
+                <Stack isInline spacing={3} align="end" flexWrap="wrap">
+                  <Box minW="280px">
+                    <Text fontSize="sm" fontWeight={500} mb={1}>
+                      {t('Training sample')}
+                    </Text>
+                    <Select
+                      value={demoSampleName}
+                      onChange={(e) => setDemoSampleName(e.target.value)}
+                    >
+                      {DEVELOPER_TRAINING_SAMPLE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Box>
+                  <PrimaryButton
+                    isDisabled={isWorkspaceLoading}
+                    isLoading={isWorkspaceLoading}
+                    onClick={() => loadDeveloperSession()}
+                  >
+                    {workspace && isDeveloperSourceMode
+                      ? t('Resume current 5 flips')
+                      : t('Start training your AI')}
+                  </PrimaryButton>
+                  <SecondaryButton onClick={() => router.push('/ai-chat')}>
+                    {t('Back to IdenaAI-GPT')}
+                  </SecondaryButton>
                 </Stack>
-              </Alert>
-            ) : null}
 
-            <Stack isInline spacing={3} align="end" flexWrap="wrap">
-              <Box minW="220px">
-                <Text fontSize="sm" fontWeight={500} mb={1}>
-                  {t('Epoch')}
-                </Text>
-                <Input
-                  value={epoch}
-                  onChange={(e) => setEpoch(e.target.value)}
-                  placeholder={t('Previous epoch')}
-                />
-              </Box>
-              <PrimaryButton
-                isLoading={isLoading}
-                onClick={() => loadPackage({forceRebuild: true})}
-              >
-                {t('Refresh batch')}
-              </PrimaryButton>
-              <SecondaryButton onClick={() => router.push('/settings/ai')}>
-                {t('Back to AI')}
-              </SecondaryButton>
-            </Stack>
-
-            <Stack isInline spacing={3} align="end" flexWrap="wrap">
-              <Box minW="280px">
-                <Text fontSize="sm" fontWeight={500} mb={1}>
-                  {t('Offline demo sample')}
-                </Text>
-                <Select
-                  value={demoSampleName}
-                  onChange={(e) => setDemoSampleName(e.target.value)}
+                <Box
+                  borderWidth="1px"
+                  borderColor="gray.100"
+                  borderRadius="md"
+                  p={4}
                 >
-                  {DEMO_SAMPLE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </Box>
-              <SecondaryButton
-                isDisabled={isWorkspaceLoading}
-                isLoading={isWorkspaceLoading && isDemoMode}
-                onClick={loadOfflineDemoWorkspace}
-              >
-                {t('Load offline demo')}
-              </SecondaryButton>
-            </Stack>
+                  <Stack spacing={2}>
+                    <Text fontWeight={600}>
+                      {workspace && isDeveloperSourceMode
+                        ? t('5-flip chunk ready')
+                        : t('No active 5-flip chunk yet')}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {workspace && isDeveloperSourceMode
+                        ? t(
+                            'Current chunk: flips {{from}}-{{to}} out of {{total}}.',
+                            {
+                              from: developerOffset + 1,
+                              to: Math.min(
+                                developerOffset + totalTaskCount,
+                                Number(
+                                  developerSessionState?.totalAvailableTasks ||
+                                    0
+                                )
+                              ),
+                              total:
+                                Number(
+                                  developerSessionState?.totalAvailableTasks ||
+                                    0
+                                ) || totalTaskCount,
+                            }
+                          )
+                        : t(
+                            'Click "Start training your AI" to open the next 5 flips from the bundled FLIP developer sample.'
+                          )}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {t('Annotated flips')}: {developerAnnotatedCount} ·{' '}
+                      {t('Pending training')}: {developerPendingCount} ·{' '}
+                      {t('Already trained')}: {developerTrainedCount}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {t('5-flip chunk size')}: {DEVELOPER_TRAINING_CHUNK_SIZE}
+                    </Text>
+                    <Text color="muted" fontSize="xs">
+                      {t('100-flip holdout comparison status')}:{' '}
+                      {String(developerComparison?.status || 'not_loaded')}
+                    </Text>
+                    {result?.comparison100?.expectedPath ? (
+                      <Text color="muted" fontSize="xs">
+                        {t('Expected comparison record')}:{' '}
+                        {result.comparison100.expectedPath}
+                      </Text>
+                    ) : null}
+                    {developerActionResult?.statePath ? (
+                      <Text color="muted" fontSize="xs">
+                        {t('Developer state path')}:{' '}
+                        {developerActionResult.statePath}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                </Box>
+              </>
+            ) : (
+              <>
+                <Alert status="info" borderRadius="md">
+                  <Stack spacing={2}>
+                    <Text fontWeight={600}>
+                      {t('Voluntary post-session teaching')}
+                    </Text>
+                    <Text fontSize="sm">
+                      {t(
+                        'This annotation set starts only after the validation session is over and final consensus exists. Skipping it does not block incoming federated updates; it only means you do not share annotation learnings for this epoch.'
+                      )}
+                    </Text>
+                    <Text fontSize="sm">
+                      {t(
+                        'The app opens one flip at a time from a capped annotation set. The exported workspace remains available as a fallback and import path.'
+                      )}
+                    </Text>
+                    <Text fontSize="sm">
+                      {t(
+                        'Each annotation set is capped at 30 flips. You can also load an offline demo set from bundled sample flips. Demo annotations stay local and are never used for training.'
+                      )}
+                    </Text>
+                  </Stack>
+                </Alert>
 
-            <Box
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="md"
-              p={4}
-            >
-              <Stack spacing={2}>
-                <Text fontWeight={600}>{packageSummary.label}</Text>
-                <Text color="muted" fontSize="sm">
-                  {packageSummary.detail}
-                </Text>
-                {result?.packagePath ? (
-                  <Text color="muted" fontSize="xs">
-                    {t('Package path')}: {result.packagePath}
-                  </Text>
+                {isDemoMode ? (
+                  <Alert status="warning" borderRadius="md">
+                    <Stack spacing={1}>
+                      <Text fontWeight={600}>{t('Offline demo mode')}</Text>
+                      <Text fontSize="sm">
+                        {t(
+                          'This annotator session uses bundled sample flips for testing only. Drafts are stored locally in a separate demo workspace and are not imported into training data.'
+                        )}
+                      </Text>
+                    </Stack>
+                  </Alert>
                 ) : null}
-                <Text color="muted" fontSize="sm">
-                  {isDemoMode
-                    ? `${t('Review status')}: ${t('demo')}`
-                    : `${t('Review status')}: ${reviewStatus}`}
-                </Text>
-                <Text color="muted" fontSize="sm">
-                  {t('Eligible')}:{' '}
-                  {isDemoMode
-                    ? Number(workspace?.taskCount) || 0
-                    : eligibleCount}
-                </Text>
-                <Text color="muted" fontSize="sm">
-                  {t('Excluded')}: {Number(result?.excludedCount) || 0}
-                </Text>
-                {importedAnnotations ? (
-                  <Text color="muted" fontSize="sm">
-                    {t('Imported annotations')}:{' '}
-                    {Number(importedAnnotations.normalizedRows) || 0}
-                  </Text>
-                ) : null}
-                {Array.isArray(result?.package?.inconsistencyFlags) &&
-                result.package.inconsistencyFlags.length ? (
-                  <Text color="muted" fontSize="xs">
-                    {t('Flags')}: {result.package.inconsistencyFlags.join(', ')}
-                  </Text>
-                ) : null}
-              </Stack>
-            </Box>
+
+                <Stack isInline spacing={3} align="end" flexWrap="wrap">
+                  <Box minW="220px">
+                    <Text fontSize="sm" fontWeight={500} mb={1}>
+                      {t('Epoch')}
+                    </Text>
+                    <Input
+                      value={epoch}
+                      onChange={(e) => setEpoch(e.target.value)}
+                      placeholder={t('Previous epoch')}
+                    />
+                  </Box>
+                  <PrimaryButton
+                    isLoading={isLoading}
+                    onClick={() => loadPackage({forceRebuild: true})}
+                  >
+                    {t('Refresh set')}
+                  </PrimaryButton>
+                  <SecondaryButton onClick={() => router.push('/settings/ai')}>
+                    {t('Back to AI')}
+                  </SecondaryButton>
+                </Stack>
+
+                <Stack isInline spacing={3} align="end" flexWrap="wrap">
+                  <Box minW="280px">
+                    <Text fontSize="sm" fontWeight={500} mb={1}>
+                      {t('Offline demo sample')}
+                    </Text>
+                    <Select
+                      value={demoSampleName}
+                      onChange={(e) => setDemoSampleName(e.target.value)}
+                    >
+                      {DEMO_SAMPLE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Box>
+                  <SecondaryButton
+                    isDisabled={isWorkspaceLoading}
+                    isLoading={isWorkspaceLoading && isDemoMode}
+                    onClick={loadOfflineDemoWorkspace}
+                  >
+                    {t('Load offline demo')}
+                  </SecondaryButton>
+                </Stack>
+
+                <Box
+                  borderWidth="1px"
+                  borderColor="gray.100"
+                  borderRadius="md"
+                  p={4}
+                >
+                  <Stack spacing={2}>
+                    <Text fontWeight={600}>{packageSummary.label}</Text>
+                    <Text color="muted" fontSize="sm">
+                      {packageSummary.detail}
+                    </Text>
+                    {result?.packagePath ? (
+                      <Text color="muted" fontSize="xs">
+                        {t('Package path')}: {result.packagePath}
+                      </Text>
+                    ) : null}
+                    <Text color="muted" fontSize="sm">
+                      {isDemoMode
+                        ? `${t('Review status')}: ${t('demo')}`
+                        : `${t('Review status')}: ${reviewStatus}`}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {t('Eligible')}:{' '}
+                      {isDemoMode
+                        ? Number(workspace?.taskCount) || 0
+                        : eligibleCount}
+                      {' / '}
+                      {HUMAN_TEACHER_SET_LIMIT}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {t('Excluded')}: {Number(result?.excludedCount) || 0}
+                    </Text>
+                    {importedAnnotations ? (
+                      <Text color="muted" fontSize="sm">
+                        {t('Imported annotations')}:{' '}
+                        {Number(importedAnnotations.normalizedRows) || 0}
+                      </Text>
+                    ) : null}
+                    {Array.isArray(result?.package?.inconsistencyFlags) &&
+                    result.package.inconsistencyFlags.length ? (
+                      <Text color="muted" fontSize="xs">
+                        {t('Flags')}:{' '}
+                        {result.package.inconsistencyFlags.join(', ')}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                </Box>
+              </>
+            )}
 
             {error ? (
               <Alert status="error" borderRadius="md">
@@ -1042,64 +1688,71 @@ export default function AiHumanTeacherPage() {
               </Alert>
             ) : null}
 
-            <Stack isInline spacing={2} flexWrap="wrap">
-              <PrimaryButton
-                isDisabled={
-                  isDemoMode || isUpdating || isExporting || eligibleCount <= 0
-                }
-                isLoading={isExporting}
-                onClick={startAnnotationFlow}
-              >
-                {reviewStatus === 'approved'
-                  ? t('Open in-app annotator')
-                  : t('Start in-app annotation')}
-              </PrimaryButton>
-              <SecondaryButton
-                isDisabled={isDemoMode || isUpdating}
-                onClick={() => updateReviewStatus('draft')}
-              >
-                {t('Keep as draft')}
-              </SecondaryButton>
-              <SecondaryButton
-                isDisabled={isDemoMode || isUpdating}
-                onClick={() => updateReviewStatus('rejected')}
-              >
-                {t('Skip this epoch')}
-              </SecondaryButton>
-              <SecondaryButton
-                isDisabled={isDemoMode || isExporting || eligibleCount <= 0}
-                isLoading={isExporting}
-                onClick={exportTasks}
-              >
-                {t('Export annotation tasks')}
-              </SecondaryButton>
-              <SecondaryButton
-                isDisabled={
-                  isDemoMode || isImporting || reviewStatus !== 'approved'
-                }
-                isLoading={isImporting}
-                onClick={importAnnotations}
-              >
-                {t('Import completed annotations')}
-              </SecondaryButton>
-              <SecondaryButton
-                isDisabled={
-                  isDemoMode
-                    ? isWorkspaceLoading
-                    : isWorkspaceLoading ||
-                      reviewStatus !== 'approved' ||
-                      eligibleCount <= 0
-                }
-                isLoading={isWorkspaceLoading}
-                onClick={isDemoMode ? loadOfflineDemoWorkspace : loadWorkspace}
-              >
-                {isDemoMode
-                  ? t('Reload demo workspace')
-                  : t('Open annotation workspace')}
-              </SecondaryButton>
-            </Stack>
+            {isDeveloperMode ? null : (
+              <Stack isInline spacing={2} flexWrap="wrap">
+                <PrimaryButton
+                  isDisabled={
+                    isDemoMode ||
+                    isUpdating ||
+                    isExporting ||
+                    eligibleCount <= 0
+                  }
+                  isLoading={isExporting}
+                  onClick={startAnnotationFlow}
+                >
+                  {reviewStatus === 'approved'
+                    ? t('Open current flip')
+                    : t('Start one-by-one annotation')}
+                </PrimaryButton>
+                <SecondaryButton
+                  isDisabled={isDemoMode || isUpdating}
+                  onClick={() => updateReviewStatus('draft')}
+                >
+                  {t('Keep as draft')}
+                </SecondaryButton>
+                <SecondaryButton
+                  isDisabled={isDemoMode || isUpdating}
+                  onClick={() => updateReviewStatus('rejected')}
+                >
+                  {t('Skip this epoch')}
+                </SecondaryButton>
+                <SecondaryButton
+                  isDisabled={isDemoMode || isExporting || eligibleCount <= 0}
+                  isLoading={isExporting}
+                  onClick={exportTasks}
+                >
+                  {t('Export fallback workspace')}
+                </SecondaryButton>
+                <SecondaryButton
+                  isDisabled={
+                    isDemoMode || isImporting || reviewStatus !== 'approved'
+                  }
+                  isLoading={isImporting}
+                  onClick={importAnnotations}
+                >
+                  {t('Import completed annotations')}
+                </SecondaryButton>
+                <SecondaryButton
+                  isDisabled={
+                    isDemoMode
+                      ? isWorkspaceLoading
+                      : isWorkspaceLoading ||
+                        reviewStatus !== 'approved' ||
+                        eligibleCount <= 0
+                  }
+                  isLoading={isWorkspaceLoading}
+                  onClick={
+                    isDemoMode ? loadOfflineDemoWorkspace : loadWorkspace
+                  }
+                >
+                  {isDemoMode
+                    ? t('Reload demo workspace')
+                    : t('Open fallback workspace')}
+                </SecondaryButton>
+              </Stack>
+            )}
 
-            {exportResult ? (
+            {!isDeveloperMode && exportResult ? (
               <Box
                 borderWidth="1px"
                 borderColor="green.100"
@@ -1107,16 +1760,14 @@ export default function AiHumanTeacherPage() {
                 p={4}
               >
                 <Stack spacing={1}>
-                  <Text fontWeight={600}>
-                    {t('Annotation workspace ready')}
-                  </Text>
+                  <Text fontWeight={600}>{t('Fallback workspace ready')}</Text>
                   <Text color="muted" fontSize="sm">
                     {t(
-                      'The app exported a local task workspace with decoded panels, a task manifest, and an annotation template.'
+                      'The app exported a local workspace with decoded panels, a manifest, and an annotation template.'
                     )}
                   </Text>
                   <Text color="muted" fontSize="sm">
-                    {t('Tasks')}: {Number(exportResult.tasks) || 0}
+                    {t('Flips')}: {Number(exportResult.tasks) || 0}
                   </Text>
                   <Text color="muted" fontSize="xs">
                     {t('Output directory')}: {exportResult.outputDir}
@@ -1134,7 +1785,7 @@ export default function AiHumanTeacherPage() {
               </Box>
             ) : null}
 
-            {importResult ? (
+            {!isDeveloperMode && importResult ? (
               <Box
                 borderWidth="1px"
                 borderColor="blue.100"
@@ -1145,7 +1796,7 @@ export default function AiHumanTeacherPage() {
                   <Text fontWeight={600}>{t('Annotations imported')}</Text>
                   <Text color="muted" fontSize="sm">
                     {t(
-                      'The app normalized completed annotation rows from the exported workspace and stored them for later training ingestion.'
+                      'The app normalized completed annotation rows from the fallback workspace and stored them for later training ingestion.'
                     )}
                   </Text>
                   <Text color="muted" fontSize="sm">
@@ -1181,17 +1832,47 @@ export default function AiHumanTeacherPage() {
                 p={4}
               >
                 <Stack spacing={4}>
-                  <Text fontWeight={600}>{t('In-app annotator')}</Text>
-                  <Text color="muted" fontSize="sm">
-                    {t(
-                      'This uses the exported task workspace for the selected epoch. Save notes task by task, then import the completed annotations when you are done.'
-                    )}
+                  <Text fontWeight={600}>
+                    {isDeveloperMode
+                      ? t('In-app flip trainer')
+                      : t('In-app annotator')}
                   </Text>
                   <Text color="muted" fontSize="sm">
-                    {t('Task count')}: {Number(workspace.taskCount) || 0} ·{' '}
-                    {t('Drafted')}: {Number(workspace.draftedCount) || 0} ·{' '}
-                    {t('Complete')}: {Number(workspace.completedCount) || 0}
+                    {isDeveloperMode
+                      ? t(
+                          'This developer loop uses 5 bundled FLIP samples at a time. Annotate them one by one, then choose whether to train immediately or load the next 5 flips.'
+                        )
+                      : t(
+                          'This uses the selected epoch annotation set. The app keeps you on one current flip at a time and saves your notes flip by flip.'
+                        )}
                   </Text>
+                  <Stack spacing={2}>
+                    <Text color="muted" fontSize="sm">
+                      {isDeveloperMode ? t('Chunk size') : t('Set size')}:{' '}
+                      {totalTaskCount} /{' '}
+                      {isDeveloperMode
+                        ? DEVELOPER_TRAINING_CHUNK_SIZE
+                        : HUMAN_TEACHER_SET_LIMIT}{' '}
+                      · {t('Drafted')}: {Number(workspace.draftedCount) || 0} ·{' '}
+                      {t('Complete')}: {Number(workspace.completedCount) || 0}
+                    </Text>
+                    <Box>
+                      <Flex justify="space-between" align="center" mb={1}>
+                        <Text fontSize="sm" fontWeight={600}>
+                          {currentFlipLabel}
+                        </Text>
+                        <Text color="muted" fontSize="xs">
+                          {completionPercent}% {t('done')}
+                        </Text>
+                      </Flex>
+                      <Progress
+                        value={completionPercent}
+                        size="sm"
+                        borderRadius="full"
+                        colorScheme="blue"
+                      />
+                    </Box>
+                  </Stack>
 
                   <Flex gap={4} align="flex-start" flexWrap="wrap">
                     <Box
@@ -1204,6 +1885,27 @@ export default function AiHumanTeacherPage() {
                       borderRadius="md"
                     >
                       <Stack spacing={0}>
+                        <Box
+                          px={3}
+                          py={3}
+                          borderBottomWidth="1px"
+                          borderBottomColor="gray.50"
+                        >
+                          <Text fontSize="sm" fontWeight={700}>
+                            {isDeveloperMode
+                              ? t('Current 5 flips')
+                              : t('Flip queue')}
+                          </Text>
+                          <Text color="muted" fontSize="xs">
+                            {isDeveloperMode
+                              ? t(
+                                  'You can move within this 5-flip chunk, then choose whether to train or load the next 5.'
+                                )
+                              : t(
+                                  'Choose another flip only if you want to jump ahead.'
+                                )}
+                          </Text>
+                        </Box>
                         {workspace.tasks.map((task) => (
                           <Box
                             key={task.taskId}
@@ -1220,14 +1922,14 @@ export default function AiHumanTeacherPage() {
                             onClick={() => setSelectedTaskId(task.taskId)}
                           >
                             <Text fontSize="sm" fontWeight={600}>
+                              {t('Flip')} {taskIds.indexOf(task.taskId) + 1}
+                            </Text>
+                            <Text color="muted" fontSize="xs" noOfLines={1}>
                               {task.flipHash || task.taskId}
                             </Text>
                             <Text color="muted" fontSize="xs">
                               {t('Consensus')}: {task.consensusAnswer || 'n/a'}{' '}
-                              · {task.consensusStrength || 'n/a'}
-                            </Text>
-                            <Text color="muted" fontSize="xs">
-                              {getDraftStatusLabel(task, t)}
+                              · {getDraftStatusLabel(task, t)}
                             </Text>
                           </Box>
                         ))}
@@ -1237,16 +1939,35 @@ export default function AiHumanTeacherPage() {
                     <Box flex="2 1 640px" minW="320px">
                       {taskDetail ? (
                         <Stack spacing={4}>
-                          <Box>
-                            <Text fontWeight={600}>
+                          <Box
+                            borderWidth="1px"
+                            borderColor="blue.100"
+                            bg="blue.50"
+                            borderRadius="xl"
+                            p={4}
+                          >
+                            <Text
+                              fontSize="sm"
+                              fontWeight={700}
+                              color="blue.600"
+                            >
+                              {currentFlipLabel}
+                            </Text>
+                            <Text fontWeight={600} mt={1}>
                               {taskDetail.flipHash || taskDetail.taskId}
                             </Text>
                             <Text color="muted" fontSize="sm" mt={1}>
                               {t(
-                                'Review it like a normal flip test: choose the better story first, then add a short human explanation.'
+                                'Review it like a normal flip test: decide which story order looks more humanly coherent, then explain that judgment briefly.'
                               )}
                             </Text>
                           </Box>
+
+                          {!nextTaskId && totalTaskCount > 0 ? (
+                            <Alert status="info" borderRadius="lg">
+                              <Text fontSize="sm">{finalFlipHint}</Text>
+                            </Alert>
+                          ) : null}
 
                           <SimpleGrid columns={[1, 2]} spacing={4}>
                             {[
@@ -1570,7 +2291,7 @@ export default function AiHumanTeacherPage() {
                                   </Text>
                                   <Text color="muted" fontSize="sm">
                                     {t(
-                                      'Open this only when you want to teach extra captions or side summaries.'
+                                      'Open this only when you want to teach extra captions or side summaries for this flip.'
                                     )}
                                   </Text>
                                 </Box>
@@ -1685,33 +2406,81 @@ export default function AiHumanTeacherPage() {
                                 isLoading={isSavingTask}
                                 onClick={() => saveTaskDraft()}
                               >
-                                {t('Save task draft')}
+                                {savePrimaryLabel}
                               </PrimaryButton>
-                              <SecondaryButton
-                                isDisabled={isSavingTask || !nextTaskId}
-                                onClick={() => saveTaskDraft({advance: true})}
-                              >
-                                {t('Save and continue')}
-                              </SecondaryButton>
+                              {isDeveloperMode ? (
+                                <>
+                                  <SecondaryButton
+                                    isDisabled={isSavingTask || !selectedTaskId}
+                                    isLoading={isFinalizingDeveloperChunk}
+                                    onClick={() =>
+                                      nextTaskId
+                                        ? saveTaskDraft({advance: true})
+                                        : finalizeDeveloperChunk({
+                                            trainNow: true,
+                                          })
+                                    }
+                                  >
+                                    {finishButtonLabel}
+                                  </SecondaryButton>
+                                  {!nextTaskId && developerCanAdvance ? (
+                                    <SecondaryButton
+                                      isDisabled={
+                                        isSavingTask ||
+                                        isFinalizingDeveloperChunk
+                                      }
+                                      onClick={() =>
+                                        finalizeDeveloperChunk({advance: true})
+                                      }
+                                    >
+                                      {t('Annotate 5 more flips')}
+                                    </SecondaryButton>
+                                  ) : null}
+                                  <SecondaryButton
+                                    isDisabled={
+                                      isSavingTask || isFinalizingDeveloperChunk
+                                    }
+                                    onClick={() =>
+                                      finalizeDeveloperChunk({exitAfter: true})
+                                    }
+                                  >
+                                    {t('Save and exit')}
+                                  </SecondaryButton>
+                                </>
+                              ) : (
+                                <SecondaryButton
+                                  isDisabled={
+                                    isSavingTask ||
+                                    (!nextTaskId && !selectedTaskId)
+                                  }
+                                  onClick={() =>
+                                    nextTaskId
+                                      ? saveTaskDraft({advance: true})
+                                      : finishAnnotationSet()
+                                  }
+                                >
+                                  {finishButtonLabel}
+                                </SecondaryButton>
+                              )}
                               <SecondaryButton
                                 isDisabled={!previousTaskId || isTaskLoading}
                                 onClick={() =>
                                   setSelectedTaskId(previousTaskId)
                                 }
                               >
-                                {t('Previous task')}
+                                {t('Previous flip')}
                               </SecondaryButton>
                               <SecondaryButton
                                 isDisabled={!nextTaskId || isTaskLoading}
                                 onClick={() => setSelectedTaskId(nextTaskId)}
                               >
-                                {t('Next task')}
+                                {t('Next flip')}
                               </SecondaryButton>
                               <SecondaryButton
                                 isDisabled={isTaskLoading}
                                 onClick={() => loadTask(selectedTaskId)}
                               >
-                                {t('Reload task')}
+                                {t('Reload flip')}
                               </SecondaryButton>
                               <Text
                                 color="muted"
@@ -1732,8 +2501,8 @@ export default function AiHumanTeacherPage() {
                         >
                           <Text color="muted" fontSize="sm">
                             {isTaskLoading
-                              ? t('Loading task...')
-                              : t('Select a task to annotate.')}
+                              ? t('Loading flip...')
+                              : t('Select a flip to annotate.')}
                           </Text>
                         </Box>
                       )}

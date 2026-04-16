@@ -2291,9 +2291,29 @@ handleTrusted(
 )
 
 handleTrusted(
+  'localAi.loadHumanTeacherDeveloperSession',
+  withLocalAiEnabled(
+    'loadHumanTeacherDeveloperSession',
+    async (_event, payload) =>
+      localAiManager.loadHumanTeacherDeveloperSession(
+        buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
   'localAi.loadHumanTeacherDemoTask',
   withLocalAiEnabled('loadHumanTeacherDemoTask', async (_event, payload) =>
     localAiManager.loadHumanTeacherDemoTask(buildLocalAiEpochPayload(payload))
+  )
+)
+
+handleTrusted(
+  'localAi.loadHumanTeacherDeveloperTask',
+  withLocalAiEnabled('loadHumanTeacherDeveloperTask', async (_event, payload) =>
+    localAiManager.loadHumanTeacherDeveloperTask(
+      buildLocalAiEpochPayload(payload)
+    )
   )
 )
 
@@ -2341,6 +2361,28 @@ handleTrusted(
   'localAi.saveHumanTeacherDemoDraft',
   withLocalAiEnabled('saveHumanTeacherDemoDraft', async (_event, payload) =>
     localAiManager.saveHumanTeacherDemoDraft(buildLocalAiEpochPayload(payload))
+  )
+)
+
+handleTrusted(
+  'localAi.saveHumanTeacherDeveloperDraft',
+  withLocalAiEnabled(
+    'saveHumanTeacherDeveloperDraft',
+    async (_event, payload) =>
+      localAiManager.saveHumanTeacherDeveloperDraft(
+        buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
+  'localAi.finalizeHumanTeacherDeveloperChunk',
+  withLocalAiEnabled(
+    'finalizeHumanTeacherDeveloperChunk',
+    async (_event, payload) =>
+      localAiManager.finalizeHumanTeacherDeveloperChunk(
+        buildLocalAiEpochPayload(payload)
+      )
   )
 )
 

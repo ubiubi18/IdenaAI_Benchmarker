@@ -9,6 +9,7 @@ const {
   DEFAULT_DEMO_SAMPLE_NAME,
   buildHumanTeacherDemoWorkspace,
   listHumanTeacherDemoSamples,
+  loadHumanTeacherDemoSample,
   normalizeDemoSampleName,
 } = require('./human-teacher-demo')
 const {exportHumanTeacherTasks} = require('./human-teacher-export')
@@ -26,9 +27,14 @@ const HUMAN_TEACHER_PACKAGE_VERSION = 1
 const MAX_CAPTURE_INDEX_ITEMS = 1000
 const MAX_RECENT_CAPTURES = 20
 const DEFAULT_HUMAN_TEACHER_BATCH_SIZE = 30
-const MAX_HUMAN_TEACHER_BATCH_SIZE = 50
+const MAX_HUMAN_TEACHER_BATCH_SIZE = 30
+const DEVELOPER_HUMAN_TEACHER_BATCH_SIZE = 5
+const DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE =
+  'flip-challenge-test-20-decoded-labeled'
+const DEVELOPER_HUMAN_TEACHER_STATE_VERSION = 1
 const DEFAULT_RUNTIME_START_TIMEOUT_MS = 10 * 1000
 const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
+const ACTIVE_VALIDATION_PERIODS = new Set(['ShortSession', 'LongSession'])
 const OLLAMA_COMMAND_CANDIDATES = [
   '/opt/homebrew/bin/ollama',
   '/usr/local/bin/ollama',
@@ -514,6 +520,76 @@ function humanTeacherDemoDir(storage, sampleName = DEFAULT_DEMO_SAMPLE_NAME) {
   )
 }
 
+function developerHumanTeacherDir(
+  storage,
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+) {
+  return storage.resolveLocalAiPath(
+    'human-teacher-developer',
+    normalizeDemoSampleName(sampleName)
+  )
+}
+
+function developerHumanTeacherStatePath(
+  storage,
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+) {
+  return path.join(developerHumanTeacherDir(storage, sampleName), 'state.json')
+}
+
+function developerHumanTeacherChunkDir(
+  storage,
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+  offset = 0
+) {
+  const nextOffset = Math.max(0, Number.parseInt(offset, 10) || 0)
+  return path.join(
+    developerHumanTeacherDir(storage, sampleName),
+    'chunks',
+    `offset-${String(nextOffset).padStart(4, '0')}`
+  )
+}
+
+function developerHumanTeacherAnnotatedPath(
+  storage,
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+) {
+  return path.join(
+    developerHumanTeacherDir(storage, sampleName),
+    'annotations.annotated.jsonl'
+  )
+}
+
+function developerHumanTeacherPendingPath(
+  storage,
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+) {
+  return path.join(
+    developerHumanTeacherDir(storage, sampleName),
+    'annotations.pending.jsonl'
+  )
+}
+
+function developerHumanTeacherTrainedPath(
+  storage,
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+) {
+  return path.join(
+    developerHumanTeacherDir(storage, sampleName),
+    'annotations.trained.jsonl'
+  )
+}
+
+function developerHumanTeacherComparisonPath(
+  storage,
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+) {
+  return path.join(
+    developerHumanTeacherDir(storage, sampleName),
+    'comparison-100flips.json'
+  )
+}
+
 function humanTeacherNormalizedAnnotationsPath(storage, epoch) {
   return storage.resolveLocalAiPath(
     'human-teacher-exports',
@@ -538,6 +614,177 @@ function normalizeHumanTeacherBatchSize(value) {
   }
 
   return Math.min(batchSize, MAX_HUMAN_TEACHER_BATCH_SIZE)
+}
+
+function normalizeDeveloperHumanTeacherOffset(value) {
+  const offset = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(offset) || offset < 0) {
+    return 0
+  }
+
+  return offset
+}
+
+function clampDeveloperHumanTeacherOffset(offset, totalFlips) {
+  const nextOffset = normalizeDeveloperHumanTeacherOffset(offset)
+  const total = Number.parseInt(totalFlips, 10)
+
+  if (!Number.isFinite(total) || total <= 0) {
+    return 0
+  }
+
+  const maxOffset = Math.max(
+    0,
+    total - Math.min(DEVELOPER_HUMAN_TEACHER_BATCH_SIZE, total)
+  )
+
+  return Math.min(nextOffset, maxOffset)
+}
+
+function normalizeCurrentPeriod(value) {
+  return String(value || '').trim()
+}
+
+function assertDeveloperHumanTeacherSessionAllowed(currentPeriod, action) {
+  const nextCurrentPeriod = normalizeCurrentPeriod(currentPeriod)
+
+  if (ACTIVE_VALIDATION_PERIODS.has(nextCurrentPeriod)) {
+    throw new Error(
+      `Developer human-teacher ${action} is blocked while a validation session is running`
+    )
+  }
+}
+
+function uniqueStrings(values = []) {
+  return Array.from(
+    new Set(values.map((item) => String(item || '').trim()).filter(Boolean))
+  )
+}
+
+function mergeJsonlRowsByTaskId(rows = [], extraRows = []) {
+  const nextRows = new Map()
+
+  ;[...rows, ...extraRows].forEach((row) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return
+    }
+
+    const taskId = String(
+      row.task_id || row.taskId || row.sample_id || row.sampleId || ''
+    ).trim()
+
+    if (!taskId) {
+      return
+    }
+
+    nextRows.set(taskId, row)
+  })
+
+  return Array.from(nextRows.values())
+}
+
+function summarizeDeveloperChunkRows(rows = []) {
+  const taskIds = uniqueStrings(rows.map((row) => row && row.task_id))
+  return {
+    taskIds,
+    rowCount: rows.length,
+  }
+}
+
+function createDefaultDeveloperHumanTeacherState({
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+  totalAvailableTasks = 0,
+  currentOffset = 0,
+} = {}) {
+  return {
+    schemaVersion: DEVELOPER_HUMAN_TEACHER_STATE_VERSION,
+    mode: 'developer-human-teacher',
+    sampleName: normalizeDemoSampleName(sampleName),
+    chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+    totalAvailableTasks: Math.max(
+      0,
+      Number.parseInt(totalAvailableTasks, 10) || 0
+    ),
+    currentOffset: normalizeDeveloperHumanTeacherOffset(currentOffset),
+    annotatedTaskIds: [],
+    pendingTrainingTaskIds: [],
+    trainedTaskIds: [],
+    chunks: [],
+    lastSavedAt: null,
+    lastTraining: null,
+    comparison100: {
+      status: 'not_loaded',
+      holdoutPath: null,
+      lastEvaluatedAt: null,
+      lastResultPath: null,
+    },
+  }
+}
+
+function normalizeDeveloperHumanTeacherState(
+  state,
+  {
+    sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+    totalAvailableTasks = 0,
+  } = {}
+) {
+  const fallback = createDefaultDeveloperHumanTeacherState({
+    sampleName,
+    totalAvailableTasks,
+  })
+  const source =
+    state && typeof state === 'object' && !Array.isArray(state) ? state : {}
+  const total = Math.max(
+    0,
+    Number.parseInt(source.totalAvailableTasks ?? totalAvailableTasks, 10) || 0
+  )
+
+  return {
+    ...fallback,
+    ...source,
+    sampleName: normalizeDemoSampleName(source.sampleName || sampleName),
+    chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+    totalAvailableTasks: total,
+    currentOffset: clampDeveloperHumanTeacherOffset(
+      source.currentOffset,
+      total
+    ),
+    annotatedTaskIds: uniqueStrings(source.annotatedTaskIds),
+    pendingTrainingTaskIds: uniqueStrings(source.pendingTrainingTaskIds),
+    trainedTaskIds: uniqueStrings(source.trainedTaskIds),
+    chunks: Array.isArray(source.chunks)
+      ? source.chunks
+          .map((chunk) => {
+            const raw =
+              chunk && typeof chunk === 'object' && !Array.isArray(chunk)
+                ? chunk
+                : {}
+
+            return {
+              offset: normalizeDeveloperHumanTeacherOffset(raw.offset),
+              taskIds: uniqueStrings(raw.taskIds),
+              rowCount: Math.max(0, Number.parseInt(raw.rowCount, 10) || 0),
+              committedAt: String(raw.committedAt || '').trim() || null,
+              trainedAt: String(raw.trainedAt || '').trim() || null,
+              trainingStatus:
+                String(raw.trainingStatus || '').trim() || 'pending',
+              normalizedPath: String(raw.normalizedPath || '').trim() || null,
+              summaryPath: String(raw.summaryPath || '').trim() || null,
+            }
+          })
+          .sort((left, right) => left.offset - right.offset)
+      : [],
+    comparison100:
+      source.comparison100 &&
+      typeof source.comparison100 === 'object' &&
+      !Array.isArray(source.comparison100)
+        ? {
+            ...fallback.comparison100,
+            ...source.comparison100,
+          }
+        : fallback.comparison100,
+  }
 }
 
 function assertPastHumanTeacherEpoch(epoch, currentEpoch, action) {
@@ -923,12 +1170,9 @@ function isHumanTeacherAnnotationComplete(annotation = {}) {
   const next = normalizeHumanTeacherAnnotationDraft({}, annotation)
 
   return Boolean(
-    next.frame_captions.length === 4 &&
-      next.frame_captions.every(Boolean) &&
-      next.option_a_summary &&
-      next.option_b_summary &&
-      next.final_answer &&
-      next.why_answer
+    next.final_answer &&
+      next.why_answer &&
+      (next.report_required !== true || next.report_reason)
   )
 }
 
@@ -972,6 +1216,77 @@ async function writeJsonlRows(filePath, rows) {
   )
 
   return targetPath
+}
+
+async function ensureHumanTeacherDemoChunkWorkspace(
+  storage,
+  {
+    sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+    outputDir,
+    batchSize = DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+    offset = 0,
+  } = {}
+) {
+  const nextSampleName = normalizeDemoSampleName(sampleName)
+  const nextOutputDir = String(outputDir || '').trim()
+
+  if (!nextOutputDir) {
+    throw new Error('outputDir is required')
+  }
+
+  const taskManifestPath = path.join(nextOutputDir, 'tasks.jsonl')
+  const summary = (await storage.exists(taskManifestPath))
+    ? {
+        demo: true,
+        developer: true,
+        sampleName: nextSampleName,
+        outputDir: nextOutputDir,
+        manifestPath: taskManifestPath,
+        templatePath: path.join(nextOutputDir, 'annotations.template.jsonl'),
+        filledPath: path.join(nextOutputDir, 'annotations.filled.jsonl'),
+        metadataPath: path.join(nextOutputDir, 'demo-metadata.json'),
+      }
+    : await buildHumanTeacherDemoWorkspace({
+        outputDir: nextOutputDir,
+        sampleName: nextSampleName,
+        take: batchSize,
+        offset,
+      })
+
+  return {
+    ...summary,
+    taskManifestPath,
+    annotationsPath: path.join(nextOutputDir, 'annotations.filled.jsonl'),
+  }
+}
+
+async function buildWorkspaceFromOutputDir(outputDir, fallbackEpoch = null) {
+  const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
+  const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+  const taskRows = await readJsonlRows(taskManifestPath, [])
+  const annotationRows = await readJsonlRows(annotationsPath, [])
+  const tasks = buildHumanTeacherWorkspaceTasks(
+    taskRows,
+    annotationRows,
+    fallbackEpoch
+  )
+
+  return {
+    outputDir,
+    taskManifestPath,
+    annotationsPath,
+    taskRows,
+    annotationRows,
+    workspace: {
+      outputDir,
+      taskManifestPath,
+      annotationsPath,
+      taskCount: tasks.length,
+      draftedCount: tasks.filter((task) => task.hasDraft).length,
+      completedCount: tasks.filter((task) => task.isComplete).length,
+      tasks,
+    },
+  }
 }
 
 function resolveWorkspaceChildPath(baseDir, relativePath) {
@@ -1211,6 +1526,432 @@ function createLocalAiManager({
       )
 
     return persistQueue
+  }
+
+  async function loadDeveloperHumanTeacherState(
+    sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+    totalAvailableTasks = 0
+  ) {
+    const nextSampleName = normalizeDemoSampleName(sampleName)
+    const statePath = developerHumanTeacherStatePath(
+      localAiStorage,
+      nextSampleName
+    )
+    const currentState = await localAiStorage.readJson(statePath, null)
+
+    return {
+      statePath,
+      state: normalizeDeveloperHumanTeacherState(currentState, {
+        sampleName: nextSampleName,
+        totalAvailableTasks,
+      }),
+    }
+  }
+
+  async function writeDeveloperHumanTeacherState(sampleName, nextState) {
+    const nextSampleName = normalizeDemoSampleName(sampleName)
+    const statePath = developerHumanTeacherStatePath(
+      localAiStorage,
+      nextSampleName
+    )
+    const normalizedState = normalizeDeveloperHumanTeacherState(nextState, {
+      sampleName: nextSampleName,
+      totalAvailableTasks: nextState?.totalAvailableTasks,
+    })
+
+    await localAiStorage.writeJsonAtomic(statePath, normalizedState)
+
+    return {
+      statePath,
+      state: normalizedState,
+    }
+  }
+
+  function summarizeDeveloperHumanTeacherState(nextState, extra = {}) {
+    const normalizedState = normalizeDeveloperHumanTeacherState(nextState, {
+      sampleName: nextState?.sampleName,
+      totalAvailableTasks: nextState?.totalAvailableTasks,
+    })
+
+    return {
+      ...normalizedState,
+      pendingTrainingCount: normalizedState.pendingTrainingTaskIds.length,
+      annotatedCount: normalizedState.annotatedTaskIds.length,
+      trainedCount: normalizedState.trainedTaskIds.length,
+      remainingTaskCount: Math.max(
+        normalizedState.totalAvailableTasks -
+          normalizedState.annotatedTaskIds.length,
+        0
+      ),
+      ...extra,
+    }
+  }
+
+  async function loadDeveloperHumanTeacherChunkWorkspace({
+    sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+    offset = 0,
+  } = {}) {
+    const nextSampleName = normalizeDemoSampleName(sampleName)
+    const sample = await loadHumanTeacherDemoSample(nextSampleName)
+    const effectiveOffset = clampDeveloperHumanTeacherOffset(
+      offset,
+      sample.totalFlips
+    )
+    const outputDir = developerHumanTeacherChunkDir(
+      localAiStorage,
+      nextSampleName,
+      effectiveOffset
+    )
+
+    const summary = await ensureHumanTeacherDemoChunkWorkspace(localAiStorage, {
+      sampleName: nextSampleName,
+      outputDir,
+      batchSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+      offset: effectiveOffset,
+    })
+    const nextWorkspace = await buildWorkspaceFromOutputDir(outputDir, null)
+    const {statePath, state: developerState} =
+      await loadDeveloperHumanTeacherState(nextSampleName, sample.totalFlips)
+
+    return {
+      sample,
+      outputDir,
+      offset: effectiveOffset,
+      statePath,
+      state: developerState,
+      summary: {
+        ...summary,
+        tasks: nextWorkspace.taskRows.length,
+        totalFlips: sample.totalFlips,
+        offset: effectiveOffset,
+      },
+      workspace: nextWorkspace.workspace,
+      taskRows: nextWorkspace.taskRows,
+      annotationsPath: nextWorkspace.annotationsPath,
+      taskManifestPath: nextWorkspace.taskManifestPath,
+    }
+  }
+
+  async function loadDeveloperHumanTeacherTaskFromChunk({
+    sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+    offset = 0,
+    taskId,
+  } = {}) {
+    const taskDetailId = String(taskId || '').trim()
+
+    if (!taskDetailId) {
+      throw new Error('taskId is required')
+    }
+
+    const chunk = await loadDeveloperHumanTeacherChunkWorkspace({
+      sampleName,
+      offset,
+    })
+    const taskRow = chunk.taskRows.find(
+      (row) =>
+        String(row && row.task_id ? row.task_id : '').trim() === taskDetailId
+    )
+
+    if (!taskRow) {
+      throw new Error('Human teacher developer task is unavailable')
+    }
+
+    const annotationRows = await readJsonlRows(chunk.annotationsPath, [])
+    const annotationRow = annotationRows.find(
+      (row) =>
+        String(row && row.task_id ? row.task_id : '').trim() === taskDetailId
+    )
+    const panels = await Promise.all(
+      (Array.isArray(taskRow.panels) ? taskRow.panels : []).map(
+        async (panelRelativePath, index) => {
+          const panelPath = resolveWorkspaceChildPath(
+            chunk.outputDir,
+            panelRelativePath
+          )
+          const panelBuffer = await localAiStorage.readBuffer(panelPath)
+
+          return {
+            id: `panel-${index + 1}`,
+            index,
+            path: panelPath,
+            dataUrl: `data:image/png;base64,${panelBuffer.toString('base64')}`,
+          }
+        }
+      )
+    )
+
+    return {
+      demo: true,
+      developer: true,
+      sampleName: chunk.sample.sampleName,
+      offset: chunk.offset,
+      task: {
+        taskId: taskDetailId,
+        sampleId: taskRow.sample_id || taskDetailId,
+        flipHash: taskRow.flip_hash || null,
+        epoch: null,
+        consensusAnswer: taskRow.final_answer || null,
+        consensusStrength: taskRow.consensus_strength || null,
+        leftOrder: Array.isArray(taskRow.left_order) ? taskRow.left_order : [],
+        rightOrder: Array.isArray(taskRow.right_order)
+          ? taskRow.right_order
+          : [],
+        words:
+          taskRow.words &&
+          typeof taskRow.words === 'object' &&
+          !Array.isArray(taskRow.words)
+            ? taskRow.words
+            : {},
+        demo:
+          taskRow.demo &&
+          typeof taskRow.demo === 'object' &&
+          !Array.isArray(taskRow.demo)
+            ? taskRow.demo
+            : null,
+        panels,
+        annotation: normalizeHumanTeacherAnnotationDraft(
+          taskRow,
+          annotationRow
+        ),
+      },
+    }
+  }
+
+  async function saveDeveloperHumanTeacherDraftToChunk({
+    sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+    offset = 0,
+    taskId,
+    annotation,
+  } = {}) {
+    const nextTaskId = String(taskId || '').trim()
+
+    if (!nextTaskId) {
+      throw new Error('taskId is required')
+    }
+
+    const chunk = await loadDeveloperHumanTeacherChunkWorkspace({
+      sampleName,
+      offset,
+    })
+    const taskRow = chunk.taskRows.find(
+      (row) =>
+        String(row && row.task_id ? row.task_id : '').trim() === nextTaskId
+    )
+
+    if (!taskRow) {
+      throw new Error('Human teacher developer task is unavailable')
+    }
+
+    const annotationRows = await readJsonlRows(chunk.annotationsPath, [])
+    const nextAnnotation = normalizeHumanTeacherAnnotationDraft(
+      taskRow,
+      annotation
+    )
+    const annotationStatus = getHumanTeacherAnnotationStatus(nextAnnotation)
+    const nextAnnotationRows = annotationRows
+      .filter(
+        (row) =>
+          String(row && row.task_id ? row.task_id : '').trim() !== nextTaskId
+      )
+      .concat(nextAnnotation)
+
+    await writeJsonlRows(chunk.annotationsPath, nextAnnotationRows)
+
+    return {
+      demo: true,
+      developer: true,
+      sampleName: chunk.sample.sampleName,
+      offset: chunk.offset,
+      task: {
+        taskId: nextTaskId,
+        annotation: nextAnnotation,
+        annotationStatus,
+      },
+      workspace: {
+        annotationsPath: chunk.annotationsPath,
+      },
+    }
+  }
+
+  async function commitDeveloperHumanTeacherChunk({
+    sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+    offset = 0,
+    trainNow = false,
+    advance = false,
+  } = {}) {
+    const chunk = await loadDeveloperHumanTeacherChunkWorkspace({
+      sampleName,
+      offset,
+    })
+
+    if (
+      Number(chunk.workspace.taskCount) > 0 &&
+      Number(chunk.workspace.completedCount) < Number(chunk.workspace.taskCount)
+    ) {
+      throw new Error(
+        'Complete all 5 developer training flips before committing this chunk'
+      )
+    }
+
+    const normalizedPath = path.join(
+      chunk.outputDir,
+      'annotations.normalized.jsonl'
+    )
+    const summaryPath = path.join(
+      chunk.outputDir,
+      'annotations.import-summary.json'
+    )
+    const importSummary = await importHumanTeacherAnnotations({
+      taskManifestPath: chunk.taskManifestPath,
+      annotationsJsonlPath: chunk.annotationsPath,
+      outputJsonlPath: normalizedPath,
+      summaryPath,
+    })
+    const annotatedPath = developerHumanTeacherAnnotatedPath(
+      localAiStorage,
+      chunk.sample.sampleName
+    )
+    const pendingPath = developerHumanTeacherPendingPath(
+      localAiStorage,
+      chunk.sample.sampleName
+    )
+    const trainedPath = developerHumanTeacherTrainedPath(
+      localAiStorage,
+      chunk.sample.sampleName
+    )
+    const existingAnnotatedRows = await readJsonlRows(annotatedPath, [])
+    let pendingRows = await readJsonlRows(pendingPath, [])
+    let trainedRows = await readJsonlRows(trainedPath, [])
+    const committedAt = new Date().toISOString()
+    const existingState = chunk.state
+    const normalizedRows = Array.isArray(importSummary.rows)
+      ? importSummary.rows
+      : []
+    const normalizedSummary = summarizeDeveloperChunkRows(normalizedRows)
+
+    const nextAnnotatedRows = mergeJsonlRowsByTaskId(
+      existingAnnotatedRows,
+      normalizedRows
+    )
+    pendingRows = mergeJsonlRowsByTaskId(pendingRows, normalizedRows)
+
+    await writeJsonlRows(annotatedPath, nextAnnotatedRows)
+    await writeJsonlRows(pendingPath, pendingRows)
+
+    let trainingResult = null
+    let trainingStatus = 'pending'
+    let trainedTaskIds = uniqueStrings(existingState.trainedTaskIds)
+    let pendingTaskIds = uniqueStrings(
+      mergeJsonlRowsByTaskId([], pendingRows).map((row) => row && row.task_id)
+    )
+
+    if (trainNow) {
+      trainingResult = await trainEpoch({
+        input: {
+          developerHumanTeacher: true,
+          sampleName: chunk.sample.sampleName,
+          offset: chunk.offset,
+          chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+          normalizedAnnotationsPath: normalizedPath,
+          pendingAnnotationsPath: pendingPath,
+          annotatedAnnotationsPath: annotatedPath,
+          trainedAnnotationsPath: trainedPath,
+          developerStatePath: chunk.statePath,
+          comparisonPath: developerHumanTeacherComparisonPath(
+            localAiStorage,
+            chunk.sample.sampleName
+          ),
+        },
+      })
+
+      if (trainingResult && trainingResult.ok) {
+        trainedRows = mergeJsonlRowsByTaskId(trainedRows, pendingRows)
+        await writeJsonlRows(trainedPath, trainedRows)
+        pendingRows = []
+        await writeJsonlRows(pendingPath, pendingRows)
+        trainedTaskIds = uniqueStrings(
+          trainedRows.map((row) => row && row.task_id)
+        )
+        pendingTaskIds = []
+        trainingStatus = 'trained'
+      } else {
+        trainingStatus = 'failed'
+      }
+    }
+
+    const nextOffset = advance
+      ? clampDeveloperHumanTeacherOffset(
+          chunk.offset + DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+          chunk.sample.totalFlips
+        )
+      : chunk.offset
+    const chunkEntries = Array.isArray(existingState.chunks)
+      ? existingState.chunks.filter((entry) => entry.offset !== chunk.offset)
+      : []
+    chunkEntries.push({
+      offset: chunk.offset,
+      taskIds: normalizedSummary.taskIds,
+      rowCount: normalizedSummary.rowCount,
+      committedAt,
+      trainedAt: trainingStatus === 'trained' ? new Date().toISOString() : null,
+      trainingStatus,
+      normalizedPath,
+      summaryPath,
+    })
+
+    const nextState = {
+      ...existingState,
+      currentOffset: nextOffset,
+      annotatedTaskIds: uniqueStrings(
+        nextAnnotatedRows.map((row) => row && row.task_id)
+      ),
+      pendingTrainingTaskIds: pendingTaskIds,
+      trainedTaskIds,
+      chunks: chunkEntries,
+      lastSavedAt: committedAt,
+      lastTraining: trainNow
+        ? {
+            at: new Date().toISOString(),
+            status: trainingStatus,
+            offset: chunk.offset,
+            rowCount: normalizedSummary.rowCount,
+            result:
+              trainingResult &&
+              typeof trainingResult === 'object' &&
+              !Array.isArray(trainingResult)
+                ? trainingResult
+                : null,
+          }
+        : existingState.lastTraining,
+    }
+    const persistedState = await writeDeveloperHumanTeacherState(
+      chunk.sample.sampleName,
+      {
+        ...nextState,
+        totalAvailableTasks: chunk.sample.totalFlips,
+      }
+    )
+
+    return {
+      demo: true,
+      developer: true,
+      sampleName: chunk.sample.sampleName,
+      offset: chunk.offset,
+      nextOffset,
+      taskCount: normalizedSummary.rowCount,
+      import: {
+        normalizedPath,
+        summaryPath,
+        annotationsPath: chunk.annotationsPath,
+        normalizedRows: Number(importSummary.normalizedRows) || 0,
+        missingAnnotations: Number(importSummary.missingAnnotations) || 0,
+        unmatchedAnnotations: Number(importSummary.unmatchedAnnotations) || 0,
+        invalidAnnotations: Number(importSummary.invalidAnnotations) || 0,
+      },
+      training: trainingResult,
+      statePath: persistedState.statePath,
+      state: summarizeDeveloperHumanTeacherState(persistedState.state),
+    }
   }
 
   async function refreshSidecarStatus(payload = {}) {
@@ -2509,6 +3250,58 @@ function createLocalAiManager({
     }
   }
 
+  async function loadHumanTeacherDeveloperSession(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    assertDeveloperHumanTeacherSessionAllowed(
+      next.currentPeriod,
+      'session start'
+    )
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {statePath, state: developerState} =
+      await loadDeveloperHumanTeacherState(sample.sampleName, sample.totalFlips)
+    const effectiveOffset = clampDeveloperHumanTeacherOffset(
+      typeof next.offset === 'number'
+        ? next.offset
+        : developerState.currentOffset,
+      sample.totalFlips
+    )
+    const session = await loadDeveloperHumanTeacherChunkWorkspace({
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+    })
+
+    return {
+      demo: true,
+      developer: true,
+      sampleName: sample.sampleName,
+      samples: listHumanTeacherDemoSamples(),
+      chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+      offset: effectiveOffset,
+      outputDir: session.outputDir,
+      statePath,
+      state: summarizeDeveloperHumanTeacherState(developerState, {
+        currentOffset: effectiveOffset,
+      }),
+      summary: session.summary,
+      workspace: session.workspace,
+      comparison100: {
+        status: String(state.comparison100?.status || 'not_loaded').trim(),
+        holdoutPath: state.comparison100?.holdoutPath || null,
+        lastEvaluatedAt: state.comparison100?.lastEvaluatedAt || null,
+        lastResultPath: state.comparison100?.lastResultPath || null,
+        expectedPath: developerHumanTeacherComparisonPath(
+          localAiStorage,
+          sample.sampleName
+        ),
+      },
+    }
+  }
+
   async function loadHumanTeacherAnnotationTask(payload) {
     await hydrate()
 
@@ -2702,6 +3495,33 @@ function createLocalAiManager({
     }
   }
 
+  async function loadHumanTeacherDeveloperTask(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    assertDeveloperHumanTeacherSessionAllowed(next.currentPeriod, 'task open')
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {state: developerState} = await loadDeveloperHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const effectiveOffset = clampDeveloperHumanTeacherOffset(
+      typeof next.offset === 'number'
+        ? next.offset
+        : developerState.currentOffset,
+      sample.totalFlips
+    )
+
+    return loadDeveloperHumanTeacherTaskFromChunk({
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+      taskId: next.taskId,
+    })
+  }
+
   async function saveHumanTeacherAnnotationDraft(payload) {
     await hydrate()
 
@@ -2865,6 +3685,64 @@ function createLocalAiManager({
     }
   }
 
+  async function saveHumanTeacherDeveloperDraft(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {state: developerState} = await loadDeveloperHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const effectiveOffset = clampDeveloperHumanTeacherOffset(
+      typeof next.offset === 'number'
+        ? next.offset
+        : developerState.currentOffset,
+      sample.totalFlips
+    )
+
+    return saveDeveloperHumanTeacherDraftToChunk({
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+      taskId: next.taskId,
+      annotation: next.annotation,
+    })
+  }
+
+  async function finalizeHumanTeacherDeveloperChunk(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    assertDeveloperHumanTeacherSessionAllowed(
+      next.currentPeriod,
+      'training commit'
+    )
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {state: developerState} = await loadDeveloperHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const effectiveOffset = clampDeveloperHumanTeacherOffset(
+      typeof next.offset === 'number'
+        ? next.offset
+        : developerState.currentOffset,
+      sample.totalFlips
+    )
+
+    return commitDeveloperHumanTeacherChunk({
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+      trainNow: next.trainNow === true,
+      advance: next.advance === true,
+    })
+  }
+
   async function importHumanTeacherAnnotationsWorkspace(payload) {
     await hydrate()
 
@@ -3022,11 +3900,15 @@ function createLocalAiManager({
     loadHumanTeacherAnnotationTask,
     loadHumanTeacherDemoWorkspace,
     loadHumanTeacherDemoTask,
+    loadHumanTeacherDeveloperSession,
+    loadHumanTeacherDeveloperTask,
     updateTrainingCandidatePackageReview,
     updateHumanTeacherPackageReview,
     exportHumanTeacherTasks: exportHumanTeacherTasksWorkspace,
     saveHumanTeacherAnnotationDraft,
     saveHumanTeacherDemoDraft,
+    saveHumanTeacherDeveloperDraft,
+    finalizeHumanTeacherDeveloperChunk,
     importHumanTeacherAnnotations: importHumanTeacherAnnotationsWorkspace,
   }
 }

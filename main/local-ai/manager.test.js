@@ -959,6 +959,79 @@ describe('local-ai manager', () => {
     )
   })
 
+  it('caps human-teacher packaging at 30 flips even when a larger batch is requested', async () => {
+    const rankedItems = Array.from({length: 35}, (_, index) => ({
+      flipHash: `flip-${index + 1}`,
+      epoch: 12,
+      sessionType: 'short',
+      panelCount: 4,
+      timestamp: 1710000000000 + index,
+      capturedAt: new Date(1710000000000 + index * 1000).toISOString(),
+      finalAnswer: index % 2 === 0 ? 'left' : 'right',
+      consensusStrength: 'Strong',
+      payloadPath: storage.resolveLocalAiPath(
+        'modern-payloads',
+        'epoch-12',
+        `flip-${index + 1}.json`
+      ),
+      words: {localNode: {word1Index: index, word2Index: index + 1}},
+      trainingWeight: 1,
+      rankingSource: 'local_node_indexer',
+      source: {
+        kind: 'modern',
+        name: 'local',
+        priority: 'local-node-first',
+      },
+      audit: {author: `0x${index + 1}`},
+    }))
+    const modernTrainingCollector = {
+      buildCandidatePackage: jest.fn(async () => ({
+        items: rankedItems,
+        excluded: [],
+        sourcePriority: 'local-node-first',
+        rankingPolicy: {
+          sourcePriority: 'local-node-first',
+          allowPublicIndexerFallback: true,
+        },
+      })),
+    }
+
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      modernTrainingCollector,
+    })
+    const summary = await manager.buildHumanTeacherPackage({
+      epoch: 12,
+      batchSize: 999,
+    })
+    const taskPackage = await storage.readHumanTeacherPackage(
+      summary.packagePath
+    )
+
+    expect(summary).toMatchObject({
+      epoch: 12,
+      eligibleCount: 30,
+      excludedCount: 0,
+    })
+    expect(taskPackage.batchSize).toBe(30)
+    expect(taskPackage.eligibleCount).toBe(30)
+    expect(taskPackage.items).toHaveLength(30)
+    expect(new Set(taskPackage.items.map((item) => item.taskId)).size).toBe(30)
+    expect(taskPackage.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          taskId: 'flip-35::human-teacher',
+          flipHash: 'flip-35',
+        }),
+        expect.objectContaining({
+          taskId: 'flip-6::human-teacher',
+          flipHash: 'flip-6',
+        }),
+      ])
+    )
+  })
+
   it('loads and updates saved human-teacher package review state locally', async () => {
     const filePath = storage.resolveLocalAiPath(
       'human-teacher',
@@ -1348,6 +1421,150 @@ describe('local-ai manager', () => {
       draftedCount: 1,
       completedCount: 1,
     })
+  })
+
+  it('stores developer flip-training chunks in groups of 5 and marks them trained after local training succeeds', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async () => ({
+        ok: true,
+        status: 'trained',
+        acceptedRows: 5,
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+    })
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(session).toMatchObject({
+      developer: true,
+      demo: true,
+      chunkSize: 5,
+      offset: 0,
+      workspace: expect.objectContaining({
+        taskCount: 5,
+      }),
+    })
+
+    for (const task of session.workspace.tasks) {
+      await manager.saveHumanTeacherDeveloperDraft({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+        taskId: task.taskId,
+        annotation: {
+          annotator: 'developer-test',
+          final_answer: 'left',
+          why_answer: `human reason for ${task.taskId}`,
+          report_required: false,
+        },
+      })
+    }
+
+    const committed = await manager.finalizeHumanTeacherDeveloperChunk({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      trainNow: true,
+      advance: true,
+    })
+
+    expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
+    expect(sidecar.trainEpoch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          developerHumanTeacher: true,
+          sampleName: 'flip-challenge-test-20-decoded-labeled',
+          offset: 0,
+          chunkSize: 5,
+          normalizedAnnotationsPath: expect.stringContaining(
+            'annotations.normalized.jsonl'
+          ),
+        }),
+      })
+    )
+    expect(committed).toMatchObject({
+      developer: true,
+      taskCount: 5,
+      nextOffset: 5,
+      training: expect.objectContaining({
+        ok: true,
+        status: 'trained',
+      }),
+      state: expect.objectContaining({
+        annotatedCount: 5,
+        pendingTrainingCount: 0,
+        trainedCount: 5,
+        currentOffset: 5,
+      }),
+    })
+  })
+
+  it('rejects starting the developer flip-training session during an active validation period', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await expect(
+      manager.loadHumanTeacherDeveloperSession({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        currentPeriod: 'ShortSession',
+      })
+    ).rejects.toThrow(
+      'Developer human-teacher session start is blocked while a validation session is running'
+    )
+  })
+
+  it('rejects opening developer flip-training tasks during an active validation period', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    await expect(
+      manager.loadHumanTeacherDeveloperTask({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        taskId: session.workspace.tasks[0].taskId,
+        currentPeriod: 'LongSession',
+      })
+    ).rejects.toThrow(
+      'Developer human-teacher task open is blocked while a validation session is running'
+    )
+  })
+
+  it('rejects committing a developer chunk before all 5 flips are complete', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    await manager.saveHumanTeacherDeveloperDraft({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      taskId: session.workspace.tasks[0].taskId,
+      annotation: {
+        annotator: 'developer-test',
+        final_answer: 'left',
+        why_answer: 'only one flip is done',
+        report_required: false,
+      },
+    })
+
+    await expect(
+      manager.finalizeHumanTeacherDeveloperChunk({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+      })
+    ).rejects.toThrow(
+      'Complete all 5 developer training flips before committing this chunk'
+    )
   })
 
   it('requires explicit approval before exporting human-teacher tasks', async () => {

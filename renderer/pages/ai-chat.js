@@ -28,6 +28,7 @@ import {
 } from '../shared/components/components'
 import {PrimaryButton, SecondaryButton} from '../shared/components/button'
 import {useChainState} from '../shared/providers/chain-context'
+import {EpochPeriod, useEpochState} from '../shared/providers/epoch-context'
 import {
   useSettingsDispatch,
   useSettingsState,
@@ -560,6 +561,7 @@ export default function AiChatPage() {
   const router = useRouter()
   const toast = useToast()
   const {loading, syncing, offline} = useChainState()
+  const epoch = useEpochState()
   const settings = useSettingsState()
   const {updateLocalAiSettings} = useSettingsDispatch()
 
@@ -567,6 +569,14 @@ export default function AiChatPage() {
     () => buildLocalAiSettings(settings.localAi),
     [settings.localAi]
   )
+  const currentMode = String(router.query?.mode || '')
+    .trim()
+    .toLowerCase()
+  const showModeChooser = currentMode !== 'chat'
+  const isValidationRunning = [
+    EpochPeriod.ShortSession,
+    EpochPeriod.LongSession,
+  ].includes(String(epoch?.currentPeriod || '').trim())
 
   const runtimePayload = React.useMemo(
     () => buildLocalAiRuntimePayload(localAi),
@@ -1075,6 +1085,122 @@ export default function AiChatPage() {
           </HStack>
         </Flex>
       </ErrorAlert>
+    )
+  }
+
+  if (showModeChooser) {
+    return (
+      <Layout loading={loading} syncing={syncing} offline={offline}>
+        <Page minW={0}>
+          <Stack spacing={6} maxW="4xl">
+            <Stack spacing={2}>
+              <HStack spacing={3} align="center">
+                <ChatIcon boxSize="6" color="brandBlue.500" />
+                <PageTitle mb={0}>{t('IdenaAI-GPT')}</PageTitle>
+              </HStack>
+              <Text color="muted" maxW="3xl">
+                {t(
+                  'Choose whether you want to talk to your local AI directly or teach it on small FLIP chunks in developer mode.'
+                )}
+              </Text>
+            </Stack>
+
+            <Box
+              bg="white"
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="xl"
+              px={4}
+              py={4}
+            >
+              <HStack spacing={2} wrap="wrap">
+                <Badge colorScheme={runtimeStatusTone}>
+                  {runtimeStatusLabel}
+                </Badge>
+                <Badge variant="subtle">
+                  {formatAiProviderLabel('local-ai')}
+                </Badge>
+                <Text color="muted" fontSize="sm">
+                  {t('Endpoint')}: {runtimePayload.baseUrl}
+                </Text>
+              </HStack>
+            </Box>
+
+            <SimpleGrid columns={[1, 1, 2]} spacing={4}>
+              <Box
+                bg="white"
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="xl"
+                px={5}
+                py={5}
+              >
+                <Stack spacing={3} h="full">
+                  <Badge colorScheme="blue" alignSelf="flex-start">
+                    {t('Developer mode')}
+                  </Badge>
+                  <Text fontSize="xl" fontWeight={700}>
+                    {t('Train your AI on flips')}
+                  </Text>
+                  <Text color="muted" flex={1}>
+                    {t(
+                      'Annotate 5 bundled FLIP examples at a time, then train immediately or save and continue later. Annotated and trained flips are tracked locally.'
+                    )}
+                  </Text>
+                  {isValidationRunning ? (
+                    <Text color="orange.500" fontSize="sm">
+                      {t(
+                        'This training flow is unavailable while a validation session is running.'
+                      )}
+                    </Text>
+                  ) : null}
+                  <PrimaryButton
+                    isDisabled={isValidationRunning}
+                    onClick={() =>
+                      router.push(
+                        '/settings/ai-human-teacher?developer=1&action=start'
+                      )
+                    }
+                  >
+                    {t('Train your AI on flips')}
+                  </PrimaryButton>
+                </Stack>
+              </Box>
+
+              <Box
+                bg="white"
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="xl"
+                px={5}
+                py={5}
+              >
+                <Stack spacing={3} h="full">
+                  <Badge colorScheme="green" alignSelf="flex-start">
+                    {t('Chat')}
+                  </Badge>
+                  <Text fontSize="xl" fontWeight={700}>
+                    {t('Chat with IdenaAI-GPT')}
+                  </Text>
+                  <Text color="muted" flex={1}>
+                    {t(
+                      'Open the dedicated local chat view, attach images, and ask the configured local runtime to reason about flips or general Idena tasks.'
+                    )}
+                  </Text>
+                  <PrimaryButton
+                    variant="solid"
+                    onClick={() => router.push('/ai-chat?mode=chat')}
+                  >
+                    {t('Chat with IdenaAI-GPT')}
+                  </PrimaryButton>
+                </Stack>
+              </Box>
+            </SimpleGrid>
+
+            {runtimeAlert}
+          </Stack>
+        </Page>
+      </Layout>
     )
   }
 

@@ -113,6 +113,7 @@ async function buildHumanTeacherDemoWorkspace({
   outputDir,
   sampleName,
   take = 0,
+  offset = 0,
 } = {}) {
   const resolvedOutputDir = path.resolve(trimText(outputDir))
 
@@ -121,10 +122,12 @@ async function buildHumanTeacherDemoWorkspace({
   }
 
   const sample = await loadHumanTeacherDemoSample(sampleName)
+  const nextOffset =
+    Number.isFinite(Number(offset)) && Number(offset) > 0 ? Number(offset) : 0
   const selectedFlips =
     Number.isFinite(Number(take)) && Number(take) > 0
-      ? sample.flips.slice(0, Number(take))
-      : sample.flips
+      ? sample.flips.slice(nextOffset, nextOffset + Number(take))
+      : sample.flips.slice(nextOffset)
 
   if (!selectedFlips.length) {
     throw new Error('Human-teacher demo sample does not contain any flips')
@@ -146,7 +149,8 @@ async function buildHumanTeacherDemoWorkspace({
   const templateRows = []
 
   for (const [index, flip] of selectedFlips.entries()) {
-    const taskId = `demo:${sample.sampleName}:${index + 1}`
+    const absoluteIndex = nextOffset + index + 1
+    const taskId = `demo:${sample.sampleName}:${absoluteIndex}`
     const taskDir = path.join(tasksDir, safeSlug(taskId))
     await fs.ensureDir(taskDir)
 
@@ -216,17 +220,18 @@ async function buildHumanTeacherDemoWorkspace({
     'utf8'
   )
   await fs.writeFile(filledPath, '', 'utf8')
-  await fs.writeJson(
-    metadataPath,
-    {
-      demo: true,
-      sampleName: sample.sampleName,
-      label: sample.label,
-      sourcePath: sample.sourcePath,
-      totalFlips: sample.totalFlips,
-      exportedTasks: manifestRows.length,
-    },
-    {spaces: 2}
+    await fs.writeJson(
+      metadataPath,
+      {
+        demo: true,
+        sampleName: sample.sampleName,
+        label: sample.label,
+        sourcePath: sample.sourcePath,
+        totalFlips: sample.totalFlips,
+        offset: nextOffset,
+        exportedTasks: manifestRows.length,
+      },
+      {spaces: 2}
   )
 
   return {
@@ -234,6 +239,8 @@ async function buildHumanTeacherDemoWorkspace({
     sampleName: sample.sampleName,
     sampleLabel: sample.label,
     outputDir: resolvedOutputDir,
+    offset: nextOffset,
+    totalFlips: sample.totalFlips,
     tasks: manifestRows.length,
     manifestPath,
     templatePath,
@@ -246,5 +253,6 @@ module.exports = {
   DEFAULT_DEMO_SAMPLE_NAME,
   buildHumanTeacherDemoWorkspace,
   listHumanTeacherDemoSamples,
+  loadHumanTeacherDemoSample,
   normalizeDemoSampleName,
 }
