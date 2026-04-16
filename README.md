@@ -1,10 +1,10 @@
-# IdenaAI
+# IdenaAI Benchmarker
 
 ## Work In Progress
 
 This repository is a **work-in-progress** community fork of
-[`idena-desktop`](https://github.com/idena-network/idena-desktop) with
-experimental AI, governance, and in-app social features.
+[`idena-desktop`](https://github.com/idena-network/idena-desktop) focused on
+benchmarking, experimental AI, governance, and in-app social features.
 
 It is **not an official Idena release**, **not production-ready**, and **not
 fully security-audited**. Treat it as research software and test tooling, not
@@ -23,11 +23,11 @@ Do **not** use valuable identities, high-value wallets, long-lived secrets, or
 large AI budgets unless you have reviewed the code and understand the current
 risks.
 
-This fork connects AI tooling to the FLIP Challenge, a human CAPTCHA-like
-benchmark built from human-generated and human-verified tasks collected from the
-Idena blockchain. It lets researchers test, compare, and stress-test models on
-tasks that are still easy for humans but often hard, brittle, and expensive for
-AI.
+This repository is a work-in-progress desktop benchmarking tool that connects
+AI providers to the FLIP-Challenge, a human CAPTCHA-like benchmark built from
+human-generated and human-verified tasks collected from the Idena blockchain.
+It lets researchers test, compare, and stress-test models on tasks that are
+still easy for humans but often hard, brittle, and expensive for AI.
 
 Use it to explore model capability, failure modes, prompt strategies, provider differences, and cost. See which models come closest, where they still break down, and what price AI has to pay on tasks where humans still hold the advantage.
 
@@ -148,6 +148,17 @@ The main unfinished areas at the time of writing are:
   artifacts remain for reproducibility, but the long-term release shape is not
   settled yet.
 
+Naming in this repository:
+
+- Human-facing app name: `IdenaAI Benchmarker`
+- Electron `productName`: `IdenaAI_Benchmarker`
+- npm package / artifact prefix: `idena-ai-benchmarker`
+- GitHub repository: `IdenaAI_Benchmarker`
+
+This repository is the benchmark fork. When documentation mentions the wider
+`IdenaAI` project direction, read it as background context rather than a claim
+that this repository is the main app.
+
 ## Status
 
 This is a research fork, not an official Idena release. The desktop runtime has
@@ -166,8 +177,8 @@ local native rebuilds. Use it carefully:
 
 For cost control, prefer prepaid API budgets or provider-side spending limits.
 
-This fork uses its own app-support directory, so it no longer collides with
-`IdenaAI_Benchmarker`.
+This fork uses its own app-support directory and runtime name so it does not
+collide with the main `IdenaAI` app.
 
 ## Community Build Warning
 
@@ -189,8 +200,16 @@ unless you have reviewed the code and understand the risks.
 
 ## Install From Source
 
-There is no official binary release from this fork. These instructions build and
-run the app from source.
+These steps build and run `IdenaAI Benchmarker` from source.
+
+This fork is separate from the main `IdenaAI` app:
+
+- repository folder: `IdenaAI_Benchmarker`
+- app support/runtime name: `IdenaAI_Benchmarker`
+- default dev renderer URL: `http://127.0.0.1:8010`
+
+That separation is intentional so the benchmarker can live alongside the main
+`IdenaAI` app without colliding with its local files or dev server.
 
 Copy one command block at a time. If one block fails, stop and fix that error
 before continuing.
@@ -218,23 +237,24 @@ brew install git node@20 python@3 pkg-config cairo pango libpng jpeg giflib libr
 brew link --overwrite --force node@20
 ```
 
-4. Download and enter the project:
+4. Clone and enter the `IdenaAI_Benchmarker` repository:
 
 ```bash
-git clone https://github.com/ubiubi18/IdenaAI.git
-cd IdenaAI
+git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
+cd IdenaAI_Benchmarker
 ```
 
-If you already downloaded the repository, open Terminal in that folder instead.
+If you already cloned `IdenaAI_Benchmarker`, open Terminal in that folder
+instead.
 
-5. Install JavaScript dependencies and run the release gate:
+5. Install dependencies and run the local release checks:
 
 ```bash
 npm ci
 npm run release:check
 ```
 
-6. Start the desktop app:
+6. Start `IdenaAI Benchmarker`:
 
 ```bash
 npm run clean
@@ -260,8 +280,8 @@ cp .env.example .env.local
 
 Edit only the values you need. Do not commit `.env.local` or provider keys.
 
-`npm start` launches the Next.js renderer dev server on `127.0.0.1:8000` and
-then starts Electron.
+`npm start` launches the renderer dev server on `127.0.0.1:8010` and then
+starts the Electron desktop app for `IdenaAI Benchmarker`.
 
 If Electron or a native addon needs to be rebuilt for the current runtime:
 
@@ -293,14 +313,14 @@ npm --version
 
 `node --version` should print a `v20...` version.
 
-3. Download and enter the project:
+3. Clone and enter the `IdenaAI_Benchmarker` repository:
 
 ```bash
-git clone https://github.com/ubiubi18/IdenaAI.git
-cd IdenaAI
+git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
+cd IdenaAI_Benchmarker
 ```
 
-4. Install dependencies, run checks, and start:
+4. Install dependencies, run checks, and start `IdenaAI Benchmarker`:
 
 ```bash
 npm ci
@@ -309,7 +329,8 @@ npm run clean
 npm start
 ```
 
-`npm start` now launches the Next.js renderer dev server and Electron together.
+`npm start` launches the renderer dev server on `127.0.0.1:8010` and then
+starts the Electron desktop app for `IdenaAI Benchmarker`.
 
 If Electron or a native addon needs to be rebuilt for the current runtime:
 
@@ -325,7 +346,8 @@ Recommended Windows path: use WSL2 with Ubuntu and follow the Linux instructions
 above. That is usually simpler than native Windows builds for current Electron
 projects with native dependencies.
 
-Native Windows source build path is experimental and may require extra debugging:
+Native Windows source build path is experimental and may require extra
+debugging:
 1. Open PowerShell as Administrator.
 
 2. Install Chocolatey if you do not already have it:
@@ -348,14 +370,14 @@ If `node --version` is not Node 20, install Node 20 manually from
 [`nodejs.org`](https://nodejs.org/) or use a Node version manager before
 continuing.
 
-4. Download and enter the project:
+4. Clone and enter the `IdenaAI_Benchmarker` repository:
 
 ```powershell
 git clone https://github.com/ubiubi18/IdenaAI.git
 cd IdenaAI
 ```
 
-5. Install dependencies, run checks, and start:
+5. Install dependencies, run checks, and start `IdenaAI Benchmarker`:
 
 ```powershell
 npm ci
