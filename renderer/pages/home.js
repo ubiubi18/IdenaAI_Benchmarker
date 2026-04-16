@@ -81,7 +81,6 @@ import {
   AdsIcon,
   ChatIcon,
   ChevronRightIcon,
-  CommunityIcon,
   DeleteIcon,
   GlobeIcon,
   InfoIcon,
@@ -750,7 +749,7 @@ function HomeFeaturedDestinations() {
             {t('Quick access')}
           </Heading>
           <Text color="muted" fontSize="sm" lineHeight="base" maxW="2xl">
-            {t('Open chat, the community feed, or DAO tools.')}
+            {t('Open chat or the community feed.')}
           </Text>
         </Stack>
         <Stack
@@ -777,17 +776,6 @@ function HomeFeaturedDestinations() {
               'Read the feed, publish through your own node, and stay close to the live network conversation.'
             )}
             cta={t('Open social')}
-          />
-          <HomeFeaturedCard
-            href="/dao"
-            icon={<CommunityIcon boxSize={5} />}
-            eyebrow={t('Governance')}
-            title={t('IdenaDAO')}
-            stamp={t('DAO')}
-            description={t(
-              'Draft tagged proposals, review governance discussion, and publish through the integrated idena.social contract flow.'
-            )}
-            cta={t('Open DAO')}
           />
         </Stack>
       </Stack>

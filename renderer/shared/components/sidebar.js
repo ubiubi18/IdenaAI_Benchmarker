@@ -58,7 +58,6 @@ import {TodoVotingCountBadge} from '../../screens/oracles/components'
 import {
   ChatIcon,
   ClockIcon,
-  CommunityIcon,
   ContactsIcon,
   GlobeIcon,
   GalleryIcon,
@@ -307,9 +306,6 @@ function Navbar() {
       </NavItem>
       <NavItem href="/social" icon={GlobeIcon} featured badge={t('Live')}>
         {t('idena.social')}
-      </NavItem>
-      <NavItem href="/dao" icon={CommunityIcon} featured badge={t('DAO')}>
-        {t('IdenaDAO')}
       </NavItem>
       <NavSectionTitle>{t('Workspace')}</NavSectionTitle>
       <NavItem href="/home" icon={ProfileIcon}>
