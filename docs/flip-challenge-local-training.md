@@ -208,6 +208,57 @@ It writes:
 - optional per-mode evaluation reports
 - one combined `matrix-summary.json`
 
+By default, matrix results are kept for only the newest `3` epoch snapshots under:
+- `.tmp/flip-train/human-matrix/epochs/<epoch-key>/`
+
+Older epoch snapshots are pruned automatically. The top-level:
+- `.tmp/flip-train/human-matrix/matrix-summary.json`
+
+always points to the latest run for compatibility with the leaderboard and any
+existing tooling.
+
+The combined `matrix-summary.json` now also includes a `comparisons` block with:
+- one compact metrics row per run
+- best run per training mode
+- best run per aggregation mode
+- overall best run on the key metrics
+
+To print a quick terminal leaderboard from that summary:
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/print_flip_human_annotation_leaderboard.py \
+  --summary-path .tmp/flip-train/human-matrix/matrix-summary.json \
+  --sort-by accuracy
+```
+
+Useful variants:
+- Markdown table for notes or PRs:
+
+```bash
+python scripts/print_flip_human_annotation_leaderboard.py \
+  --summary-path .tmp/flip-train/human-matrix/matrix-summary.json \
+  --format markdown
+```
+
+- Only compare DeepFunding runs:
+
+```bash
+python scripts/print_flip_human_annotation_leaderboard.py \
+  --summary-path .tmp/flip-train/human-matrix/matrix-summary.json \
+  --aggregation deepfunding \
+  --sort-by accuracy
+```
+
+- Export a spreadsheet-friendly CSV:
+
+```bash
+python scripts/print_flip_human_annotation_leaderboard.py \
+  --summary-path .tmp/flip-train/human-matrix/matrix-summary.json \
+  --format csv \
+  --output .tmp/flip-train/human-matrix/leaderboard.csv
+```
+
 Recommended first experiment:
 - use a small fixed FLIP slice such as `30-50` flips
 - compare `baseline`, `weight_boost`, and `hybrid`
