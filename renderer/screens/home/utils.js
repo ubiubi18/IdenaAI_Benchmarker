@@ -1,8 +1,8 @@
 import {IdentityStatus} from '../../shared/types'
-import {requestDb} from '../../shared/utils/db'
+import {createSublevelDb, requestDb} from '../../shared/utils/db'
 
 export function createProfileDb(epoch) {
-  const requestProfileDb = () => global.sub(requestDb(), 'profile')
+  const requestProfileDb = () => createSublevelDb(requestDb(), 'profile')
 
   const planNextValidationkey = `didPlanNextValidation!!${epoch?.epoch ?? -1}`
 

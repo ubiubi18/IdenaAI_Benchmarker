@@ -12,8 +12,22 @@ export const DnaLinkMethod = {
   Invite: 'invite',
 }
 
+function getDnaBridge() {
+  const bridge = getSharedGlobal('dna', {})
+
+  return {
+    getPendingLink:
+      typeof bridge?.getPendingLink === 'function'
+        ? bridge.getPendingLink
+        : async () => undefined,
+    onLink: typeof bridge?.onLink === 'function' ? bridge.onLink : () => {},
+    offLink: typeof bridge?.offLink === 'function' ? bridge.offLink : () => {},
+  }
+}
+
 export function useDnaLink({onInvalidLink}) {
   const [url, setUrl] = React.useState()
+  const logger = getSharedGlobal('logger', console)
 
   React.useEffect(() => {
     if (!sessionStorage.getItem('didCheckDnaLink')) {
@@ -48,10 +62,10 @@ export function useDnaLink({onInvalidLink}) {
 
   React.useEffect(() => {
     if (url && !isValidDnaUrl(url)) {
-      global.logger.error('Receieved invalid dna url', url)
+      logger.error('Receieved invalid dna url', url)
       if (onInvalidLink) onInvalidLink(url)
     }
-  }, [onInvalidLink, url])
+  }, [logger, onInvalidLink, url])
 
   return {url, method, params}
 }

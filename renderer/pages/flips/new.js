@@ -68,7 +68,7 @@ import {
   useSettingsState,
 } from '../../shared/providers/settings-context'
 import {BadFlipDialog} from '../../screens/validation/components'
-import {requestDb} from '../../shared/utils/db'
+import {createSublevelDb, requestDb} from '../../shared/utils/db'
 import {useFailToast} from '../../shared/hooks/use-toast'
 import {InfoIcon, RefreshIcon} from '../../shared/components/icons'
 import {useRpc, useTrackTx} from '../../screens/ads/hooks'
@@ -2216,9 +2216,9 @@ export default function NewFlipPage() {
         let didShowBadFlip
 
         try {
-          didShowBadFlip = await global
-            .sub(requestDb(), 'flips')
-            .get('didShowBadFlipNew')
+          didShowBadFlip = await createSublevelDb(requestDb(), 'flips').get(
+            'didShowBadFlipNew'
+          )
         } catch {
           didShowBadFlip = false
         }
@@ -6521,7 +6521,10 @@ export default function NewFlipPage() {
             'Please read the rules carefully. You can lose all your validation rewards if any of your flips is reported.'
           )}
           onClose={async () => {
-            await global.sub(requestDb(), 'flips').put('didShowBadFlipNew', 1)
+            await createSublevelDb(requestDb(), 'flips').put(
+              'didShowBadFlipNew',
+              1
+            )
             send('SKIP_BAD_FLIP')
             onCloseBadFlipDialog()
           }}

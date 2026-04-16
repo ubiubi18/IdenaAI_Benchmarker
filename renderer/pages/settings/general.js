@@ -53,6 +53,9 @@ function Settings() {
       render: () => <Toast title={title} />,
     })
 
+  const clearFlips = getSharedGlobal('flipStore', {}).clear || (() => {})
+  const inviteDb = getSharedGlobal('invitesDb', {clearInvites: () => {}})
+
   const {runInternalNode, useExternalNode} = useSettingsState()
 
   const {

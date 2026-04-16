@@ -5,7 +5,7 @@ import {assign, log} from 'xstate/lib/actions'
 import {useIdentityState} from './identity-context'
 import {useEpochState} from './epoch-context'
 import {fetchLastOpenVotings} from '../../screens/oracles/utils'
-import {requestDb} from '../utils/db'
+import {createSublevelDb, requestDb} from '../utils/db'
 
 const VotingNotificationStateContext = React.createContext()
 const VotingNotificationDispatchContext = React.createContext()
@@ -61,7 +61,7 @@ export function VotingNotificationProvider(props) {
             const lastVotings =
               (await fetchLastOpenVotings({oracle: address})) ?? []
 
-            const votingDb = global.sub(requestDb(), 'votings')
+            const votingDb = createSublevelDb(requestDb(), 'votings')
 
             const lastVotingTimestamp = await (async () => {
               try {

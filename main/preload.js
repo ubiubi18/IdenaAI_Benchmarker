@@ -193,6 +193,12 @@ async function invokeStorage(payload) {
   return unwrapIpcResponse(response)
 }
 
+const DNA_LINK_EVENT = 'DNA_LINK'
+const CHECK_DNA_LINK_COMMAND = 'CHECK_DNA_LINK'
+const IDENA_CONTEXT_BRIDGE_KEY = '__idenaBridge'
+let didExposeContextBridge = false
+let didExposeLegacyContextBridge = false
+
 function getAppInfo() {
   try {
     return ipcRenderer.sendSync(APP_INFO_COMMAND) || {}

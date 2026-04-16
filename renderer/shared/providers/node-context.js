@@ -89,6 +89,8 @@ function hasNodeBridge() {
 // eslint-disable-next-line react/prop-types
 export function NodeProvider({children}) {
   const settings = useSettingsState()
+  const initRequestedRef = React.useRef(false)
+  const startRequestedRef = React.useRef(false)
 
   const [state, dispatch] = useLogger(
     React.useReducer(nodeReducer, initialState)
@@ -102,19 +104,27 @@ export function NodeProvider({children}) {
     const onEvent = (event, data) => {
       switch (event) {
         case 'node-failed':
+          initRequestedRef.current = false
+          startRequestedRef.current = false
           dispatch({type: NODE_FAILED})
           break
         case 'node-started':
+          startRequestedRef.current = false
           dispatch({type: NODE_START})
           break
         case 'node-stopped':
+          initRequestedRef.current = false
+          startRequestedRef.current = false
           dispatch({type: NODE_STOP})
           break
         case 'node-ready':
+          initRequestedRef.current = false
           dispatch({type: NODE_READY, data})
           break
         case 'restart-node':
         case 'state-cleaned':
+          initRequestedRef.current = false
+          startRequestedRef.current = false
           dispatch({type: NODE_REINIT, data})
           break
         case 'unsupported-macos-version':
@@ -153,6 +163,8 @@ export function NodeProvider({children}) {
   ])
 
   useEffect(() => {
+    initRequestedRef.current = false
+    startRequestedRef.current = false
     dispatch({type: NODE_REINIT})
   }, [settings.runInternalNode, dispatch])
 
@@ -193,6 +205,12 @@ export function NodeProvider({children}) {
     if (state.nodeReady || state.nodeFailed || state.runningTroubleshooter) {
       return
     }
+
+    if (!hasNodeBridge()) {
+      return
+    }
+
+    const node = getNodeBridge()
     if (settings.runInternalNode) {
       if (!state.nodeStarted) {
         getNodeBridge().initLocalNode()
@@ -209,6 +227,8 @@ export function NodeProvider({children}) {
   ])
 
   const tryRestartNode = useCallback(() => {
+    initRequestedRef.current = false
+    startRequestedRef.current = false
     dispatch({type: NODE_REINIT})
   }, [dispatch])
 
@@ -229,7 +249,7 @@ export function NodeProvider({children}) {
       <NodeDispatchContext.Provider
         value={useMemo(
           () => ({tryRestartNode, importNodeKey}),
-          [tryRestartNode]
+          [importNodeKey, tryRestartNode]
         )}
       >
         {children}

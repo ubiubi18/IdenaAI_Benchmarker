@@ -3,7 +3,7 @@ import {useTranslation} from 'react-i18next'
 import {SettingsLinkButton} from '../../screens/settings/components'
 import {HDivider} from '../../shared/components/components'
 import {useEpochState} from '../../shared/providers/epoch-context'
-import {requestDb} from '../../shared/utils/db'
+import {createSublevelDb, requestDb} from '../../shared/utils/db'
 import SettingsLayout from '../../screens/settings/layout'
 import {useSuccessToast} from '../../shared/hooks/use-toast'
 import {LayersIcon} from '../../shared/components/icons'
@@ -34,7 +34,7 @@ export default function AdvancedSettings() {
             </Stack>
             <SettingsLinkButton
               onClick={async () => {
-                await global.sub(requestDb(), 'votings').clear()
+                await createSublevelDb(requestDb(), 'votings').clear()
                 toast(t('Votings removed'))
               }}
             >

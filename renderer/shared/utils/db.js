@@ -154,6 +154,14 @@ function wrapStore(store, {epochFactory} = {}) {
     async clear() {
       return store.clear()
     },
+    async clearByPrefix(prefix) {
+      Array.from(store.keys()).forEach((key) => {
+        if (String(key).startsWith(prefix)) {
+          store.delete(key)
+        }
+      })
+      return undefined
+    },
     isOpen() {
       return true
     },
@@ -217,6 +225,86 @@ function createRootBridgeDb() {
         default:
           throw new Error(`Unsupported storage namespace: ${normalizedPrefix}`)
       }
+    },
+  }
+}
+
+function isUsableDb(value) {
+  return (
+    value &&
+    typeof value.get === 'function' &&
+    typeof value.put === 'function' &&
+    typeof value.batch === 'function' &&
+    typeof value.clear === 'function' &&
+    (!value._db || typeof value._db.open === 'function')
+  )
+}
+
+function getFallbackDb() {
+  if (fallbackDb === null) {
+    fallbackDb = createInMemoryDb()
+  }
+
+  return fallbackDb
+}
+
+export function createSublevelDb(db, prefix, options = {}) {
+  const valueEncoding = options.valueEncoding || undefined
+  const prefixKey = `${String(prefix)}${SUBLEVEL_SEPARATOR}`
+  const withPrefix = (key) => `${prefixKey}${String(key)}`
+
+  const encodeValue = (value) => {
+    if (valueEncoding === 'json') {
+      return JSON.stringify(value)
+    }
+
+    return value
+  }
+
+  const decodeValue = (value) => {
+    if (valueEncoding === 'json' && typeof value === 'string') {
+      return JSON.parse(value)
+    }
+
+    return value
+  }
+
+  return {
+    async get(key) {
+      return decodeValue(await db.get(withPrefix(key)))
+    },
+    async put(key, value) {
+      return db.put(withPrefix(key), encodeValue(value))
+    },
+    batch() {
+      const batch = db.batch()
+
+      return {
+        put(key, value) {
+          batch.put(withPrefix(key), encodeValue(value))
+          return this
+        },
+        del(key) {
+          batch.del(withPrefix(key))
+          return this
+        },
+        write() {
+          return batch.write()
+        },
+      }
+    },
+    async clear() {
+      if (typeof db.clearByPrefix === 'function') {
+        return db.clearByPrefix(prefixKey)
+      }
+
+      return undefined
+    },
+    isOpen() {
+      return typeof db.isOpen === 'function' ? db.isOpen() : true
+    },
+    close() {
+      return typeof db.close === 'function' ? db.close() : Promise.resolve()
     },
   }
 }

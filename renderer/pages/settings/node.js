@@ -66,7 +66,7 @@ function NodeSettings() {
     toggleAutoActivateMining,
   } = useSettingsDispatch()
 
-  const {nodeFailed} = useNodeState()
+  const {nodeFailed, nodeReady, nodeStarted} = useNodeState()
 
   const {tryRestartNode} = useNodeDispatch()
 

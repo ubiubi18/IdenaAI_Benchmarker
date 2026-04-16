@@ -1,6 +1,7 @@
 import React, {useEffect} from 'react'
 import {useInterval} from '../hooks/use-interval'
 import {useSettingsState} from './settings-context'
+import {useNodeState} from './node-context'
 import {callRpc} from '../utils/utils'
 
 const FETCH_SYNC_SUCCEEDED = 'FETCH_SYNC_SUCCEEDED'
@@ -48,12 +49,19 @@ const ChainStateContext = React.createContext()
 
 // eslint-disable-next-line react/prop-types
 function ChainProvider({children}) {
-  const {useExternalNode} = useSettingsState()
+  const {useExternalNode, runInternalNode} = useSettingsState()
+  const {nodeFailed, nodeStarted} = useNodeState()
   const [state, dispatch] = React.useReducer(chainReducer, initialState)
 
   useEffect(() => {
     dispatch({type: SET_LOADING})
-  }, [useExternalNode])
+  }, [nodeStarted, runInternalNode, useExternalNode])
+
+  const shouldKeepWaitingForInternalNode =
+    runInternalNode &&
+    !useExternalNode &&
+    !nodeFailed &&
+    (state.currentBlock === null || !nodeStarted)
 
   useInterval(
     async () => {
@@ -63,10 +71,16 @@ function ChainProvider({children}) {
           payload: await callRpc('bcn_syncing'),
         })
       } catch (error) {
-        dispatch({type: FETCH_SYNC_FAILED})
+        if (shouldKeepWaitingForInternalNode) {
+          dispatch({type: SET_LOADING})
+        } else {
+          dispatch({type: FETCH_SYNC_FAILED})
+        }
       }
     },
-    !state.offline && state.syncing ? 1000 * 1 : 1000 * 5,
+    shouldKeepWaitingForInternalNode || (!state.offline && state.syncing)
+      ? 1000 * 1
+      : 1000 * 5,
     true
   )
 

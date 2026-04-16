@@ -241,6 +241,17 @@ npm run clean
 npm start
 ```
 
+To build a local macOS release artifact instead of running the dev app:
+
+```bash
+npm run dist:mac
+```
+
+On Apple Silicon, the packaging helper detects the physical machine
+architecture and targets `arm64` even if your shell is using an x64/Rosetta
+Node installation. The default local macOS release is a signed `.zip`, which is
+the most reliable format on current Apple Silicon/Homebrew setups.
+
 Optional local defaults:
 
 ```bash
@@ -472,6 +483,20 @@ tagged release packaging.
 Release packaging excludes local `.env*`, logs, `.tmp/`, `tmp/`, `data/`, and
 coverage artifacts. Keep provider keys in the session-only UI or in local
 untracked files.
+
+Desktop packaging uses the explicit postinstall Electron-runtime rebuild helper
+from this repo and disables Electron Builder's blanket native-dependency
+rebuild. That keeps required runtime modules aligned while avoiding legacy
+optional dependencies such as `fsevents` that do not rebuild cleanly on current
+Electron/macOS toolchains.
+
+Local macOS release packaging defaults to `.zip`. Electron Builder's DMG helper
+currently depends on an Intel Homebrew gettext path on some Apple Silicon
+machines, so DMG creation is kept as an explicit opt-in path:
+
+```bash
+npm run dist:mac:dmg
+```
 
 Large bundled artifacts:
 

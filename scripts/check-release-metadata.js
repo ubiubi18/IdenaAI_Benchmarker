@@ -68,12 +68,12 @@ for (const filePath of expectedFiles) {
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'))
 
 requireCondition(
-  packageJson.name === 'idena-desktop',
-  'package.json name must remain idena-desktop'
+  packageJson.name === 'idena-ai-benchmarker',
+  'package.json name must remain idena-ai-benchmarker'
 )
 requireCondition(
-  packageJson.productName === 'idena-desktop',
-  'package.json productName must remain idena-desktop'
+  packageJson.productName === 'IdenaAI_Benchmarker',
+  'package.json productName must remain IdenaAI_Benchmarker'
 )
 requireCondition(
   packageJson.repository &&

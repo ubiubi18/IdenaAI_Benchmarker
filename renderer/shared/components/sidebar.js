@@ -52,6 +52,7 @@ import {
   eitherState,
   formatValidationDate,
 } from '../utils/utils'
+import {getSharedGlobal} from '../utils/shared-global'
 import {ExternalLink, Tooltip} from './components'
 import {useTimingState} from '../providers/timing-context'
 import {TodoVotingCountBadge} from '../../screens/oracles/components'

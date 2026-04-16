@@ -20,7 +20,7 @@ const NODE_UPDATE_FAIL = 'NODE_UPDATE_FAIL'
 
 const initialState = {
   checkStarted: false,
-  uiCurrentVersion: global.appVersion,
+  uiCurrentVersion: getSharedGlobal('appVersion', '0.0.0'),
   nodeCurrentVersion: '0.0.0',
   showExternalUpdateModal: false,
 }
@@ -118,6 +118,10 @@ export function AutoUpdateProvider({children}) {
   const settings = useSettingsState()
 
   const [state, dispatch] = React.useReducer(updateReducer, initialState)
+  let nodeVersionPollDelay = 10000
+  if (settings.runInternalNode && !settings.useExternalNode) {
+    nodeVersionPollDelay = state.nodeCurrentVersion === '0.0.0' ? 1000 : 10000
+  }
 
   useEffect(() => {
     if (!hasUpdateBridge()) {
@@ -191,7 +195,7 @@ export function AutoUpdateProvider({children}) {
         global.logger.error('Error fetching node version', error, state)
       }
     },
-    10000,
+    nodeVersionPollDelay,
     true
   )
 

@@ -62,6 +62,10 @@ const {toIpcCloneable} = require('./utils/ipc-cloneable')
 
 logger.info('idena started', appVersion)
 
+if (!isDev && !autoUpdater) {
+  logger.warn('electron-updater could not be loaded; UI update checks disabled')
+}
+
 const {
   AUTO_UPDATE_EVENT,
   AUTO_UPDATE_COMMAND,
@@ -1681,6 +1685,9 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       getCurrentVersion()
         .then((version) => {
           sendMainWindowMsg(NODE_EVENT, 'node-ready', version)
+          if (isNodeProcessRunning()) {
+            sendMainWindowMsg(NODE_EVENT, 'node-started')
+          }
         })
         .catch((e) => {
           logger.error('error while getting current node version', e.toString())
@@ -1888,13 +1895,14 @@ nodeUpdater.on('update-downloaded', (info) => {
   sendMainWindowMsg(AUTO_UPDATE_EVENT, 'node-update-ready', info)
 })
 
-autoUpdater.on('download-progress', (info) => {
-  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
-})
+if (autoUpdater) {
+  autoUpdater.on('download-progress', (info) => {
+    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
+  })
 
-autoUpdater.on('update-downloaded', (info) => {
-  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
-})
+  autoUpdater.on('update-downloaded', (info) => {
+    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
+  })
 
 autoUpdater.on('error', (error) => {
   logger.error('error while checking UI update', error.toString())
@@ -1957,7 +1965,7 @@ function checkForUpdates() {
             })
           }, 30000)
         }
-      } else {
+      } else if (autoUpdater) {
         await autoUpdater.checkForUpdates()
       }
     } catch (e) {

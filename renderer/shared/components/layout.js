@@ -27,7 +27,6 @@ import {
 } from '@chakra-ui/react'
 import {useMachine} from '@xstate/react'
 import semver from 'semver'
-import {assign, createMachine} from 'xstate'
 import NextLink from 'next/link'
 import Sidebar from './sidebar'
 import {useDebounce} from '../hooks/use-debounce'
@@ -88,10 +87,13 @@ import {OfflineBanner} from './layout/offline'
 import {TroubleshootingScreen} from '../../screens/troubleshooting'
 import {getAppBridge} from '../utils/app-bridge'
 
-global.getZoomLevel = global.getZoomLevel || (() => 0)
-global.setZoomLevel = global.setZoomLevel || (() => {})
+const setZoomLevelBridge = (level) =>
+  getSharedGlobal('setZoomLevel', () => {})(level)
 
-const AVAILABLE_TIMEOUT = global.isDev || global.isTest ? 0 : 1000 * 5
+const AVAILABLE_TIMEOUT =
+  getSharedGlobal('isDev', false) || getSharedGlobal('isTest', false)
+    ? 0
+    : 1000 * 5
 
 const sendConfirmQuit = () => getAppBridge().requestConfirmQuit()
 
@@ -112,7 +114,7 @@ export default function Layout({
   )
 
   React.useEffect(() => {
-    if (global.isDev) return
+    if (getSharedGlobal('isDev', false)) return
 
     const handleMouseWheel = (e) => {
       if (e.ctrlKey) {
@@ -131,10 +133,10 @@ export default function Layout({
   }, [])
 
   React.useEffect(() => {
-    if (global.isDev) return
+    if (getSharedGlobal('isDev', false)) return
 
     if (Number.isFinite(zoomLevel)) {
-      global.setZoomLevel(zoomLevel)
+      setZoomLevelBridge(zoomLevel)
       persistItem('settings', 'zoomLevel', zoomLevel)
     }
   }, [zoomLevel])
@@ -172,6 +174,11 @@ export default function Layout({
   const [{runInternalNode}] = useSettings()
 
   React.useEffect(() => {
+    const ipcRenderer = getSharedGlobal('ipcRenderer', {
+      on: () => {},
+      removeListener: () => {},
+    })
+
     const handleRequestQuit = async () => {
       if (isReady) {
         try {
