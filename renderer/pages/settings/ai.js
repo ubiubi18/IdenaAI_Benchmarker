@@ -952,7 +952,7 @@ export default function AiSettingsPage() {
     try {
       const result = await ensureLocalAiBridge().chat({
         ...localAiRuntimePayload,
-        input: prompt,
+        prompt,
       })
       setLocalAiChatResult(result)
     } catch (error) {

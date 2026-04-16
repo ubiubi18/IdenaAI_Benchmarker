@@ -602,6 +602,16 @@ function sanitizeLocalAiGenerationOptions(value) {
 
 function sanitizeLocalAiRuntimePayload(payload = {}) {
   const source = isPlainObject(payload) ? payload : {}
+  const rawInput = source.input
+  const sanitizedInput =
+    typeof rawInput === 'string'
+      ? sanitizeOptionalBoundedString(rawInput, 10000)
+      : {
+          images: sanitizeDataImageList(
+            rawInput && rawInput.images ? rawInput.images : source.images,
+            8
+          ),
+        }
 
   return {
     model: sanitizeOptionalBoundedString(source.model, 256),
@@ -620,14 +630,7 @@ function sanitizeLocalAiRuntimePayload(payload = {}) {
     generationOptions: sanitizeLocalAiGenerationOptions(
       source.generationOptions
     ),
-    input: {
-      images: sanitizeDataImageList(
-        source.input && source.input.images
-          ? source.input.images
-          : source.images,
-        8
-      ),
-    },
+    input: sanitizedInput,
   }
 }
 
