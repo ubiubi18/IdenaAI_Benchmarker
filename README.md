@@ -26,22 +26,21 @@ What exists today:
   - `deepfunding`
 
 What is still rough:
-- the benchmarker is not fully rebranded at the package-metadata level yet
 - the codebase still shares a large amount of desktop-app structure with the
   main repo
-- packaged identity/app metadata cleanup is incomplete
 - the desktop UI is secondary to the benchmark/training workflows
 
 ## Important naming reality
 
-This repository is the benchmarker fork, but the current code still shares some
-package metadata with the main app.
+This repository is the benchmarker fork and now uses benchmarker-specific
+package metadata.
 
 That means:
 - the repository name is `IdenaAI_Benchmarker`
-- but some package/build fields still read as `IdenaAI`
-- you should treat this as a source-run research fork, not a neatly separated
-  branded release yet
+- the package name is `idena-ai-benchmarker`
+- the Electron `productName` is `IdenaAI_Benchmarker`
+- you should still treat this as a source-run research fork first, not a
+  polished end-user release
 
 So the safest assumption today is:
 - use separate checkouts
@@ -113,10 +112,20 @@ npm run dist
 ```
 
 Important caveat:
-- although this is the benchmarker repo, the current package metadata is not
-  fully separated from the main app yet
-- do not assume a fully distinct packaged app identity until that cleanup is
-  actually completed in code
+- this is still a research-oriented fork even though its package metadata is
+  now benchmarker-specific
+- prefer source runs for experiments and treat packaged artifacts as secondary
+
+## Large bundled artifacts
+
+This repository intentionally tracks a small set of large bundled static
+libraries under `idena-wasm-binding/lib/`.
+
+Rules:
+- do not add new large tracked binaries casually
+- if a new artifact is large, prefer Git LFS or release artifacts
+- keep the currently allowed bundled wasm libraries under review for formal
+  releases
 
 ## Optional Local AI runtime
 

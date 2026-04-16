@@ -851,47 +851,6 @@ function writeError(err) {
   }
 }
 
-async function ensureNodeSubscriptionsFile() {
-  const subscriptionsFile = getNodeSubscriptionsFile()
-  await fs.ensureDir(path.dirname(subscriptionsFile))
-
-  const defaultContent = '[]\n'
-
-  try {
-    if (!(await fs.pathExists(subscriptionsFile))) {
-      await fs.writeFile(subscriptionsFile, defaultContent, 'utf8')
-      return
-    }
-
-    const content = await fs.readFile(subscriptionsFile, 'utf8')
-
-    if (!content.trim()) {
-      logger.info(
-        {subscriptionsFile},
-        'repairing empty node subscriptions file with default content'
-      )
-      await fs.writeFile(subscriptionsFile, defaultContent, 'utf8')
-      return
-    }
-
-    const parsed = JSON.parse(content)
-
-    if (!Array.isArray(parsed)) {
-      logger.warn(
-        {subscriptionsFile},
-        'repairing invalid node subscriptions file with default content'
-      )
-      await fs.writeFile(subscriptionsFile, defaultContent, 'utf8')
-    }
-  } catch (error) {
-    logger.warn(
-      {error: error.message, subscriptionsFile},
-      'repairing unreadable node subscriptions file with default content'
-    )
-    await fs.writeFile(subscriptionsFile, defaultContent, 'utf8')
-  }
-}
-
 async function startNode(
   port,
   tcpPort,
@@ -939,8 +898,6 @@ async function startNode(
 
   parameters.push('--config')
   parameters.push(getNodeConfigFile())
-
-  await ensureNodeSubscriptionsFile()
 
   const idenaNode = spawn(getNodeFile(), parameters)
   await writeNodeRuntime({pid: idenaNode.pid, port})

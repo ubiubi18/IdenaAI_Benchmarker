@@ -92,8 +92,15 @@ const BLANK_IMAGE =
       })
     : BLANK_IMAGE_DATAURL
 
-function resizeImageDataUrl(url, maxWidth = IMAGE_WIDTH, maxHeight = IMAGE_HEIGHT) {
-  if (global.imageTools && typeof global.imageTools.resizeDataUrl === 'function') {
+function resizeImageDataUrl(
+  url,
+  maxWidth = IMAGE_WIDTH,
+  maxHeight = IMAGE_HEIGHT
+) {
+  if (
+    global.imageTools &&
+    typeof global.imageTools.resizeDataUrl === 'function'
+  ) {
     return (
       global.imageTools.resizeDataUrl(url, {
         maxWidth,
@@ -309,7 +316,11 @@ export default function FlipEditor({
     }
     const reader = new FileReader()
     reader.addEventListener('loadend', (re) => {
-      const url = resizeImageDataUrl(re.target.result, IMAGE_WIDTH, IMAGE_HEIGHT)
+      const url = resizeImageDataUrl(
+        re.target.result,
+        IMAGE_WIDTH,
+        IMAGE_HEIGHT
+      )
       setImageUrl({url})
       setInsertImageMode(0)
     })

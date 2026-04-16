@@ -1685,9 +1685,6 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       getCurrentVersion()
         .then((version) => {
           sendMainWindowMsg(NODE_EVENT, 'node-ready', version)
-          if (isNodeProcessRunning()) {
-            sendMainWindowMsg(NODE_EVENT, 'node-started')
-          }
         })
         .catch((e) => {
           logger.error('error while getting current node version', e.toString())
@@ -1904,9 +1901,10 @@ if (autoUpdater) {
     sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
   })
 
-autoUpdater.on('error', (error) => {
-  logger.error('error while checking UI update', error.toString())
-})
+  autoUpdater.on('error', (error) => {
+    logger.error('error while checking UI update', error.toString())
+  })
+}
 
 onTrusted(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   logger.info(`new autoupdate command`, command, data)

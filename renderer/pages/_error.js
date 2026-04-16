@@ -14,8 +14,6 @@ global.logger = global.logger || {
 
 // eslint-disable-next-line react/prop-types
 function MyError({statusCode, hasGetInitialPropsRun, err}) {
-  const ipcRenderer = getSharedGlobal('ipcRenderer', {send: () => {}})
-
   if (!hasGetInitialPropsRun && err) {
     // getInitialProps is not called in case of
     // https://github.com/zeit/next.js/issues/8592. As a workaround, we pass

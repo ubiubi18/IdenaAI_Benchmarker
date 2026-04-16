@@ -59,32 +59,32 @@ export function ExportPrivateKeyDialog({onClose, ...props}) {
                 }),
               ],
             },
+            ENCODE: 'encoding',
+            RESET: 'password',
           },
-          encoding: {
-            invoke: {
-              // eslint-disable-next-line no-shadow
-              src: ({password}) => callRpc('dna_exportKey', password),
-              onDone: 'encoded',
-              onError: 'fail',
-            },
-          },
-          encoded: {
-            entry: [
-              assign({
-                encodedPrivateKey: (_, {data}) => data,
-              }),
-            ],
-            on: {
-              RESET: 'password',
-            },
-          },
-          fail: {},
         },
-      }),
-    []
+        encoding: {
+          invoke: {
+            // eslint-disable-next-line no-shadow
+            src: ({password}) => callRpc('dna_exportKey', password),
+            onDone: 'encoded',
+            onError: 'fail',
+          },
+        },
+        encoded: {
+          entry: [
+            assign({
+              encodedPrivateKey: (_, {data}) => data,
+            }),
+          ],
+          on: {
+            RESET: 'password',
+          },
+        },
+        fail: {},
+      },
+    })
   )
-
-  const [current, send] = useMachine(exportPrivateKeyMachine)
 
   const {password, encodedPrivateKey} = current.context
 

@@ -1,16 +1,16 @@
 {
-  "name": "idena-ai",
-  "productName": "IdenaAI",
+  "name": "idena-ai-benchmarker",
+  "productName": "IdenaAI_Benchmarker",
   "version": "0.0.1",
   "description": "Idena desktop fork with optional experimental AI flip tooling and benchmark helpers.",
   "main": "main/index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ubiubi18/IdenaAI.git"
+    "url": "https://github.com/ubiubi18/IdenaAI_Benchmarker.git"
   },
-  "homepage": "https://github.com/ubiubi18/IdenaAI#readme",
+  "homepage": "https://github.com/ubiubi18/IdenaAI_Benchmarker#readme",
   "bugs": {
-    "url": "https://github.com/ubiubi18/IdenaAI/issues"
+    "url": "https://github.com/ubiubi18/IdenaAI_Benchmarker/issues"
   },
   "license": "MIT",
   "scripts": {
@@ -43,12 +43,12 @@
   },
   "build": {
     "appId": "io.idena.ai",
-    "artifactName": "idena-ai-${os}-${version}.${ext}",
+    "artifactName": "idena-ai-benchmarker-${os}-${version}.${ext}",
     "publish": [
       {
         "provider": "github",
         "owner": "ubiubi18",
-        "repo": "IdenaAI"
+        "repo": "IdenaAI_Benchmarker"
       }
     ],
     "files": [
