@@ -80,6 +80,45 @@ python scripts/prepare_flip_challenge_mlx_vlm.py \
   --output-dir .tmp/flip-train/pilot-val-200
 ```
 
+### Optional: include human-teacher annotations in prep
+
+If you already have normalized human-teacher annotations, the prep script can
+now blend them directly into the training dataset.
+
+Supported modes:
+- `none`: baseline preparation, ignore human annotations
+- `weight_boost`: keep the original answer target, but increase
+  `training_weight` for useful human-annotated examples
+- `followup_reasoning`: keep the original answer target and add a second
+  supervised human-teacher follow-up turn with the rationale
+- `hybrid`: apply both the weight boost and the rationale follow-up turn
+
+Expected annotation input:
+- normalized JSONL from:
+  - `python scripts/import_human_teacher_annotations.py ...`
+
+Example hybrid preparation:
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/prepare_flip_challenge_mlx_vlm.py \
+  --split train \
+  --max-flips 500 \
+  --output-dir .tmp/flip-train/pilot-train-500-human \
+  --prompt-family runtime_aligned_native_frames_v2 \
+  --image-mode native_frames \
+  --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl \
+  --human-annotation-mode hybrid \
+  --human-min-quality-tier bronze \
+  --human-weight-scale 1.0
+```
+
+The prepared manifest will record:
+- how many human annotations were loaded
+- how many records received weight boosts
+- how many received follow-up reasoning turns
+- which quality tiers were applied
+
 ## Stage 2: run a first LoRA pilot
 
 Recommended initial base:
@@ -98,6 +137,11 @@ python scripts/train_flip_challenge_mlx_vlm.py \
   --learning-rate 1e-4 \
   --lora-rank 10
 ```
+
+If you prepared a human-assisted dataset, just point `--dataset-path` at that
+prepared `hf-dataset/` directory. The trainer itself does not need a special
+human-annotation flag because the prep stage already bakes the weighting and
+follow-up turns into the dataset rows.
 
 ## Stage 3: scale carefully
 
@@ -118,6 +162,46 @@ python scripts/prepare_flip_challenge_mlx_vlm.py \
   --max-flips 2000 \
   --output-dir .tmp/flip-train/train-2000
 ```
+
+## Compare baseline vs human-assisted runs
+
+The easiest way to compare training styles on the same small slice is the
+matrix runner:
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/run_flip_human_annotation_matrix.py \
+  --output-root .tmp/flip-train/human-matrix \
+  --train-split train \
+  --max-flips 30 \
+  --prompt-family runtime_aligned_native_frames_v2 \
+  --image-mode native_frames \
+  --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl \
+  --eval-dataset-path .tmp/flip-train/pilot-val-200/hf-dataset \
+  --modes baseline weight_boost followup_reasoning hybrid
+```
+
+This runner keeps the current evaluator compatible and simply orchestrates:
+1. prepare dataset
+2. train adapter
+3. evaluate adapter on the same holdout
+
+That makes it suitable for small experiments where you want to find out which
+human annotation style actually helps:
+- answer-only with higher weight
+- short rationale follow-up
+- both at once
+
+It writes:
+- per-mode prepared manifests
+- per-mode run summaries
+- optional per-mode evaluation reports
+- one combined `matrix-summary.json`
+
+Recommended first experiment:
+- use a small fixed FLIP slice such as `30-50` flips
+- compare `baseline`, `weight_boost`, and `hybrid`
+- only scale further if one mode clearly beats the others on the same holdout
 
 ## Larger model later, not first
 
@@ -145,6 +229,15 @@ The other files help with:
 - inspection
 - reproducibility
 - audits
+
+Human-assisted prepared datasets may also contain:
+- `human_annotation_available`
+- `human_annotation_quality_tier`
+- `human_annotation_quality_score`
+- `evaluation_messages`
+
+`evaluation_messages` is used only to keep evaluation anchored to the original
+decision prompt when the training record includes an extra human follow-up turn.
 
 ## Recommended monitoring
 

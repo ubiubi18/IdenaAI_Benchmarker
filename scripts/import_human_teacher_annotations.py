@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 
 VALID_FINAL_ANSWERS = {"left", "right", "skip"}
+QUALITY_TIERS = ("reject", "bronze", "silver", "gold")
 
 
 def load_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -74,12 +75,108 @@ def validate_final_answer(value: Any) -> str:
     return raw
 
 
+def build_reasoning_tags(annotation_row: Dict[str, Any]) -> List[str]:
+    tags: List[str] = []
+    if normalize_bool(annotation_row.get("text_required")) is True:
+        tags.append("needs_text")
+    if normalize_bool(annotation_row.get("sequence_markers_present")) is True:
+        tags.append("sequence_markers")
+    if normalize_bool(annotation_row.get("report_required")) is True:
+        tags.append("report_required")
+
+    why_answer = normalize_text(annotation_row.get("why_answer"))
+    if why_answer:
+        tags.append("has_rationale")
+
+    frame_captions = normalize_captions(annotation_row.get("frame_captions"))
+    if sum(1 for item in frame_captions if item.strip()) >= 3:
+        tags.append("dense_frame_notes")
+
+    return tags
+
+
+def compute_quality_metrics(
+    *,
+    task_row: Dict[str, Any],
+    annotation_row: Dict[str, Any],
+    captions: List[str],
+    final_answer: str,
+) -> Dict[str, Any]:
+    consensus_answer = normalize_text(task_row.get("final_answer"), max_length=16).lower()
+    consensus_match = bool(consensus_answer and final_answer == consensus_answer)
+    why_answer = normalize_text(annotation_row.get("why_answer"))
+    report_reason = normalize_text(annotation_row.get("report_reason"))
+    option_a_summary = normalize_text(annotation_row.get("option_a_summary"))
+    option_b_summary = normalize_text(annotation_row.get("option_b_summary"))
+    text_required = normalize_bool(annotation_row.get("text_required"))
+    sequence_markers_present = normalize_bool(
+        annotation_row.get("sequence_markers_present")
+    )
+    report_required = normalize_bool(annotation_row.get("report_required"))
+
+    caption_coverage = sum(1 for item in captions if item.strip())
+    summary_coverage = sum(
+        1 for item in [option_a_summary, option_b_summary] if item.strip()
+    )
+    rationale_length = len(why_answer)
+
+    quality_score = 0.0
+    if consensus_match:
+        quality_score += 3.0
+    else:
+        quality_score -= 2.0
+    if rationale_length >= 24:
+        quality_score += 2.0
+    elif rationale_length > 0:
+        quality_score += 1.0
+    if caption_coverage >= 4:
+        quality_score += 2.0
+    elif caption_coverage >= 2:
+        quality_score += 1.0
+    if summary_coverage == 2:
+        quality_score += 1.0
+    if text_required is not None:
+        quality_score += 0.5
+    if sequence_markers_present is not None:
+        quality_score += 0.5
+    if report_required is not None:
+        quality_score += 0.5
+    if report_required is True and report_reason:
+        quality_score += 1.0
+
+    if not consensus_match:
+        quality_tier = "reject"
+    elif quality_score >= 7.0:
+        quality_tier = "gold"
+    elif quality_score >= 4.0:
+        quality_tier = "silver"
+    else:
+        quality_tier = "bronze"
+
+    return {
+        "consensus_match": consensus_match,
+        "caption_coverage": caption_coverage,
+        "summary_coverage": summary_coverage,
+        "rationale_length": rationale_length,
+        "quality_score": round(quality_score, 3),
+        "quality_tier": quality_tier,
+        "training_useful": quality_tier != "reject",
+        "reasoning_tags": build_reasoning_tags(annotation_row),
+    }
+
+
 def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any]) -> Dict[str, Any]:
     captions = normalize_captions(annotation_row.get("frame_captions"))
     if len(captions) != 4:
         raise ValueError("frame_captions must contain 4 entries")
 
     final_answer = validate_final_answer(annotation_row.get("final_answer"))
+    quality = compute_quality_metrics(
+        task_row=task_row,
+        annotation_row=annotation_row,
+        captions=captions,
+        final_answer=final_answer,
+    )
 
     return {
         "task_id": task_row["task_id"],
@@ -107,6 +204,14 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
         "right_order": list(task_row.get("right_order") or []),
         "words": task_row.get("words") or {},
         "selected_order": task_row.get("selected_order"),
+        "consensus_match": quality["consensus_match"],
+        "caption_coverage": quality["caption_coverage"],
+        "summary_coverage": quality["summary_coverage"],
+        "rationale_length": quality["rationale_length"],
+        "annotation_quality_score": quality["quality_score"],
+        "annotation_quality_tier": quality["quality_tier"],
+        "training_useful": quality["training_useful"],
+        "reasoning_tags": quality["reasoning_tags"],
     }
 
 
@@ -164,6 +269,14 @@ def main() -> int:
         "missing_annotations": max(len(task_rows) - len(seen_task_ids), 0),
         "unmatched_annotations": unmatched_annotations,
         "invalid_annotations": invalid_annotations,
+        "qualityTierCounts": {
+            tier: sum(
+                1
+                for row in normalized_rows
+                if str(row.get("annotation_quality_tier") or "") == tier
+            )
+            for tier in QUALITY_TIERS
+        },
     }
 
     if summary_path:

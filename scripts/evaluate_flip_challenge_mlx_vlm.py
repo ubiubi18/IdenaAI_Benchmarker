@@ -174,7 +174,26 @@ def count_user_image_placeholders(messages: list[dict]) -> int:
 
 
 def build_generation_inputs(model, processor, example: Dict[str, Any]) -> Dict[str, Any]:
-    user_messages = [message for message in (example.get("messages") or []) if message.get("role") == "user"]
+    evaluation_messages = example.get("evaluation_messages")
+    if isinstance(evaluation_messages, list) and evaluation_messages:
+        source_messages = evaluation_messages
+    else:
+        source_messages = example.get("messages") or []
+
+    user_messages = []
+    assistant_seen = False
+    for message in source_messages:
+        role = str(message.get("role") or "").strip().lower()
+        if role == "assistant":
+            assistant_seen = True
+            break
+        if role == "user":
+            user_messages.append(message)
+
+    if assistant_seen and not user_messages and isinstance(source_messages, list):
+        user_messages = [
+            message for message in source_messages if str(message.get("role") or "").strip().lower() == "user"
+        ]
     if not user_messages:
         raise ValueError("Example is missing user messages")
     images = extract_images(example)

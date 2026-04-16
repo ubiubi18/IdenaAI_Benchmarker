@@ -15,6 +15,7 @@ The resulting dataset is designed for local staged training on Apple Silicon.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -22,7 +23,7 @@ import tempfile
 import urllib.request
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from flip_training_ranker import build_historical_signals
 
@@ -184,6 +185,19 @@ PROMPT_FAMILIES = {
 }
 COMPOSITE_MAX_SIZE = (448, 448)
 NATIVE_FRAME_MAX_SIZE = (128, 128)
+HUMAN_ANNOTATION_MODES = {"none", "weight_boost", "followup_reasoning", "hybrid"}
+ANNOTATION_TIER_RANK = {
+    "reject": 0,
+    "bronze": 1,
+    "silver": 2,
+    "gold": 3,
+}
+BASE_HUMAN_WEIGHT_BONUS = {
+    "reject": 0.0,
+    "bronze": 0.15,
+    "silver": 0.35,
+    "gold": 0.6,
+}
 
 
 def fetch_json(url: str):
@@ -587,6 +601,227 @@ def resolve_prompt_template(
     return PROMPT_FAMILIES[family], family
 
 
+def load_jsonl(path: Path) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append(json.loads(line))
+    return rows
+
+
+def normalize_human_annotation_mode(value: str) -> str:
+    mode = str(value or "none").strip().lower().replace("-", "_")
+    if mode not in HUMAN_ANNOTATION_MODES:
+        raise ValueError(f"Unsupported human annotation mode: {value}")
+    return mode
+
+
+def tier_meets_minimum(tier: str, minimum_tier: str) -> bool:
+    return ANNOTATION_TIER_RANK.get(str(tier or "").strip().lower(), 0) >= ANNOTATION_TIER_RANK.get(
+        str(minimum_tier or "").strip().lower(),
+        ANNOTATION_TIER_RANK["bronze"],
+    )
+
+
+def select_preferred_annotation(
+    current: Optional[Dict[str, Any]],
+    candidate: Dict[str, Any],
+) -> Dict[str, Any]:
+    if current is None:
+        return candidate
+
+    current_key = (
+        float(current.get("annotation_quality_score") or 0.0),
+        int(current.get("rationale_length") or 0),
+    )
+    candidate_key = (
+        float(candidate.get("annotation_quality_score") or 0.0),
+        int(candidate.get("rationale_length") or 0),
+    )
+    return candidate if candidate_key > current_key else current
+
+
+def load_human_annotation_index(
+    path: Optional[Path],
+    *,
+    minimum_tier: str = "bronze",
+) -> Dict[str, Dict[str, Any]]:
+    if not path:
+        return {}
+
+    index: Dict[str, Dict[str, Any]] = {}
+    for row in load_jsonl(path):
+        if not bool(row.get("training_useful", True)):
+            continue
+        tier = str(row.get("annotation_quality_tier") or "").strip().lower()
+        if not tier_meets_minimum(tier, minimum_tier):
+            continue
+
+        keys = [
+            str(row.get("sample_id") or "").strip(),
+            str(row.get("flip_hash") or "").strip(),
+            str(row.get("task_id") or "").strip(),
+        ]
+        for key in keys:
+            if not key:
+                continue
+            index[key] = select_preferred_annotation(index.get(key), row)
+
+    return index
+
+
+def should_apply_human_weight_boost(mode: str) -> bool:
+    return normalize_human_annotation_mode(mode) in {"weight_boost", "hybrid"}
+
+
+def should_apply_human_followup(mode: str) -> bool:
+    return normalize_human_annotation_mode(mode) in {"followup_reasoning", "hybrid"}
+
+
+def build_human_teacher_followup_prompt(record: Dict[str, Any]) -> str:
+    prompt_family = str(record.get("prompt_family") or "").strip().lower()
+    if prompt_family == "candidate_label_native_frames_v1":
+        return (
+            "Human teacher follow-up: briefly explain why this candidate should be "
+            "treated as winner, loser, or skip using only concrete visual cues."
+        )
+    if prompt_family == "candidate_analysis_native_frames_v1":
+        return (
+            "Human teacher follow-up: briefly explain the main coherence strengths "
+            "or weaknesses of this candidate using concrete visual cues."
+        )
+    return (
+        "Human teacher follow-up: briefly explain why the selected story is the "
+        "better answer, and mention text/reportability concerns if they matter."
+    )
+
+
+def summarize_human_annotation(record: Dict[str, Any], annotation: Dict[str, Any]) -> str:
+    reasons: List[str] = []
+    why_answer = str(annotation.get("why_answer") or "").strip()
+    if why_answer:
+        reasons.append(why_answer)
+
+    final_answer = str(annotation.get("final_answer") or "").strip().lower()
+    candidate_maps_to = str(record.get("candidate_maps_to") or "").strip().lower()
+    candidate_label = str(record.get("candidate_label") or "").strip().upper()
+
+    if candidate_label and candidate_maps_to:
+        if final_answer == "skip":
+            reasons.insert(
+                0,
+                f"Human teacher review marks candidate {candidate_label} as skip because the flip is ambiguous or report-worthy.",
+            )
+        elif final_answer == candidate_maps_to:
+            reasons.insert(
+                0,
+                f"Human teacher review marks candidate {candidate_label} as the better story.",
+            )
+        else:
+            reasons.insert(
+                0,
+                f"Human teacher review marks candidate {candidate_label} as the weaker story.",
+            )
+    elif final_answer:
+        reasons.insert(0, f"Human teacher review says the correct answer is {final_answer}.")
+
+    if bool(annotation.get("text_required")):
+        reasons.append("Reading visible text is required to solve this flip.")
+    if bool(annotation.get("sequence_markers_present")):
+        reasons.append("Visible sequence markers are present in the images.")
+    if bool(annotation.get("report_required")):
+        report_reason = str(annotation.get("report_reason") or "").strip()
+        if report_reason:
+            reasons.append(f"Reportability note: {report_reason}")
+        else:
+            reasons.append("The flip should be reported instead of solved normally.")
+
+    if not reasons:
+        reasons.append("Human teacher confirms the decision using common-sense chronology and visual coherence.")
+
+    return " ".join(item.strip() for item in reasons if item.strip())[:900]
+
+
+def human_weight_multiplier(annotation: Dict[str, Any], scale: float) -> float:
+    tier = str(annotation.get("annotation_quality_tier") or "").strip().lower()
+    bonus = BASE_HUMAN_WEIGHT_BONUS.get(tier, 0.0)
+    return 1.0 + (max(scale, 0.0) * bonus)
+
+
+def attach_human_annotation(
+    record: Dict[str, Any],
+    annotation_index: Dict[str, Dict[str, Any]],
+    *,
+    human_annotation_mode: str,
+    human_weight_scale: float,
+) -> Dict[str, Any]:
+    mode = normalize_human_annotation_mode(human_annotation_mode)
+    if mode == "none" or not annotation_index:
+        return record
+
+    annotation = None
+    for key in (
+        str(record.get("sample_id") or "").strip(),
+        str(record.get("flip_hash") or "").strip(),
+    ):
+        if key and key in annotation_index:
+            annotation = annotation_index[key]
+            break
+
+    if not annotation:
+        return {
+            **record,
+            "human_annotation_available": False,
+        }
+
+    next_record = {
+        **record,
+        "human_annotation_available": True,
+        "human_annotation_quality_tier": annotation.get("annotation_quality_tier"),
+        "human_annotation_quality_score": annotation.get("annotation_quality_score"),
+        "human_annotation_reasoning_tags": list(annotation.get("reasoning_tags") or []),
+    }
+
+    if should_apply_human_weight_boost(mode):
+        next_record["training_weight"] = round(
+            float(record.get("training_weight") or 1.0)
+            * human_weight_multiplier(annotation, human_weight_scale),
+            6,
+        )
+        base_source = str(record.get("ranking_source") or "baseline").strip()
+        next_record["ranking_source"] = f"{base_source}+human_teacher_boost"
+
+    if should_apply_human_followup(mode):
+        original_messages = copy.deepcopy(record.get("messages") or [])
+        if original_messages:
+            next_record["evaluation_messages"] = [copy.deepcopy(original_messages[0])]
+        next_record["messages"] = original_messages + [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": build_human_teacher_followup_prompt(record),
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": summarize_human_annotation(record, annotation),
+                    }
+                ],
+            },
+        ]
+
+    return next_record
+
+
 def build_candidate_frame_images(
     *,
     saved_images: List[str],
@@ -940,6 +1175,9 @@ def process_parquet_files(
     prompt_family: str,
     image_mode: str,
     augment_swap_orders: bool,
+    human_annotation_index: Optional[Dict[str, Dict[str, Any]]] = None,
+    human_annotation_mode: str = "none",
+    human_weight_scale: float = 1.0,
 ) -> Tuple[List[dict], int]:
     tasks: Dict[str, dict] = {}
     completed_task_ids = set()
@@ -1005,6 +1243,16 @@ def process_parquet_files(
                                 build_swapped_training_record(item, prompt_template)
                                 for item in list(flip_records)
                             )
+                        if human_annotation_index:
+                            flip_records = [
+                                attach_human_annotation(
+                                    item,
+                                    human_annotation_index,
+                                    human_annotation_mode=human_annotation_mode,
+                                    human_weight_scale=human_weight_scale,
+                                )
+                                for item in flip_records
+                            ]
                         if produced >= skip_flips:
                             completed.extend(flip_records)
                         produced += 1
@@ -1142,8 +1390,35 @@ def main() -> int:
             "useful for fixed validation slices"
         ),
     )
+    parser.add_argument(
+        "--human-annotations-jsonl",
+        type=Path,
+        help="Optional normalized human-teacher annotation JSONL to blend into training records",
+    )
+    parser.add_argument(
+        "--human-annotation-mode",
+        choices=sorted(HUMAN_ANNOTATION_MODES),
+        default="none",
+        help=(
+            "How human annotations should affect prepared records: none, weight_boost, "
+            "followup_reasoning, or hybrid"
+        ),
+    )
+    parser.add_argument(
+        "--human-min-quality-tier",
+        choices=["bronze", "silver", "gold"],
+        default="bronze",
+        help="Minimum human annotation quality tier accepted for training augmentation",
+    )
+    parser.add_argument(
+        "--human-weight-scale",
+        type=float,
+        default=1.0,
+        help="Scale factor applied to human quality-based training-weight boosts",
+    )
     args = parser.parse_args()
     selected_image_mode = normalize_image_mode(args.image_mode)
+    human_annotation_mode = normalize_human_annotation_mode(args.human_annotation_mode)
 
     if args.max_flips < 1:
         print("--max-flips must be >= 1", file=sys.stderr)
@@ -1156,6 +1431,12 @@ def main() -> int:
         prompt_family=args.prompt_family,
         prompt_template=args.prompt_template,
         image_mode=selected_image_mode,
+    )
+    human_annotation_index = load_human_annotation_index(
+        args.human_annotations_jsonl.resolve()
+        if args.human_annotations_jsonl
+        else None,
+        minimum_tier=args.human_min_quality_tier,
     )
 
     parquet_paths = list_parquet_paths(args.split)
@@ -1188,6 +1469,9 @@ def main() -> int:
         prompt_family,
         selected_image_mode,
         args.augment_swap_orders,
+        human_annotation_index,
+        human_annotation_mode,
+        args.human_weight_scale,
     )
 
     if not records:
@@ -1207,6 +1491,11 @@ def main() -> int:
     counts_by_first_candidate: Dict[str, int] = {}
     ranking_sources: Dict[str, int] = {}
     training_weights: List[float] = []
+    human_annotation_summary = {
+        "available": 0,
+        "followupReasoning": 0,
+        "qualityTiers": {},
+    }
     for item in records:
         answer = item["expected_answer"]
         counts_by_answer[answer] = counts_by_answer.get(answer, 0) + 1
@@ -1224,6 +1513,14 @@ def main() -> int:
             training_weights.append(float(item.get("training_weight", 1.0) or 1.0))
         except (TypeError, ValueError):
             training_weights.append(1.0)
+        if item.get("human_annotation_available"):
+            human_annotation_summary["available"] += 1
+            tier = str(item.get("human_annotation_quality_tier") or "unknown")
+            human_annotation_summary["qualityTiers"][tier] = (
+                human_annotation_summary["qualityTiers"].get(tier, 0) + 1
+            )
+            if item.get("evaluation_messages"):
+                human_annotation_summary["followupReasoning"] += 1
 
     training_weight_summary = {
         "min": round(min(training_weights), 6),
@@ -1243,6 +1540,16 @@ def main() -> int:
             "swapOrders": bool(args.augment_swap_orders),
         },
         "promptFamily": prompt_family,
+        "humanAnnotations": {
+            "mode": human_annotation_mode,
+            "path": str(args.human_annotations_jsonl.resolve())
+            if args.human_annotations_jsonl
+            else None,
+            "minimumTier": args.human_min_quality_tier,
+            "weightScale": args.human_weight_scale,
+            "indexSize": len(human_annotation_index),
+            "applied": human_annotation_summary,
+        },
         "balancing": balancing_summary
         or {
             "enabled": False,
