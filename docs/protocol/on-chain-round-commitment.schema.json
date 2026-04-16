@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idenaai.local/protocol/on-chain-round-commitment.schema.json",
+  "title": "IdenaAI On-Chain Round Commitment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolId",
+    "version",
+    "commitmentType",
+    "roundId",
+    "epoch",
+    "roundManifestHash",
+    "acceptedAnnotationManifestHash",
+    "acceptedAdapterManifestHash",
+    "committeeAttestationHash",
+    "nextGlobalAdapterHash",
+    "distributionManifestHash"
+  ],
+  "properties": {
+    "protocolId": {
+      "const": "idenaai-federated-human-teacher"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "commitmentType": {
+      "const": "on-chain-round-commitment"
+    },
+    "roundId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "roundManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "acceptedAnnotationManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "acceptedAdapterManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "committeeAttestationHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "nextGlobalAdapterHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "distributionManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "benchmarkResultHash": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "committeeSetHash": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

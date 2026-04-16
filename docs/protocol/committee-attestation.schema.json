@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idenaai.local/protocol/committee-attestation.schema.json",
+  "title": "IdenaAI Committee Attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolId",
+    "version",
+    "documentType",
+    "roundId",
+    "roundManifestHash",
+    "acceptedAnnotationManifestHash",
+    "acceptedAdapterManifestHash",
+    "nextGlobalAdapterHash",
+    "verificationSummary",
+    "signatures",
+    "createdAt"
+  ],
+  "properties": {
+    "protocolId": {
+      "const": "idenaai-federated-human-teacher"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "documentType": {
+      "const": "committee-attestation"
+    },
+    "roundId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roundManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "acceptedAnnotationManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "acceptedAdapterManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "nextGlobalAdapterHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "verificationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acceptedAnnotationBundles",
+        "rejectedAnnotationBundles",
+        "acceptedAdapterBundles",
+        "rejectedAdapterBundles",
+        "committeeThreshold",
+        "signerCount"
+      ],
+      "properties": {
+        "acceptedAnnotationBundles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "rejectedAnnotationBundles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["bundleHash", "reason"],
+            "properties": {
+              "bundleHash": {
+                "$ref": "#/$defs/sha256"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "acceptedAdapterBundles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "rejectedAdapterBundles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["bundleHash", "reason"],
+            "properties": {
+              "bundleHash": {
+                "$ref": "#/$defs/sha256"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "committeeThreshold": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 1
+        },
+        "signerCount": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/signerSignature"
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "signerSignature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "type", "value"],
+      "properties": {
+        "identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

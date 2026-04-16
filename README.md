@@ -159,6 +159,7 @@ Start here for the full workflow:
 
 Related notes:
 - [docs/federated-model-distribution.md](docs/federated-model-distribution.md)
+- [docs/federated-human-teacher-protocol.md](docs/federated-human-teacher-protocol.md)
 
 ## Python training environment
 

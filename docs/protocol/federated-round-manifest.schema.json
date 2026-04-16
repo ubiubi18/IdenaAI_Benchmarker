@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idenaai.local/protocol/federated-round-manifest.schema.json",
+  "title": "IdenaAI Federated Round Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolId",
+    "version",
+    "manifestType",
+    "roundId",
+    "epoch",
+    "parentRoundHash",
+    "baseModelHash",
+    "parentGlobalAdapterHash",
+    "benchmarkManifestHash",
+    "annotationSchemaHash",
+    "mergePolicy",
+    "submissionWindow",
+    "committee",
+    "createdAt"
+  ],
+  "properties": {
+    "protocolId": {
+      "const": "idenaai-federated-human-teacher"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "manifestType": {
+      "const": "federated-round-manifest"
+    },
+    "roundId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "parentRoundHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "baseModelHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "parentGlobalAdapterHash": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "benchmarkManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "annotationSchemaHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "mergePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "annotationAggregation",
+        "adapterMergeMode",
+        "committeeThreshold"
+      ],
+      "properties": {
+        "annotationAggregation": {
+          "enum": ["best_single", "deepfunding"]
+        },
+        "adapterMergeMode": {
+          "enum": ["committee_retrain_v1", "direct_merge_v2"]
+        },
+        "committeeThreshold": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 1
+        }
+      }
+    },
+    "submissionWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["annotationsCloseAt", "adaptersCloseAt"],
+      "properties": {
+        "annotationsCloseAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "adaptersCloseAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "committee": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["committeeSetHash", "minSigners"],
+      "properties": {
+        "committeeSetHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "minSigners": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

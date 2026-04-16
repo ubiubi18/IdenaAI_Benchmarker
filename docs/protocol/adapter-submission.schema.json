@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idenaai.local/protocol/adapter-submission.schema.json",
+  "title": "IdenaAI Adapter Submission",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolId",
+    "version",
+    "bundleType",
+    "roundId",
+    "roundManifestHash",
+    "identity",
+    "epoch",
+    "baseModelHash",
+    "parentGlobalAdapterHash",
+    "deltaType",
+    "adapterFormat",
+    "adapterSha256",
+    "trainingConfigHash",
+    "benchmarkManifestHash",
+    "metrics",
+    "artifact",
+    "governance",
+    "audit",
+    "signature",
+    "createdAt"
+  ],
+  "properties": {
+    "protocolId": {
+      "const": "idenaai-federated-human-teacher"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bundleType": {
+      "const": "adapter-submission"
+    },
+    "roundId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roundManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "identity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "baseModelHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "parentGlobalAdapterHash": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deltaType": {
+      "enum": ["lora_adapter", "none"]
+    },
+    "adapterFormat": {
+      "type": "string",
+      "minLength": 1
+    },
+    "adapterSha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "trainingConfigHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "benchmarkManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accuracy", "totalFlips", "correct"],
+      "properties": {
+        "accuracy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "totalFlips": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "correct": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "swapConsistency": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256", "sizeBytes"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eligible", "source", "exclusionRule"],
+      "properties": {
+        "eligible": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exclusionRule": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policyVersion", "minimumDistinctIdentities"],
+      "properties": {
+        "policyVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minimumDistinctIdentities": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "signature": {
+      "$ref": "#/$defs/signature"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

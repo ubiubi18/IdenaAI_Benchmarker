@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idenaai.local/protocol/annotation-submission.schema.json",
+  "title": "IdenaAI Annotation Submission",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolId",
+    "version",
+    "bundleType",
+    "roundId",
+    "roundManifestHash",
+    "identity",
+    "createdAt",
+    "artifact",
+    "summary",
+    "signature"
+  ],
+  "properties": {
+    "protocolId": {
+      "const": "idenaai-federated-human-teacher"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bundleType": {
+      "const": "annotation-submission"
+    },
+    "roundId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roundManifestHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "identity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identityStatus": {
+      "enum": ["Newbie", "Verified", "Suspended", "Human"]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256", "rowCount"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "rowCount": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskIds", "flipHashes", "containsRawPayload"],
+      "properties": {
+        "taskIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "flipHashes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "containsRawPayload": {
+          "const": false
+        },
+        "qualityHints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "consensusMatchedRows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rationaleRows": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "signature": {
+      "$ref": "#/$defs/signature"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
