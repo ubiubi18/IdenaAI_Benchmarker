@@ -74,6 +74,21 @@ research features:
 AI is optional. The app should still be usable like regular `idena-desktop`
 without enabling AI or adding API keys.
 
+## Training Guide
+
+If you want to reproduce the FLIP fine-tuning work in this repository, start
+with the local training guide instead of guessing the script order. The short
+version is:
+
+- normalize optional human-teacher annotations first
+- prepare a small FLIP slice from the Hugging Face benchmark
+- train a pilot adapter on that prepared dataset
+- compare baseline vs human-assisted preparation modes on the same holdout
+
+See [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
+for the full step-by-step workflow, including the new human-annotation-aware
+dataset prep modes and the small experiment matrix runner.
+
 ## Human Teacher Loop
 
 The longer-term idea of `IdenaAI` is a decentralized human-teacher loop, not
