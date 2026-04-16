@@ -35,6 +35,7 @@ const DEVELOPER_HUMAN_TEACHER_STATE_VERSION = 1
 const DEFAULT_RUNTIME_START_TIMEOUT_MS = 10 * 1000
 const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
 const ACTIVE_VALIDATION_PERIODS = new Set(['ShortSession', 'LongSession'])
+const MAX_DEVELOPER_COMPARISON_HISTORY = 30
 const OLLAMA_COMMAND_CANDIDATES = [
   '/opt/homebrew/bin/ollama',
   '/usr/local/bin/ollama',
@@ -692,6 +693,326 @@ function summarizeDeveloperChunkRows(rows = []) {
   }
 }
 
+function normalizeAccuracyValue(value) {
+  const parsed = Number.parseFloat(value)
+
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  if (parsed >= 0 && parsed <= 1) {
+    return parsed
+  }
+
+  if (parsed > 1 && parsed <= 100) {
+    return parsed / 100
+  }
+
+  return null
+}
+
+function normalizeNonNegativeInteger(value) {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function normalizeDeveloperComparisonStatus(value, fallback = 'not_loaded') {
+  const status = String(value || fallback).trim()
+  return status || fallback
+}
+
+function normalizeIsoDate(value) {
+  const raw = String(value || '').trim()
+
+  if (!raw) {
+    return null
+  }
+
+  const parsed = new Date(raw)
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null
+}
+
+function createDefaultDeveloperComparisonState() {
+  return {
+    status: 'not_loaded',
+    holdoutPath: null,
+    lastEvaluatedAt: null,
+    lastResultPath: null,
+    accuracy: null,
+    correct: null,
+    totalFlips: null,
+    bestAccuracy: null,
+    history: [],
+  }
+}
+
+function normalizeDeveloperComparisonHistoryEntry(entry = {}) {
+  const source =
+    entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {}
+
+  return {
+    status: normalizeDeveloperComparisonStatus(source.status, 'evaluated'),
+    evaluatedAt: normalizeIsoDate(
+      source.evaluatedAt || source.lastEvaluatedAt || source.generatedAt
+    ),
+    resultPath:
+      String(
+        source.resultPath || source.lastResultPath || source.path || ''
+      ).trim() || null,
+    holdoutPath: String(source.holdoutPath || '').trim() || null,
+    accuracy: normalizeAccuracyValue(source.accuracy),
+    correct: normalizeNonNegativeInteger(source.correct),
+    totalFlips: normalizeNonNegativeInteger(
+      source.totalFlips || source.total || source.flipCount
+    ),
+  }
+}
+
+function dedupeDeveloperComparisonHistory(entries = []) {
+  const normalizedEntries = entries
+    .map((entry) => normalizeDeveloperComparisonHistoryEntry(entry))
+    .filter(
+      (entry) =>
+        entry.evaluatedAt ||
+        entry.resultPath ||
+        entry.accuracy !== null ||
+        entry.correct !== null ||
+        entry.totalFlips !== null
+    )
+    .sort((left, right) => {
+      const leftTime = left.evaluatedAt ? Date.parse(left.evaluatedAt) : 0
+      const rightTime = right.evaluatedAt ? Date.parse(right.evaluatedAt) : 0
+      return rightTime - leftTime
+    })
+
+  const uniqueEntries = []
+  const seenKeys = new Set()
+
+  normalizedEntries.forEach((entry) => {
+    const key = [
+      entry.evaluatedAt || '',
+      entry.resultPath || '',
+      entry.accuracy === null ? '' : String(entry.accuracy),
+      entry.correct === null ? '' : String(entry.correct),
+      entry.totalFlips === null ? '' : String(entry.totalFlips),
+    ].join('::')
+
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key)
+      uniqueEntries.push(entry)
+    }
+  })
+
+  return uniqueEntries.slice(0, MAX_DEVELOPER_COMPARISON_HISTORY)
+}
+
+function normalizeDeveloperComparisonState(value) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const fallback = createDefaultDeveloperComparisonState()
+  const history = dedupeDeveloperComparisonHistory(source.history)
+  const latestEntry =
+    history[0] ||
+    normalizeDeveloperComparisonHistoryEntry({
+      status: source.status,
+      evaluatedAt: source.lastEvaluatedAt,
+      resultPath: source.lastResultPath,
+      holdoutPath: source.holdoutPath,
+      accuracy: source.accuracy,
+      correct: source.correct,
+      totalFlips: source.totalFlips,
+    })
+  const bestAccuracy = history.reduce((best, entry) => {
+    if (entry.accuracy === null) {
+      return best
+    }
+
+    return best === null ? entry.accuracy : Math.max(best, entry.accuracy)
+  }, normalizeAccuracyValue(source.bestAccuracy))
+
+  return {
+    ...fallback,
+    ...source,
+    status: normalizeDeveloperComparisonStatus(
+      latestEntry?.status || source.status,
+      fallback.status
+    ),
+    holdoutPath:
+      String(
+        latestEntry?.holdoutPath || source.holdoutPath || fallback.holdoutPath
+      ).trim() || null,
+    lastEvaluatedAt:
+      latestEntry?.evaluatedAt ||
+      normalizeIsoDate(source.lastEvaluatedAt) ||
+      fallback.lastEvaluatedAt,
+    lastResultPath:
+      String(
+        latestEntry?.resultPath ||
+          source.lastResultPath ||
+          fallback.lastResultPath
+      ).trim() || null,
+    accuracy:
+      latestEntry?.accuracy !== null
+        ? latestEntry.accuracy
+        : normalizeAccuracyValue(source.accuracy),
+    correct:
+      latestEntry?.correct !== null
+        ? latestEntry.correct
+        : normalizeNonNegativeInteger(source.correct),
+    totalFlips:
+      latestEntry?.totalFlips !== null
+        ? latestEntry.totalFlips
+        : normalizeNonNegativeInteger(source.totalFlips),
+    bestAccuracy,
+    history,
+  }
+}
+
+function readComparisonMetric(source, candidates = []) {
+  for (const pathParts of candidates) {
+    let current = source
+
+    for (const part of pathParts) {
+      if (
+        !current ||
+        typeof current !== 'object' ||
+        Array.isArray(current) ||
+        typeof current[part] === 'undefined'
+      ) {
+        current = undefined
+        break
+      }
+
+      current = current[part]
+    }
+
+    if (typeof current !== 'undefined') {
+      return current
+    }
+  }
+
+  return undefined
+}
+
+function extractDeveloperComparisonSnapshot(
+  result,
+  {resultPath = null, holdoutPath = null, fallbackStatus = 'evaluated'} = {}
+) {
+  const source =
+    result && typeof result === 'object' && !Array.isArray(result) ? result : {}
+  const accuracy = normalizeAccuracyValue(
+    readComparisonMetric(source, [
+      ['accuracy'],
+      ['summary', 'accuracy'],
+      ['metrics', 'accuracy'],
+      ['result', 'accuracy'],
+      ['comparison100', 'accuracy'],
+    ])
+  )
+  const correct = normalizeNonNegativeInteger(
+    readComparisonMetric(source, [
+      ['correct'],
+      ['summary', 'correct'],
+      ['metrics', 'correct'],
+      ['result', 'correct'],
+      ['comparison100', 'correct'],
+    ])
+  )
+  const totalFlips = normalizeNonNegativeInteger(
+    readComparisonMetric(source, [
+      ['totalFlips'],
+      ['total'],
+      ['flipCount'],
+      ['summary', 'totalFlips'],
+      ['summary', 'total'],
+      ['metrics', 'totalFlips'],
+      ['result', 'totalFlips'],
+      ['comparison100', 'totalFlips'],
+    ])
+  )
+
+  if (accuracy === null && correct === null && totalFlips === null) {
+    return null
+  }
+
+  const evaluatedAt = normalizeIsoDate(
+    readComparisonMetric(source, [
+      ['evaluatedAt'],
+      ['lastEvaluatedAt'],
+      ['generatedAt'],
+      ['summary', 'evaluatedAt'],
+      ['comparison100', 'lastEvaluatedAt'],
+    ])
+  )
+  const resolvedResultPath =
+    String(
+      readComparisonMetric(source, [
+        ['resultPath'],
+        ['lastResultPath'],
+        ['path'],
+        ['comparison100', 'lastResultPath'],
+      ]) ||
+        resultPath ||
+        ''
+    ).trim() || null
+  const resolvedHoldoutPath =
+    String(
+      readComparisonMetric(source, [
+        ['holdoutPath'],
+        ['comparison100', 'holdoutPath'],
+      ]) ||
+        holdoutPath ||
+        ''
+    ).trim() || null
+
+  return normalizeDeveloperComparisonHistoryEntry({
+    status: fallbackStatus,
+    evaluatedAt: evaluatedAt || new Date().toISOString(),
+    resultPath: resolvedResultPath,
+    holdoutPath: resolvedHoldoutPath,
+    accuracy,
+    correct,
+    totalFlips,
+  })
+}
+
+function mergeDeveloperComparisonSnapshot(
+  currentComparison,
+  snapshot,
+  fallbackStatus = 'evaluated'
+) {
+  const normalizedCurrent = normalizeDeveloperComparisonState(currentComparison)
+
+  if (!snapshot) {
+    return {
+      ...normalizedCurrent,
+      status: normalizeDeveloperComparisonStatus(
+        normalizedCurrent.status,
+        fallbackStatus
+      ),
+    }
+  }
+
+  return normalizeDeveloperComparisonState({
+    ...normalizedCurrent,
+    status: normalizeDeveloperComparisonStatus(snapshot.status, fallbackStatus),
+    holdoutPath: snapshot.holdoutPath || normalizedCurrent.holdoutPath,
+    lastEvaluatedAt: snapshot.evaluatedAt || normalizedCurrent.lastEvaluatedAt,
+    lastResultPath: snapshot.resultPath || normalizedCurrent.lastResultPath,
+    accuracy:
+      snapshot.accuracy !== null
+        ? snapshot.accuracy
+        : normalizedCurrent.accuracy,
+    correct:
+      snapshot.correct !== null ? snapshot.correct : normalizedCurrent.correct,
+    totalFlips:
+      snapshot.totalFlips !== null
+        ? snapshot.totalFlips
+        : normalizedCurrent.totalFlips,
+    history: [snapshot, ...normalizedCurrent.history],
+  })
+}
+
 function createDefaultDeveloperHumanTeacherState({
   sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
   totalAvailableTasks = 0,
@@ -713,12 +1034,7 @@ function createDefaultDeveloperHumanTeacherState({
     chunks: [],
     lastSavedAt: null,
     lastTraining: null,
-    comparison100: {
-      status: 'not_loaded',
-      holdoutPath: null,
-      lastEvaluatedAt: null,
-      lastResultPath: null,
-    },
+    comparison100: createDefaultDeveloperComparisonState(),
   }
 }
 
@@ -775,15 +1091,7 @@ function normalizeDeveloperHumanTeacherState(
           })
           .sort((left, right) => left.offset - right.offset)
       : [],
-    comparison100:
-      source.comparison100 &&
-      typeof source.comparison100 === 'object' &&
-      !Array.isArray(source.comparison100)
-        ? {
-            ...fallback.comparison100,
-            ...source.comparison100,
-          }
-        : fallback.comparison100,
+    comparison100: normalizeDeveloperComparisonState(source.comparison100),
   }
 }
 
@@ -1538,13 +1846,60 @@ function createLocalAiManager({
       nextSampleName
     )
     const currentState = await localAiStorage.readJson(statePath, null)
+    const normalizedState = normalizeDeveloperHumanTeacherState(currentState, {
+      sampleName: nextSampleName,
+      totalAvailableTasks,
+    })
+    const comparisonPath = developerHumanTeacherComparisonPath(
+      localAiStorage,
+      nextSampleName
+    )
+    let nextState = normalizedState
+
+    if (await localAiStorage.exists(comparisonPath)) {
+      const comparisonResult = await localAiStorage.readJson(
+        comparisonPath,
+        null
+      )
+      const snapshot = extractDeveloperComparisonSnapshot(comparisonResult, {
+        resultPath: comparisonPath,
+        holdoutPath:
+          normalizedState.comparison100?.holdoutPath ||
+          comparisonResult?.holdoutPath ||
+          null,
+      })
+      const mergedComparison = snapshot
+        ? mergeDeveloperComparisonSnapshot(
+            normalizedState.comparison100,
+            snapshot
+          )
+        : normalizeDeveloperComparisonState({
+            ...normalizedState.comparison100,
+            status:
+              normalizeDeveloperComparisonStatus(
+                normalizedState.comparison100?.status
+              ) === 'not_loaded'
+                ? 'result_available'
+                : normalizedState.comparison100?.status,
+            lastResultPath:
+              normalizedState.comparison100?.lastResultPath || comparisonPath,
+          })
+
+      if (
+        JSON.stringify(mergedComparison) !==
+        JSON.stringify(normalizedState.comparison100)
+      ) {
+        nextState = {
+          ...normalizedState,
+          comparison100: mergedComparison,
+        }
+        await localAiStorage.writeJsonAtomic(statePath, nextState)
+      }
+    }
 
     return {
       statePath,
-      state: normalizeDeveloperHumanTeacherState(currentState, {
-        sampleName: nextSampleName,
-        totalAvailableTasks,
-      }),
+      state: nextState,
     }
   }
 
@@ -1844,8 +2199,15 @@ function createLocalAiManager({
     let pendingTaskIds = uniqueStrings(
       mergeJsonlRowsByTaskId([], pendingRows).map((row) => row && row.task_id)
     )
+    let nextComparison = normalizeDeveloperComparisonState(
+      existingState.comparison100
+    )
 
     if (trainNow) {
+      const comparisonPath = developerHumanTeacherComparisonPath(
+        localAiStorage,
+        chunk.sample.sampleName
+      )
       trainingResult = await trainEpoch({
         input: {
           developerHumanTeacher: true,
@@ -1857,10 +2219,7 @@ function createLocalAiManager({
           annotatedAnnotationsPath: annotatedPath,
           trainedAnnotationsPath: trainedPath,
           developerStatePath: chunk.statePath,
-          comparisonPath: developerHumanTeacherComparisonPath(
-            localAiStorage,
-            chunk.sample.sampleName
-          ),
+          comparisonPath,
         },
       })
 
@@ -1874,8 +2233,39 @@ function createLocalAiManager({
         )
         pendingTaskIds = []
         trainingStatus = 'trained'
+        nextComparison = mergeDeveloperComparisonSnapshot(
+          nextComparison,
+          extractDeveloperComparisonSnapshot(trainingResult, {
+            resultPath: comparisonPath,
+          }),
+          'trained'
+        )
       } else {
         trainingStatus = 'failed'
+      }
+
+      if (await localAiStorage.exists(comparisonPath)) {
+        const comparisonResult = await localAiStorage.readJson(
+          comparisonPath,
+          null
+        )
+        nextComparison = mergeDeveloperComparisonSnapshot(
+          nextComparison,
+          extractDeveloperComparisonSnapshot(comparisonResult, {
+            resultPath: comparisonPath,
+            holdoutPath:
+              nextComparison.holdoutPath ||
+              comparisonResult?.holdoutPath ||
+              null,
+          }),
+          trainingResult && trainingResult.ok ? 'evaluated' : 'result_available'
+        )
+      } else if (trainingResult && trainingResult.ok) {
+        nextComparison = normalizeDeveloperComparisonState({
+          ...nextComparison,
+          status: 'trained_pending_evaluation',
+          lastResultPath: nextComparison.lastResultPath || comparisonPath,
+        })
       }
     }
 
@@ -1909,6 +2299,7 @@ function createLocalAiManager({
       trainedTaskIds,
       chunks: chunkEntries,
       lastSavedAt: committedAt,
+      comparison100: nextComparison,
       lastTraining: trainNow
         ? {
             at: new Date().toISOString(),
@@ -3290,10 +3681,19 @@ function createLocalAiManager({
       summary: session.summary,
       workspace: session.workspace,
       comparison100: {
-        status: String(state.comparison100?.status || 'not_loaded').trim(),
-        holdoutPath: state.comparison100?.holdoutPath || null,
-        lastEvaluatedAt: state.comparison100?.lastEvaluatedAt || null,
-        lastResultPath: state.comparison100?.lastResultPath || null,
+        status: String(
+          developerState.comparison100?.status || 'not_loaded'
+        ).trim(),
+        holdoutPath: developerState.comparison100?.holdoutPath || null,
+        lastEvaluatedAt: developerState.comparison100?.lastEvaluatedAt || null,
+        lastResultPath: developerState.comparison100?.lastResultPath || null,
+        accuracy: developerState.comparison100?.accuracy ?? null,
+        correct: developerState.comparison100?.correct ?? null,
+        totalFlips: developerState.comparison100?.totalFlips ?? null,
+        bestAccuracy: developerState.comparison100?.bestAccuracy ?? null,
+        history: Array.isArray(developerState.comparison100?.history)
+          ? developerState.comparison100.history
+          : [],
         expectedPath: developerHumanTeacherComparisonPath(
           localAiStorage,
           sample.sampleName

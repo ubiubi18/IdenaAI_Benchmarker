@@ -1430,11 +1430,20 @@ describe('local-ai manager', () => {
       chat: jest.fn(),
       captionFlip: jest.fn(),
       ocrImage: jest.fn(),
-      trainEpoch: jest.fn(async () => ({
-        ok: true,
-        status: 'trained',
-        acceptedRows: 5,
-      })),
+      trainEpoch: jest.fn(async ({input}) => {
+        await fs.writeJson(input.comparisonPath, {
+          totalFlips: 100,
+          correct: 61,
+          accuracy: 0.61,
+          evaluatedAt: '2026-04-16T16:05:00.000Z',
+        })
+
+        return {
+          ok: true,
+          status: 'trained',
+          acceptedRows: 5,
+        }
+      }),
     }
     const manager = createLocalAiManager({
       logger: mockLogger(),
@@ -1504,6 +1513,41 @@ describe('local-ai manager', () => {
         pendingTrainingCount: 0,
         trainedCount: 5,
         currentOffset: 5,
+        comparison100: expect.objectContaining({
+          status: 'evaluated',
+          accuracy: 0.61,
+          correct: 61,
+          totalFlips: 100,
+          bestAccuracy: 0.61,
+          history: [
+            expect.objectContaining({
+              accuracy: 0.61,
+              correct: 61,
+              totalFlips: 100,
+            }),
+          ],
+        }),
+      }),
+    })
+
+    const reloadedSession = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(reloadedSession.state).toMatchObject({
+      comparison100: expect.objectContaining({
+        status: 'evaluated',
+        accuracy: 0.61,
+        correct: 61,
+        totalFlips: 100,
+        bestAccuracy: 0.61,
+        history: [
+          expect.objectContaining({
+            accuracy: 0.61,
+            correct: 61,
+            totalFlips: 100,
+          }),
+        ],
       }),
     })
   })

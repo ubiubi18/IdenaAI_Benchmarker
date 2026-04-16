@@ -333,6 +333,32 @@ function getCurrentFlipLabel(t, index, total) {
   })
 }
 
+function formatSuccessRate(value) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 'n/a'
+  }
+
+  return `${(parsed * 100).toFixed(1)}%`
+}
+
+function formatTimestamp(value) {
+  const raw = String(value || '').trim()
+
+  if (!raw) {
+    return 'n/a'
+  }
+
+  const parsed = new Date(raw)
+
+  if (!Number.isFinite(parsed.getTime())) {
+    return raw
+  }
+
+  return parsed.toLocaleString()
+}
+
 function getWorkspaceCountsAfterSave(
   workspace,
   selectedTaskId,
@@ -1137,11 +1163,24 @@ export default function AiHumanTeacherPage() {
 
         if (trainNow) {
           if (nextResult?.training?.ok) {
+            const latestAccuracy = nextResult?.state?.comparison100?.accuracy
+            const latestCorrect = nextResult?.state?.comparison100?.correct
+            const latestTotal = nextResult?.state?.comparison100?.totalFlips
             toast({
               title: t('Training started'),
-              description: t(
-                'This 5-flip chunk was added to your local training set and the local AI runtime accepted the training request.'
-              ),
+              description:
+                typeof latestAccuracy === 'number'
+                  ? t(
+                      'This 5-flip chunk was trained locally. Latest success rate: {{accuracy}} ({{correct}} / {{total}}).',
+                      {
+                        accuracy: formatSuccessRate(latestAccuracy),
+                        correct: Number(latestCorrect) || 0,
+                        total: Number(latestTotal) || 0,
+                      }
+                    )
+                  : t(
+                      'This 5-flip chunk was added to your local training set and the local AI runtime accepted the training request.'
+                    ),
               status: 'success',
               duration: 4500,
               isClosable: true,
@@ -1301,6 +1340,23 @@ export default function AiHumanTeacherPage() {
   const developerRemainingCount =
     Number(developerSessionState?.remainingTaskCount) || 0
   const developerComparison = developerSessionState?.comparison100 || null
+  const developerComparisonHistory = Array.isArray(developerComparison?.history)
+    ? developerComparison.history
+    : []
+  const latestDeveloperComparison = developerComparisonHistory[0] || null
+  const previousDeveloperComparison = developerComparisonHistory[1] || null
+  const developerBestAccuracy =
+    typeof developerComparison?.bestAccuracy === 'number'
+      ? developerComparison.bestAccuracy
+      : latestDeveloperComparison?.accuracy ?? null
+  const developerAccuracyDelta =
+    latestDeveloperComparison &&
+    previousDeveloperComparison &&
+    typeof latestDeveloperComparison.accuracy === 'number' &&
+    typeof previousDeveloperComparison.accuracy === 'number'
+      ? latestDeveloperComparison.accuracy -
+        previousDeveloperComparison.accuracy
+      : null
   const developerCanAdvance =
     isDeveloperMode &&
     totalTaskCount > 0 &&
@@ -1525,6 +1581,41 @@ export default function AiHumanTeacherPage() {
                       {t('Pending training')}: {developerPendingCount} ·{' '}
                       {t('Already trained')}: {developerTrainedCount}
                     </Text>
+                    {latestDeveloperComparison ? (
+                      <>
+                        <Text color="muted" fontSize="sm">
+                          {t('Latest success rate')}:{' '}
+                          {formatSuccessRate(
+                            latestDeveloperComparison.accuracy
+                          )}{' '}
+                          ({Number(latestDeveloperComparison.correct) || 0} /{' '}
+                          {Number(latestDeveloperComparison.totalFlips) || 0})
+                        </Text>
+                        <Text color="muted" fontSize="sm">
+                          {t('Best success rate so far')}:{' '}
+                          {formatSuccessRate(developerBestAccuracy)} ·{' '}
+                          {t('Evaluations logged')}:{' '}
+                          {developerComparisonHistory.length}
+                        </Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('Last evaluated')}:{' '}
+                          {formatTimestamp(
+                            latestDeveloperComparison.evaluatedAt
+                          )}
+                          {developerAccuracyDelta !== null
+                            ? ` · ${t('Change vs previous')}: ${
+                                developerAccuracyDelta >= 0 ? '+' : ''
+                              }${(developerAccuracyDelta * 100).toFixed(1)} pts`
+                            : ''}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'No success-rate history yet. Once a 100-flip comparison is recorded, your latest and past results will appear here.'
+                        )}
+                      </Text>
+                    )}
                     <Text color="muted" fontSize="sm">
                       {t('5-flip chunk size')}: {DEVELOPER_TRAINING_CHUNK_SIZE}
                     </Text>
@@ -1532,6 +1623,36 @@ export default function AiHumanTeacherPage() {
                       {t('100-flip holdout comparison status')}:{' '}
                       {String(developerComparison?.status || 'not_loaded')}
                     </Text>
+                    {developerComparisonHistory.length ? (
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        p={3}
+                      >
+                        <Stack spacing={1}>
+                          <Text fontSize="sm" fontWeight={600}>
+                            {t('Recent success-rate history')}
+                          </Text>
+                          {developerComparisonHistory
+                            .slice(0, 5)
+                            .map((entry, index) => (
+                              <Text
+                                key={`${entry.resultPath || 'result'}-${
+                                  entry.evaluatedAt || index
+                                }`}
+                                color="muted"
+                                fontSize="xs"
+                              >
+                                {formatTimestamp(entry.evaluatedAt)} ·{' '}
+                                {formatSuccessRate(entry.accuracy)} (
+                                {Number(entry.correct) || 0} /{' '}
+                                {Number(entry.totalFlips) || 0})
+                              </Text>
+                            ))}
+                        </Stack>
+                      </Box>
+                    ) : null}
                     {result?.comparison100?.expectedPath ? (
                       <Text color="muted" fontSize="xs">
                         {t('Expected comparison record')}:{' '}
