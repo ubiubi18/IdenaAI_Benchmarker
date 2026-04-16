@@ -14,11 +14,13 @@ small FLIP slices.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 MODE_MAPPING = {
@@ -37,6 +39,144 @@ def run_command(command: List[str]) -> None:
 def load_json(path: Path) -> Dict:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def epoch_run_key(now: Optional[dt.datetime] = None) -> str:
+    current = now or dt.datetime.now(dt.timezone.utc)
+    return current.strftime("%Y%m%dT%H%M%SZ")
+
+
+def prune_epoch_history(epochs_root: Path, keep: int) -> List[str]:
+    if keep <= 0 or not epochs_root.exists():
+        return []
+
+    epoch_dirs = sorted(
+        [path for path in epochs_root.iterdir() if path.is_dir()],
+        key=lambda path: path.name,
+    )
+    removable = epoch_dirs[:-keep]
+    removed = []
+    for path in removable:
+        shutil.rmtree(path)
+        removed.append(path.name)
+    return removed
+
+
+def extract_eval_metrics(eval_summary: Optional[Dict]) -> Dict[str, Optional[float]]:
+    if not eval_summary:
+        return {
+            "accuracy": None,
+            "accuracy_on_answered": None,
+            "answered_fraction": None,
+            "candidate_slot_bias_score": None,
+            "swap_consistency_rate": None,
+        }
+
+    examples = eval_summary.get("examples")
+    answered = eval_summary.get("answered")
+    try:
+        answered_fraction = (
+            round(float(answered) / float(examples), 6)
+            if examples and answered is not None
+            else None
+        )
+    except (TypeError, ValueError, ZeroDivisionError):
+        answered_fraction = None
+
+    swap_consistency = eval_summary.get("swap_consistency") or {}
+    return {
+        "accuracy": eval_summary.get("accuracy"),
+        "accuracy_on_answered": eval_summary.get("accuracy_on_answered"),
+        "answered_fraction": answered_fraction,
+        "candidate_slot_bias_score": eval_summary.get("candidate_slot_bias_score"),
+        "swap_consistency_rate": swap_consistency.get("rate"),
+    }
+
+
+def build_comparisons(mode_rows: List[Dict]) -> Dict[str, object]:
+    metrics = [
+        ("accuracy", "max"),
+        ("accuracy_on_answered", "max"),
+        ("answered_fraction", "max"),
+        ("swap_consistency_rate", "max"),
+        ("candidate_slot_bias_score", "min"),
+    ]
+
+    def pick_best(rows: List[Dict], metric_name: str, direction: str) -> Optional[Dict]:
+        candidates = [
+            row for row in rows if row.get("metrics", {}).get(metric_name) is not None
+        ]
+        if not candidates:
+            return None
+        key_fn = lambda row: float(row["metrics"][metric_name])
+        return (
+            max(candidates, key=key_fn)
+            if direction == "max"
+            else min(candidates, key=key_fn)
+        )
+
+    comparison_rows = [
+        {
+            "runKey": row["runKey"],
+            "mode": row["humanAnnotationMode"],
+            "aggregation": row["humanAnnotationAggregation"],
+            "metrics": row["metrics"],
+        }
+        for row in mode_rows
+    ]
+
+    by_mode: Dict[str, Dict[str, object]] = {}
+    for mode in sorted({row["humanAnnotationMode"] for row in mode_rows}):
+        rows = [row for row in mode_rows if row["humanAnnotationMode"] == mode]
+        best = {}
+        for metric_name, direction in metrics:
+            picked = pick_best(rows, metric_name, direction)
+            if picked:
+                best[metric_name] = {
+                    "runKey": picked["runKey"],
+                    "aggregation": picked["humanAnnotationAggregation"],
+                    "value": picked["metrics"][metric_name],
+                }
+        by_mode[mode] = {"runs": [row["runKey"] for row in rows], "best": best}
+
+    by_aggregation: Dict[str, Dict[str, object]] = {}
+    for aggregation in sorted({row["humanAnnotationAggregation"] for row in mode_rows}):
+        rows = [
+            row
+            for row in mode_rows
+            if row["humanAnnotationAggregation"] == aggregation
+        ]
+        best = {}
+        for metric_name, direction in metrics:
+            picked = pick_best(rows, metric_name, direction)
+            if picked:
+                best[metric_name] = {
+                    "runKey": picked["runKey"],
+                    "mode": picked["humanAnnotationMode"],
+                    "value": picked["metrics"][metric_name],
+                }
+        by_aggregation[aggregation] = {
+            "runs": [row["runKey"] for row in rows],
+            "best": best,
+        }
+
+    overall_best = {}
+    for metric_name, direction in metrics:
+        picked = pick_best(mode_rows, metric_name, direction)
+        if picked:
+            overall_best[metric_name] = {
+                "runKey": picked["runKey"],
+                "mode": picked["humanAnnotationMode"],
+                "aggregation": picked["humanAnnotationAggregation"],
+                "value": picked["metrics"][metric_name],
+            }
+
+    return {
+        "rows": comparison_rows,
+        "byMode": by_mode,
+        "byAggregation": by_aggregation,
+        "overallBest": overall_best,
+    }
 
 
 def main() -> int:
@@ -87,10 +227,21 @@ def main() -> int:
     parser.add_argument("--eval-mode", default="score", choices=["generate", "score", "both", "candidate_compare", "candidate_label_compare"])
     parser.add_argument("--eval-take", type=int, default=0)
     parser.add_argument("--eval-output-suffix", default="eval.json")
+    parser.add_argument(
+        "--retention-epochs",
+        type=int,
+        default=3,
+        help="How many matrix-result epochs to keep under output-root/epochs (default: 3)",
+    )
     args = parser.parse_args()
 
     output_root = Path(args.output_root).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    epochs_root = output_root / "epochs"
+    epochs_root.mkdir(parents=True, exist_ok=True)
+    epoch_key = epoch_run_key()
+    epoch_root = epochs_root / epoch_key
+    epoch_root.mkdir(parents=True, exist_ok=True)
 
     script_dir = Path(__file__).resolve().parent
     prepare_script = script_dir / "prepare_flip_challenge_mlx_vlm.py"
@@ -105,6 +256,9 @@ def main() -> int:
 
     matrix_summary = {
         "outputRoot": str(output_root),
+        "epochKey": epoch_key,
+        "epochRoot": str(epoch_root),
+        "retentionEpochs": args.retention_epochs,
         "trainSplit": args.train_split,
         "maxFlips": args.max_flips,
         "promptFamily": args.prompt_family,
@@ -135,9 +289,9 @@ def main() -> int:
                 if human_mode == "none"
                 else f"{mode_key}__{aggregation_mode}"
             )
-            prepared_dir = output_root / "prepared" / run_key
-            run_dir = output_root / "runs" / run_key
-            eval_path = output_root / "evals" / f"{run_key}-{args.eval_output_suffix}"
+            prepared_dir = epoch_root / "prepared" / run_key
+            run_dir = epoch_root / "runs" / run_key
+            eval_path = epoch_root / "evals" / f"{run_key}-{args.eval_output_suffix}"
 
             prepare_command = [
                 sys.executable,
@@ -235,6 +389,7 @@ def main() -> int:
                     "runKey": run_key,
                     "humanAnnotationMode": human_mode,
                     "humanAnnotationAggregation": aggregation_mode,
+                    "metrics": extract_eval_metrics(eval_summary),
                     "preparedManifest": manifest,
                     "runSummary": run_summary,
                     "evaluation": eval_summary,
@@ -246,8 +401,18 @@ def main() -> int:
                 },
             )
 
-    summary_path = output_root / "matrix-summary.json"
-    summary_path.write_text(json.dumps(matrix_summary, indent=2), encoding="utf-8")
+    matrix_summary["comparisons"] = build_comparisons(matrix_summary["modes"])
+    summary_json = json.dumps(matrix_summary, indent=2)
+    summary_path = epoch_root / "matrix-summary.json"
+    summary_path.write_text(summary_json, encoding="utf-8")
+    latest_summary_path = output_root / "matrix-summary.json"
+    latest_summary_path.write_text(summary_json, encoding="utf-8")
+    removed_epochs = prune_epoch_history(epochs_root, args.retention_epochs)
+    matrix_summary["prunedEpochs"] = removed_epochs
+    if removed_epochs:
+        summary_json = json.dumps(matrix_summary, indent=2)
+        summary_path.write_text(summary_json, encoding="utf-8")
+        latest_summary_path.write_text(summary_json, encoding="utf-8")
     print(json.dumps({"ok": True, "summaryPath": str(summary_path)}, indent=2))
     return 0
 
