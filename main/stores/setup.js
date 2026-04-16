@@ -1,7 +1,9 @@
 /* eslint-disable import/no-extraneous-dependencies */
 const path = require('path')
+
 let electron = {}
 try {
+  // eslint-disable-next-line global-require
   electron = require('electron') || {}
 } catch {
   electron = {}

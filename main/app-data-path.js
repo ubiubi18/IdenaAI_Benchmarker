@@ -1,8 +1,9 @@
 /* eslint-disable prefer-rest-params */
 /* eslint-disable no-param-reassign */
-// eslint-disable-next-line import/no-extraneous-dependencies
+/* eslint-disable import/no-extraneous-dependencies */
 let electron = {}
 try {
+  // eslint-disable-next-line global-require
   electron = require('electron') || {}
 } catch {
   electron = {}

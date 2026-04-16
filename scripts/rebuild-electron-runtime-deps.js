@@ -25,10 +25,10 @@ function detectRebuildArch() {
 
   // When Node runs under Rosetta, `process.arch` and `uname -m` can both report
   // x64 even though Electron launches natively as arm64 on Apple Silicon.
-  const supportsArm64 = readCommandOutput(
-    '/usr/sbin/sysctl',
-    ['-in', 'hw.optional.arm64']
-  )
+  const supportsArm64 = readCommandOutput('/usr/sbin/sysctl', [
+    '-in',
+    'hw.optional.arm64',
+  ])
   if (supportsArm64 === '1') {
     return 'arm64'
   }
