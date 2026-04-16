@@ -1366,7 +1366,6 @@ describe('local-ai manager', () => {
 
     const workspace = await manager.loadHumanTeacherDemoWorkspace({
       sampleName: 'flip-challenge-test-5-decoded-labeled',
-      batchSize: 2,
     })
     const firstTaskId = workspace.workspace.tasks[0].taskId
     const task = await manager.loadHumanTeacherDemoTask({
@@ -1393,7 +1392,7 @@ describe('local-ai manager', () => {
       demo: true,
       sampleName: 'flip-challenge-test-5-decoded-labeled',
       workspace: expect.objectContaining({
-        taskCount: 2,
+        taskCount: 5,
         draftedCount: 0,
         completedCount: 0,
       }),
@@ -1417,10 +1416,96 @@ describe('local-ai manager', () => {
       }),
     })
     expect(reloadedWorkspace.workspace).toMatchObject({
-      taskCount: 2,
+      taskCount: 5,
       draftedCount: 1,
       completedCount: 1,
     })
+  })
+
+  it('advances the offline demo session to the next 5 flips after finishing a trained demo chunk', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    const session = await manager.loadHumanTeacherDemoWorkspace({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(session).toMatchObject({
+      demo: true,
+      offset: 0,
+      chunkSize: 5,
+      workspace: expect.objectContaining({
+        taskCount: 5,
+      }),
+    })
+
+    for (const task of session.workspace.tasks) {
+      await manager.saveHumanTeacherDemoDraft({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+        taskId: task.taskId,
+        annotation: {
+          annotator: 'offline-demo',
+          final_answer: 'left',
+          why_answer: `demo reason for ${task.taskId}`,
+          report_required: false,
+        },
+      })
+    }
+
+    const finalized = await manager.finalizeHumanTeacherDemoChunk({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      trainNow: true,
+    })
+
+    expect(finalized).toMatchObject({
+      demo: true,
+      offset: 0,
+      nextOffset: 5,
+      taskCount: 5,
+      training: expect.objectContaining({
+        ok: true,
+        status: 'demo_simulated',
+        simulated: true,
+      }),
+      state: expect.objectContaining({
+        currentOffset: 5,
+        annotatedCount: 5,
+        trainedChunkCount: 1,
+      }),
+    })
+
+    const nextSession = await manager.loadHumanTeacherDemoWorkspace({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(nextSession).toMatchObject({
+      demo: true,
+      offset: 5,
+      state: expect.objectContaining({
+        currentOffset: 5,
+      }),
+      workspace: expect.objectContaining({
+        taskCount: 5,
+      }),
+    })
+    expect(nextSession.workspace.tasks[0].taskId).not.toBe(
+      session.workspace.tasks[0].taskId
+    )
+  })
+
+  it('rejects ambiguous demo chunk finalization requests', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await expect(
+      manager.finalizeHumanTeacherDemoChunk({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        trainNow: true,
+        advance: true,
+      })
+    ).rejects.toThrow(
+      'Demo chunk finalization must choose either training now or advancing to the next chunk, not both'
+    )
   })
 
   it('stores developer flip-training chunks in groups of 5 and marks them trained after local training succeeds', async () => {
@@ -1548,6 +1633,95 @@ describe('local-ai manager', () => {
             totalFlips: 100,
           }),
         ],
+      }),
+    })
+  })
+
+  it('runs the explicit 100-flip developer comparison and stores the updated success history', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async ({input}) => {
+        await fs.writeJson(input.comparisonPath, {
+          totalFlips: 100,
+          correct: 67,
+          accuracy: 0.67,
+          evaluatedAt: '2026-04-16T17:10:00.000Z',
+        })
+
+        return {
+          ok: true,
+          status: 'evaluated',
+        }
+      }),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+    })
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkSize: 5,
+        totalAvailableTasks: 20,
+        currentOffset: 5,
+        annotatedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+        pendingTrainingTaskIds: [],
+        trainedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+        chunks: [],
+        comparison100: {
+          status: 'not_loaded',
+          history: [],
+        },
+      }
+    )
+
+    const result = await manager.runHumanTeacherDeveloperComparison({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
+    expect(sidecar.trainEpoch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          developerHumanTeacher: true,
+          sampleName: 'flip-challenge-test-20-decoded-labeled',
+          comparisonOnly: true,
+          compareOnly: true,
+          evaluationFlips: 100,
+          comparisonPath: expect.stringContaining('comparison-100flips.json'),
+        }),
+      })
+    )
+    expect(result).toMatchObject({
+      developer: true,
+      state: expect.objectContaining({
+        comparison100: expect.objectContaining({
+          status: 'evaluated',
+          accuracy: 0.67,
+          correct: 67,
+          totalFlips: 100,
+          bestAccuracy: 0.67,
+          history: [
+            expect.objectContaining({
+              accuracy: 0.67,
+              correct: 67,
+              totalFlips: 100,
+            }),
+          ],
+        }),
       }),
     })
   })

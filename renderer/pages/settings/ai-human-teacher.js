@@ -5,6 +5,12 @@ import {
   Box,
   Flex,
   Image,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
   Progress,
   SimpleGrid,
   Stack,
@@ -34,7 +40,7 @@ function formatErrorMessage(error) {
   const message = raw.replace(prefix, '').trim()
 
   if (
-    /No handler registered for 'localAi\.(?:loadHumanTeacherDemoWorkspace|loadHumanTeacherDemoTask|saveHumanTeacherDemoDraft|loadHumanTeacherAnnotationWorkspace|loadHumanTeacherAnnotationTask|saveHumanTeacherAnnotationDraft|importHumanTeacherAnnotations|exportHumanTeacherTasks)'/i.test(
+    /No handler registered for 'localAi\.(?:loadHumanTeacherDemoWorkspace|loadHumanTeacherDemoTask|saveHumanTeacherDemoDraft|finalizeHumanTeacherDemoChunk|runHumanTeacherDeveloperComparison|loadHumanTeacherAnnotationWorkspace|loadHumanTeacherAnnotationTask|saveHumanTeacherAnnotationDraft|importHumanTeacherAnnotations|exportHumanTeacherTasks)'/i.test(
       message
     )
   ) {
@@ -483,10 +489,18 @@ export default function AiHumanTeacherPage() {
   const [isSavingTask, setIsSavingTask] = React.useState(false)
   const [isFinalizingDeveloperChunk, setIsFinalizingDeveloperChunk] =
     React.useState(false)
+  const [isRunningDeveloperComparison, setIsRunningDeveloperComparison] =
+    React.useState(false)
   const [showAdvancedFields, setShowAdvancedFields] = React.useState(false)
+  const [demoSessionState, setDemoSessionState] = React.useState(null)
+  const [demoOffset, setDemoOffset] = React.useState(0)
   const [developerSessionState, setDeveloperSessionState] = React.useState(null)
   const [developerOffset, setDeveloperOffset] = React.useState(0)
   const [developerActionResult, setDeveloperActionResult] = React.useState(null)
+  const [chunkDecisionDialog, setChunkDecisionDialog] = React.useState({
+    isOpen: false,
+    mode: '',
+  })
 
   React.useEffect(() => {
     if (queryEpoch) {
@@ -527,6 +541,20 @@ export default function AiHumanTeacherPage() {
     return global.localAi
   }, [])
 
+  const openChunkDecisionDialog = React.useCallback((mode) => {
+    setChunkDecisionDialog({
+      isOpen: true,
+      mode,
+    })
+  }, [])
+
+  const closeChunkDecisionDialog = React.useCallback(() => {
+    setChunkDecisionDialog({
+      isOpen: false,
+      mode: '',
+    })
+  }, [])
+
   const loadPackage = React.useCallback(
     async ({forceRebuild = false} = {}) => {
       const nextEpoch = String(epoch || '').trim()
@@ -548,6 +576,9 @@ export default function AiHumanTeacherPage() {
       setSelectedTaskId('')
       setTaskDetail(null)
       setAnnotationDraft(createEmptyAnnotationDraft())
+      closeChunkDecisionDialog()
+      setDemoSessionState(null)
+      setDemoOffset(0)
 
       try {
         const bridge = ensureBridge()
@@ -586,7 +617,7 @@ export default function AiHumanTeacherPage() {
         setIsLoading(false)
       }
     },
-    [currentEpoch, ensureBridge, epoch, t]
+    [closeChunkDecisionDialog, currentEpoch, ensureBridge, epoch, t]
   )
 
   React.useEffect(() => {
@@ -662,6 +693,7 @@ export default function AiHumanTeacherPage() {
       })
       const nextWorkspace = workspaceResult.workspace || null
       setResult(workspaceResult)
+      closeChunkDecisionDialog()
       setWorkspace(nextWorkspace)
       setSelectedTaskId(pickPreferredTaskId(nextWorkspace, selectedTaskId))
     } catch (nextError) {
@@ -670,7 +702,15 @@ export default function AiHumanTeacherPage() {
     } finally {
       setIsExporting(false)
     }
-  }, [currentEpoch, ensureBridge, epoch, result, selectedTaskId, t])
+  }, [
+    closeChunkDecisionDialog,
+    currentEpoch,
+    ensureBridge,
+    epoch,
+    result,
+    selectedTaskId,
+    t,
+  ])
 
   const loadWorkspace = React.useCallback(async () => {
     const nextEpoch = String(epoch || '').trim()
@@ -692,6 +732,9 @@ export default function AiHumanTeacherPage() {
       const nextWorkspace = nextResult.workspace || null
       setAnnotationSourceMode('epoch')
       setResult(nextResult)
+      closeChunkDecisionDialog()
+      setDemoSessionState(null)
+      setDemoOffset(0)
       setWorkspace(nextWorkspace)
       setSelectedTaskId(pickPreferredTaskId(nextWorkspace, selectedTaskId))
     } catch (nextError) {
@@ -703,36 +746,61 @@ export default function AiHumanTeacherPage() {
     } finally {
       setIsWorkspaceLoading(false)
     }
-  }, [currentEpoch, ensureBridge, epoch, selectedTaskId, t])
+  }, [
+    closeChunkDecisionDialog,
+    currentEpoch,
+    ensureBridge,
+    epoch,
+    selectedTaskId,
+    t,
+  ])
 
-  const loadOfflineDemoWorkspace = React.useCallback(async () => {
-    setIsWorkspaceLoading(true)
-    setError('')
-    setImportResult(null)
+  const loadOfflineDemoWorkspace = React.useCallback(
+    async ({offsetOverride} = {}) => {
+      setIsWorkspaceLoading(true)
+      setError('')
+      setImportResult(null)
 
-    try {
-      const nextResult = await ensureBridge().loadHumanTeacherDemoWorkspace({
-        sampleName: demoSampleName,
-      })
-      const nextWorkspace = nextResult.workspace || null
-      setAnnotationSourceMode('demo')
-      setWorkspace(nextWorkspace)
-      setResult(nextResult)
-      setSelectedTaskId(pickPreferredTaskId(nextWorkspace, selectedTaskId))
+      try {
+        const nextResult = await ensureBridge().loadHumanTeacherDemoWorkspace({
+          sampleName: demoSampleName,
+          offset: offsetOverride,
+          batchSize: DEVELOPER_TRAINING_CHUNK_SIZE,
+        })
+        const nextWorkspace = nextResult.workspace || null
+        setAnnotationSourceMode('demo')
+        setWorkspace(nextWorkspace)
+        setResult(nextResult)
+        closeChunkDecisionDialog()
+        setDemoSessionState(nextResult.state || null)
+        setDemoOffset(Number(nextResult.offset) || 0)
+        setDeveloperSessionState(null)
+        setDeveloperActionResult(null)
+        setSelectedTaskId(pickPreferredTaskId(nextWorkspace, selectedTaskId))
 
-      if (queryAction === 'demo') {
-        router.replace('/settings/ai-human-teacher')
+        if (queryAction === 'demo') {
+          router.replace('/settings/ai-human-teacher')
+        }
+      } catch (nextError) {
+        setWorkspace(null)
+        setSelectedTaskId('')
+        setTaskDetail(null)
+        setAnnotationDraft(createEmptyAnnotationDraft())
+        setDemoSessionState(null)
+        setError(formatErrorMessage(nextError))
+      } finally {
+        setIsWorkspaceLoading(false)
       }
-    } catch (nextError) {
-      setWorkspace(null)
-      setSelectedTaskId('')
-      setTaskDetail(null)
-      setAnnotationDraft(createEmptyAnnotationDraft())
-      setError(formatErrorMessage(nextError))
-    } finally {
-      setIsWorkspaceLoading(false)
-    }
-  }, [demoSampleName, ensureBridge, queryAction, router, selectedTaskId])
+    },
+    [
+      closeChunkDecisionDialog,
+      demoSampleName,
+      ensureBridge,
+      queryAction,
+      router,
+      selectedTaskId,
+    ]
+  )
 
   const loadDeveloperSession = React.useCallback(
     async ({offsetOverride} = {}) => {
@@ -751,6 +819,9 @@ export default function AiHumanTeacherPage() {
         setAnnotationSourceMode('developer')
         setWorkspace(nextWorkspace)
         setResult(nextResult)
+        closeChunkDecisionDialog()
+        setDemoSessionState(null)
+        setDemoOffset(0)
         setDeveloperSessionState(nextResult.state || null)
         setDeveloperOffset(Number(nextResult.offset) || 0)
         setDeveloperActionResult(null)
@@ -778,6 +849,7 @@ export default function AiHumanTeacherPage() {
       queryAction,
       router,
       selectedTaskId,
+      closeChunkDecisionDialog,
     ]
   )
 
@@ -822,6 +894,9 @@ export default function AiHumanTeacherPage() {
       const nextWorkspace = workspaceResult.workspace || null
       setAnnotationSourceMode('epoch')
       setResult(workspaceResult)
+      closeChunkDecisionDialog()
+      setDemoSessionState(null)
+      setDemoOffset(0)
       setWorkspace(nextWorkspace)
       setSelectedTaskId(pickPreferredTaskId(nextWorkspace, selectedTaskId))
 
@@ -842,6 +917,7 @@ export default function AiHumanTeacherPage() {
     router,
     selectedTaskId,
     t,
+    closeChunkDecisionDialog,
   ])
 
   const loadTask = React.useCallback(
@@ -868,6 +944,7 @@ export default function AiHumanTeacherPage() {
         } else if (annotationSourceMode === 'demo') {
           nextResult = await ensureBridge().loadHumanTeacherDemoTask({
             sampleName: demoSampleName,
+            offset: demoOffset,
             taskId,
           })
         } else {
@@ -896,6 +973,7 @@ export default function AiHumanTeacherPage() {
       currentEpoch,
       currentPeriod,
       demoSampleName,
+      demoOffset,
       developerOffset,
       ensureBridge,
       epoch,
@@ -968,7 +1046,11 @@ export default function AiHumanTeacherPage() {
 
   const saveTaskDraft = React.useCallback(
     async (options = {}) => {
-      const {advance = false, quiet = false} = options
+      const {
+        advance = false,
+        quiet = false,
+        promptOnChunkComplete = true,
+      } = options
       const nextEpoch = String(epoch || '').trim()
 
       if ((!nextEpoch && annotationSourceMode !== 'demo') || !selectedTaskId) {
@@ -993,6 +1075,7 @@ export default function AiHumanTeacherPage() {
         } else if (annotationSourceMode === 'demo') {
           nextResult = await ensureBridge().saveHumanTeacherDemoDraft({
             sampleName: demoSampleName,
+            offset: demoOffset,
             taskId: selectedTaskId,
             annotation: annotationDraft,
           })
@@ -1074,6 +1157,16 @@ export default function AiHumanTeacherPage() {
           setSelectedTaskId(nextTaskId)
         }
 
+        if (
+          promptOnChunkComplete &&
+          !nextTaskId &&
+          completionState.allComplete &&
+          (annotationSourceMode === 'developer' ||
+            annotationSourceMode === 'demo')
+        ) {
+          openChunkDecisionDialog(annotationSourceMode)
+        }
+
         return {
           task: nextResult?.task || null,
           completionState,
@@ -1091,10 +1184,12 @@ export default function AiHumanTeacherPage() {
       currentEpoch,
       currentPeriod,
       demoSampleName,
+      demoOffset,
       developerOffset,
       ensureBridge,
       epoch,
       nextTaskId,
+      openChunkDecisionDialog,
       selectedTaskId,
       t,
       toast,
@@ -1104,7 +1199,10 @@ export default function AiHumanTeacherPage() {
 
   const finalizeDeveloperChunk = React.useCallback(
     async ({trainNow = false, advance = false, exitAfter = false} = {}) => {
-      const saved = await saveTaskDraft({quiet: true})
+      const saved = await saveTaskDraft({
+        quiet: true,
+        promptOnChunkComplete: false,
+      })
 
       if (!saved) {
         return null
@@ -1235,6 +1333,180 @@ export default function AiHumanTeacherPage() {
     ]
   )
 
+  const finalizeDemoChunk = React.useCallback(
+    async ({trainNow = false, advance = false, exitAfter = false} = {}) => {
+      const saved = await saveTaskDraft({
+        quiet: true,
+        promptOnChunkComplete: false,
+      })
+
+      if (!saved) {
+        return null
+      }
+
+      if (!saved.completionState.allComplete) {
+        toast({
+          title: t('Flip saved'),
+          description: exitAfter
+            ? t(
+                'Your demo draft was saved. Complete the remaining flips in this 5-flip chunk before finishing it.'
+              )
+            : t(
+                'Complete all 5 demo flips in this chunk before loading the next chunk.'
+              ),
+          status: 'info',
+          duration: 3500,
+          isClosable: true,
+        })
+
+        if (exitAfter) {
+          router.push('/ai-chat')
+        }
+
+        return null
+      }
+
+      setIsFinalizingDeveloperChunk(true)
+      setError('')
+
+      try {
+        const nextResult = await ensureBridge().finalizeHumanTeacherDemoChunk({
+          sampleName: demoSampleName,
+          offset: demoOffset,
+          trainNow,
+          advance,
+        })
+        const loadedNextChunk =
+          Number(nextResult.nextOffset) !== Number(nextResult.offset)
+        const nextTitle = trainNow
+          ? t('Demo chunk finished')
+          : t('Next 5 flips loaded')
+        let nextDescription = t(
+          'These 5 demo flips were stored locally. You can continue later from the same chunk.'
+        )
+
+        if (trainNow) {
+          nextDescription = loadedNextChunk
+            ? t(
+                'The completed demo chunk was saved locally. Demo mode does not train the real model, but the next 5 demo flips are ready.'
+              )
+            : t(
+                'The completed demo chunk was saved locally. Demo mode does not train the real model, and there are no further bundled demo flips in this sample.'
+              )
+        } else if (advance) {
+          nextDescription = loadedNextChunk
+            ? t(
+                'The finished demo chunk was saved locally. You can keep annotating the next 5 demo flips now.'
+              )
+            : t(
+                'The finished demo chunk was saved locally. There are no further bundled demo flips in this sample.'
+              )
+        }
+
+        setDemoSessionState(nextResult.state || null)
+        setDemoOffset(Number(nextResult.nextOffset ?? nextResult.offset) || 0)
+
+        if (trainNow || advance) {
+          await loadOfflineDemoWorkspace({
+            offsetOverride: nextResult.nextOffset,
+          })
+          toast({
+            title: nextTitle,
+            description: nextDescription,
+            status: 'success',
+            duration: 4000,
+            isClosable: true,
+          })
+        } else {
+          toast({
+            title: t('Demo chunk saved'),
+            description: t(
+              'These 5 demo flips were stored locally. You can continue later from the same chunk.'
+            ),
+            status: 'success',
+            duration: 3500,
+            isClosable: true,
+          })
+        }
+
+        if (exitAfter) {
+          router.push('/ai-chat')
+        }
+
+        return nextResult
+      } catch (nextError) {
+        setError(formatErrorMessage(nextError))
+        return null
+      } finally {
+        setIsFinalizingDeveloperChunk(false)
+      }
+    },
+    [
+      demoOffset,
+      demoSampleName,
+      ensureBridge,
+      loadOfflineDemoWorkspace,
+      router,
+      saveTaskDraft,
+      t,
+      toast,
+    ]
+  )
+
+  const runDeveloperComparison = React.useCallback(async () => {
+    setIsRunningDeveloperComparison(true)
+    setError('')
+
+    try {
+      const nextResult =
+        await ensureBridge().runHumanTeacherDeveloperComparison({
+          sampleName: demoSampleName,
+          currentPeriod,
+        })
+      setDeveloperActionResult(nextResult)
+      setDeveloperSessionState(nextResult.state || null)
+
+      const latestAccuracy = nextResult?.state?.comparison100?.accuracy
+      const latestCorrect = nextResult?.state?.comparison100?.correct
+      const latestTotal = nextResult?.state?.comparison100?.totalFlips
+
+      toast({
+        title: t('100-flip comparison finished'),
+        description:
+          typeof latestAccuracy === 'number'
+            ? t(
+                'Latest success rate: {{accuracy}} ({{correct}} / {{total}}).',
+                {
+                  accuracy: formatSuccessRate(latestAccuracy),
+                  correct: Number(latestCorrect) || 0,
+                  total: Number(latestTotal) || 0,
+                }
+              )
+            : t(
+                'The local runtime finished the comparison request, but no accuracy result was returned yet.'
+              ),
+        status: 'success',
+        duration: 4500,
+        isClosable: true,
+      })
+
+      return nextResult
+    } catch (nextError) {
+      const message = formatErrorMessage(nextError)
+      setError(message)
+      toast({
+        title: t('100-flip comparison failed'),
+        description: message,
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      })
+      return null
+    } finally {
+      setIsRunningDeveloperComparison(false)
+    }
+  }, [currentPeriod, demoSampleName, ensureBridge, t, toast])
+
   const importAnnotations = React.useCallback(async () => {
     const nextEpoch = String(epoch || '').trim()
 
@@ -1332,6 +1604,16 @@ export default function AiHumanTeacherPage() {
   const importedAnnotations = result?.package?.importedAnnotations || null
   const isDeveloperSourceMode = annotationSourceMode === 'developer'
   const isDemoMode = annotationSourceMode === 'demo'
+  const chunkDecisionMode = chunkDecisionDialog.mode
+  const isChunkDecisionBusy = isSavingTask || isFinalizingDeveloperChunk
+  const demoRemainingCount = Number(demoSessionState?.remainingTaskCount) || 0
+  const demoCanAdvance =
+    isDemoMode &&
+    totalTaskCount > 0 &&
+    completionPreview.allComplete &&
+    demoRemainingCount > 0 &&
+    demoOffset + DEVELOPER_TRAINING_CHUNK_SIZE <
+      Number(demoSessionState?.totalAvailableTasks || 0)
   const developerPendingCount =
     Number(developerSessionState?.pendingTrainingCount) || 0
   const developerAnnotatedCount =
@@ -1340,6 +1622,9 @@ export default function AiHumanTeacherPage() {
   const developerRemainingCount =
     Number(developerSessionState?.remainingTaskCount) || 0
   const developerComparison = developerSessionState?.comparison100 || null
+  const developerComparisonStatus = String(
+    developerComparison?.status || 'not_loaded'
+  ).trim()
   const developerComparisonHistory = Array.isArray(developerComparison?.history)
     ? developerComparison.history
     : []
@@ -1357,6 +1642,10 @@ export default function AiHumanTeacherPage() {
       ? latestDeveloperComparison.accuracy -
         previousDeveloperComparison.accuracy
       : null
+  const developerCanRunComparison =
+    isDeveloperMode &&
+    (developerTrainedCount > 0 || developerPendingCount > 0) &&
+    !isRunningDeveloperComparison
   const developerCanAdvance =
     isDeveloperMode &&
     totalTaskCount > 0 &&
@@ -1371,7 +1660,7 @@ export default function AiHumanTeacherPage() {
         return t('Save and next flip')
       }
 
-      return t('Train your AI now')
+      return t('Save and choose next step')
     }
 
     if (nextTaskId) {
@@ -1379,7 +1668,7 @@ export default function AiHumanTeacherPage() {
     }
 
     if (isDemoMode) {
-      return t('Save and finish demo')
+      return t('Save and choose next step')
     }
 
     return t('Save and submit set')
@@ -1388,18 +1677,24 @@ export default function AiHumanTeacherPage() {
     if (isDeveloperSourceMode) {
       if (developerCanAdvance) {
         return t(
-          'This 5-flip chunk is complete. You can train now or load the next 5 flips.'
+          'This 5-flip chunk is complete. Saving this flip will open the next-step dialog so you can train now or load the next 5 flips.'
         )
       }
 
       return t(
-        'This 5-flip chunk is complete. You can train your AI now or save and come back later.'
+        'This 5-flip chunk is complete. Saving this flip will open the next-step dialog so you can train now or save and come back later.'
       )
     }
 
     if (isDemoMode) {
+      if (demoCanAdvance) {
+        return t(
+          'This 5-flip demo chunk is complete. Saving this flip will open the next-step dialog so you can continue with the next 5 demo flips.'
+        )
+      }
+
       return t(
-        'This is the last flip in the demo set. Save it here to finish the demo.'
+        'This 5-flip demo chunk is complete. Saving this flip will open the next-step dialog so you can close it now or keep working later.'
       )
     }
 
@@ -1416,6 +1711,7 @@ export default function AiHumanTeacherPage() {
   }, [
     completionPreview.allComplete,
     completionPreview.remainingCount,
+    demoCanAdvance,
     developerCanAdvance,
     isDeveloperSourceMode,
     isDemoMode,
@@ -1480,6 +1776,66 @@ export default function AiHumanTeacherPage() {
     queryAction,
     startAnnotationFlow,
   ])
+
+  const handleSaveAndExit = React.useCallback(async () => {
+    if (isDeveloperSourceMode) {
+      await finalizeDeveloperChunk({exitAfter: true})
+      return
+    }
+
+    if (isDemoMode) {
+      await finalizeDemoChunk({exitAfter: true})
+      return
+    }
+
+    const saved = await saveTaskDraft()
+
+    if (saved) {
+      router.push('/settings/ai')
+    }
+  }, [
+    finalizeDemoChunk,
+    finalizeDeveloperChunk,
+    isDemoMode,
+    isDeveloperSourceMode,
+    router,
+    saveTaskDraft,
+  ])
+
+  const handleChunkDecisionAction = React.useCallback(
+    async (action) => {
+      const mode = chunkDecisionMode
+      let nextResult = null
+
+      if (mode === 'developer') {
+        if (action === 'train') {
+          nextResult = await finalizeDeveloperChunk({trainNow: true})
+        } else if (action === 'advance') {
+          nextResult = await finalizeDeveloperChunk({advance: true})
+        } else if (action === 'exit') {
+          nextResult = await finalizeDeveloperChunk({exitAfter: true})
+        }
+      } else if (mode === 'demo') {
+        if (action === 'train') {
+          nextResult = await finalizeDemoChunk({trainNow: true})
+        } else if (action === 'advance') {
+          nextResult = await finalizeDemoChunk({advance: true})
+        } else if (action === 'exit') {
+          nextResult = await finalizeDemoChunk({exitAfter: true})
+        }
+      }
+
+      if (nextResult || action === 'exit') {
+        closeChunkDecisionDialog()
+      }
+    },
+    [
+      chunkDecisionMode,
+      closeChunkDecisionDialog,
+      finalizeDemoChunk,
+      finalizeDeveloperChunk,
+    ]
+  )
 
   return (
     <SettingsLayout>
@@ -1621,8 +1977,17 @@ export default function AiHumanTeacherPage() {
                     </Text>
                     <Text color="muted" fontSize="xs">
                       {t('100-flip holdout comparison status')}:{' '}
-                      {String(developerComparison?.status || 'not_loaded')}
+                      {developerComparisonStatus}
                     </Text>
+                    <Stack isInline spacing={2} flexWrap="wrap">
+                      <PrimaryButton
+                        isDisabled={!developerCanRunComparison}
+                        isLoading={isRunningDeveloperComparison}
+                        onClick={runDeveloperComparison}
+                      >
+                        {t('Run 100-flip comparison now')}
+                      </PrimaryButton>
+                    </Stack>
                     {developerComparisonHistory.length ? (
                       <Box
                         borderWidth="1px"
@@ -2529,7 +2894,7 @@ export default function AiHumanTeacherPage() {
                               >
                                 {savePrimaryLabel}
                               </PrimaryButton>
-                              {isDeveloperMode ? (
+                              {isDeveloperMode || isDemoMode ? (
                                 <>
                                   <SecondaryButton
                                     isDisabled={isSavingTask || !selectedTaskId}
@@ -2537,33 +2902,16 @@ export default function AiHumanTeacherPage() {
                                     onClick={() =>
                                       nextTaskId
                                         ? saveTaskDraft({advance: true})
-                                        : finalizeDeveloperChunk({
-                                            trainNow: true,
-                                          })
+                                        : saveTaskDraft()
                                     }
                                   >
                                     {finishButtonLabel}
                                   </SecondaryButton>
-                                  {!nextTaskId && developerCanAdvance ? (
-                                    <SecondaryButton
-                                      isDisabled={
-                                        isSavingTask ||
-                                        isFinalizingDeveloperChunk
-                                      }
-                                      onClick={() =>
-                                        finalizeDeveloperChunk({advance: true})
-                                      }
-                                    >
-                                      {t('Annotate 5 more flips')}
-                                    </SecondaryButton>
-                                  ) : null}
                                   <SecondaryButton
                                     isDisabled={
                                       isSavingTask || isFinalizingDeveloperChunk
                                     }
-                                    onClick={() =>
-                                      finalizeDeveloperChunk({exitAfter: true})
-                                    }
+                                    onClick={handleSaveAndExit}
                                   >
                                     {t('Save and exit')}
                                   </SecondaryButton>
@@ -2632,6 +2980,75 @@ export default function AiHumanTeacherPage() {
                 </Stack>
               </Box>
             ) : null}
+
+            <Modal
+              isOpen={chunkDecisionDialog.isOpen}
+              onClose={
+                isChunkDecisionBusy ? () => {} : closeChunkDecisionDialog
+              }
+              closeOnOverlayClick={false}
+              closeOnEsc={!isChunkDecisionBusy}
+              isCentered
+            >
+              <ModalOverlay />
+              <ModalContent>
+                <ModalHeader>
+                  {chunkDecisionDialog.mode === 'demo'
+                    ? t('5 demo flips complete')
+                    : t('5 flips complete')}
+                </ModalHeader>
+                <ModalBody>
+                  <Stack spacing={3}>
+                    <Text>
+                      {chunkDecisionDialog.mode === 'demo'
+                        ? t(
+                            'This 5-flip demo chunk is complete. Choose whether to simulate training now, load another 5 demo flips, or save and return later.'
+                          )
+                        : t(
+                            'This 5-flip training chunk is complete. Choose whether to train your AI now, load another 5 flips, or save and return later.'
+                          )}
+                    </Text>
+                    {chunkDecisionDialog.mode === 'demo' ? (
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Demo mode never changes your real model. It only lets you test the full chunk workflow locally.'
+                        )}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                </ModalBody>
+                <ModalFooter>
+                  <Stack spacing={2} w="full">
+                    <PrimaryButton
+                      isLoading={isChunkDecisionBusy}
+                      onClick={() => handleChunkDecisionAction('train')}
+                    >
+                      {chunkDecisionDialog.mode === 'demo'
+                        ? t('Train demo now')
+                        : t('Train your AI now')}
+                    </PrimaryButton>
+                    {(
+                      chunkDecisionDialog.mode === 'developer'
+                        ? developerCanAdvance
+                        : demoCanAdvance
+                    ) ? (
+                      <SecondaryButton
+                        isDisabled={isChunkDecisionBusy}
+                        onClick={() => handleChunkDecisionAction('advance')}
+                      >
+                        {t('Annotate 5 more flips')}
+                      </SecondaryButton>
+                    ) : null}
+                    <SecondaryButton
+                      isDisabled={isChunkDecisionBusy}
+                      onClick={() => handleChunkDecisionAction('exit')}
+                    >
+                      {t('Save and close')}
+                    </SecondaryButton>
+                  </Stack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
           </Stack>
         </SettingsSection>
       </Stack>

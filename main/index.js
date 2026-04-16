@@ -2376,12 +2376,32 @@ handleTrusted(
 )
 
 handleTrusted(
+  'localAi.finalizeHumanTeacherDemoChunk',
+  withLocalAiEnabled('finalizeHumanTeacherDemoChunk', async (_event, payload) =>
+    localAiManager.finalizeHumanTeacherDemoChunk(
+      buildLocalAiEpochPayload(payload)
+    )
+  )
+)
+
+handleTrusted(
   'localAi.finalizeHumanTeacherDeveloperChunk',
   withLocalAiEnabled(
     'finalizeHumanTeacherDeveloperChunk',
     async (_event, payload) =>
       localAiManager.finalizeHumanTeacherDeveloperChunk(
         buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
+  'localAi.runHumanTeacherDeveloperComparison',
+  withLocalAiTrainingEnabled(
+    'runHumanTeacherDeveloperComparison',
+    async (_event, payload) =>
+      localAiManager.runHumanTeacherDeveloperComparison(
+        buildLocalAiTrainHookPayload(payload)
       )
   )
 )

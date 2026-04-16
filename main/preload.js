@@ -1213,9 +1213,19 @@ const localAiBridge = Object.freeze({
       'localAi.saveHumanTeacherDeveloperDraft',
       sanitizeLocalAiAnnotationPayload(payload)
     ),
+  finalizeHumanTeacherDemoChunk: (payload) =>
+    invokeCloneable(
+      'localAi.finalizeHumanTeacherDemoChunk',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
   finalizeHumanTeacherDeveloperChunk: (payload) =>
     invokeCloneable(
       'localAi.finalizeHumanTeacherDeveloperChunk',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  runHumanTeacherDeveloperComparison: (payload) =>
+    invokeCloneable(
+      'localAi.runHumanTeacherDeveloperComparison',
       sanitizeLocalAiEpochPayload(payload)
     ),
   importHumanTeacherAnnotations: (payload) =>

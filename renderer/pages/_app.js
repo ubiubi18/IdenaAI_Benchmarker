@@ -127,7 +127,9 @@ function syncLegacyBridgeGlobals(bridge = {}) {
       saveHumanTeacherAnnotationDraft: empty,
       saveHumanTeacherDemoDraft: empty,
       saveHumanTeacherDeveloperDraft: empty,
+      finalizeHumanTeacherDemoChunk: empty,
       finalizeHumanTeacherDeveloperChunk: empty,
+      runHumanTeacherDeveloperComparison: empty,
       importHumanTeacherAnnotations: empty,
       captureFlip: () => {},
     }

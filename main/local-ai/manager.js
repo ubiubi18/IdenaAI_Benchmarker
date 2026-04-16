@@ -28,6 +28,8 @@ const MAX_CAPTURE_INDEX_ITEMS = 1000
 const MAX_RECENT_CAPTURES = 20
 const DEFAULT_HUMAN_TEACHER_BATCH_SIZE = 30
 const MAX_HUMAN_TEACHER_BATCH_SIZE = 30
+const DEMO_HUMAN_TEACHER_BATCH_SIZE = 5
+const DEMO_HUMAN_TEACHER_STATE_VERSION = 1
 const DEVELOPER_HUMAN_TEACHER_BATCH_SIZE = 5
 const DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE =
   'flip-challenge-test-20-decoded-labeled'
@@ -521,6 +523,26 @@ function humanTeacherDemoDir(storage, sampleName = DEFAULT_DEMO_SAMPLE_NAME) {
   )
 }
 
+function demoHumanTeacherStatePath(
+  storage,
+  sampleName = DEFAULT_DEMO_SAMPLE_NAME
+) {
+  return path.join(humanTeacherDemoDir(storage, sampleName), 'state.json')
+}
+
+function demoHumanTeacherChunkDir(
+  storage,
+  sampleName = DEFAULT_DEMO_SAMPLE_NAME,
+  offset = 0
+) {
+  const nextOffset = Math.max(0, Number.parseInt(offset, 10) || 0)
+  return path.join(
+    humanTeacherDemoDir(storage, sampleName),
+    'chunks',
+    `offset-${String(nextOffset).padStart(4, '0')}`
+  )
+}
+
 function developerHumanTeacherDir(
   storage,
   sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
@@ -627,6 +649,26 @@ function normalizeDeveloperHumanTeacherOffset(value) {
   return offset
 }
 
+function normalizeDemoHumanTeacherOffset(value) {
+  return normalizeDeveloperHumanTeacherOffset(value)
+}
+
+function clampDemoHumanTeacherOffset(offset, totalFlips) {
+  const nextOffset = normalizeDemoHumanTeacherOffset(offset)
+  const total = Number.parseInt(totalFlips, 10)
+
+  if (!Number.isFinite(total) || total <= 0) {
+    return 0
+  }
+
+  const maxOffset = Math.max(
+    0,
+    total - Math.min(DEMO_HUMAN_TEACHER_BATCH_SIZE, total)
+  )
+
+  return Math.min(nextOffset, maxOffset)
+}
+
 function clampDeveloperHumanTeacherOffset(offset, totalFlips) {
   const nextOffset = normalizeDeveloperHumanTeacherOffset(offset)
   const total = Number.parseInt(totalFlips, 10)
@@ -661,6 +703,16 @@ function uniqueStrings(values = []) {
   return Array.from(
     new Set(values.map((item) => String(item || '').trim()).filter(Boolean))
   )
+}
+
+function uniqueNumbers(values = []) {
+  return Array.from(
+    new Set(
+      values
+        .map((item) => Number.parseInt(item, 10))
+        .filter((item) => Number.isFinite(item) && item >= 0)
+    )
+  ).sort((left, right) => left - right)
 }
 
 function mergeJsonlRowsByTaskId(rows = [], extraRows = []) {
@@ -1011,6 +1063,76 @@ function mergeDeveloperComparisonSnapshot(
         : normalizedCurrent.totalFlips,
     history: [snapshot, ...normalizedCurrent.history],
   })
+}
+
+function createDefaultDemoHumanTeacherState({
+  sampleName = DEFAULT_DEMO_SAMPLE_NAME,
+  totalAvailableTasks = 0,
+  currentOffset = 0,
+} = {}) {
+  return {
+    schemaVersion: DEMO_HUMAN_TEACHER_STATE_VERSION,
+    mode: 'demo-human-teacher',
+    sampleName: normalizeDemoSampleName(sampleName),
+    chunkSize: DEMO_HUMAN_TEACHER_BATCH_SIZE,
+    totalAvailableTasks: Math.max(
+      0,
+      Number.parseInt(totalAvailableTasks, 10) || 0
+    ),
+    currentOffset: normalizeDemoHumanTeacherOffset(currentOffset),
+    annotatedTaskIds: [],
+    trainedChunkOffsets: [],
+    chunks: [],
+    lastSavedAt: null,
+    lastTraining: null,
+  }
+}
+
+function normalizeDemoHumanTeacherState(
+  state,
+  {sampleName = DEFAULT_DEMO_SAMPLE_NAME, totalAvailableTasks = 0} = {}
+) {
+  const fallback = createDefaultDemoHumanTeacherState({
+    sampleName,
+    totalAvailableTasks,
+  })
+  const source =
+    state && typeof state === 'object' && !Array.isArray(state) ? state : {}
+  const total = Math.max(
+    0,
+    Number.parseInt(source.totalAvailableTasks ?? totalAvailableTasks, 10) || 0
+  )
+
+  return {
+    ...fallback,
+    ...source,
+    sampleName: normalizeDemoSampleName(source.sampleName || sampleName),
+    chunkSize: DEMO_HUMAN_TEACHER_BATCH_SIZE,
+    totalAvailableTasks: total,
+    currentOffset: clampDemoHumanTeacherOffset(source.currentOffset, total),
+    annotatedTaskIds: uniqueStrings(source.annotatedTaskIds),
+    trainedChunkOffsets: uniqueNumbers(source.trainedChunkOffsets),
+    chunks: Array.isArray(source.chunks)
+      ? source.chunks
+          .map((chunk) => {
+            const raw =
+              chunk && typeof chunk === 'object' && !Array.isArray(chunk)
+                ? chunk
+                : {}
+
+            return {
+              offset: normalizeDemoHumanTeacherOffset(raw.offset),
+              taskIds: uniqueStrings(raw.taskIds),
+              rowCount: Math.max(0, Number.parseInt(raw.rowCount, 10) || 0),
+              committedAt: String(raw.committedAt || '').trim() || null,
+              trainedAt: String(raw.trainedAt || '').trim() || null,
+              trainingStatus:
+                String(raw.trainingStatus || '').trim() || 'pending',
+            }
+          })
+          .sort((left, right) => left.offset - right.offset)
+      : [],
+  }
 }
 
 function createDefaultDeveloperHumanTeacherState({
@@ -1903,6 +2025,59 @@ function createLocalAiManager({
     }
   }
 
+  async function loadDemoHumanTeacherState(
+    sampleName = DEFAULT_DEMO_SAMPLE_NAME,
+    totalAvailableTasks = 0
+  ) {
+    const nextSampleName = normalizeDemoSampleName(sampleName)
+    const statePath = demoHumanTeacherStatePath(localAiStorage, nextSampleName)
+    const currentState = await localAiStorage.readJson(statePath, null)
+    const normalizedState = normalizeDemoHumanTeacherState(currentState, {
+      sampleName: nextSampleName,
+      totalAvailableTasks,
+    })
+
+    return {
+      statePath,
+      state: normalizedState,
+    }
+  }
+
+  async function writeDemoHumanTeacherState(sampleName, nextState) {
+    const nextSampleName = normalizeDemoSampleName(sampleName)
+    const statePath = demoHumanTeacherStatePath(localAiStorage, nextSampleName)
+    const normalizedState = normalizeDemoHumanTeacherState(nextState, {
+      sampleName: nextSampleName,
+      totalAvailableTasks: nextState?.totalAvailableTasks,
+    })
+
+    await localAiStorage.writeJsonAtomic(statePath, normalizedState)
+
+    return {
+      statePath,
+      state: normalizedState,
+    }
+  }
+
+  function summarizeDemoHumanTeacherState(nextState, extra = {}) {
+    const normalizedState = normalizeDemoHumanTeacherState(nextState, {
+      sampleName: nextState?.sampleName,
+      totalAvailableTasks: nextState?.totalAvailableTasks,
+    })
+
+    return {
+      ...normalizedState,
+      annotatedCount: normalizedState.annotatedTaskIds.length,
+      trainedChunkCount: normalizedState.trainedChunkOffsets.length,
+      remainingTaskCount: Math.max(
+        normalizedState.totalAvailableTasks -
+          normalizedState.annotatedTaskIds.length,
+        0
+      ),
+      ...extra,
+    }
+  }
+
   async function writeDeveloperHumanTeacherState(sampleName, nextState) {
     const nextSampleName = normalizeDemoSampleName(sampleName)
     const statePath = developerHumanTeacherStatePath(
@@ -1976,6 +2151,55 @@ function createLocalAiManager({
       state: developerState,
       summary: {
         ...summary,
+        tasks: nextWorkspace.taskRows.length,
+        totalFlips: sample.totalFlips,
+        offset: effectiveOffset,
+      },
+      workspace: nextWorkspace.workspace,
+      taskRows: nextWorkspace.taskRows,
+      annotationsPath: nextWorkspace.annotationsPath,
+      taskManifestPath: nextWorkspace.taskManifestPath,
+    }
+  }
+
+  async function loadDemoHumanTeacherChunkWorkspace({
+    sampleName = DEFAULT_DEMO_SAMPLE_NAME,
+    offset = 0,
+  } = {}) {
+    const nextSampleName = normalizeDemoSampleName(sampleName)
+    const sample = await loadHumanTeacherDemoSample(nextSampleName)
+    const effectiveOffset = clampDemoHumanTeacherOffset(
+      offset,
+      sample.totalFlips
+    )
+    const outputDir = demoHumanTeacherChunkDir(
+      localAiStorage,
+      nextSampleName,
+      effectiveOffset
+    )
+
+    const summary = await ensureHumanTeacherDemoChunkWorkspace(localAiStorage, {
+      sampleName: nextSampleName,
+      outputDir,
+      batchSize: DEMO_HUMAN_TEACHER_BATCH_SIZE,
+      offset: effectiveOffset,
+    })
+    const nextWorkspace = await buildWorkspaceFromOutputDir(outputDir, null)
+    const {statePath, state: demoState} = await loadDemoHumanTeacherState(
+      nextSampleName,
+      sample.totalFlips
+    )
+
+    return {
+      sample,
+      outputDir,
+      offset: effectiveOffset,
+      statePath,
+      state: demoState,
+      summary: {
+        ...summary,
+        demo: true,
+        developer: false,
         tasks: nextWorkspace.taskRows.length,
         totalFlips: sample.totalFlips,
         offset: effectiveOffset,
@@ -3587,57 +3811,33 @@ function createLocalAiManager({
 
     const next = normalizeRuntimePayload(payload)
     const sampleName = normalizeDemoSampleName(next.sampleName)
-    const outputDir = humanTeacherDemoDir(localAiStorage, sampleName)
-    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
-    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
-
-    const summary = (await localAiStorage.exists(taskManifestPath))
-      ? {
-          demo: true,
-          sampleName,
-          sampleLabel:
-            listHumanTeacherDemoSamples().find(
-              (item) => item.sampleName === sampleName
-            )?.label || sampleName,
-          outputDir,
-          tasks: 0,
-          manifestPath: taskManifestPath,
-          templatePath: path.join(outputDir, 'annotations.template.jsonl'),
-          filledPath: annotationsPath,
-          metadataPath: path.join(outputDir, 'demo-metadata.json'),
-        }
-      : await buildHumanTeacherDemoWorkspace({
-          outputDir,
-          sampleName,
-          take: next.batchSize,
-        })
-
-    const taskRows = await readJsonlRows(taskManifestPath, [])
-    const annotationRows = await readJsonlRows(annotationsPath, [])
-    const tasks = buildHumanTeacherWorkspaceTasks(
-      taskRows,
-      annotationRows,
-      null
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {statePath, state: demoState} = await loadDemoHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
     )
+    const effectiveOffset = clampDemoHumanTeacherOffset(
+      typeof next.offset === 'number' ? next.offset : demoState.currentOffset,
+      sample.totalFlips
+    )
+    const session = await loadDemoHumanTeacherChunkWorkspace({
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+    })
 
     return {
       demo: true,
-      sampleName,
+      sampleName: sample.sampleName,
       samples: listHumanTeacherDemoSamples(),
-      outputDir,
-      summary: {
-        ...summary,
-        tasks: taskRows.length,
-      },
-      workspace: {
-        outputDir,
-        taskManifestPath,
-        annotationsPath,
-        taskCount: tasks.length,
-        draftedCount: tasks.filter((task) => task.hasDraft).length,
-        completedCount: tasks.filter((task) => task.isComplete).length,
-        tasks,
-      },
+      chunkSize: DEMO_HUMAN_TEACHER_BATCH_SIZE,
+      offset: effectiveOffset,
+      outputDir: session.outputDir,
+      statePath,
+      state: summarizeDemoHumanTeacherState(demoState, {
+        currentOffset: effectiveOffset,
+      }),
+      summary: session.summary,
+      workspace: session.workspace,
     }
   }
 
@@ -3810,26 +4010,27 @@ function createLocalAiManager({
 
     const next = normalizeRuntimePayload(payload)
     const sampleName = normalizeDemoSampleName(next.sampleName)
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {state: demoState} = await loadDemoHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const effectiveOffset = clampDemoHumanTeacherOffset(
+      typeof next.offset === 'number' ? next.offset : demoState.currentOffset,
+      sample.totalFlips
+    )
     const taskId = String(next.taskId || '').trim()
 
     if (!taskId) {
       throw new Error('taskId is required')
     }
 
-    const outputDir = humanTeacherDemoDir(localAiStorage, sampleName)
-    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
-    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
-
-    if (!(await localAiStorage.exists(taskManifestPath))) {
-      await buildHumanTeacherDemoWorkspace({
-        outputDir,
-        sampleName,
-        take: next.batchSize,
-      })
-    }
-
-    const taskRows = await readJsonlRows(taskManifestPath, [])
-    const annotationRows = await readJsonlRows(annotationsPath, [])
+    const chunk = await loadDemoHumanTeacherChunkWorkspace({
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+    })
+    const taskRows = await readJsonlRows(chunk.taskManifestPath, [])
+    const annotationRows = await readJsonlRows(chunk.annotationsPath, [])
     const taskRow = taskRows.find(
       (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
     )
@@ -3845,7 +4046,7 @@ function createLocalAiManager({
       (Array.isArray(taskRow.panels) ? taskRow.panels : []).map(
         async (panelRelativePath, index) => {
           const panelPath = resolveWorkspaceChildPath(
-            outputDir,
+            chunk.outputDir,
             panelRelativePath
           )
           const panelBuffer = await localAiStorage.readBuffer(panelPath)
@@ -3862,7 +4063,8 @@ function createLocalAiManager({
 
     return {
       demo: true,
-      sampleName,
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
       task: {
         taskId,
         sampleId: taskRow.sample_id || taskId,
@@ -4030,25 +4232,26 @@ function createLocalAiManager({
 
     const next = normalizeRuntimePayload(payload)
     const sampleName = normalizeDemoSampleName(next.sampleName)
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {state: demoState} = await loadDemoHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const effectiveOffset = clampDemoHumanTeacherOffset(
+      typeof next.offset === 'number' ? next.offset : demoState.currentOffset,
+      sample.totalFlips
+    )
     const taskId = String(next.taskId || '').trim()
 
     if (!taskId) {
       throw new Error('taskId is required')
     }
 
-    const outputDir = humanTeacherDemoDir(localAiStorage, sampleName)
-    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
-    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
-
-    if (!(await localAiStorage.exists(taskManifestPath))) {
-      await buildHumanTeacherDemoWorkspace({
-        outputDir,
-        sampleName,
-        take: next.batchSize,
-      })
-    }
-
-    const taskRows = await readJsonlRows(taskManifestPath, [])
+    const chunk = await loadDemoHumanTeacherChunkWorkspace({
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+    })
+    const taskRows = await readJsonlRows(chunk.taskManifestPath, [])
     const taskRow = taskRows.find(
       (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
     )
@@ -4057,7 +4260,7 @@ function createLocalAiManager({
       throw new Error('Human teacher demo task is unavailable')
     }
 
-    const annotationRows = await readJsonlRows(annotationsPath, [])
+    const annotationRows = await readJsonlRows(chunk.annotationsPath, [])
     const nextAnnotation = normalizeHumanTeacherAnnotationDraft(
       taskRow,
       next.annotation
@@ -4069,19 +4272,131 @@ function createLocalAiManager({
       )
       .concat(nextAnnotation)
 
-    await writeJsonlRows(annotationsPath, nextAnnotationRows)
+    await writeJsonlRows(chunk.annotationsPath, nextAnnotationRows)
+    await writeDemoHumanTeacherState(sample.sampleName, {
+      ...demoState,
+      totalAvailableTasks: sample.totalFlips,
+      currentOffset: effectiveOffset,
+      lastSavedAt: new Date().toISOString(),
+    })
 
     return {
       demo: true,
-      sampleName,
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
       task: {
         taskId,
         annotation: nextAnnotation,
         annotationStatus,
       },
       workspace: {
-        annotationsPath,
+        annotationsPath: chunk.annotationsPath,
       },
+    }
+  }
+
+  async function finalizeHumanTeacherDemoChunk(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+
+    if (next.trainNow === true && next.advance === true) {
+      throw new Error(
+        'Demo chunk finalization must choose either training now or advancing to the next chunk, not both'
+      )
+    }
+
+    const sampleName = normalizeDemoSampleName(next.sampleName)
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {state: demoState} = await loadDemoHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const effectiveOffset = clampDemoHumanTeacherOffset(
+      typeof next.offset === 'number' ? next.offset : demoState.currentOffset,
+      sample.totalFlips
+    )
+    const chunk = await loadDemoHumanTeacherChunkWorkspace({
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+    })
+    const taskCount = Number(chunk.workspace.taskCount) || 0
+
+    if (taskCount <= 0) {
+      throw new Error('Demo chunk is unavailable')
+    }
+
+    if (Number(chunk.workspace.completedCount) < taskCount) {
+      throw new Error('Complete all 5 demo flips before finishing this chunk')
+    }
+
+    const chunkTaskIds = uniqueStrings(
+      chunk.taskRows.map((row) => row && row.task_id)
+    )
+    const committedAt = new Date().toISOString()
+    const shouldAdvance = next.advance === true || next.trainNow === true
+    const nextOffset = shouldAdvance
+      ? clampDemoHumanTeacherOffset(
+          chunk.offset + DEMO_HUMAN_TEACHER_BATCH_SIZE,
+          chunk.sample.totalFlips
+        )
+      : chunk.offset
+    const chunkEntries = Array.isArray(demoState.chunks)
+      ? demoState.chunks.filter((entry) => entry.offset !== chunk.offset)
+      : []
+    chunkEntries.push({
+      offset: chunk.offset,
+      taskIds: chunkTaskIds,
+      rowCount: chunkTaskIds.length,
+      committedAt,
+      trainedAt: next.trainNow === true ? committedAt : null,
+      trainingStatus: next.trainNow === true ? 'demo_trained' : 'saved',
+    })
+
+    const persistedState = await writeDemoHumanTeacherState(
+      chunk.sample.sampleName,
+      {
+        ...demoState,
+        totalAvailableTasks: chunk.sample.totalFlips,
+        currentOffset: nextOffset,
+        annotatedTaskIds: uniqueStrings([
+          ...demoState.annotatedTaskIds,
+          ...chunkTaskIds,
+        ]),
+        trainedChunkOffsets:
+          next.trainNow === true
+            ? uniqueNumbers([...demoState.trainedChunkOffsets, chunk.offset])
+            : uniqueNumbers(demoState.trainedChunkOffsets),
+        chunks: chunkEntries,
+        lastSavedAt: committedAt,
+        lastTraining:
+          next.trainNow === true
+            ? {
+                at: committedAt,
+                status: 'demo_trained',
+                offset: chunk.offset,
+                rowCount: chunkTaskIds.length,
+              }
+            : demoState.lastTraining,
+      }
+    )
+
+    return {
+      demo: true,
+      sampleName: chunk.sample.sampleName,
+      offset: chunk.offset,
+      nextOffset,
+      taskCount: chunkTaskIds.length,
+      training:
+        next.trainNow === true
+          ? {
+              ok: true,
+              status: 'demo_simulated',
+              simulated: true,
+            }
+          : null,
+      statePath: persistedState.statePath,
+      state: summarizeDemoHumanTeacherState(persistedState.state),
     }
   }
 
@@ -4141,6 +4456,135 @@ function createLocalAiManager({
       trainNow: next.trainNow === true,
       advance: next.advance === true,
     })
+  }
+
+  async function runHumanTeacherDeveloperComparison(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    assertDeveloperHumanTeacherSessionAllowed(
+      next.currentPeriod,
+      'comparison run'
+    )
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const {statePath, state: existingState} =
+      await loadDeveloperHumanTeacherState(sample.sampleName, sample.totalFlips)
+
+    if (
+      existingState.trainedTaskIds.length === 0 &&
+      existingState.pendingTrainingTaskIds.length === 0
+    ) {
+      throw new Error(
+        'Annotate and train at least one 5-flip chunk before running the 100-flip comparison'
+      )
+    }
+
+    const annotatedPath = developerHumanTeacherAnnotatedPath(
+      localAiStorage,
+      sample.sampleName
+    )
+    const pendingPath = developerHumanTeacherPendingPath(
+      localAiStorage,
+      sample.sampleName
+    )
+    const trainedPath = developerHumanTeacherTrainedPath(
+      localAiStorage,
+      sample.sampleName
+    )
+    const comparisonPath = developerHumanTeacherComparisonPath(
+      localAiStorage,
+      sample.sampleName
+    )
+
+    const runningState = await writeDeveloperHumanTeacherState(
+      sample.sampleName,
+      {
+        ...existingState,
+        totalAvailableTasks: sample.totalFlips,
+        comparison100: normalizeDeveloperComparisonState({
+          ...existingState.comparison100,
+          status: 'running',
+          lastResultPath:
+            existingState.comparison100?.lastResultPath || comparisonPath,
+        }),
+      }
+    )
+
+    const comparisonResult = await trainEpoch({
+      input: {
+        developerHumanTeacher: true,
+        sampleName: sample.sampleName,
+        comparisonOnly: true,
+        compareOnly: true,
+        evaluationFlips: 100,
+        annotatedAnnotationsPath: annotatedPath,
+        pendingAnnotationsPath: pendingPath,
+        trainedAnnotationsPath: trainedPath,
+        developerStatePath: statePath,
+        comparisonPath,
+      },
+    })
+
+    let nextComparison = normalizeDeveloperComparisonState(
+      runningState.state.comparison100
+    )
+
+    if (await localAiStorage.exists(comparisonPath)) {
+      const persistedComparison = await localAiStorage.readJson(
+        comparisonPath,
+        null
+      )
+      nextComparison = mergeDeveloperComparisonSnapshot(
+        nextComparison,
+        extractDeveloperComparisonSnapshot(persistedComparison, {
+          resultPath: comparisonPath,
+          holdoutPath:
+            nextComparison.holdoutPath ||
+            persistedComparison?.holdoutPath ||
+            null,
+        }),
+        comparisonResult && comparisonResult.ok
+          ? 'evaluated'
+          : 'result_available'
+      )
+    } else if (comparisonResult && comparisonResult.ok) {
+      nextComparison = mergeDeveloperComparisonSnapshot(
+        nextComparison,
+        extractDeveloperComparisonSnapshot(comparisonResult, {
+          resultPath: comparisonPath,
+        }),
+        'evaluated'
+      )
+    } else {
+      nextComparison = normalizeDeveloperComparisonState({
+        ...nextComparison,
+        status: 'failed',
+        lastResultPath: nextComparison.lastResultPath || comparisonPath,
+      })
+    }
+
+    const persistedState = await writeDeveloperHumanTeacherState(
+      sample.sampleName,
+      {
+        ...existingState,
+        totalAvailableTasks: sample.totalFlips,
+        comparison100: nextComparison,
+      }
+    )
+
+    return {
+      developer: true,
+      sampleName: sample.sampleName,
+      comparison100: {
+        expectedPath: comparisonPath,
+      },
+      statePath: persistedState.statePath,
+      state: summarizeDeveloperHumanTeacherState(persistedState.state),
+      comparison: comparisonResult,
+    }
   }
 
   async function importHumanTeacherAnnotationsWorkspace(payload) {
@@ -4308,7 +4752,9 @@ function createLocalAiManager({
     saveHumanTeacherAnnotationDraft,
     saveHumanTeacherDemoDraft,
     saveHumanTeacherDeveloperDraft,
+    finalizeHumanTeacherDemoChunk,
     finalizeHumanTeacherDeveloperChunk,
+    runHumanTeacherDeveloperComparison,
     importHumanTeacherAnnotations: importHumanTeacherAnnotationsWorkspace,
   }
 }
