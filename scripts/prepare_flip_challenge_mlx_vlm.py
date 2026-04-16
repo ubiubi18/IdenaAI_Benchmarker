@@ -17,15 +17,28 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import os
 import sys
 import tempfile
 import urllib.request
+from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from flip_training_ranker import build_historical_signals
+try:
+    from deepfunding_scoring import find_optimal_weights
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from deepfunding_scoring import find_optimal_weights
+
+try:
+    from flip_training_ranker import build_historical_signals
+except ModuleNotFoundError:
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from flip_training_ranker import build_historical_signals
 
 try:
     import pyarrow.parquet as pq
@@ -186,6 +199,7 @@ PROMPT_FAMILIES = {
 COMPOSITE_MAX_SIZE = (448, 448)
 NATIVE_FRAME_MAX_SIZE = (128, 128)
 HUMAN_ANNOTATION_MODES = {"none", "weight_boost", "followup_reasoning", "hybrid"}
+HUMAN_ANNOTATION_AGGREGATION_MODES = {"best_single", "deepfunding"}
 ANNOTATION_TIER_RANK = {
     "reject": 0,
     "bronze": 1,
@@ -198,6 +212,7 @@ BASE_HUMAN_WEIGHT_BONUS = {
     "silver": 0.35,
     "gold": 0.6,
 }
+ANNOTATION_FINAL_ANSWERS = ("left", "right", "skip")
 
 
 def fetch_json(url: str):
@@ -619,6 +634,15 @@ def normalize_human_annotation_mode(value: str) -> str:
     return mode
 
 
+def normalize_human_annotation_aggregation_mode(value: str) -> str:
+    mode = str(value or "best_single").strip().lower().replace("-", "_")
+    if mode not in HUMAN_ANNOTATION_AGGREGATION_MODES:
+        raise ValueError(
+            f"Unsupported human annotation aggregation mode: {value}"
+        )
+    return mode
+
+
 def tier_meets_minimum(tier: str, minimum_tier: str) -> bool:
     return ANNOTATION_TIER_RANK.get(str(tier or "").strip().lower(), 0) >= ANNOTATION_TIER_RANK.get(
         str(minimum_tier or "").strip().lower(),
@@ -644,21 +668,278 @@ def select_preferred_annotation(
     return candidate if candidate_key > current_key else current
 
 
+def annotation_strength(annotation: Dict[str, Any]) -> float:
+    confidence = annotation.get("confidence")
+    try:
+        confidence_value = float(confidence) if confidence is not None else 0.7
+    except (TypeError, ValueError):
+        confidence_value = 0.7
+    confidence_value = min(max(confidence_value, 0.05), 0.99)
+
+    quality_score = float(annotation.get("annotation_quality_score") or 0.0)
+    quality_bonus = max(min(quality_score / 8.0, 1.0), 0.0) * 0.5
+    return max(0.3, -math.log(1.0 - confidence_value) + quality_bonus)
+
+
+def consensus_margin(annotation_rows: List[Dict[str, Any]]) -> float:
+    strengths = [
+        float(row.get("consensus_strength") or 0.0)
+        for row in annotation_rows
+        if row.get("consensus_strength") is not None
+    ]
+    if not strengths:
+        return 1.0
+    average_strength = sum(strengths) / max(len(strengths), 1)
+    return max(0.5, 0.75 + average_strength)
+
+
+def aggregate_annotation_fields(
+    rows: List[Dict[str, Any]],
+    weights: List[float],
+    *,
+    aggregated_answer: str,
+) -> Dict[str, Any]:
+    weighted_rows = list(zip(rows, weights))
+    matching_rows = [
+        (row, weight)
+        for row, weight in weighted_rows
+        if str(row.get("final_answer") or "").strip().lower() == aggregated_answer
+    ]
+    if not matching_rows:
+        matching_rows = weighted_rows
+
+    representative = max(
+        matching_rows,
+        key=lambda item: (
+            float(item[1]),
+            float(item[0].get("annotation_quality_score") or 0.0),
+            int(item[0].get("rationale_length") or 0),
+        ),
+    )[0]
+
+    def weighted_bool(field: str) -> Optional[bool]:
+        total = 0.0
+        seen = 0.0
+        for row, weight in weighted_rows:
+            value = row.get(field)
+            if value is None:
+                continue
+            seen += weight
+            total += weight * (1.0 if bool(value) else 0.0)
+        if seen <= 0:
+            return None
+        return (total / seen) >= 0.5
+
+    combined_tags: Dict[str, float] = {}
+    for row, weight in weighted_rows:
+        for tag in row.get("reasoning_tags") or []:
+            combined_tags[str(tag)] = combined_tags.get(str(tag), 0.0) + float(weight)
+
+    rationale_candidates = [
+        (row, weight)
+        for row, weight in matching_rows
+        if str(row.get("why_answer") or "").strip()
+    ]
+    if rationale_candidates:
+        rationale_row = max(
+            rationale_candidates,
+            key=lambda item: (
+                float(item[1]),
+                int(item[0].get("rationale_length") or 0),
+            ),
+        )[0]
+        why_answer = str(rationale_row.get("why_answer") or "").strip()
+    else:
+        why_answer = str(representative.get("why_answer") or "").strip()
+
+    report_reason = ""
+    if weighted_bool("report_required") is True:
+        report_candidates = [
+            (row, weight)
+            for row, weight in weighted_rows
+            if str(row.get("report_reason") or "").strip()
+        ]
+        if report_candidates:
+            report_reason = str(
+                max(report_candidates, key=lambda item: float(item[1]))[0].get(
+                    "report_reason"
+                )
+                or ""
+            ).strip()
+
+    avg_quality = (
+        sum(float(row.get("annotation_quality_score") or 0.0) * weight for row, weight in weighted_rows)
+        / max(sum(weights), 1e-6)
+    )
+    tier = "gold" if avg_quality >= 7.0 else "silver" if avg_quality >= 4.0 else "bronze"
+
+    return {
+        **representative,
+        "final_answer": aggregated_answer,
+        "why_answer": why_answer,
+        "text_required": weighted_bool("text_required"),
+        "sequence_markers_present": weighted_bool("sequence_markers_present"),
+        "report_required": weighted_bool("report_required"),
+        "report_reason": report_reason,
+        "annotation_quality_score": round(avg_quality, 3),
+        "annotation_quality_tier": tier,
+        "training_useful": True,
+        "reasoning_tags": [
+            tag
+            for tag, score in sorted(
+                combined_tags.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+            if score > 0
+        ],
+        "annotation_aggregation_method": "deepfunding",
+        "annotation_contributor_count": len(rows),
+    }
+
+
+def build_deepfunding_annotation_index(
+    grouped_rows: Dict[str, List[Dict[str, Any]]]
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    sample_keys = sorted(
+        key for key, rows in grouped_rows.items() if key and len(rows) >= 2
+    )
+    if not sample_keys:
+        return {}, {"mode": "deepfunding", "applied": False, "reason": "insufficient_multi_annotator_samples"}
+
+    annotators: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for sample_key in sample_keys:
+        for row in grouped_rows[sample_key]:
+            annotator = str(row.get("annotator") or "").strip()
+            if annotator:
+                annotators[annotator].append(row)
+
+    eligible_annotators = {
+        annotator: rows
+        for annotator, rows in annotators.items()
+        if len(rows) >= 2
+    }
+    if len(eligible_annotators) < 2:
+        return {}, {"mode": "deepfunding", "applied": False, "reason": "insufficient_repeated_annotators"}
+
+    item_index: Dict[Tuple[str, str], int] = {}
+    next_index = 0
+    for sample_key in sample_keys:
+        for answer in ANNOTATION_FINAL_ANSWERS:
+            item_index[(sample_key, answer)] = next_index
+            next_index += 1
+
+    logits_lists: List[List[float]] = []
+    annotator_names: List[str] = []
+    for annotator, rows in sorted(eligible_annotators.items()):
+        logits = [0.0] * next_index
+        for row in rows:
+            sample_key = str(row.get("sample_id") or row.get("flip_hash") or "").strip()
+            answer = str(row.get("final_answer") or "").strip().lower()
+            if sample_key not in sample_keys or answer not in ANNOTATION_FINAL_ANSWERS:
+                continue
+            strength = annotation_strength(row)
+            logits[item_index[(sample_key, answer)]] = strength
+        logits_lists.append(logits)
+        annotator_names.append(annotator)
+
+    samples: List[Tuple[int, int, float]] = []
+    for sample_key in sample_keys:
+        rows = grouped_rows[sample_key]
+        consensus_answer = str(rows[0].get("consensus_answer") or "").strip().lower()
+        if consensus_answer not in ANNOTATION_FINAL_ANSWERS:
+            continue
+        margin = consensus_margin(rows)
+        preferred_index = item_index[(sample_key, consensus_answer)]
+        for option in ANNOTATION_FINAL_ANSWERS:
+            if option == consensus_answer:
+                continue
+            samples.append((item_index[(sample_key, option)], preferred_index, margin))
+
+    if not samples:
+        return {}, {"mode": "deepfunding", "applied": False, "reason": "missing_consensus_samples"}
+
+    annotator_weights = find_optimal_weights(logits_lists, samples)
+    weight_by_annotator = {
+        annotator: float(weight)
+        for annotator, weight in zip(annotator_names, annotator_weights)
+    }
+
+    aggregated_index: Dict[str, Dict[str, Any]] = {}
+    aggregated_rows = 0
+    for sample_key, rows in grouped_rows.items():
+        if not sample_key:
+            continue
+        if len(rows) == 1:
+            aggregated_index[sample_key] = rows[0]
+            continue
+
+        row_weights: List[float] = []
+        for row in rows:
+            annotator = str(row.get("annotator") or "").strip()
+            row_weight = weight_by_annotator.get(annotator, 0.0)
+            if row_weight <= 0:
+                row_weight = max(
+                    0.05,
+                    float(row.get("annotation_quality_score") or 0.0) / 10.0,
+                )
+            row_weights.append(row_weight)
+
+        option_scores = {
+            answer: 0.0 for answer in ANNOTATION_FINAL_ANSWERS
+        }
+        for row, row_weight in zip(rows, row_weights):
+            answer = str(row.get("final_answer") or "").strip().lower()
+            if answer in option_scores:
+                option_scores[answer] += float(row_weight)
+        aggregated_answer = max(
+            option_scores.items(),
+            key=lambda item: (item[1], item[0] != "skip", item[0]),
+        )[0]
+        aggregated_index[sample_key] = aggregate_annotation_fields(
+            rows,
+            row_weights,
+            aggregated_answer=aggregated_answer,
+        )
+        aggregated_rows += 1
+
+    return aggregated_index, {
+        "mode": "deepfunding",
+        "applied": True,
+        "annotatorCount": len(weight_by_annotator),
+        "sampleCount": len(sample_keys),
+        "aggregatedRows": aggregated_rows,
+        "annotatorWeights": weight_by_annotator,
+    }
+
+
 def load_human_annotation_index(
     path: Optional[Path],
     *,
     minimum_tier: str = "bronze",
-) -> Dict[str, Dict[str, Any]]:
+    aggregation_mode: str = "best_single",
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
     if not path:
-        return {}
+        return {}, {"mode": normalize_human_annotation_aggregation_mode(aggregation_mode), "applied": False}
 
-    index: Dict[str, Dict[str, Any]] = {}
+    normalized_aggregation_mode = normalize_human_annotation_aggregation_mode(
+        aggregation_mode
+    )
+    grouped_rows: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    best_single_index: Dict[str, Dict[str, Any]] = {}
     for row in load_jsonl(path):
         if not bool(row.get("training_useful", True)):
             continue
         tier = str(row.get("annotation_quality_tier") or "").strip().lower()
         if not tier_meets_minimum(tier, minimum_tier):
             continue
+
+        canonical_key = (
+            str(row.get("sample_id") or "").strip()
+            or str(row.get("flip_hash") or "").strip()
+            or str(row.get("task_id") or "").strip()
+        )
+        if canonical_key:
+            grouped_rows[canonical_key].append(row)
 
         keys = [
             str(row.get("sample_id") or "").strip(),
@@ -668,9 +949,37 @@ def load_human_annotation_index(
         for key in keys:
             if not key:
                 continue
-            index[key] = select_preferred_annotation(index.get(key), row)
+            best_single_index[key] = select_preferred_annotation(
+                best_single_index.get(key), row
+            )
 
-    return index
+    if normalized_aggregation_mode == "best_single":
+        return best_single_index, {
+            "mode": "best_single",
+            "applied": True,
+            "sampleCount": len(best_single_index),
+        }
+
+    try:
+        deepfunding_index, deepfunding_summary = build_deepfunding_annotation_index(
+            grouped_rows
+        )
+    except ModuleNotFoundError as exc:
+        return best_single_index, {
+            "mode": "deepfunding",
+            "applied": False,
+            "reason": "missing_dependency",
+            "error": str(exc),
+            "fallback": "best_single",
+            "sampleCount": len(best_single_index),
+        }
+    if not deepfunding_summary.get("applied"):
+        return best_single_index, {
+            **deepfunding_summary,
+            "fallback": "best_single",
+            "sampleCount": len(best_single_index),
+        }
+    return deepfunding_index, deepfunding_summary
 
 
 def should_apply_human_weight_boost(mode: str) -> bool:
@@ -1411,6 +1720,15 @@ def main() -> int:
         help="Minimum human annotation quality tier accepted for training augmentation",
     )
     parser.add_argument(
+        "--human-annotation-aggregation",
+        choices=sorted(HUMAN_ANNOTATION_AGGREGATION_MODES),
+        default="best_single",
+        help=(
+            "How multiple human annotations for the same flip are merged before "
+            "training augmentation"
+        ),
+    )
+    parser.add_argument(
         "--human-weight-scale",
         type=float,
         default=1.0,
@@ -1419,6 +1737,9 @@ def main() -> int:
     args = parser.parse_args()
     selected_image_mode = normalize_image_mode(args.image_mode)
     human_annotation_mode = normalize_human_annotation_mode(args.human_annotation_mode)
+    human_annotation_aggregation = normalize_human_annotation_aggregation_mode(
+        args.human_annotation_aggregation
+    )
 
     if args.max_flips < 1:
         print("--max-flips must be >= 1", file=sys.stderr)
@@ -1432,11 +1753,12 @@ def main() -> int:
         prompt_template=args.prompt_template,
         image_mode=selected_image_mode,
     )
-    human_annotation_index = load_human_annotation_index(
+    human_annotation_index, human_annotation_aggregation_summary = load_human_annotation_index(
         args.human_annotations_jsonl.resolve()
         if args.human_annotations_jsonl
         else None,
         minimum_tier=args.human_min_quality_tier,
+        aggregation_mode=human_annotation_aggregation,
     )
 
     parquet_paths = list_parquet_paths(args.split)
@@ -1546,6 +1868,7 @@ def main() -> int:
             if args.human_annotations_jsonl
             else None,
             "minimumTier": args.human_min_quality_tier,
+            "aggregation": human_annotation_aggregation_summary,
             "weightScale": args.human_weight_scale,
             "indexSize": len(human_annotation_index),
             "applied": human_annotation_summary,

@@ -93,6 +93,13 @@ Supported modes:
   supervised human-teacher follow-up turn with the rationale
 - `hybrid`: apply both the weight boost and the rationale follow-up turn
 
+If multiple humans annotated the same flip, you can also choose how those rows
+are merged before training augmentation:
+- `best_single`: keep only the strongest single annotation row per flip
+- `deepfunding`: use the forked `scoring` mechanism to weight repeated
+  annotators against consensus-backed answers and build one merged annotation
+  per flip
+
 Expected annotation input:
 - normalized JSONL from:
   - `python scripts/import_human_teacher_annotations.py ...`
@@ -109,6 +116,7 @@ python scripts/prepare_flip_challenge_mlx_vlm.py \
   --image-mode native_frames \
   --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl \
   --human-annotation-mode hybrid \
+  --human-annotation-aggregation deepfunding \
   --human-min-quality-tier bronze \
   --human-weight-scale 1.0
 ```
@@ -177,6 +185,7 @@ python scripts/run_flip_human_annotation_matrix.py \
   --prompt-family runtime_aligned_native_frames_v2 \
   --image-mode native_frames \
   --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl \
+  --human-annotation-aggregations best_single deepfunding \
   --eval-dataset-path .tmp/flip-train/pilot-val-200/hf-dataset \
   --modes baseline weight_boost followup_reasoning hybrid
 ```
@@ -191,6 +200,7 @@ human annotation style actually helps:
 - answer-only with higher weight
 - short rationale follow-up
 - both at once
+- and, when multiple annotators exist, `best_single` vs `deepfunding`
 
 It writes:
 - per-mode prepared manifests
