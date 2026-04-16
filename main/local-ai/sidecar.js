@@ -1535,16 +1535,42 @@ function createLocalAiSidecar({
           timeout: normalizedTimeoutMs,
         }
       )
+      const responseData =
+        response && response.data && typeof response.data === 'object'
+          ? response.data
+          : {}
+      const normalizedStatus =
+        String(responseData.status || 'ok').trim() || 'ok'
+      const responseOk =
+        responseData.ok !== false &&
+        !['error', 'failed', 'not_implemented'].includes(normalizedStatus)
+
+      if (!responseOk) {
+        return {
+          ok: false,
+          status: normalizedStatus,
+          baseUrl: normalizedBaseUrl,
+          endpoint,
+          data: responseData,
+          lastError:
+            String(
+              responseData.lastError ||
+                responseData.message ||
+                responseData.detail ||
+                ''
+            ).trim() ||
+            (normalizedStatus === 'not_implemented'
+              ? `${action} is not implemented by this Local AI sidecar`
+              : `${action} failed`),
+        }
+      }
 
       return {
         ok: true,
         status: 'ok',
         baseUrl: normalizedBaseUrl,
         endpoint,
-        data:
-          response && response.data && typeof response.data === 'object'
-            ? response.data
-            : {},
+        data: responseData,
         lastError: null,
       }
     } catch (error) {

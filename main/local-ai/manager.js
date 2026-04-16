@@ -1135,6 +1135,69 @@ function normalizeDemoHumanTeacherState(
   }
 }
 
+function extractDeveloperTrainingFailureReason(result) {
+  const source =
+    result && typeof result === 'object' && !Array.isArray(result) ? result : {}
+  const rawError =
+    source.error &&
+    typeof source.error === 'object' &&
+    !Array.isArray(source.error)
+      ? source.error
+      : null
+
+  const candidates = [
+    source.failureReason,
+    source.message,
+    source.reason,
+    source.lastError,
+    rawError?.message,
+    typeof source.error === 'string' ? source.error : null,
+    source.details,
+    source.stderr,
+    source.status,
+  ]
+
+  for (const candidate of candidates) {
+    const message = String(candidate || '').trim()
+
+    if (message) {
+      return message.slice(0, 400)
+    }
+  }
+
+  return null
+}
+
+function normalizeDeveloperLastTrainingState(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = value
+  const offset = Number.parseInt(source.offset, 10)
+  const rowCount = Number.parseInt(source.rowCount, 10)
+
+  return {
+    at: String(source.at || '').trim() || null,
+    status: String(source.status || '').trim() || null,
+    offset: Number.isFinite(offset)
+      ? normalizeDeveloperHumanTeacherOffset(offset)
+      : null,
+    rowCount: Number.isFinite(rowCount) && rowCount > 0 ? rowCount : 0,
+    failureReason:
+      String(
+        source.failureReason ||
+          extractDeveloperTrainingFailureReason(source.result)
+      ).trim() || null,
+    result:
+      source.result &&
+      typeof source.result === 'object' &&
+      !Array.isArray(source.result)
+        ? source.result
+        : null,
+  }
+}
+
 function createDefaultDeveloperHumanTeacherState({
   sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
   totalAvailableTasks = 0,
@@ -1191,6 +1254,7 @@ function normalizeDeveloperHumanTeacherState(
     annotatedTaskIds: uniqueStrings(source.annotatedTaskIds),
     pendingTrainingTaskIds: uniqueStrings(source.pendingTrainingTaskIds),
     trainedTaskIds: uniqueStrings(source.trainedTaskIds),
+    lastTraining: normalizeDeveloperLastTrainingState(source.lastTraining),
     chunks: Array.isArray(source.chunks)
       ? source.chunks
           .map((chunk) => {
@@ -2626,6 +2690,10 @@ function createLocalAiManager({
             status: trainingStatus,
             offset: chunk.offset,
             rowCount: normalizedSummary.rowCount,
+            failureReason:
+              trainingStatus === 'failed'
+                ? extractDeveloperTrainingFailureReason(trainingResult)
+                : null,
             result:
               trainingResult &&
               typeof trainingResult === 'object' &&

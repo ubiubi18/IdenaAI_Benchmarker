@@ -740,41 +740,25 @@ function HomeFeaturedDestinations() {
       borderRadius="xl"
       boxShadow="0 2px 8px 0 rgba(83, 86, 92, 0.08), 0 1px 2px 0 rgba(83, 86, 92, 0.12)"
       px={5}
-      py={4}
+      py={3}
       w="full"
     >
-      <Stack spacing={3}>
-        <Stack spacing={1}>
-          <Heading as="h2" fontSize="lg" fontWeight={500}>
-            {t('Quick access')}
-          </Heading>
-          <Text color="muted" fontSize="sm" lineHeight="base" maxW="2xl">
-            {t('Open chat or the community feed.')}
-          </Text>
-        </Stack>
+      <Stack spacing={2}>
         <Stack
           direction={{base: 'column', xl: 'row'}}
           align="stretch"
-          spacing={4}
+          spacing={3}
         >
           <HomeFeaturedCard
             href="/ai-chat"
             icon={<ChatIcon boxSize={5} />}
-            eyebrow={t('AI assistant')}
             title={t('IdenaAI-GPT')}
-            description={t(
-              'Ask questions, attach images, and let the local runtime reason about test flips or node behavior.'
-            )}
             cta={t('Start chat')}
           />
           <HomeFeaturedCard
             href="/social"
             icon={<GlobeIcon boxSize={5} />}
-            eyebrow={t('Community')}
             title={t('idena.social')}
-            description={t(
-              'Read the feed, publish through your own node, and stay close to the live network conversation.'
-            )}
             cta={t('Open social')}
           />
         </Stack>
@@ -783,15 +767,7 @@ function HomeFeaturedDestinations() {
   )
 }
 
-function HomeFeaturedCard({
-  href,
-  icon,
-  eyebrow,
-  title,
-  description,
-  cta,
-  stamp,
-}) {
+function HomeFeaturedCard({href, icon, title, context, cta, stamp}) {
   return (
     <Box
       borderWidth="1px"
@@ -803,43 +779,48 @@ function HomeFeaturedCard({
       bg="gray.50"
     >
       <Stack spacing={2} h="full" align="flex-start">
-        <Stack spacing={1.5} w="full">
-          <HStack justify="space-between" align="flex-start" spacing={3}>
-            <Text
-              color="brandBlue.500"
-              fontSize="2xs"
-              fontWeight={600}
-              textTransform="uppercase"
-              letterSpacing="0.04em"
+        <HStack justify="space-between" align="center" spacing={3} w="full">
+          <HStack spacing={3} align="center" minW={0}>
+            <Flex
+              align="center"
+              justify="center"
+              boxSize={10}
+              borderRadius="md"
+              bg="white"
+              color="gray.700"
+              flexShrink={0}
             >
-              {eyebrow}
-            </Text>
-            {stamp ? (
-              <Badge
-                colorScheme="purple"
-                borderRadius="full"
-                px={2}
-                py="0.5"
-                fontSize="2xs"
-                textTransform="uppercase"
-              >
-                {stamp}
-              </Badge>
-            ) : null}
+              {icon}
+            </Flex>
+            <Stack spacing={0} minW={0}>
+              <HStack spacing={2} align="center">
+                <Heading as="h3" fontSize="md" fontWeight={500}>
+                  {title}
+                </Heading>
+                {stamp ? (
+                  <Badge
+                    colorScheme="purple"
+                    borderRadius="full"
+                    px={2}
+                    py="0.5"
+                    fontSize="2xs"
+                    textTransform="uppercase"
+                  >
+                    {stamp}
+                  </Badge>
+                ) : null}
+              </HStack>
+              {context ? (
+                <Text color="muted" fontSize="xs" lineHeight="base">
+                  {context}
+                </Text>
+              ) : null}
+            </Stack>
           </HStack>
-          <HStack spacing={2} align="center">
-            {icon}
-            <Heading as="h3" fontSize="md" fontWeight={500}>
-              {title}
-            </Heading>
-          </HStack>
-          <Text color="muted" fontSize="sm" lineHeight="base">
-            {description}
-          </Text>
-        </Stack>
-        <IconLink href={href} icon={icon} maxW="full">
-          {cta}
-        </IconLink>
+          <IconLink href={href} icon={icon} maxW="full" flexShrink={0}>
+            {cta}
+          </IconLink>
+        </HStack>
       </Stack>
     </Box>
   )

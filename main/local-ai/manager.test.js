@@ -1659,6 +1659,80 @@ describe('local-ai manager', () => {
     })
   })
 
+  it('persists the last developer training failure reason when local training does not complete', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async () => ({
+        ok: false,
+        status: 'failed',
+        error: 'runtime_start_failed',
+        lastError:
+          'Training backend is unavailable in the current local runtime',
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+    })
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    for (const task of session.workspace.tasks) {
+      await manager.saveHumanTeacherDeveloperDraft({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+        taskId: task.taskId,
+        annotation: {
+          annotator: 'developer-test',
+          final_answer: 'left',
+          why_answer: `human reason for ${task.taskId}`,
+          report_required: false,
+          confidence: 5,
+        },
+      })
+    }
+
+    const committed = await manager.finalizeHumanTeacherDeveloperChunk({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      trainNow: true,
+    })
+
+    expect(committed).toMatchObject({
+      training: expect.objectContaining({
+        ok: false,
+        status: 'failed',
+      }),
+      state: expect.objectContaining({
+        annotatedCount: 5,
+        pendingTrainingCount: 5,
+        trainedCount: 0,
+        lastTraining: expect.objectContaining({
+          status: 'failed',
+          failureReason:
+            'Training backend is unavailable in the current local runtime',
+        }),
+      }),
+    })
+
+    const reloadedSession = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(reloadedSession.state.lastTraining).toMatchObject({
+      status: 'failed',
+      failureReason:
+        'Training backend is unavailable in the current local runtime',
+    })
+  })
+
   it('runs the explicit 100-flip developer comparison and stores the updated success history', async () => {
     const sidecar = {
       getHealth: jest.fn(),
@@ -1954,10 +2028,12 @@ describe('local-ai manager', () => {
       currentEpoch: 13,
     })
     const taskPackage = await storage.readHumanTeacherPackage(filePath)
-    const normalizedRows = (await fs.readFile(
-      path.join(exportResult.outputDir, 'annotations.normalized.jsonl'),
-      'utf8'
-    ))
+    const normalizedRows = (
+      await fs.readFile(
+        path.join(exportResult.outputDir, 'annotations.normalized.jsonl'),
+        'utf8'
+      )
+    )
       .trim()
       .split(/\r?\n/u)
       .filter(Boolean)

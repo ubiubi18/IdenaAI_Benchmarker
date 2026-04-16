@@ -289,7 +289,14 @@ function BandwidthItem(props) {
 
 export function Logo() {
   return (
-    <Image src="/static/logo.svg" alt="Idena logo" w="14" my="8" mx="auto" />
+    <Image
+      src="/static/logo.svg"
+      alt="Idena logo"
+      w="14"
+      mt="4"
+      mb="4"
+      mx="auto"
+    />
   )
 }
 
@@ -300,41 +307,45 @@ function Navbar() {
 
   return (
     <Nav>
-      <NavSectionTitle>{t('Discover')}</NavSectionTitle>
-      <NavItem href="/ai-chat" icon={ChatIcon} featured badge={t('AI')}>
-        {t('IdenaAI-GPT')}
-      </NavItem>
-      <NavItem href="/social" icon={GlobeIcon} featured badge={t('Live')}>
-        {t('idena.social')}
-      </NavItem>
-      <NavSectionTitle>{t('Workspace')}</NavSectionTitle>
-      <NavItem href="/home" icon={ProfileIcon}>
-        {t('My Idena')}
-      </NavItem>
-      <NavItem href="/wallets" icon={WalletIcon}>
-        {t('Wallets')}
-      </NavItem>
-      <NavItem href="/flips/list" icon={GalleryIcon}>
-        {t('Flips')}
-      </NavItem>
-      <NavItem href="/contacts" icon={ContactsIcon}>
-        {t('Contacts')}
-      </NavItem>
-      <NavItem href="/oracles/list" icon={OracleIcon} display>
-        {todoCount > 0 ? (
-          <Flex flex={1} align="center" justify="space-between">
-            <Text as="span">{t('Oracle voting')}</Text>
-            <TodoVotingCountBadge>
-              {todoCount > 10 ? '10+' : todoCount}
-            </TodoVotingCountBadge>
-          </Flex>
-        ) : (
-          t('Oracle voting')
-        )}
-      </NavItem>
-      <NavItem href="/settings/general" icon={SettingsIcon}>
-        {t('Settings')}
-      </NavItem>
+      <Box>
+        <NavSectionTitle mt={0}>{t('Discover')}</NavSectionTitle>
+        <NavItem href="/ai-chat" icon={ChatIcon} featured badge={t('AI')}>
+          {t('IdenaAI-GPT')}
+        </NavItem>
+        <NavItem href="/social" icon={GlobeIcon} featured badge={t('Live')}>
+          {t('idena.social')}
+        </NavItem>
+      </Box>
+      <Box mt={7}>
+        <NavSectionTitle mt={0}>{t('Workspace')}</NavSectionTitle>
+        <NavItem href="/home" icon={ProfileIcon}>
+          {t('My Idena')}
+        </NavItem>
+        <NavItem href="/wallets" icon={WalletIcon}>
+          {t('Wallets')}
+        </NavItem>
+        <NavItem href="/flips/list" icon={GalleryIcon}>
+          {t('Flips')}
+        </NavItem>
+        <NavItem href="/contacts" icon={ContactsIcon}>
+          {t('Contacts')}
+        </NavItem>
+        <NavItem href="/oracles/list" icon={OracleIcon} display>
+          {todoCount > 0 ? (
+            <Flex flex={1} align="center" justify="space-between">
+              <Text as="span">{t('Oracle voting')}</Text>
+              <TodoVotingCountBadge>
+                {todoCount > 10 ? '10+' : todoCount}
+              </TodoVotingCountBadge>
+            </Flex>
+          ) : (
+            t('Oracle voting')
+          )}
+        </NavItem>
+        <NavItem href="/settings/general" icon={SettingsIcon}>
+          {t('Settings')}
+        </NavItem>
+      </Box>
     </Nav>
   )
 }
@@ -343,7 +354,7 @@ function Nav(props) {
   return <Flex direction="column" w="full" {...props} />
 }
 
-function NavSectionTitle({children}) {
+function NavSectionTitle({children, ...props}) {
   return (
     <Text
       color="xwhite.040"
@@ -354,6 +365,7 @@ function NavSectionTitle({children}) {
       mt={4}
       mb={1}
       px={2}
+      {...props}
     >
       {children}
     </Text>

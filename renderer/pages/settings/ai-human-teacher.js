@@ -150,6 +150,45 @@ function formatErrorMessage(error) {
   return message || 'Unknown error'
 }
 
+function extractTrainingFailureReason(result) {
+  const source =
+    result && typeof result === 'object' && !Array.isArray(result) ? result : {}
+  const rawError =
+    source.error &&
+    typeof source.error === 'object' &&
+    !Array.isArray(source.error)
+      ? source.error
+      : null
+
+  const candidates = [
+    source.failureReason,
+    source.message,
+    source.reason,
+    source.lastError,
+    rawError?.message,
+    typeof source.error === 'string' ? source.error : null,
+    source.details,
+    source.stderr,
+    source.status,
+  ]
+
+  for (const candidate of candidates) {
+    const message = String(candidate || '').trim()
+
+    if (message) {
+      return message.slice(0, 400)
+    }
+  }
+
+  return ''
+}
+
+function isTrainingUnsupportedReason(reason) {
+  return /not implemented by this Local AI sidecar/i.test(
+    String(reason || '').trim()
+  )
+}
+
 function normalizeReviewStatus(value) {
   const status = String(value || '')
     .trim()
@@ -488,6 +527,35 @@ function formatTimestamp(value) {
   return parsed.toLocaleString()
 }
 
+function formatCompactTimestamp(value) {
+  const raw = String(value || '').trim()
+
+  if (!raw) {
+    return 'n/a'
+  }
+
+  const parsed = new Date(raw)
+
+  if (!Number.isFinite(parsed.getTime())) {
+    return raw
+  }
+
+  return parsed.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function clampPercent(value) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return Math.max(0, Math.min(100, parsed * 100))
+}
+
 function getWorkspaceCountsAfterSave(
   workspace,
   selectedTaskId,
@@ -548,6 +616,190 @@ function InterviewPrompt({title, children}) {
         <Text mt={1}>{title}</Text>
       </Box>
       <Box>{children}</Box>
+    </Box>
+  )
+}
+
+function SuccessRateHistoryChart({entries = [], t}) {
+  const chartEntries = React.useMemo(
+    () =>
+      entries
+        .filter((entry) => Number.isFinite(Number(entry?.accuracy)))
+        .slice()
+        .reverse(),
+    [entries]
+  )
+
+  if (!chartEntries.length) {
+    return null
+  }
+
+  const width = 640
+  const height = 220
+  const paddingLeft = 42
+  const paddingRight = 16
+  const paddingTop = 16
+  const paddingBottom = 32
+  const innerWidth = width - paddingLeft - paddingRight
+  const innerHeight = height - paddingTop - paddingBottom
+  const gridValues = [0, 25, 50, 75, 100]
+
+  const points = chartEntries.map((entry, index) => {
+    const percentage = clampPercent(entry.accuracy) || 0
+    const x =
+      chartEntries.length === 1
+        ? paddingLeft + innerWidth / 2
+        : paddingLeft + (innerWidth * index) / (chartEntries.length - 1)
+    const y = paddingTop + ((100 - percentage) / 100) * innerHeight
+
+    return {
+      ...entry,
+      percentage,
+      x,
+      y,
+      runNumber: index + 1,
+    }
+  })
+
+  const polylinePoints = points
+    .map((point) => `${point.x},${point.y}`)
+    .join(' ')
+  const latestPoint = points[points.length - 1]
+
+  return (
+    <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+      <Stack spacing={3}>
+        <Flex justify="space-between" align="center" flexWrap="wrap" gap={2}>
+          <Box>
+            <Text fontSize="sm" fontWeight={600}>
+              {t('Success-rate trend')}
+            </Text>
+            <Text color="muted" fontSize="xs">
+              {t(
+                'The same 100-flip holdout benchmark is appended here after each new comparison run.'
+              )}
+            </Text>
+          </Box>
+          <Text color="muted" fontSize="xs">
+            {t('Runs')}: {points.length} · {t('Latest')}:{' '}
+            {formatSuccessRate(latestPoint?.accuracy)}
+          </Text>
+        </Flex>
+
+        <Box overflowX="auto">
+          <svg
+            width="100%"
+            viewBox={`0 0 ${width} ${height}`}
+            role="img"
+            aria-label={t('Developer training success rate over time')}
+          >
+            {gridValues.map((value) => {
+              const y = paddingTop + ((100 - value) / 100) * innerHeight
+
+              return (
+                <g key={value}>
+                  <line
+                    x1={paddingLeft}
+                    y1={y}
+                    x2={width - paddingRight}
+                    y2={y}
+                    stroke="#E2E8F0"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={paddingLeft - 8}
+                    y={y + 4}
+                    textAnchor="end"
+                    fontSize="11"
+                    fill="#718096"
+                  >
+                    {value}%
+                  </text>
+                </g>
+              )
+            })}
+
+            <line
+              x1={paddingLeft}
+              y1={paddingTop + innerHeight}
+              x2={width - paddingRight}
+              y2={paddingTop + innerHeight}
+              stroke="#CBD5E0"
+              strokeWidth="1.2"
+            />
+
+            {points.length > 1 ? (
+              <polyline
+                fill="none"
+                stroke="#4C7CF0"
+                strokeWidth="3"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                points={polylinePoints}
+              />
+            ) : null}
+
+            {points.map((point, index) => (
+              <g key={`${point.evaluatedAt || point.resultPath || index}`}>
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={index === points.length - 1 ? 5 : 4}
+                  fill={index === points.length - 1 ? '#2B6CB0' : '#4C7CF0'}
+                >
+                  <title>
+                    {`${t('Run')} ${point.runNumber}: ${formatSuccessRate(
+                      point.accuracy
+                    )} · ${Number(point.correct) || 0} / ${
+                      Number(point.totalFlips) || 0
+                    } · ${formatTimestamp(point.evaluatedAt)}`}
+                  </title>
+                </circle>
+                <text
+                  x={point.x}
+                  y={height - 10}
+                  textAnchor="middle"
+                  fontSize="11"
+                  fill="#718096"
+                >
+                  {point.runNumber}
+                </text>
+              </g>
+            ))}
+          </svg>
+        </Box>
+
+        <Flex gap={2} flexWrap="wrap">
+          {points
+            .slice(-4)
+            .reverse()
+            .map((point) => (
+              <Box
+                key={`summary-${point.runNumber}-${point.evaluatedAt || ''}`}
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="md"
+                px={3}
+                py={2}
+                bg="gray.50"
+                minW="120px"
+              >
+                <Text fontSize="xs" fontWeight={700}>
+                  {t('Run')} {point.runNumber}
+                </Text>
+                <Text fontSize="sm" fontWeight={600}>
+                  {formatSuccessRate(point.accuracy)}
+                </Text>
+                <Text color="muted" fontSize="xs">
+                  {Number(point.correct) || 0} / {Number(point.totalFlips) || 0}
+                </Text>
+                <Text color="muted" fontSize="xs">
+                  {formatCompactTimestamp(point.evaluatedAt)}
+                </Text>
+              </Box>
+            ))}
+        </Flex>
+      </Stack>
     </Box>
   )
 }
@@ -1664,6 +1916,10 @@ export default function AiHumanTeacherPage() {
         }
 
         if (trainNow) {
+          const trainingFailureReason =
+            nextResult?.state?.lastTraining?.failureReason ||
+            extractTrainingFailureReason(nextResult?.training)
+
           if (nextResult?.training?.ok) {
             const latestAccuracy = nextResult?.state?.comparison100?.accuracy
             const latestCorrect = nextResult?.state?.comparison100?.correct
@@ -1673,7 +1929,7 @@ export default function AiHumanTeacherPage() {
               description:
                 typeof latestAccuracy === 'number'
                   ? t(
-                      'This 5-flip chunk was trained locally. Latest success rate: {{accuracy}} ({{correct}} / {{total}}).',
+                      'This 5-flip chunk was trained locally and is now part of the active model. Latest success rate: {{accuracy}} ({{correct}} / {{total}}).',
                       {
                         accuracy: formatSuccessRate(latestAccuracy),
                         correct: Number(latestCorrect) || 0,
@@ -1681,7 +1937,7 @@ export default function AiHumanTeacherPage() {
                       }
                     )
                   : t(
-                      'This 5-flip chunk was added to your local training set and the local AI runtime accepted the training request.'
+                      'This 5-flip chunk is now part of the active local model.'
                     ),
               status: 'success',
               duration: 4500,
@@ -1690,9 +1946,16 @@ export default function AiHumanTeacherPage() {
           } else {
             toast({
               title: t('Chunk saved for training'),
-              description: t(
-                'Your 5 annotated flips were stored locally, but the current Local AI runtime did not complete training yet.'
-              ),
+              description: trainingFailureReason
+                ? t(
+                    'Your 5 annotated flips were stored locally, but the active local model is unchanged because training failed. Reason: {{reason}}',
+                    {
+                      reason: trainingFailureReason,
+                    }
+                  )
+                : t(
+                    'Your 5 annotated flips were stored locally, but the active local model is unchanged right now because training did not complete yet.'
+                  ),
               status: 'warning',
               duration: 5000,
               isClosable: true,
@@ -2029,6 +2292,137 @@ export default function AiHumanTeacherPage() {
   const developerComparisonStatus = String(
     developerComparison?.status || 'not_loaded'
   ).trim()
+  const developerLastTraining = developerSessionState?.lastTraining || null
+  const developerLastTrainingFailureReason =
+    developerLastTraining?.failureReason ||
+    extractTrainingFailureReason(developerLastTraining?.result)
+  const developerTrainingUnsupported = isTrainingUnsupportedReason(
+    developerLastTrainingFailureReason
+  )
+  const developerModelStatus = React.useMemo(() => {
+    if (!isDeveloperMode) {
+      return null
+    }
+
+    const lastTrainingStatus = String(
+      developerLastTraining?.status || ''
+    ).trim()
+    const lastTrainingAt = developerLastTraining?.at || null
+
+    if (lastTrainingStatus === 'failed') {
+      if (developerTrainingUnsupported) {
+        return {
+          tone: 'warning',
+          title: t('Current local model: training backend unavailable'),
+          detail:
+            developerTrainedCount > 0
+              ? t(
+                  'Your latest 5-flip chunk was saved, but this Local AI runtime can currently chat only. The active model still contains only earlier trained flips.'
+                )
+              : t(
+                  'Your 5 annotated flips were saved locally, but this Local AI runtime can currently chat only. The active model is still the untrained baseline.'
+                ),
+          reason: t(
+            'The current Local AI sidecar does not implement local training yet.'
+          ),
+        }
+      }
+
+      return {
+        tone: 'error',
+        title: t('Current local model: latest training did not apply'),
+        detail:
+          developerTrainedCount > 0
+            ? t(
+                'The last training attempt failed{{when}}. Your active model still only includes earlier trained flips, and {{count}} newer annotated flips are still waiting to be trained.',
+                {
+                  when: lastTrainingAt
+                    ? ` ${t('at')} ${formatTimestamp(lastTrainingAt)}`
+                    : '',
+                  count: developerPendingCount,
+                }
+              )
+            : t(
+                'The last training attempt failed{{when}}. Your active model is still the untrained baseline, and {{count}} annotated flips are waiting to be trained.',
+                {
+                  when: lastTrainingAt
+                    ? ` ${t('at')} ${formatTimestamp(lastTrainingAt)}`
+                    : '',
+                  count: developerPendingCount,
+                }
+              ),
+        reason: developerLastTrainingFailureReason,
+      }
+    }
+
+    if (developerPendingCount > 0 && developerTrainedCount > 0) {
+      return {
+        tone: 'warning',
+        title: t('Current local model: partially up to date'),
+        detail: t(
+          'The active local model already includes {{trained}} trained flips, but {{pending}} newer annotated flips are not inside the model yet.',
+          {
+            trained: developerTrainedCount,
+            pending: developerPendingCount,
+          }
+        ),
+      }
+    }
+
+    if (developerPendingCount > 0) {
+      return {
+        tone: 'warning',
+        title: t('Current local model: not trained on your annotations yet'),
+        detail: t(
+          'You have {{pending}} annotated flips saved locally, but the active local model is still unchanged because those flips have not been trained yet.',
+          {
+            pending: developerPendingCount,
+          }
+        ),
+      }
+    }
+
+    if (developerTrainedCount > 0) {
+      return {
+        tone: 'success',
+        title: t('Current local model: trained and up to date'),
+        detail: t(
+          'The active local model already includes all {{trained}} human-annotated flips that were trained so far.',
+          {
+            trained: developerTrainedCount,
+          }
+        ),
+      }
+    }
+
+    if (developerAnnotatedCount > 0) {
+      return {
+        tone: 'info',
+        title: t('Current local model: no confirmed training yet'),
+        detail: t(
+          'You already saved human annotations, but there is no confirmed local training run yet. Until training succeeds, the active model stays unchanged.'
+        ),
+      }
+    }
+
+    return {
+      tone: 'info',
+      title: t('Current local model: baseline'),
+      detail: t(
+        'No human-teacher flips have been trained into the active local model yet.'
+      ),
+    }
+  }, [
+    developerAnnotatedCount,
+    developerLastTraining?.at,
+    developerLastTrainingFailureReason,
+    developerLastTraining?.status,
+    developerPendingCount,
+    developerTrainingUnsupported,
+    developerTrainedCount,
+    isDeveloperMode,
+    t,
+  ])
   const developerComparisonHistory = Array.isArray(developerComparison?.history)
     ? developerComparison.history
     : []
@@ -2048,6 +2442,7 @@ export default function AiHumanTeacherPage() {
       : null
   const developerCanRunComparison =
     isDeveloperMode &&
+    !developerTrainingUnsupported &&
     (developerTrainedCount > 0 || developerPendingCount > 0) &&
     !isRunningDeveloperComparison
   const developerCanAdvance =
@@ -2444,53 +2839,201 @@ export default function AiHumanTeacherPage() {
                             'Click "Start training your AI" to open the next 5 flips from the bundled FLIP developer sample.'
                           )}
                     </Text>
-                    <Text color="muted" fontSize="sm">
-                      {t('Annotated flips')}: {developerAnnotatedCount} ·{' '}
-                      {t('Pending training')}: {developerPendingCount} ·{' '}
-                      {t('Already trained')}: {developerTrainedCount}
-                    </Text>
-                    {latestDeveloperComparison ? (
-                      <>
-                        <Text color="muted" fontSize="sm">
-                          {t('Latest success rate')}:{' '}
-                          {formatSuccessRate(
-                            latestDeveloperComparison.accuracy
-                          )}{' '}
-                          ({Number(latestDeveloperComparison.correct) || 0} /{' '}
-                          {Number(latestDeveloperComparison.totalFlips) || 0})
-                        </Text>
-                        <Text color="muted" fontSize="sm">
-                          {t('Best success rate so far')}:{' '}
-                          {formatSuccessRate(developerBestAccuracy)} ·{' '}
-                          {t('Evaluations logged')}:{' '}
-                          {developerComparisonHistory.length}
-                        </Text>
+                    <SimpleGrid columns={[1, 3]} spacing={3}>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                        bg="gray.50"
+                      >
                         <Text color="muted" fontSize="xs">
-                          {t('Last evaluated')}:{' '}
-                          {formatTimestamp(
-                            latestDeveloperComparison.evaluatedAt
-                          )}
-                          {developerAccuracyDelta !== null
-                            ? ` · ${t('Change vs previous')}: ${
-                                developerAccuracyDelta >= 0 ? '+' : ''
-                              }${(developerAccuracyDelta * 100).toFixed(1)} pts`
-                            : ''}
+                          {t('Annotated')}
                         </Text>
-                      </>
+                        <Text fontWeight={700}>{developerAnnotatedCount}</Text>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                        bg="gray.50"
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Pending training')}
+                        </Text>
+                        <Text fontWeight={700}>{developerPendingCount}</Text>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                        bg="gray.50"
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Inside active model')}
+                        </Text>
+                        <Text fontWeight={700}>{developerTrainedCount}</Text>
+                      </Box>
+                    </SimpleGrid>
+                    {isFinalizingDeveloperChunk ? (
+                      <Box
+                        borderWidth="1px"
+                        borderColor="blue.100"
+                        borderRadius="md"
+                        px={3}
+                        py={3}
+                        bg="blue.50"
+                      >
+                        <Stack spacing={2}>
+                          <Text fontWeight={600}>
+                            {t('Training request running')}
+                          </Text>
+                          <Progress
+                            size="sm"
+                            isIndeterminate
+                            colorScheme="blue"
+                          />
+                          <Text color="muted" fontSize="sm">
+                            {t(
+                              'The app is trying to train this 5-flip chunk locally. The active model stays unchanged until this finishes successfully.'
+                            )}
+                          </Text>
+                        </Stack>
+                      </Box>
+                    ) : null}
+                    {isRunningDeveloperComparison ? (
+                      <Box
+                        borderWidth="1px"
+                        borderColor="purple.100"
+                        borderRadius="md"
+                        px={3}
+                        py={3}
+                        bg="purple.50"
+                      >
+                        <Stack spacing={2}>
+                          <Text fontWeight={600}>
+                            {t('100-flip comparison running')}
+                          </Text>
+                          <Progress
+                            size="sm"
+                            isIndeterminate
+                            colorScheme="purple"
+                          />
+                          <Text color="muted" fontSize="sm">
+                            {t(
+                              'The app is checking the latest local model against the same 100-flip holdout target used for earlier comparison runs.'
+                            )}
+                          </Text>
+                        </Stack>
+                      </Box>
+                    ) : null}
+                    {developerModelStatus ? (
+                      <Alert
+                        status={developerModelStatus.tone}
+                        borderRadius="md"
+                      >
+                        <Stack spacing={1}>
+                          <Text fontSize="sm" fontWeight={700}>
+                            {developerModelStatus.title}
+                          </Text>
+                          <Text fontSize="sm">
+                            {developerModelStatus.detail}
+                          </Text>
+                          {developerModelStatus.reason ? (
+                            <Text fontSize="sm">
+                              {t('Reason')}: {developerModelStatus.reason}
+                            </Text>
+                          ) : null}
+                          {developerLastTraining?.at ? (
+                            <Text color="muted" fontSize="xs">
+                              {t('Last training attempt')}:{' '}
+                              {formatTimestamp(developerLastTraining.at)}
+                              {developerLastTraining?.status
+                                ? ` · ${t('Status')}: ${
+                                    developerLastTraining.status
+                                  }`
+                                : ''}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                      </Alert>
+                    ) : null}
+                    <SimpleGrid columns={[1, 3]} spacing={3}>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Latest success rate')}
+                        </Text>
+                        <Text fontWeight={700}>
+                          {latestDeveloperComparison
+                            ? formatSuccessRate(
+                                latestDeveloperComparison.accuracy
+                              )
+                            : 'n/a'}
+                        </Text>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Best success rate')}
+                        </Text>
+                        <Text fontWeight={700}>
+                          {latestDeveloperComparison
+                            ? formatSuccessRate(developerBestAccuracy)
+                            : 'n/a'}
+                        </Text>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('100-flip benchmark')}
+                        </Text>
+                        <Text fontWeight={700}>
+                          {developerComparisonStatus}
+                        </Text>
+                      </Box>
+                    </SimpleGrid>
+                    {latestDeveloperComparison ? (
+                      <Text color="muted" fontSize="xs">
+                        {t('Last evaluated')}:{' '}
+                        {formatTimestamp(latestDeveloperComparison.evaluatedAt)}
+                        {developerAccuracyDelta !== null
+                          ? ` · ${t('Change vs previous')}: ${
+                              developerAccuracyDelta >= 0 ? '+' : ''
+                            }${(developerAccuracyDelta * 100).toFixed(1)} pts`
+                          : ''}
+                      </Text>
                     ) : (
                       <Text color="muted" fontSize="sm">
-                        {t(
-                          'No success-rate history yet. Once a 100-flip comparison is recorded, your latest and past results will appear here.'
-                        )}
+                        {developerTrainingUnsupported
+                          ? t(
+                              'No benchmark result yet because the current Local AI runtime cannot train or run the held-out comparison.'
+                            )
+                          : t(
+                              'No benchmark result yet. After training succeeds, run the fixed 100-flip comparison to audit the latest local model.'
+                            )}
                       </Text>
                     )}
-                    <Text color="muted" fontSize="sm">
-                      {t('5-flip chunk size')}: {DEVELOPER_TRAINING_CHUNK_SIZE}
-                    </Text>
-                    <Text color="muted" fontSize="xs">
-                      {t('100-flip holdout comparison status')}:{' '}
-                      {developerComparisonStatus}
-                    </Text>
                     <Stack isInline spacing={2} flexWrap="wrap">
                       <PrimaryButton
                         isDisabled={!developerCanRunComparison}
@@ -2501,35 +3044,15 @@ export default function AiHumanTeacherPage() {
                       </PrimaryButton>
                     </Stack>
                     {developerComparisonHistory.length ? (
-                      <Box
-                        borderWidth="1px"
-                        borderColor="gray.100"
-                        borderRadius="md"
-                        p={3}
-                      >
-                        <Stack spacing={1}>
-                          <Text fontSize="sm" fontWeight={600}>
-                            {t('Recent success-rate history')}
-                          </Text>
-                          {developerComparisonHistory
-                            .slice(0, 5)
-                            .map((entry, index) => (
-                              <Text
-                                key={`${entry.resultPath || 'result'}-${
-                                  entry.evaluatedAt || index
-                                }`}
-                                color="muted"
-                                fontSize="xs"
-                              >
-                                {formatTimestamp(entry.evaluatedAt)} ·{' '}
-                                {formatSuccessRate(entry.accuracy)} (
-                                {Number(entry.correct) || 0} /{' '}
-                                {Number(entry.totalFlips) || 0})
-                              </Text>
-                            ))}
-                        </Stack>
-                      </Box>
+                      <SuccessRateHistoryChart
+                        entries={developerComparisonHistory}
+                        t={t}
+                      />
                     ) : null}
+                    <Text color="muted" fontSize="xs">
+                      {t('Chunk size')}: {DEVELOPER_TRAINING_CHUNK_SIZE} ·{' '}
+                      {t('Benchmark size')}: 100
+                    </Text>
                     {result?.comparison100?.expectedPath ? (
                       <Text color="muted" fontSize="xs">
                         {t('Expected comparison record')}:{' '}
@@ -3735,12 +4258,25 @@ export default function AiHumanTeacherPage() {
                   <Stack spacing={2} w="full">
                     <PrimaryButton
                       isLoading={isChunkDecisionBusy}
+                      isDisabled={
+                        isChunkDecisionBusy ||
+                        (chunkDecisionDialog.mode === 'developer' &&
+                          developerTrainingUnsupported)
+                      }
                       onClick={() => handleChunkDecisionAction('train')}
                     >
                       {chunkDecisionDialog.mode === 'demo'
                         ? t('Start demo training now')
                         : t('Start training now')}
                     </PrimaryButton>
+                    {chunkDecisionDialog.mode === 'developer' &&
+                    developerTrainingUnsupported ? (
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Training is unavailable in the current Local AI runtime. Your annotations stay saved locally until a trainable backend exists.'
+                        )}
+                      </Text>
+                    ) : null}
                     {(
                       chunkDecisionDialog.mode === 'developer'
                         ? developerCanAdvance

@@ -995,10 +995,6 @@ export default function AiChatPage() {
     String(localAi.publicModelId || '').trim() || 'Idena-text-v1'
   const multimodalModelLabel =
     String(localAi.publicVisionId || '').trim() || 'Idena-multimodal-v1'
-  const compatibilityTextModel =
-    String(localAi.model || '').trim() || t('runtime default')
-  const compatibilityVisionModel =
-    String(localAi.visionModel || '').trim() || t('runtime default')
   const backendLabel =
     localAi.runtimeBackend === 'ollama-direct'
       ? t('Local runtime via Ollama')
@@ -1214,9 +1210,9 @@ export default function AiChatPage() {
                 <ChatIcon boxSize="6" color="brandBlue.500" />
                 <PageTitle mb={0}>{t('IdenaAI-GPT')}</PageTitle>
               </HStack>
-              <Text color="muted" maxW="4xl">
+              <Text color="muted" maxW="3xl">
                 {t(
-                  'A dedicated local chat view for your configured IdenaAI runtime, with conversation history kept only in this desktop profile. You can also attach flip panels or other images and ask IdenaAI to analyze them.'
+                  'Ask the local runtime directly. You can also attach images or FLIP panels.'
                 )}
               </Text>
             </Stack>
@@ -1245,21 +1241,12 @@ export default function AiChatPage() {
                         {formatAiProviderLabel('local-ai')}
                       </Badge>
                     </HStack>
-                    <Text fontWeight={600}>
-                      {t('Text model')}: {textModelLabel}
-                    </Text>
-                    <Text fontWeight={600}>
-                      {t('Multimodal model')}: {multimodalModelLabel}
+                    <Text color="muted" fontSize="sm">
+                      {t('Runtime')}: {backendLabel} · {t('Endpoint')}:{' '}
+                      {runtimePayload.baseUrl}
                     </Text>
                     <Text color="muted" fontSize="sm">
-                      {t('Compatibility backend')}: {backendLabel}
-                    </Text>
-                    <Text color="muted" fontSize="sm">
-                      {t('Backend overrides')}: {compatibilityTextModel} /{' '}
-                      {compatibilityVisionModel}
-                    </Text>
-                    <Text color="muted" fontSize="sm">
-                      {t('Endpoint')}: {runtimePayload.baseUrl}
+                      {t('Models')}: {textModelLabel} · {multimodalModelLabel}
                     </Text>
                   </Stack>
 
@@ -1322,8 +1309,8 @@ export default function AiChatPage() {
                   px={4}
                   py={4}
                   flex={1}
-                  minH="420px"
-                  maxH="calc(100vh - 430px)"
+                  minH="320px"
+                  maxH="calc(100vh - 520px)"
                   overflowY="auto"
                 >
                   {messages.length > 0 ? (
@@ -1352,38 +1339,20 @@ export default function AiChatPage() {
                       <Box ref={scrollAnchorRef} />
                     </Stack>
                   ) : (
-                    <Stack spacing={4} align="flex-start">
-                      <Text fontWeight={600}>
-                        {t('Start with a simple ask')}
+                    <Flex h="full" align="center" justify="center">
+                      <Text color="muted">
+                        {t('Your conversation will appear here.')}
                       </Text>
-                      <Text color="muted" maxW="2xl">
-                        {t(
-                          'This page is meant to be a fast, convenient IdenaAI conversation surface, similar in convenience to the Social section rather than a raw debug control.'
-                        )}
-                      </Text>
-                      <Stack spacing={2}>
-                        {QUICK_PROMPTS.map((prompt) => (
-                          <Button
-                            key={prompt}
-                            justifyContent="flex-start"
-                            variant="ghost"
-                            colorScheme="blue"
-                            onClick={() => handleQuickPrompt(prompt)}
-                          >
-                            {t(prompt)}
-                          </Button>
-                        ))}
-                      </Stack>
-                    </Stack>
+                    </Flex>
                   )}
                 </Box>
 
                 {lastError && <ErrorAlert>{lastError}</ErrorAlert>}
 
                 <Box
-                  bg="white"
+                  bg="blue.50"
                   borderWidth="1px"
-                  borderColor="gray.100"
+                  borderColor="blue.100"
                   borderRadius="xl"
                   px={4}
                   py={4}
@@ -1404,10 +1373,10 @@ export default function AiChatPage() {
                       gap={3}
                     >
                       <Stack spacing={1}>
-                        <Text fontWeight={600}>{t('Message')}</Text>
+                        <Text fontWeight={700}>{t('Ask IdenaAI-GPT')}</Text>
                         <Text color="muted" fontSize="sm">
                           {t(
-                            'Attach one or more images to discuss them, or attach 2 to 4 flip panels and ask IdenaAI to solve the test flip locally.'
+                            'Type a question, or attach images or FLIP panels and ask for analysis.'
                           )}
                         </Text>
                       </Stack>
@@ -1562,11 +1531,31 @@ export default function AiChatPage() {
                       </Box>
                     )}
 
+                    <Stack spacing={2}>
+                      <Text color="muted" fontSize="xs" fontWeight={600}>
+                        {t('Quick starts')}
+                      </Text>
+                      <HStack spacing={2} flexWrap="wrap">
+                        {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
+                          <Button
+                            key={prompt}
+                            size="sm"
+                            variant="ghost"
+                            colorScheme="blue"
+                            onClick={() => handleQuickPrompt(prompt)}
+                          >
+                            {t(prompt)}
+                          </Button>
+                        ))}
+                      </HStack>
+                    </Stack>
+
                     <Textarea
                       value={draft}
                       onChange={(event) => setDraft(event.target.value)}
                       onKeyDown={handleDraftKeyDown}
-                      minH="120px"
+                      minH="160px"
+                      bg="white"
                       placeholder={t(
                         'Ask Local AI something useful about flips, validation, node logs, or general strategy...'
                       )}

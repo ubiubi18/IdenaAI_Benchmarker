@@ -123,6 +123,30 @@ describe('local-ai sidecar', () => {
     })
   })
 
+  it('treats payload-level not_implemented as a failed local sidecar action', async () => {
+    const httpClient = {
+      post: jest.fn(async () => ({
+        data: {
+          ok: false,
+          status: 'not_implemented',
+          detail: 'train is not implemented in the Local AI stub yet.',
+        },
+      })),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.trainEpoch({
+        baseUrl: 'http://localhost:5000',
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 'not_implemented',
+      endpoint: 'http://localhost:5000/train',
+      lastError: 'train is not implemented in the Local AI stub yet.',
+    })
+  })
+
   it('loads Ollama health from /api/version when runtimeType is ollama', async () => {
     const httpClient = {
       get: jest.fn(async () => ({
