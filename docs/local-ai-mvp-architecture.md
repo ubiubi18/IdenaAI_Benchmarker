@@ -2,12 +2,8 @@
 
 ## Purpose
 
-This private repository, `ubiubi18/IdenaAI`, is now the forward-moving
-development home for the desktop fork and its Local AI extension work.
-
-The public repository, `ubiubi18/IdenaAI_Benchmarker`, remains the
-historical/public reference for now. Future Codex and Deep Research work should
-target the private repo and avoid changing the public repo by mistake.
+This repository is the forward-moving development home for the desktop fork and
+its Local AI extension work.
 
 ## Current MVP Scope
 

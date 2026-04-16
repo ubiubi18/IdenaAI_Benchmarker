@@ -1,6 +1,7 @@
-# ChatGPT Deep Research Integration
+# Research Index Integration
 
-This repository includes a reproducible index so ChatGPT Deep Research can ingest project context with minimal ambiguity.
+This repository includes a reproducible index so research or coding assistants
+can ingest project context with minimal ambiguity.
 
 ## 1. Generate/refresh the index
 
@@ -13,22 +14,17 @@ This writes:
 
 - `docs/deep-research-index.json` (machine-readable master index)
 
-## 2. Current private-repo workflow
+## 2. Current workflow
 
-- Development home: `ubiubi18/IdenaAI`
-- Public reference repo: `ubiubi18/IdenaAI_Benchmarker`
-- Keep `origin` on the private repo
-- Keep `upstream` on the public repo
-- Use `local-ai` for the current private migration track
-- Do not target the public repo for new changes by mistake
+- Keep the repository index fresh before large research or implementation runs.
+- Prefer the machine-readable index over ad hoc file discovery.
+- Treat the listed files as the primary handoff set for external tooling.
 
-## 3. Recommended file set to provide to Deep Research
+## 3. Recommended file set to provide to external research tools
 
 Always include:
 
 - `docs/deep-research-index.json`
-- `docs/private-repo-codex-context.md`
-- `docs/deep-research-private-notes.md`
 - `docs/context-snapshot.md`
 - `docs/fork-plan.md`
 - `docs/worklog.md`
@@ -43,14 +39,13 @@ Optional (for dataset + audits):
 - `scripts/import_flip_challenge.py`
 - `scripts/audit_flip_consensus.py`
 
-## 4. Prompt template for Deep Research
+## 4. Prompt template
 
 Use this starter prompt:
 
 ```text
 Use docs/deep-research-index.json as the source-of-truth index.
-Start with docs/private-repo-codex-context.md and docs/deep-research-private-notes.md.
-Treat the public repo as reference-only and target the private repo for future work.
+Start with docs/context-snapshot.md and docs/worklog.md for recent context.
 Prioritize files listed under sections.docs, sections.ai_backend, and sections.ai_ui.
 When proposing changes, include exact file targets and minimal reversible patches.
 Respect research benchmark constraints, cost/latency tracking, and local test-unit flow.
@@ -62,4 +57,4 @@ Respect research benchmark constraints, cost/latency tracking, and local test-un
 - Record major changes in `docs/worklog.md`.
 - Keep AI provider behavior centralized in `main/ai-providers/bridge.js`.
 - Keep flip-builder UX orchestration centralized in `renderer/pages/flips/new.js`.
-- Keep private-repo workflow notes current if remotes or branch policy change.
+- Keep the index and handoff notes current if repository structure changes.
