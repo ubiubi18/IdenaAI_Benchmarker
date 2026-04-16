@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -23,6 +24,9 @@ from mlx_vlm.utils import generate, load, prepare_inputs
 from prepare_flip_challenge_mlx_vlm import (
     DEFAULT_COMPOSITE_PROMPT_TEMPLATE,
     DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE,
+    PROMPT_FAMILIES,
+    build_candidate_analysis_messages,
+    build_candidate_label_messages,
     build_training_images,
     build_training_messages,
     normalize_image_mode,
@@ -35,9 +39,23 @@ def patch_qwen_tokenizer_vocab() -> None:
 
 
 def normalize_candidate_answer(value: Any) -> Optional[str]:
+    parsed_payload = parse_structured_response_payload(value)
+    if isinstance(parsed_payload, dict) and "answer" in parsed_payload:
+        extracted = normalize_candidate_answer(parsed_payload.get("answer"))
+        if extracted:
+            return extracted
+
     text = str(value or "").strip().lower()
     if not text:
         return None
+
+    answer_match = re.search(
+        r'"answer"\s*:\s*"(a|b|skip|left|right)"',
+        text,
+        flags=re.IGNORECASE,
+    )
+    if answer_match:
+        return answer_match.group(1).lower()
 
     first_token = text.split()[0]
     if first_token in {"a", "option", "candidate"}:
@@ -55,6 +73,53 @@ def normalize_candidate_answer(value: Any) -> Optional[str]:
         return "right"
     if first_token in {"skip", "report", "reported", "inappropriate"}:
         return "skip"
+    return None
+
+
+def normalize_candidate_role(value: Any) -> Optional[str]:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+
+    first_token = text.split()[0]
+    if first_token in {"winner", "win"}:
+        return "winner"
+    if first_token in {"loser", "lose"}:
+        return "loser"
+    if first_token in {"skip", "report", "reported", "inappropriate"}:
+        return "skip"
+    return None
+
+
+def parse_structured_response_payload(value: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(value, dict):
+        return value
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    candidates = [text]
+    if "```" in text:
+        candidates.extend(
+            segment.strip()
+            for segment in text.split("```")
+            if segment.strip().startswith("{")
+        )
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidates.append(text[start : end + 1])
+
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+
     return None
 
 
@@ -147,6 +212,9 @@ def build_generation_inputs(model, processor, example: Dict[str, Any]) -> Dict[s
 
 
 def get_prompt_template_for_example(example: Dict[str, Any]) -> str:
+    prompt_family = str(example.get("prompt_family") or "").strip().lower()
+    if prompt_family in PROMPT_FAMILIES:
+        return PROMPT_FAMILIES[prompt_family]
     image_mode = normalize_image_mode(example.get("training_image_mode", "composite"))
     if image_mode == "native_frames":
         return DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE
@@ -192,6 +260,31 @@ def build_swapped_presentation_example(example: Dict[str, Any]) -> Dict[str, Any
         "messages": messages,
         "first_candidate_key": first_candidate_key,
         "second_candidate_key": "b" if first_candidate_key == "a" else "a",
+    }
+
+
+def build_candidate_analysis_example(
+    example: Dict[str, Any],
+    candidate_label: str,
+    prompt_family: str = "candidate_analysis_native_frames_v1",
+) -> Dict[str, Any]:
+    normalized_label = "a" if str(candidate_label or "").strip().lower() == "a" else "b"
+    prompt_template = PROMPT_FAMILIES[prompt_family]
+    images = (
+        list(example.get("option_a_frame_images") or [])
+        if normalized_label == "a"
+        else list(example.get("option_b_frame_images") or [])
+    )
+    return {
+        **example,
+        "prompt_family": prompt_family,
+        "images": images,
+        "messages": (
+            build_candidate_label_messages(prompt_template, "", len(images))
+            if prompt_family == "candidate_label_native_frames_v1"
+            else build_candidate_analysis_messages(prompt_template, "", len(images))
+        ),
+        "candidate_label": normalized_label,
     }
 
 
@@ -258,6 +351,74 @@ def predict_from_candidate_scores(candidate_scores: Dict[str, Dict[str, Any]]) -
     )[0]
 
 
+def get_candidate_score_value(
+    candidate_scores: Dict[str, Dict[str, Any]],
+    label: str,
+) -> float:
+    return float(candidate_scores.get(label, {}).get("avg_logprob", float("-inf")))
+
+
+def compute_candidate_label_compare_score(
+    candidate_scores: Dict[str, Dict[str, Any]],
+    strategy: str,
+) -> Optional[float]:
+    if not candidate_scores:
+        return None
+
+    winner_score = get_candidate_score_value(candidate_scores, "winner")
+    loser_score = get_candidate_score_value(candidate_scores, "loser")
+    skip_score = get_candidate_score_value(candidate_scores, "skip")
+
+    if strategy == "winner_loser_margin":
+        return round(winner_score - loser_score, 6)
+    if strategy == "loss_aversion":
+        # Empirically, penalizing loser confidence more strongly than we reward
+        # winner confidence generalized better than a plain winner-loser margin on
+        # the candidate-label pilots while keeping A/B slot bias low.
+        return round(((-0.5) * winner_score) + ((-1.0) * loser_score), 6)
+    if strategy == "winner_only":
+        return round(winner_score, 6)
+    if strategy == "loser_only":
+        return round(-loser_score, 6)
+    if strategy == "winner_skip_margin":
+        return round(winner_score - skip_score, 6)
+    raise ValueError(f"Unsupported candidate-label compare strategy: {strategy}")
+
+
+def dedupe_candidate_label_compare_dataset(raw_dataset):
+    selected_indices = []
+    seen = set()
+
+    for index, example in enumerate(raw_dataset):
+        key = (
+            str(example.get("flip_hash") or ""),
+            tuple(example.get("option_a_order") or []),
+            tuple(example.get("option_b_order") or []),
+            str(example.get("expected_answer") or ""),
+            str(example.get("option_a_maps_to") or ""),
+            str(example.get("option_b_maps_to") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        selected_indices.append(index)
+
+    if len(selected_indices) == len(raw_dataset):
+        return raw_dataset, {
+            "applied": False,
+            "inputExamples": len(raw_dataset),
+            "outputExamples": len(raw_dataset),
+            "removedExamples": 0,
+        }
+
+    return raw_dataset.select(selected_indices), {
+        "applied": True,
+        "inputExamples": len(raw_dataset),
+        "outputExamples": len(selected_indices),
+        "removedExamples": len(raw_dataset) - len(selected_indices),
+    }
+
+
 def aggregate_canonical_scores(
     *candidate_score_sets: tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]
 ) -> Dict[str, Dict[str, Any]]:
@@ -291,6 +452,274 @@ def predict_from_canonical_scores(
         canonical_scores.items(),
         key=lambda item: item[1].get("avg_logprob", float("-inf")),
     )[0]
+
+
+def parse_bool_field(raw_response: str, field_name: str) -> Optional[bool]:
+    match = re.search(
+        rf'"{field_name}"\s*:\s*(true|false)',
+        str(raw_response or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return match.group(1).lower() == "true"
+
+
+def parse_int_field(raw_response: str, field_name: str) -> Optional[int]:
+    match = re.search(
+        rf'"{field_name}"\s*:\s*(-?\d+)',
+        str(raw_response or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def extract_candidate_analysis_metrics(value: Any) -> Dict[str, Any]:
+    parsed_payload = parse_structured_response_payload(value)
+    source = parsed_payload if isinstance(parsed_payload, dict) else {}
+    raw_response = str(value or "")
+
+    chronology = source.get("chronology")
+    if not isinstance(chronology, (int, float)):
+        chronology = parse_int_field(raw_response, "chronology")
+
+    entity_consistency = source.get("entityConsistency")
+    if not isinstance(entity_consistency, (int, float)):
+        entity_consistency = parse_int_field(raw_response, "entityConsistency")
+
+    causality = source.get("causality")
+    if not isinstance(causality, (int, float)):
+        causality = parse_int_field(raw_response, "causality")
+
+    text_required = source.get("textRequired")
+    if not isinstance(text_required, bool):
+        text_required = parse_bool_field(raw_response, "textRequired")
+
+    sequence_markers = source.get("sequenceMarkersPresent")
+    if not isinstance(sequence_markers, bool):
+        sequence_markers = parse_bool_field(raw_response, "sequenceMarkersPresent")
+
+    inappropriate = source.get("inappropriateContent")
+    if not isinstance(inappropriate, bool):
+        inappropriate = parse_bool_field(raw_response, "inappropriateContent")
+
+    quality = source.get("quality")
+    quality = str(quality).strip().lower() if isinstance(quality, str) else None
+
+    score = None
+    if all(isinstance(item, (int, float)) for item in [chronology, entity_consistency, causality]):
+        score = int(chronology) + int(entity_consistency) + int(causality)
+
+    report_risk = bool(text_required or sequence_markers or inappropriate)
+
+    return {
+        "parsed": parsed_payload,
+        "story": source.get("story") if isinstance(source.get("story"), str) else None,
+        "chronology": int(chronology) if isinstance(chronology, (int, float)) else None,
+        "entityConsistency": int(entity_consistency)
+        if isinstance(entity_consistency, (int, float))
+        else None,
+        "causality": int(causality) if isinstance(causality, (int, float)) else None,
+        "textRequired": text_required,
+        "sequenceMarkersPresent": sequence_markers,
+        "inappropriateContent": inappropriate,
+        "quality": quality,
+        "score": score,
+        "reportRisk": report_risk,
+    }
+
+
+def evaluate_candidate_compare_example(
+    *,
+    model,
+    processor,
+    example: Dict[str, Any],
+    args,
+    index: int,
+) -> Dict[str, Any]:
+    expected = to_canonical_answer(
+        normalize_candidate_answer(example.get("expected_answer")),
+        example,
+    )
+    analyses = {}
+    for candidate_label in ("a", "b"):
+        candidate_example = build_candidate_analysis_example(example, candidate_label)
+        prepared_inputs = build_generation_inputs(model, processor, candidate_example)
+        raw_response = generate(
+            model,
+            processor,
+            prepared_inputs["prompt"],
+            pixel_values=prepared_inputs["pixel_values"],
+            input_ids=prepared_inputs["input_ids"],
+            mask=prepared_inputs["mask"],
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            verbose=False,
+            **{
+                key: value
+                for key, value in prepared_inputs.items()
+                if key not in {"prompt", "pixel_values", "input_ids", "mask"}
+            },
+        )
+        analyses[candidate_label] = {
+            "rawResponse": raw_response,
+            **extract_candidate_analysis_metrics(raw_response),
+        }
+
+    score_a = analyses["a"]["score"]
+    score_b = analyses["b"]["score"]
+    selected_candidate = None
+    predicted = None
+
+    if analyses["a"]["reportRisk"] or analyses["b"]["reportRisk"]:
+        predicted = "skip"
+    elif score_a is not None and score_b is not None:
+        if abs(score_a - score_b) < args.candidate_compare_margin:
+            predicted = "skip"
+        else:
+            selected_candidate = "a" if score_a > score_b else "b"
+            predicted = to_canonical_answer(selected_candidate, example)
+
+    is_correct = expected is not None and predicted == expected
+    return {
+        "index": index,
+        "flipHash": example.get("flip_hash"),
+        "expected": expected,
+        "predicted": predicted,
+        "generatedPrediction": predicted,
+        "scoredPrediction": None,
+        "generatedCandidate": selected_candidate,
+        "scoredCandidate": None,
+        "selectedCandidate": selected_candidate,
+        "rawResponse": None,
+        "parsedResponse": None,
+        "candidateScores": {},
+        "candidateAnalyses": analyses,
+        "correct": is_correct,
+        "trainingWeight": example.get("training_weight"),
+        "rankingSource": example.get("ranking_source"),
+        "optionAMapsTo": example.get("option_a_maps_to"),
+        "optionBMapsTo": example.get("option_b_maps_to"),
+    }
+
+
+def evaluate_candidate_label_compare_example(
+    *,
+    model,
+    processor,
+    example: Dict[str, Any],
+    args,
+    index: int,
+) -> Dict[str, Any]:
+    expected = to_canonical_answer(
+        normalize_candidate_answer(example.get("expected_answer")),
+        example,
+    )
+    analyses = {}
+    winner_candidates = []
+    loser_candidates = []
+    skip_candidates = []
+
+    for candidate_label in ("a", "b"):
+        candidate_example = build_candidate_analysis_example(
+            example,
+            candidate_label,
+            prompt_family="candidate_label_native_frames_v1",
+        )
+        prepared_inputs = build_generation_inputs(model, processor, candidate_example)
+        role_scores = score_answer_candidates(
+            model,
+            processor,
+            prepared_inputs,
+            ["winner", "loser", "skip"],
+        )
+        raw_response = generate(
+            model,
+            processor,
+            prepared_inputs["prompt"],
+            pixel_values=prepared_inputs["pixel_values"],
+            input_ids=prepared_inputs["input_ids"],
+            mask=prepared_inputs["mask"],
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            verbose=False,
+            **{
+                key: value
+                for key, value in prepared_inputs.items()
+                if key not in {"prompt", "pixel_values", "input_ids", "mask"}
+            },
+        )
+        scored_role = predict_from_candidate_scores(role_scores)
+        role = scored_role or normalize_candidate_role(raw_response)
+        compare_score = compute_candidate_label_compare_score(
+            role_scores,
+            args.candidate_label_compare_strategy,
+        )
+        analyses[candidate_label] = {
+            "rawResponse": raw_response,
+            "roleScores": role_scores,
+            "generatedRole": normalize_candidate_role(raw_response),
+            "role": role,
+            "winnerLoserMargin": round(
+                float(role_scores.get("winner", {}).get("avg_logprob", float("-inf")))
+                - float(role_scores.get("loser", {}).get("avg_logprob", float("-inf"))),
+                6,
+            )
+            if role_scores
+            else None,
+            "compareScore": compare_score,
+        }
+        if role == "winner":
+            winner_candidates.append(candidate_label)
+        elif role == "loser":
+            loser_candidates.append(candidate_label)
+        else:
+            skip_candidates.append(candidate_label)
+
+    selected_candidate = None
+    predicted = "skip"
+    if len(skip_candidates) == 2:
+        selected_candidate = None
+        predicted = "skip"
+    elif len(winner_candidates) == 1:
+        selected_candidate = winner_candidates[0]
+        predicted = to_canonical_answer(selected_candidate, example)
+    elif len(winner_candidates) == 0 and len(loser_candidates) == 1:
+        selected_candidate = "b" if loser_candidates[0] == "a" else "a"
+        predicted = to_canonical_answer(selected_candidate, example)
+    else:
+        compare_score_a = analyses["a"].get("compareScore")
+        compare_score_b = analyses["b"].get("compareScore")
+        if isinstance(compare_score_a, (int, float)) and isinstance(
+            compare_score_b, (int, float)
+        ):
+            if abs(compare_score_a - compare_score_b) >= args.candidate_label_margin:
+                selected_candidate = "a" if compare_score_a > compare_score_b else "b"
+                predicted = to_canonical_answer(selected_candidate, example)
+
+    is_correct = expected is not None and predicted == expected
+    return {
+        "index": index,
+        "flipHash": example.get("flip_hash"),
+        "expected": expected,
+        "predicted": predicted,
+        "generatedPrediction": predicted,
+        "scoredPrediction": None,
+        "generatedCandidate": selected_candidate,
+        "scoredCandidate": None,
+        "selectedCandidate": selected_candidate,
+        "rawResponse": None,
+        "parsedResponse": None,
+        "candidateScores": {},
+        "candidateAnalyses": analyses,
+        "correct": is_correct,
+        "trainingWeight": example.get("training_weight"),
+        "rankingSource": example.get("ranking_source"),
+        "optionAMapsTo": example.get("option_a_maps_to"),
+        "optionBMapsTo": example.get("option_b_maps_to"),
+    }
 
 
 def evaluate_single_example(
@@ -328,6 +757,7 @@ def evaluate_single_example(
         )
 
     generated_candidate = normalize_candidate_answer(response)
+    parsed_response = parse_structured_response_payload(response)
 
     if args.mode in {"score", "both"}:
         answer_labels = (
@@ -371,6 +801,7 @@ def evaluate_single_example(
         "scoredCandidate": scored_candidate,
         "selectedCandidate": selected_candidate,
         "rawResponse": response,
+        "parsedResponse": parsed_response,
         "candidateScores": candidate_scores,
         "correct": is_correct,
         "trainingWeight": example.get("training_weight"),
@@ -399,6 +830,9 @@ def evaluate(args) -> int:
     raw_dataset = load_from_disk(str(dataset_path))
     if args.take:
       raw_dataset = raw_dataset.select(range(min(args.take, len(raw_dataset))))
+    dedupe_summary = None
+    if args.mode == "candidate_label_compare":
+        raw_dataset, dedupe_summary = dedupe_candidate_label_compare_dataset(raw_dataset)
 
     results = []
     confusion = Counter()
@@ -410,19 +844,42 @@ def evaluate(args) -> int:
 
     print(f"Evaluating {len(raw_dataset)} example(s)")
     for index, example in enumerate(raw_dataset, start=1):
-        item = evaluate_single_example(
-            model=model,
-            processor=processor,
-            example=example,
-            args=args,
-            index=index,
+        item = (
+            evaluate_candidate_compare_example(
+                model=model,
+                processor=processor,
+                example=example,
+                args=args,
+                index=index,
+            )
+            if args.mode == "candidate_compare"
+            else evaluate_candidate_label_compare_example(
+                model=model,
+                processor=processor,
+                example=example,
+                args=args,
+                index=index,
+            )
+            if args.mode == "candidate_label_compare"
+            else evaluate_single_example(
+                model=model,
+                processor=processor,
+                example=example,
+                args=args,
+                index=index,
+            )
         )
         expected = item["expected"]
         predicted = item["predicted"]
         selected_candidate = item["selectedCandidate"]
         is_correct = item["correct"]
 
-        if args.swap_consistency and example.get("option_a_maps_to") and example.get("option_b_maps_to"):
+        if (
+            args.mode not in {"candidate_compare", "candidate_label_compare"}
+            and args.swap_consistency
+            and example.get("option_a_maps_to")
+            and example.get("option_b_maps_to")
+        ):
             swapped_item = evaluate_single_example(
                 model=model,
                 processor=processor,
@@ -497,6 +954,18 @@ def evaluate(args) -> int:
         else None,
         "temperature": args.temperature,
         "max_tokens": args.max_tokens,
+        "candidate_compare_margin": args.candidate_compare_margin
+        if args.mode == "candidate_compare"
+        else None,
+        "candidate_label_margin": args.candidate_label_margin
+        if args.mode == "candidate_label_compare"
+        else None,
+        "candidate_label_compare_strategy": args.candidate_label_compare_strategy
+        if args.mode == "candidate_label_compare"
+        else None,
+        "candidate_label_dedup": dedupe_summary
+        if args.mode == "candidate_label_compare"
+        else None,
         "confusion": {
             f"{truth}->{pred}": count for (truth, pred), count in sorted(confusion.items())
         },
@@ -565,12 +1034,43 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--mode",
-        choices=["generate", "score", "both"],
+        choices=[
+            "generate",
+            "score",
+            "both",
+            "candidate_compare",
+            "candidate_label_compare",
+        ],
         default="score",
         help=(
             "Evaluation mode: generate free-form answer, score fixed candidates, "
-            "or do both and prefer scored prediction"
+            "do both and prefer scored prediction, compare separate candidate analyses, "
+            "or compare separate candidate winner/loser classifications"
         ),
+    )
+    parser.add_argument(
+        "--candidate-compare-margin",
+        type=int,
+        default=6,
+        help="minimum score gap required to choose a side in candidate_compare mode",
+    )
+    parser.add_argument(
+        "--candidate-label-margin",
+        type=float,
+        default=0.0,
+        help="minimum compare-score gap required to choose a side in candidate_label_compare mode",
+    )
+    parser.add_argument(
+        "--candidate-label-compare-strategy",
+        choices=[
+            "loss_aversion",
+            "winner_loser_margin",
+            "winner_only",
+            "loser_only",
+            "winner_skip_margin",
+        ],
+        default="loss_aversion",
+        help="how to compare candidate-label role scores when selecting between candidate A and B",
     )
     parser.add_argument(
         "--swap-consistency",

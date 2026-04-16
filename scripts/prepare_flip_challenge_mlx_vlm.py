@@ -101,6 +101,58 @@ DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE = (
     "If neither story tells a coherent story, or the flip should be reported, answer skip.\n"
     "Reply with exactly one lowercase token: a, b, or skip."
 )
+STRUCTURED_COMPARE_NATIVE_FRAMES_PROMPT_TEMPLATE = (
+    "You are solving an Idena FLIP validation challenge. "
+    "You are given eight native frame images in order.\n"
+    "Images 1-4 belong to the first shown candidate: OPTION {first_candidate_label} in temporal order.\n"
+    "Images 5-8 belong to the second shown candidate: OPTION {second_candidate_label} in temporal order.\n"
+    "Important:\n"
+    "- Candidate labels are randomized across examples. OPTION A or OPTION B may be shown first. Do not use label identity or first-vs-second position as a hint.\n"
+    "- Your answer token refers to candidate identity, not position. If OPTION B is better, answer b even when it is shown first.\n"
+    "Required thinking steps:\n"
+    "1) Inspect every frame separately and identify the main actors, action, and visible state.\n"
+    '2) If readable text exists, transcribe it as TEXT:\"...\" and translate it to English if needed.\n'
+    "3) Build one short factual story summary for OPTION A and one for OPTION B.\n"
+    "4) Score both candidates independently using chronology (0-40), entityConsistency (0-30), and causality (0-30).\n"
+    "5) Compare the totals and choose the stronger candidate only if the advantage is clear.\n"
+    "Reportability rules:\n"
+    "- If solving clearly requires reading text, answer skip.\n"
+    "- If visible order labels, letters, numbers, arrows, captions, or sequence markers are drawn on the images, answer skip.\n"
+    "- If inappropriate, NSFW, or graphic violent content is present, answer skip.\n"
+    "Return JSON only with this exact schema:\n"
+    '{{"optionA":{{"story":"...","chronology":0,"entityConsistency":0,"causality":0}},'
+    '"optionB":{{"story":"...","chronology":0,"entityConsistency":0,"causality":0}},'
+    '"textRequired":false,"sequenceMarkersPresent":false,"inappropriateContent":false,'
+    '"answer":"a|b|skip"}}'
+)
+CANDIDATE_ANALYSIS_NATIVE_FRAMES_PROMPT_TEMPLATE = (
+    "You are solving an Idena FLIP validation challenge. "
+    "You are given four native frame images in temporal order for one candidate story.\n"
+    "Required thinking steps:\n"
+    "1) Inspect every frame separately and identify the main actors, action, and visible state.\n"
+    '2) If readable text exists, transcribe it as TEXT:\"...\" and translate it to English if needed.\n'
+    "3) Build one short factual story summary for this candidate only.\n"
+    "4) Score this candidate independently using chronology (0-40), entityConsistency (0-30), and causality (0-30).\n"
+    "5) If the candidate is report-worthy or depends on visible text or sequence markers, mark that explicitly.\n"
+    "Return JSON only with this exact schema:\n"
+    '{{"story":"...","chronology":0,"entityConsistency":0,"causality":0,'
+    '"textRequired":false,"sequenceMarkersPresent":false,"inappropriateContent":false,'
+    '"quality":"strong|weak|invalid"}}'
+)
+CANDIDATE_LABEL_NATIVE_FRAMES_PROMPT_TEMPLATE = (
+    "You are solving an Idena FLIP validation challenge. "
+    "You are given four native frame images in temporal order for one candidate story.\n"
+    "Required thinking steps:\n"
+    "1) Inspect every frame separately and identify the main actors, action, and visible state.\n"
+    '2) If readable text exists, transcribe it as TEXT:\"...\" and translate it to English if needed.\n'
+    "3) Decide whether this candidate is a likely winner, a likely loser, or should be skipped because it is ambiguous or report-worthy.\n"
+    "4) Do not compare label identity, slot position, or anything outside these four frames.\n"
+    "Reportability rules:\n"
+    "- If solving clearly requires reading text, answer skip.\n"
+    "- If visible order labels, letters, numbers, arrows, captions, or sequence markers are drawn on the images, answer skip.\n"
+    "- If inappropriate, NSFW, or graphic violent content is present, answer skip.\n"
+    "Reply with exactly one lowercase token: winner, loser, or skip."
+)
 RUNTIME_ALIGNED_NATIVE_FRAMES_PROMPT_TEMPLATE = (
     "You are solving an Idena FLIP validation challenge. "
     "You are given eight native frame images in order.\n"
@@ -125,6 +177,9 @@ RUNTIME_ALIGNED_NATIVE_FRAMES_PROMPT_TEMPLATE = (
 PROMPT_FAMILIES = {
     "default_composite": DEFAULT_COMPOSITE_PROMPT_TEMPLATE,
     "default_native_frames": DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE,
+    "candidate_analysis_native_frames_v1": CANDIDATE_ANALYSIS_NATIVE_FRAMES_PROMPT_TEMPLATE,
+    "candidate_label_native_frames_v1": CANDIDATE_LABEL_NATIVE_FRAMES_PROMPT_TEMPLATE,
+    "structured_compare_native_frames_v1": STRUCTURED_COMPARE_NATIVE_FRAMES_PROMPT_TEMPLATE,
     "runtime_aligned_native_frames_v2": RUNTIME_ALIGNED_NATIVE_FRAMES_PROMPT_TEMPLATE,
 }
 COMPOSITE_MAX_SIZE = (448, 448)
@@ -227,6 +282,128 @@ def choose_option_a_mapping(task_id: str) -> str:
 def choose_first_presented_candidate(task_id: str) -> str:
     score = sum(ord(character) for character in f"{task_id}:presentation")
     return "a" if score % 2 == 0 else "b"
+
+
+def bounded_score(base: int, task_id: str, salt: str, minimum: int, maximum: int) -> int:
+    score = sum(ord(character) for character in f"{task_id}:{salt}")
+    jitter = (score % 5) - 2
+    return max(minimum, min(maximum, base + jitter))
+
+
+def build_structured_compare_target(
+    *,
+    task_id: str,
+    training_target: str,
+    expected_strength: str,
+) -> str:
+    normalized_target = str(training_target or "").strip().lower()
+    normalized_strength = str(expected_strength or "").strip().lower()
+    is_strong = normalized_strength == "strong"
+
+    stronger_base = {"chronology": 34 if is_strong else 30, "entity": 25 if is_strong else 22, "causality": 24 if is_strong else 20}
+    weaker_base = {"chronology": 16 if is_strong else 18, "entity": 11 if is_strong else 13, "causality": 9 if is_strong else 11}
+    skip_base = {"chronology": 19, "entity": 15, "causality": 13}
+
+    def build_option_payload(option_label: str) -> dict:
+        if normalized_target == "skip":
+            chronology = bounded_score(skip_base["chronology"], task_id, f"{option_label}:chrono:skip", 0, 40)
+            entity = bounded_score(skip_base["entity"], task_id, f"{option_label}:entity:skip", 0, 30)
+            causality = bounded_score(skip_base["causality"], task_id, f"{option_label}:causal:skip", 0, 30)
+            story = "Frames stay ambiguous or report-worthy, so this candidate does not justify a confident story choice."
+        else:
+            is_selected = normalized_target == option_label
+            base = stronger_base if is_selected else weaker_base
+            chronology = bounded_score(base["chronology"], task_id, f"{option_label}:chrono", 0, 40)
+            entity = bounded_score(base["entity"], task_id, f"{option_label}:entity", 0, 30)
+            causality = bounded_score(base["causality"], task_id, f"{option_label}:causal", 0, 30)
+            story = (
+                "Frames form a clearer step-by-step story with more consistent entities and stronger cause/effect links."
+                if is_selected
+                else "Frames feel less coherent, weaker in chronology, or less consistent in the visible cause/effect chain."
+            )
+        return {
+            "story": story,
+            "chronology": chronology,
+            "entityConsistency": entity,
+            "causality": causality,
+        }
+
+    payload = {
+        "optionA": build_option_payload("a"),
+        "optionB": build_option_payload("b"),
+        "textRequired": False,
+        "sequenceMarkersPresent": False,
+        "inappropriateContent": False,
+        "answer": normalized_target if normalized_target in {"a", "b", "skip"} else "skip",
+    }
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+
+def build_candidate_analysis_target(
+    *,
+    task_id: str,
+    candidate_label: str,
+    candidate_role: str,
+    expected_strength: str,
+) -> str:
+    normalized_role = str(candidate_role or "").strip().lower()
+    normalized_strength = str(expected_strength or "").strip().lower()
+    is_strong = normalized_strength == "strong"
+
+    if normalized_role == "winner":
+        base = {
+            "chronology": 34 if is_strong else 30,
+            "entityConsistency": 25 if is_strong else 22,
+            "causality": 24 if is_strong else 20,
+            "quality": "strong",
+        }
+        story = "Frames form a clearer step-by-step story with more consistent entities and stronger visible cause/effect links."
+    elif normalized_role == "loser":
+        base = {
+            "chronology": 16 if is_strong else 18,
+            "entityConsistency": 11 if is_strong else 13,
+            "causality": 9 if is_strong else 11,
+            "quality": "weak",
+        }
+        story = "Frames feel less coherent, weaker in chronology, or less consistent in the visible cause/effect chain."
+    else:
+        base = {
+            "chronology": 19,
+            "entityConsistency": 15,
+            "causality": 13,
+            "quality": "invalid",
+        }
+        story = "Frames stay ambiguous or report-worthy, so this candidate does not justify a confident story judgment."
+
+    payload = {
+        "story": story,
+        "chronology": bounded_score(
+            base["chronology"],
+            task_id,
+            f"{candidate_label}:chrono:candidate",
+            0,
+            40,
+        ),
+        "entityConsistency": bounded_score(
+            base["entityConsistency"],
+            task_id,
+            f"{candidate_label}:entity:candidate",
+            0,
+            30,
+        ),
+        "causality": bounded_score(
+            base["causality"],
+            task_id,
+            f"{candidate_label}:causal:candidate",
+            0,
+            30,
+        ),
+        "textRequired": False,
+        "sequenceMarkersPresent": False,
+        "inappropriateContent": False,
+        "quality": base["quality"],
+    }
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
 
 def load_panel_image(raw: bytes) -> Image.Image:
@@ -333,6 +510,44 @@ def build_training_messages(
             else option_a_order
         ),
     )
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "image"} for _ in range(max(1, image_count))]
+            + [{"type": "text", "text": prompt}],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": training_target}],
+        },
+    ]
+
+
+def build_candidate_analysis_messages(
+    prompt_template: str,
+    training_target: str,
+    image_count: int,
+) -> List[dict]:
+    prompt = prompt_template.format()
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "image"} for _ in range(max(1, image_count))]
+            + [{"type": "text", "text": prompt}],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": training_target}],
+        },
+    ]
+
+
+def build_candidate_label_messages(
+    prompt_template: str,
+    training_target: str,
+    image_count: int,
+) -> List[dict]:
+    prompt = prompt_template.format()
     return [
         {
             "role": "user",
@@ -514,6 +729,90 @@ def build_training_record(
         if expected_answer == option_b_maps_to
         else "skip"
     )
+    if prompt_family in {
+        "candidate_analysis_native_frames_v1",
+        "candidate_label_native_frames_v1",
+    }:
+        candidate_specs = [
+            ("a", option_a_maps_to, option_a_order, option_a_frame_images),
+            ("b", option_b_maps_to, option_b_order, option_b_frame_images),
+        ]
+        candidate_records = []
+        for candidate_label, candidate_maps_to, candidate_order, candidate_images in candidate_specs:
+            candidate_role = (
+                "winner"
+                if expected_answer == candidate_maps_to
+                else "skip"
+                if expected_answer == "skip"
+                else "loser"
+            )
+            assistant_target = (
+                candidate_role
+                if prompt_family == "candidate_label_native_frames_v1"
+                else build_candidate_analysis_target(
+                    task_id=task_id,
+                    candidate_label=candidate_label,
+                    candidate_role=candidate_role,
+                    expected_strength=expected_strength or "",
+                )
+            )
+            message_builder = (
+                build_candidate_label_messages
+                if prompt_family == "candidate_label_native_frames_v1"
+                else build_candidate_analysis_messages
+            )
+            candidate_records.append(
+                {
+                    "schema_version": "idena.flip-training.v1",
+                    "sample_id": f"{task_id}::candidate-{candidate_label}",
+                    "flip_hash": task_id,
+                    "flip_group_id": task_id,
+                    "prompt_variant": "candidate-analysis",
+                    "prompt_family": prompt_family,
+                    "images": list(candidate_images),
+                    "panel_images": saved_images,
+                    "left_frame_images": left_frame_images,
+                    "right_frame_images": right_frame_images,
+                    "training_image_mode": "native_frames",
+                    "messages": message_builder(
+                        prompt_template,
+                        assistant_target,
+                        len(candidate_images),
+                    ),
+                    "training_target": candidate_role,
+                    "assistant_target": assistant_target,
+                    "expected_answer": expected_answer,
+                    "expected_strength": expected_strength or "",
+                    "candidate_label": candidate_label,
+                    "candidate_maps_to": candidate_maps_to,
+                    "candidate_order": candidate_order,
+                    "option_a_maps_to": option_a_maps_to,
+                    "option_b_maps_to": option_b_maps_to,
+                    "option_a_order": option_a_order,
+                    "option_b_order": option_b_order,
+                    "option_a_frame_images": option_a_frame_images,
+                    "option_b_frame_images": option_b_frame_images,
+                    "training_weight": ranking.training_weight,
+                    "ranking_source": ranking.ranking_source,
+                    "source": {
+                        "kind": ranking.source_kind,
+                        "name": ranking.source_name,
+                        "priority": ranking.source_priority,
+                    },
+                    "audit": ranking.to_dict(),
+                }
+            )
+        return candidate_records
+
+    assistant_target = (
+        build_structured_compare_target(
+            task_id=task_id,
+            training_target=training_target,
+            expected_strength=expected_strength or "",
+        )
+        if prompt_family == "structured_compare_native_frames_v1"
+        else training_target
+    )
     canonical_record = {
         "schema_version": "idena.flip-training.v1",
         "sample_id": task_id,
@@ -530,10 +829,11 @@ def build_training_record(
             option_a_order,
             option_b_order,
             first_candidate_key,
-            training_target,
+            assistant_target,
             len(training_images),
         ),
         "training_target": training_target,
+        "assistant_target": assistant_target,
         "expected_answer": expected_answer,
         "expected_strength": expected_strength or "",
         "left_order": left_stack,
@@ -578,6 +878,16 @@ def build_swapped_training_record(record: dict, prompt_template: str) -> dict:
         if expected_answer == option_b_maps_to
         else "skip"
     )
+    prompt_family = str(record.get("prompt_family") or "").strip().lower()
+    assistant_target = (
+        build_structured_compare_target(
+            task_id=record["flip_hash"],
+            training_target=swapped_target,
+            expected_strength=record.get("expected_strength") or "",
+        )
+        if prompt_family == "structured_compare_native_frames_v1"
+        else swapped_target
+    )
     training_image_mode = normalize_image_mode(
         record.get("training_image_mode", "composite")
     )
@@ -606,10 +916,11 @@ def build_swapped_training_record(record: dict, prompt_template: str) -> dict:
             option_a_order,
             option_b_order,
             first_candidate_key,
-            swapped_target,
+            assistant_target,
             len(images),
         ),
         "training_target": swapped_target,
+        "assistant_target": assistant_target,
         "option_a_maps_to": option_a_maps_to,
         "option_b_maps_to": option_b_maps_to,
         "option_a_order": option_a_order,
@@ -682,7 +993,14 @@ def process_parquet_files(
                             prompt_family,
                             image_mode,
                         )
-                        if augment_swap_orders:
+                        if (
+                            augment_swap_orders
+                            and prompt_family
+                            not in {
+                                "candidate_analysis_native_frames_v1",
+                                "candidate_label_native_frames_v1",
+                            }
+                        ):
                             flip_records.extend(
                                 build_swapped_training_record(item, prompt_template)
                                 for item in list(flip_records)
