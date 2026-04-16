@@ -53,6 +53,18 @@ def main() -> int:
     parser.add_argument("--balance-canonical-answers", action="store_true")
     parser.add_argument("--human-annotations-jsonl", help="Normalized human-teacher annotation JSONL")
     parser.add_argument("--human-min-quality-tier", choices=["bronze", "silver", "gold"], default="bronze")
+    parser.add_argument(
+        "--human-annotation-aggregation",
+        choices=["best_single", "deepfunding"],
+        default="best_single",
+        help="Default aggregation mode when only one aggregation should be tested",
+    )
+    parser.add_argument(
+        "--human-annotation-aggregations",
+        nargs="+",
+        choices=["best_single", "deepfunding"],
+        help="Optional list of aggregation modes to compare side by side",
+    )
     parser.add_argument("--human-weight-scale", type=float, default=1.0)
     parser.add_argument(
         "--modes",
@@ -97,8 +109,16 @@ def main() -> int:
         "maxFlips": args.max_flips,
         "promptFamily": args.prompt_family,
         "imageMode": args.image_mode,
+        "humanAnnotationAggregations": [],
         "modes": [],
     }
+
+    aggregation_modes = (
+        list(dict.fromkeys(args.human_annotation_aggregations))
+        if args.human_annotation_aggregations
+        else [args.human_annotation_aggregation]
+    )
+    matrix_summary["humanAnnotationAggregations"] = aggregation_modes
 
     for mode_key in args.modes:
         human_mode = MODE_MAPPING[mode_key]
@@ -107,112 +127,124 @@ def main() -> int:
                 f"Mode {mode_key} requires --human-annotations-jsonl"
             )
 
-        prepared_dir = output_root / "prepared" / mode_key
-        run_dir = output_root / "runs" / mode_key
-        eval_path = output_root / "evals" / f"{mode_key}-{args.eval_output_suffix}"
+        mode_aggregations = ["best_single"] if human_mode == "none" else aggregation_modes
 
-        prepare_command = [
-            sys.executable,
-            str(prepare_script),
-            "--split",
-            args.train_split,
-            "--max-flips",
-            str(args.max_flips),
-            "--skip-flips",
-            str(args.skip_flips),
-            "--output-dir",
-            str(prepared_dir),
-            "--prompt-family",
-            args.prompt_family,
-            "--image-mode",
-            args.image_mode,
-            "--human-annotation-mode",
-            human_mode,
-            "--human-min-quality-tier",
-            args.human_min_quality_tier,
-            "--human-weight-scale",
-            str(args.human_weight_scale),
-        ]
-        if args.augment_swap_orders:
-            prepare_command.append("--augment-swap-orders")
-        if args.balance_canonical_answers:
-            prepare_command.append("--balance-canonical-answers")
-        if human_annotations_path:
-            prepare_command.extend(
-                ["--human-annotations-jsonl", str(human_annotations_path)]
+        for aggregation_mode in mode_aggregations:
+            run_key = (
+                mode_key
+                if human_mode == "none"
+                else f"{mode_key}__{aggregation_mode}"
             )
+            prepared_dir = output_root / "prepared" / run_key
+            run_dir = output_root / "runs" / run_key
+            eval_path = output_root / "evals" / f"{run_key}-{args.eval_output_suffix}"
 
-        run_command(prepare_command)
-
-        train_command = [
-            sys.executable,
-            str(train_script),
-            "--dataset-path",
-            str(prepared_dir / "hf-dataset"),
-            "--model-path",
-            args.model_path,
-            "--output-dir",
-            str(run_dir),
-            "--epochs",
-            str(args.epochs),
-            "--steps",
-            str(args.steps),
-            "--batch-size",
-            str(args.batch_size),
-            "--learning-rate",
-            str(args.learning_rate),
-            "--lora-rank",
-            str(args.lora_rank),
-            "--lora-alpha",
-            str(args.lora_alpha),
-            "--lora-dropout",
-            str(args.lora_dropout),
-            "--sample-weight-column",
-            args.sample_weight_column,
-        ]
-        if args.train_take > 0:
-            train_command.extend(["--take", str(args.train_take)])
-
-        run_command(train_command)
-
-        eval_summary = None
-        if args.eval_dataset_path:
-            eval_command = [
+            prepare_command = [
                 sys.executable,
-                str(evaluate_script),
+                str(prepare_script),
+                "--split",
+                args.train_split,
+                "--max-flips",
+                str(args.max_flips),
+                "--skip-flips",
+                str(args.skip_flips),
+                "--output-dir",
+                str(prepared_dir),
+                "--prompt-family",
+                args.prompt_family,
+                "--image-mode",
+                args.image_mode,
+                "--human-annotation-mode",
+                human_mode,
+                "--human-min-quality-tier",
+                args.human_min_quality_tier,
+                "--human-annotation-aggregation",
+                aggregation_mode,
+                "--human-weight-scale",
+                str(args.human_weight_scale),
+            ]
+            if args.augment_swap_orders:
+                prepare_command.append("--augment-swap-orders")
+            if args.balance_canonical_answers:
+                prepare_command.append("--balance-canonical-answers")
+            if human_annotations_path:
+                prepare_command.extend(
+                    ["--human-annotations-jsonl", str(human_annotations_path)]
+                )
+
+            run_command(prepare_command)
+
+            train_command = [
+                sys.executable,
+                str(train_script),
                 "--dataset-path",
-                str(Path(args.eval_dataset_path).resolve()),
+                str(prepared_dir / "hf-dataset"),
                 "--model-path",
                 args.model_path,
-                "--adapter-path",
-                str(run_dir / "adapters.safetensors"),
-                "--mode",
-                args.eval_mode,
-                "--output",
-                str(eval_path),
+                "--output-dir",
+                str(run_dir),
+                "--epochs",
+                str(args.epochs),
+                "--steps",
+                str(args.steps),
+                "--batch-size",
+                str(args.batch_size),
+                "--learning-rate",
+                str(args.learning_rate),
+                "--lora-rank",
+                str(args.lora_rank),
+                "--lora-alpha",
+                str(args.lora_alpha),
+                "--lora-dropout",
+                str(args.lora_dropout),
+                "--sample-weight-column",
+                args.sample_weight_column,
             ]
-            if args.eval_take > 0:
-                eval_command.extend(["--take", str(args.eval_take)])
-            run_command(eval_command)
-            eval_summary = load_json(eval_path)
+            if args.train_take > 0:
+                train_command.extend(["--take", str(args.train_take)])
 
-        manifest = load_json(prepared_dir / "manifest.json")
-        run_summary = load_json(run_dir / "run-summary.json")
+            run_command(train_command)
 
-        matrix_summary["modes"].append(
-            {
-                "name": mode_key,
-                "humanAnnotationMode": human_mode,
-                "preparedManifest": manifest,
-                "runSummary": run_summary,
-                "evaluation": eval_summary,
-                "paths": {
-                    "preparedDir": str(prepared_dir),
-                    "runDir": str(run_dir),
-                    "evalPath": str(eval_path) if args.eval_dataset_path else None,
+            eval_summary = None
+            if args.eval_dataset_path:
+                eval_command = [
+                    sys.executable,
+                    str(evaluate_script),
+                    "--dataset-path",
+                    str(Path(args.eval_dataset_path).resolve()),
+                    "--model-path",
+                    args.model_path,
+                    "--adapter-path",
+                    str(run_dir / "adapters.safetensors"),
+                    "--mode",
+                    args.eval_mode,
+                    "--output",
+                    str(eval_path),
+                ]
+                if args.eval_take > 0:
+                    eval_command.extend(["--take", str(args.eval_take)])
+                run_command(eval_command)
+                eval_summary = load_json(eval_path)
+
+            manifest = load_json(prepared_dir / "manifest.json")
+            run_summary = load_json(run_dir / "run-summary.json")
+
+            matrix_summary["modes"].append(
+                {
+                    "name": mode_key,
+                    "runKey": run_key,
+                    "humanAnnotationMode": human_mode,
+                    "humanAnnotationAggregation": aggregation_mode,
+                    "preparedManifest": manifest,
+                    "runSummary": run_summary,
+                    "evaluation": eval_summary,
+                    "paths": {
+                        "preparedDir": str(prepared_dir),
+                        "runDir": str(run_dir),
+                        "evalPath": str(eval_path) if args.eval_dataset_path else None,
+                    },
                 },
-            }
-        )
+            )
 
     summary_path = output_root / "matrix-summary.json"
     summary_path.write_text(json.dumps(matrix_summary, indent=2), encoding="utf-8")
