@@ -38,11 +38,19 @@ function normalizeConfidence(value) {
 
   const parsed = Number.parseFloat(value)
 
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+  if (!Number.isFinite(parsed) || parsed < 0) {
     return null
   }
 
-  return parsed
+  if (parsed <= 1) {
+    return Math.min(5, Math.max(1, Math.round(parsed * 4 + 1)))
+  }
+
+  if (parsed > 5) {
+    return null
+  }
+
+  return Math.round(parsed)
 }
 
 function normalizeCaptions(value) {
@@ -55,6 +63,74 @@ function normalizeCaptions(value) {
   }
 
   return captions
+}
+
+function normalizePanelReferenceIndex(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 3) {
+    return null
+  }
+
+  return parsed
+}
+
+function normalizePanelReferenceCoordinate(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null
+  }
+
+  const parsed = Number.parseFloat(value)
+
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return Math.max(0, Math.min(1, parsed))
+}
+
+function normalizePanelReferences(value) {
+  let source = []
+
+  if (Array.isArray(value)) {
+    source = value
+  } else if (value && typeof value === 'object') {
+    source = ['A', 'B', 'C'].map((code) => {
+      const raw =
+        value[code] ||
+        value[code.toLowerCase()] ||
+        value[String(code || '').toUpperCase()] ||
+        {}
+
+      return typeof raw === 'string' ? {code, description: raw} : {code, ...raw}
+    })
+  }
+  const byCode = new Map(
+    source
+      .map((entry, index) => {
+        const code = String(entry?.code || ['A', 'B', 'C'][index] || '')
+          .trim()
+          .toUpperCase()
+
+        return [code, entry]
+      })
+      .filter(([code]) => ['A', 'B', 'C'].includes(code))
+  )
+
+  return ['A', 'B', 'C'].map((code) => {
+    const raw = byCode.get(code) || {}
+    const panelIndex = normalizePanelReferenceIndex(
+      raw.panel_index ?? raw.panelIndex
+    )
+
+    return {
+      code,
+      description: trimText(raw.description, 160),
+      panel_index: panelIndex,
+      x: panelIndex === null ? null : normalizePanelReferenceCoordinate(raw.x),
+      y: panelIndex === null ? null : normalizePanelReferenceCoordinate(raw.y),
+    }
+  })
 }
 
 function validateFinalAnswer(value) {
@@ -95,6 +171,9 @@ function normalizeAnnotation(taskRow, annotationRow) {
     frame_captions: frameCaptions,
     option_a_summary: trimText(annotationRow.option_a_summary),
     option_b_summary: trimText(annotationRow.option_b_summary),
+    panel_references: normalizePanelReferences(
+      annotationRow.panel_references || annotationRow.panelReferences
+    ),
     text_required: normalizeBool(annotationRow.text_required),
     sequence_markers_present: normalizeBool(
       annotationRow.sequence_markers_present

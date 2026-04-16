@@ -33,6 +33,94 @@ import {
 import {useEpochState} from '../../shared/providers/epoch-context'
 
 const HUMAN_TEACHER_SET_LIMIT = 30
+const AUTO_SAVE_DELAY_MS = 2500
+const PANEL_REFERENCE_CODES = ['A', 'B', 'C']
+
+function createEmptyPanelReference(code) {
+  return {
+    code,
+    description: '',
+    panel_index: null,
+    x: null,
+    y: null,
+  }
+}
+
+function normalizePanelReferenceIndex(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 3) {
+    return null
+  }
+
+  return parsed
+}
+
+function normalizePanelReferenceCoordinate(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null
+  }
+
+  const parsed = Number.parseFloat(value)
+
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return Math.max(0, Math.min(1, parsed))
+}
+
+function normalizePanelReferences(value) {
+  let source = []
+
+  if (Array.isArray(value)) {
+    source = value
+  } else if (value && typeof value === 'object') {
+    source = PANEL_REFERENCE_CODES.map((code) => {
+      const raw =
+        value[code] ||
+        value[code.toLowerCase()] ||
+        value[String(code || '').toUpperCase()] ||
+        {}
+
+      return typeof raw === 'string' ? {code, description: raw} : {code, ...raw}
+    })
+  }
+  const byCode = new Map(
+    source
+      .map((entry, index) => {
+        const code = String(entry?.code || PANEL_REFERENCE_CODES[index] || '')
+          .trim()
+          .toUpperCase()
+
+        return [code, entry]
+      })
+      .filter(([code]) => PANEL_REFERENCE_CODES.includes(code))
+  )
+
+  return PANEL_REFERENCE_CODES.map((code) => {
+    const raw = byCode.get(code) || {}
+    const panelIndex = normalizePanelReferenceIndex(
+      raw.panel_index ?? raw.panelIndex
+    )
+
+    return {
+      ...createEmptyPanelReference(code),
+      description: String(raw.description || '')
+        .trim()
+        .slice(0, 160),
+      panel_index: panelIndex,
+      x: panelIndex === null ? null : normalizePanelReferenceCoordinate(raw.x),
+      y: panelIndex === null ? null : normalizePanelReferenceCoordinate(raw.y),
+    }
+  })
+}
+
+function hasPanelReferenceContent(reference = {}) {
+  return Boolean(
+    String(reference.description || '').trim() || reference.panel_index !== null
+  )
+}
 
 function formatErrorMessage(error) {
   const raw = String((error && error.message) || error || '').trim()
@@ -155,6 +243,9 @@ function createEmptyAnnotationDraft() {
     frame_captions: ['', '', '', ''],
     option_a_summary: '',
     option_b_summary: '',
+    panel_references: PANEL_REFERENCE_CODES.map((code) =>
+      createEmptyPanelReference(code)
+    ),
     text_required: null,
     sequence_markers_present: null,
     report_required: null,
@@ -184,6 +275,9 @@ function normalizeAnnotationDraft(annotation = {}) {
     annotator: String(next.annotator || ''),
     option_a_summary: String(next.option_a_summary || ''),
     option_b_summary: String(next.option_b_summary || ''),
+    panel_references: normalizePanelReferences(
+      next.panel_references || next.panelReferences
+    ),
     report_reason: String(next.report_reason || ''),
     final_answer: String(next.final_answer || ''),
     why_answer: String(next.why_answer || ''),
@@ -201,6 +295,9 @@ function hasDraftContent(annotation = {}) {
       next.frame_captions.some((item) => String(item || '').trim()) ||
       next.option_a_summary.trim() ||
       next.option_b_summary.trim() ||
+      next.panel_references.some((reference) =>
+        hasPanelReferenceContent(reference)
+      ) ||
       next.report_reason.trim() ||
       next.final_answer.trim() ||
       next.why_answer.trim() ||
@@ -216,6 +313,7 @@ function isCompleteDraft(annotation = {}) {
   return Boolean(
     next.final_answer.trim() &&
       next.why_answer.trim() &&
+      next.confidence !== '' &&
       (next.report_required !== true || next.report_reason.trim())
   )
 }
@@ -274,6 +372,31 @@ function getDraftHelperText(annotation, t) {
   }
 
   return t('No annotation content yet.')
+}
+
+function buildAnnotationDraftKey({
+  annotationSourceMode = 'epoch',
+  epoch = '',
+  demoSampleName = '',
+  demoOffset = 0,
+  developerOffset = 0,
+  selectedTaskId = '',
+} = {}) {
+  const taskId = String(selectedTaskId || '').trim()
+
+  if (!taskId) {
+    return ''
+  }
+
+  if (annotationSourceMode === 'developer') {
+    return `developer:${demoSampleName}:${developerOffset}:${taskId}`
+  }
+
+  if (annotationSourceMode === 'demo') {
+    return `demo:${demoSampleName}:${demoOffset}:${taskId}`
+  }
+
+  return `epoch:${String(epoch || '').trim()}:${taskId}`
 }
 
 const DEMO_SAMPLE_OPTIONS = [
@@ -460,6 +583,7 @@ export default function AiHumanTeacherPage() {
   }, [router.query?.developer])
   const queryDemoSample = String(router.query?.sample || '').trim()
   const autoStartKeyRef = React.useRef('')
+  const shouldFlushAutosaveRef = React.useRef(false)
 
   const [epoch, setEpoch] = React.useState(queryEpoch || fallbackEpoch)
   const [result, setResult] = React.useState(null)
@@ -491,6 +615,7 @@ export default function AiHumanTeacherPage() {
     React.useState(false)
   const [isRunningDeveloperComparison, setIsRunningDeveloperComparison] =
     React.useState(false)
+  const [showReferenceTool, setShowReferenceTool] = React.useState(false)
   const [showAdvancedFields, setShowAdvancedFields] = React.useState(false)
   const [demoSessionState, setDemoSessionState] = React.useState(null)
   const [demoOffset, setDemoOffset] = React.useState(0)
@@ -500,6 +625,15 @@ export default function AiHumanTeacherPage() {
   const [chunkDecisionDialog, setChunkDecisionDialog] = React.useState({
     isOpen: false,
     mode: '',
+  })
+  const [lastPersistedDraft, setLastPersistedDraft] = React.useState({
+    key: '',
+    snapshot: '',
+  })
+  const [autosaveMeta, setAutosaveMeta] = React.useState({
+    status: 'idle',
+    savedAt: null,
+    error: '',
   })
 
   React.useEffect(() => {
@@ -955,14 +1089,38 @@ export default function AiHumanTeacherPage() {
           })
         }
 
-        setTaskDetail(nextResult.task || null)
-        setAnnotationDraft(
-          normalizeAnnotationDraft(nextResult.task?.annotation || {})
-        )
+        const nextTask = nextResult.task || null
+        const nextDraft = normalizeAnnotationDraft(nextTask?.annotation || {})
+
+        setTaskDetail(nextTask)
+        setAnnotationDraft(nextDraft)
+        setLastPersistedDraft({
+          key: buildAnnotationDraftKey({
+            annotationSourceMode,
+            epoch: nextEpoch,
+            demoSampleName,
+            demoOffset,
+            developerOffset,
+            selectedTaskId: taskId,
+          }),
+          snapshot: JSON.stringify(nextDraft),
+        })
+        setAutosaveMeta({
+          status: 'idle',
+          savedAt: null,
+          error: '',
+        })
         setShowAdvancedFields(false)
+        setShowReferenceTool(false)
       } catch (nextError) {
         setTaskDetail(null)
         setAnnotationDraft(createEmptyAnnotationDraft())
+        setLastPersistedDraft({key: '', snapshot: ''})
+        setAutosaveMeta({
+          status: 'idle',
+          savedAt: null,
+          error: '',
+        })
         setError(formatErrorMessage(nextError))
       } finally {
         setIsTaskLoading(false)
@@ -1036,12 +1194,194 @@ export default function AiHumanTeacherPage() {
     () => getOrderedPanels(taskDetail, taskDetail?.rightOrder || []),
     [taskDetail]
   )
+  const activePanelReferences = React.useMemo(
+    () =>
+      normalizePanelReferences(annotationDraft.panel_references).filter(
+        (reference) => hasPanelReferenceContent(reference)
+      ),
+    [annotationDraft.panel_references]
+  )
+  const panelReferencesByIndex = React.useMemo(() => {
+    const next = new Map()
+
+    normalizePanelReferences(annotationDraft.panel_references).forEach(
+      (reference) => {
+        if (
+          reference.panel_index === null ||
+          reference.x === null ||
+          reference.y === null
+        ) {
+          return
+        }
+
+        const existing = next.get(reference.panel_index) || []
+        existing.push(reference)
+        next.set(reference.panel_index, existing)
+      }
+    )
+
+    return next
+  }, [annotationDraft.panel_references])
+  const activePanelReferenceSummary = React.useMemo(
+    () =>
+      activePanelReferences
+        .map((reference) =>
+          reference.description
+            ? `${reference.code} = ${reference.description}`
+            : reference.code
+        )
+        .join(' · '),
+    [activePanelReferences]
+  )
   const hasDecision = Boolean(annotationDraft.final_answer)
   const hasReason = Boolean(String(annotationDraft.why_answer || '').trim())
+  const showPanelReferenceTool =
+    showReferenceTool || activePanelReferences.length > 0
+  const normalizedDraft = React.useMemo(
+    () => normalizeAnnotationDraft(annotationDraft),
+    [annotationDraft]
+  )
+  const currentDraftSnapshot = React.useMemo(
+    () => JSON.stringify(normalizedDraft),
+    [normalizedDraft]
+  )
+  const currentDraftKey = React.useMemo(
+    () =>
+      buildAnnotationDraftKey({
+        annotationSourceMode,
+        epoch,
+        demoSampleName,
+        demoOffset,
+        developerOffset,
+        selectedTaskId,
+      }),
+    [
+      annotationSourceMode,
+      demoOffset,
+      demoSampleName,
+      developerOffset,
+      epoch,
+      selectedTaskId,
+    ]
+  )
+  const hasCurrentDraftContent = React.useMemo(
+    () => hasDraftContent(annotationDraft),
+    [annotationDraft]
+  )
+  const hasUnsavedDraftChanges = React.useMemo(
+    () =>
+      Boolean(
+        currentDraftKey &&
+          hasCurrentDraftContent &&
+          (lastPersistedDraft.key !== currentDraftKey ||
+            lastPersistedDraft.snapshot !== currentDraftSnapshot)
+      ),
+    [
+      currentDraftKey,
+      currentDraftSnapshot,
+      hasCurrentDraftContent,
+      lastPersistedDraft,
+    ]
+  )
   const completionPreview = React.useMemo(
     () =>
       getWorkspaceCountsAfterSave(workspace, selectedTaskId, annotationDraft),
     [annotationDraft, selectedTaskId, workspace]
+  )
+
+  const updatePanelReference = React.useCallback((code, nextPatch) => {
+    const nextCode = String(code || '')
+      .trim()
+      .toUpperCase()
+
+    if (!PANEL_REFERENCE_CODES.includes(nextCode)) {
+      return
+    }
+
+    setAnnotationDraft((current) => {
+      const currentReferences = normalizePanelReferences(
+        current.panel_references
+      )
+      const patch =
+        typeof nextPatch === 'function'
+          ? nextPatch(
+              currentReferences.find((reference) => reference.code === nextCode)
+            )
+          : nextPatch
+
+      return {
+        ...current,
+        panel_references: normalizePanelReferences(
+          currentReferences.map((reference) =>
+            reference.code === nextCode
+              ? {
+                  ...reference,
+                  ...(patch && typeof patch === 'object' ? patch : {}),
+                }
+              : reference
+          )
+        ),
+      }
+    })
+  }, [])
+
+  const clearPanelReferencePlacement = React.useCallback(
+    (code) => {
+      updatePanelReference(code, {
+        panel_index: null,
+        x: null,
+        y: null,
+      })
+    },
+    [updatePanelReference]
+  )
+
+  const handlePanelReferenceDragStart = React.useCallback((event, code) => {
+    event.dataTransfer.setData('text/plain', String(code || ''))
+    event.dataTransfer.effectAllowed = 'move'
+  }, [])
+
+  const handlePanelReferenceDragOver = React.useCallback(
+    (event) => {
+      if (!showPanelReferenceTool) {
+        return
+      }
+
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+    },
+    [showPanelReferenceTool]
+  )
+
+  const handlePanelReferenceDrop = React.useCallback(
+    (event, panelIndex) => {
+      if (!showPanelReferenceTool) {
+        return
+      }
+
+      event.preventDefault()
+
+      const code = String(event.dataTransfer.getData('text/plain') || '')
+        .trim()
+        .toUpperCase()
+
+      if (!PANEL_REFERENCE_CODES.includes(code)) {
+        return
+      }
+
+      const rect = event.currentTarget.getBoundingClientRect()
+      const width = Math.max(rect.width, 1)
+      const height = Math.max(rect.height, 1)
+      const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / width))
+      const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / height))
+
+      updatePanelReference(code, {
+        panel_index: Number(panelIndex),
+        x,
+        y,
+      })
+    },
+    [showPanelReferenceTool, updatePanelReference]
   )
 
   const saveTaskDraft = React.useCallback(
@@ -1050,16 +1390,27 @@ export default function AiHumanTeacherPage() {
         advance = false,
         quiet = false,
         promptOnChunkComplete = true,
+        autosave = false,
       } = options
       const nextEpoch = String(epoch || '').trim()
 
       if ((!nextEpoch && annotationSourceMode !== 'demo') || !selectedTaskId) {
-        setError(t('Select a flip before saving annotation notes.'))
+        if (!autosave) {
+          setError(t('Select a flip before saving annotation notes.'))
+        }
         return null
       }
 
       setIsSavingTask(true)
-      setError('')
+      if (autosave) {
+        setAutosaveMeta((current) => ({
+          status: 'saving',
+          savedAt: current.savedAt,
+          error: '',
+        }))
+      } else {
+        setError('')
+      }
 
       try {
         let nextResult = null
@@ -1091,6 +1442,15 @@ export default function AiHumanTeacherPage() {
         const nextStatus = String(
           nextResult?.task?.annotationStatus || 'pending'
         )
+        const nextNormalizedDraft = normalizeAnnotationDraft(annotationDraft)
+        const nextDraftKey = buildAnnotationDraftKey({
+          annotationSourceMode,
+          epoch: nextEpoch,
+          demoSampleName,
+          demoOffset,
+          developerOffset,
+          selectedTaskId,
+        })
         const completionState = getWorkspaceCountsAfterSave(
           workspace,
           selectedTaskId,
@@ -1134,6 +1494,15 @@ export default function AiHumanTeacherPage() {
               }
             : current
         )
+        setLastPersistedDraft({
+          key: nextDraftKey,
+          snapshot: JSON.stringify(nextNormalizedDraft),
+        })
+        setAutosaveMeta({
+          status: 'saved',
+          savedAt: new Date().toISOString(),
+          error: '',
+        })
 
         if (!quiet) {
           if (isCompleteDraft(annotationDraft)) {
@@ -1172,7 +1541,17 @@ export default function AiHumanTeacherPage() {
           completionState,
         }
       } catch (nextError) {
-        setError(formatErrorMessage(nextError))
+        const message = formatErrorMessage(nextError)
+
+        if (autosave) {
+          setAutosaveMeta((current) => ({
+            status: 'error',
+            savedAt: current.savedAt,
+            error: message,
+          }))
+        } else {
+          setError(message)
+        }
         return null
       } finally {
         setIsSavingTask(false)
@@ -1195,6 +1574,31 @@ export default function AiHumanTeacherPage() {
       toast,
       workspace,
     ]
+  )
+
+  const navigateToTask = React.useCallback(
+    async (taskId) => {
+      const nextTargetTaskId = String(taskId || '').trim()
+
+      if (!nextTargetTaskId || nextTargetTaskId === selectedTaskId) {
+        return
+      }
+
+      if (hasUnsavedDraftChanges) {
+        const saved = await saveTaskDraft({
+          quiet: true,
+          promptOnChunkComplete: false,
+          autosave: true,
+        })
+
+        if (!saved) {
+          return
+        }
+      }
+
+      setSelectedTaskId(nextTargetTaskId)
+    },
+    [hasUnsavedDraftChanges, saveTaskDraft, selectedTaskId]
   )
 
   const finalizeDeveloperChunk = React.useCallback(
@@ -1653,7 +2057,33 @@ export default function AiHumanTeacherPage() {
     developerRemainingCount > 0 &&
     developerOffset + DEVELOPER_TRAINING_CHUNK_SIZE <
       Number(developerSessionState?.totalAvailableTasks || 0)
-  const savePrimaryLabel = nextTaskId ? t('Save flip draft') : t('Save flip')
+  const savePrimaryLabel = nextTaskId ? t('Save and next flip') : t('Save flip')
+  const saveDraftLabel = t('Save flip draft')
+  const autosaveStatusText = React.useMemo(() => {
+    if (autosaveMeta.status === 'saving') {
+      return t('Saving draft automatically…')
+    }
+
+    if (autosaveMeta.status === 'saved' && autosaveMeta.savedAt) {
+      return t(
+        'Draft autosaved at {{time}}. It will also try to save when you switch flips or leave this page.',
+        {
+          time: formatTimestamp(autosaveMeta.savedAt),
+        }
+      )
+    }
+
+    if (autosaveMeta.status === 'error') {
+      return t(
+        'Automatic draft save failed. Use “Save flip draft” before leaving this page. {{error}}',
+        {
+          error: autosaveMeta.error,
+        }
+      )
+    }
+
+    return t('Drafts autosave while you work and when you switch flips.')
+  }, [autosaveMeta.error, autosaveMeta.savedAt, autosaveMeta.status, t])
   const finishButtonLabel = React.useMemo(() => {
     if (isDeveloperSourceMode) {
       if (nextTaskId) {
@@ -1724,8 +2154,90 @@ export default function AiHumanTeacherPage() {
     } else {
       setTaskDetail(null)
       setAnnotationDraft(createEmptyAnnotationDraft())
+      setLastPersistedDraft({key: '', snapshot: ''})
+      setAutosaveMeta({
+        status: 'idle',
+        savedAt: null,
+        error: '',
+      })
     }
   }, [loadTask, selectedTaskId])
+
+  React.useEffect(() => {
+    shouldFlushAutosaveRef.current =
+      hasUnsavedDraftChanges &&
+      !isSavingTask &&
+      !isTaskLoading &&
+      !isFinalizingDeveloperChunk
+  }, [
+    hasUnsavedDraftChanges,
+    isFinalizingDeveloperChunk,
+    isSavingTask,
+    isTaskLoading,
+  ])
+
+  React.useEffect(() => {
+    if (
+      !hasUnsavedDraftChanges ||
+      isSavingTask ||
+      isTaskLoading ||
+      isFinalizingDeveloperChunk ||
+      chunkDecisionDialog.isOpen
+    ) {
+      return undefined
+    }
+
+    const timerId = window.setTimeout(() => {
+      saveTaskDraft({
+        quiet: true,
+        promptOnChunkComplete: false,
+        autosave: true,
+      }).catch(() => {})
+    }, AUTO_SAVE_DELAY_MS)
+
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [
+    chunkDecisionDialog.isOpen,
+    hasUnsavedDraftChanges,
+    isFinalizingDeveloperChunk,
+    isSavingTask,
+    isTaskLoading,
+    saveTaskDraft,
+  ])
+
+  React.useEffect(() => {
+    const flushAutosave = () => {
+      if (!shouldFlushAutosaveRef.current) {
+        return
+      }
+
+      saveTaskDraft({
+        quiet: true,
+        promptOnChunkComplete: false,
+        autosave: true,
+      }).catch(() => {})
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushAutosave()
+      }
+    }
+
+    window.addEventListener('pagehide', flushAutosave)
+    window.addEventListener('beforeunload', flushAutosave)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    router.events.on('routeChangeStart', flushAutosave)
+
+    return () => {
+      window.removeEventListener('pagehide', flushAutosave)
+      window.removeEventListener('beforeunload', flushAutosave)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      router.events.off('routeChangeStart', flushAutosave)
+    }
+  }, [router.events, saveTaskDraft])
 
   React.useEffect(() => {
     const nextEpoch = String(epoch || '').trim()
@@ -2405,7 +2917,7 @@ export default function AiHumanTeacherPage() {
                                 : 'transparent'
                             }
                             cursor="pointer"
-                            onClick={() => setSelectedTaskId(task.taskId)}
+                            onClick={() => navigateToTask(task.taskId)}
                           >
                             <Text fontSize="sm" fontWeight={600}>
                               {t('Flip')} {taskIds.indexOf(task.taskId) + 1}
@@ -2454,6 +2966,130 @@ export default function AiHumanTeacherPage() {
                               <Text fontSize="sm">{finalFlipHint}</Text>
                             </Alert>
                           ) : null}
+
+                          <Box
+                            borderWidth="1px"
+                            borderColor="gray.100"
+                            borderRadius="lg"
+                            p={3}
+                          >
+                            <Flex
+                              justify="space-between"
+                              align={['stretch', 'center']}
+                              direction={['column', 'row']}
+                              gap={3}
+                            >
+                              <Box>
+                                <Text fontWeight={600}>
+                                  {t('Optional A / B / C references')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t(
+                                    'If you want, drag A, B, or C onto a panel image and describe what each letter means. You can mention the letters or their descriptions in your reasoning.'
+                                  )}
+                                </Text>
+                              </Box>
+                              <SecondaryButton
+                                onClick={() =>
+                                  setShowReferenceTool((current) => !current)
+                                }
+                              >
+                                {showPanelReferenceTool
+                                  ? t('Hide A / B / C references')
+                                  : t('Add A / B / C references')}
+                              </SecondaryButton>
+                            </Flex>
+
+                            {showPanelReferenceTool ? (
+                              <Stack spacing={3} mt={3}>
+                                {normalizePanelReferences(
+                                  annotationDraft.panel_references
+                                ).map((reference) => (
+                                  <Box
+                                    key={reference.code}
+                                    borderWidth="1px"
+                                    borderColor="gray.100"
+                                    borderRadius="md"
+                                    p={3}
+                                  >
+                                    <Stack spacing={2}>
+                                      <Flex
+                                        align={['stretch', 'center']}
+                                        direction={['column', 'row']}
+                                        gap={3}
+                                      >
+                                        <Flex
+                                          align="center"
+                                          justify="center"
+                                          w="40px"
+                                          h="40px"
+                                          borderRadius="full"
+                                          bg="blue.500"
+                                          color="white"
+                                          fontWeight={700}
+                                          fontSize="lg"
+                                          cursor="grab"
+                                          draggable
+                                          onDragStart={(event) =>
+                                            handlePanelReferenceDragStart(
+                                              event,
+                                              reference.code
+                                            )
+                                          }
+                                        >
+                                          {reference.code}
+                                        </Flex>
+                                        <Input
+                                          value={reference.description}
+                                          placeholder={t(
+                                            'What does {{code}} point to?',
+                                            {code: reference.code}
+                                          )}
+                                          onChange={(e) =>
+                                            updatePanelReference(
+                                              reference.code,
+                                              {
+                                                description: e.target.value,
+                                              }
+                                            )
+                                          }
+                                        />
+                                        <SecondaryButton
+                                          isDisabled={
+                                            !hasPanelReferenceContent(reference)
+                                          }
+                                          onClick={() =>
+                                            updatePanelReference(
+                                              reference.code,
+                                              {
+                                                description: '',
+                                                panel_index: null,
+                                                x: null,
+                                                y: null,
+                                              }
+                                            )
+                                          }
+                                        >
+                                          {t('Clear')}
+                                        </SecondaryButton>
+                                      </Flex>
+                                      <Text color="muted" fontSize="xs">
+                                        {reference.panel_index !== null
+                                          ? t(
+                                              '{{code}} is placed on a panel. Drag it again to move it, or click the marker on the image to remove only the placement.',
+                                              {code: reference.code}
+                                            )
+                                          : t(
+                                              'Drag {{code}} onto one of the panel images below if you want to reference a specific object or spot.',
+                                              {code: reference.code}
+                                            )}
+                                      </Text>
+                                    </Stack>
+                                  </Box>
+                                ))}
+                              </Stack>
+                            ) : null}
+                          </Box>
 
                           <SimpleGrid columns={[1, 2]} spacing={4}>
                             {[
@@ -2525,14 +3161,73 @@ export default function AiHumanTeacherPage() {
                                       overflow="hidden"
                                       bg="gray.50"
                                     >
-                                      <Image
-                                        src={panel.dataUrl}
-                                        alt={panel.id}
-                                        objectFit="contain"
-                                        w="full"
-                                        maxH="180px"
-                                        bg="gray.50"
-                                      />
+                                      <Box
+                                        position="relative"
+                                        onDragOver={
+                                          handlePanelReferenceDragOver
+                                        }
+                                        onDrop={(event) =>
+                                          handlePanelReferenceDrop(
+                                            event,
+                                            panel.index
+                                          )
+                                        }
+                                      >
+                                        <Image
+                                          src={panel.dataUrl}
+                                          alt={panel.id}
+                                          objectFit="contain"
+                                          w="full"
+                                          maxH="180px"
+                                          bg="gray.50"
+                                        />
+                                        {(
+                                          panelReferencesByIndex.get(
+                                            Number(panel.index)
+                                          ) || []
+                                        ).map((reference) => (
+                                          <Flex
+                                            key={`${panel.id}-${reference.code}`}
+                                            position="absolute"
+                                            left={`${
+                                              (reference.x ?? 0.5) * 100
+                                            }%`}
+                                            top={`${
+                                              (reference.y ?? 0.5) * 100
+                                            }%`}
+                                            transform="translate(-50%, -50%)"
+                                            align="center"
+                                            justify="center"
+                                            w="32px"
+                                            h="32px"
+                                            borderRadius="full"
+                                            bg="blue.500"
+                                            color="white"
+                                            fontWeight={700}
+                                            fontSize="sm"
+                                            boxShadow="md"
+                                            cursor={
+                                              showPanelReferenceTool
+                                                ? 'pointer'
+                                                : 'default'
+                                            }
+                                            onClick={() =>
+                                              showPanelReferenceTool
+                                                ? clearPanelReferencePlacement(
+                                                    reference.code
+                                                  )
+                                                : null
+                                            }
+                                            title={
+                                              reference.description
+                                                ? `${reference.code}: ${reference.description}`
+                                                : reference.code
+                                            }
+                                          >
+                                            {reference.code}
+                                          </Flex>
+                                        ))}
+                                      </Box>
                                       <Box px={3} py={2} bg="white">
                                         <Text fontSize="xs" color="muted">
                                           {t('Step')} {panelIndex + 1}
@@ -2648,6 +3343,16 @@ export default function AiHumanTeacherPage() {
                                     }))
                                   }
                                 />
+                                {activePanelReferences.length ? (
+                                  <Text color="muted" fontSize="xs" mt={2}>
+                                    {t(
+                                      'Optional references available: {{references}}. You can mention the letters or the descriptions in your reason.',
+                                      {
+                                        references: activePanelReferenceSummary,
+                                      }
+                                    )}
+                                  </Text>
+                                ) : null}
                               </InterviewPrompt>
                             ) : null}
 
@@ -2738,7 +3443,7 @@ export default function AiHumanTeacherPage() {
                             {hasDecision && hasReason ? (
                               <InterviewPrompt
                                 title={t(
-                                  'How confident are you in that judgment? This is optional.'
+                                  'How confident are you in that judgment? Choose one level before saving this flip.'
                                 )}
                               >
                                 <Select
@@ -2750,7 +3455,9 @@ export default function AiHumanTeacherPage() {
                                     }))
                                   }
                                 >
-                                  <option value="">{t('Optional')}</option>
+                                  <option value="">
+                                    {t('Choose confidence')}
+                                  </option>
                                   <option value="1">{t('Low')}</option>
                                   <option value="2">{t('Rather low')}</option>
                                   <option value="3">{t('Medium')}</option>
@@ -2890,7 +3597,11 @@ export default function AiHumanTeacherPage() {
                             <Stack isInline spacing={2} flexWrap="wrap">
                               <PrimaryButton
                                 isLoading={isSavingTask}
-                                onClick={() => saveTaskDraft()}
+                                onClick={() =>
+                                  nextTaskId
+                                    ? saveTaskDraft({advance: true})
+                                    : saveTaskDraft()
+                                }
                               >
                                 {savePrimaryLabel}
                               </PrimaryButton>
@@ -2899,13 +3610,11 @@ export default function AiHumanTeacherPage() {
                                   <SecondaryButton
                                     isDisabled={isSavingTask || !selectedTaskId}
                                     isLoading={isFinalizingDeveloperChunk}
-                                    onClick={() =>
-                                      nextTaskId
-                                        ? saveTaskDraft({advance: true})
-                                        : saveTaskDraft()
-                                    }
+                                    onClick={() => saveTaskDraft()}
                                   >
-                                    {finishButtonLabel}
+                                    {nextTaskId
+                                      ? saveDraftLabel
+                                      : finishButtonLabel}
                                   </SecondaryButton>
                                   <SecondaryButton
                                     isDisabled={
@@ -2924,24 +3633,24 @@ export default function AiHumanTeacherPage() {
                                   }
                                   onClick={() =>
                                     nextTaskId
-                                      ? saveTaskDraft({advance: true})
+                                      ? saveTaskDraft()
                                       : finishAnnotationSet()
                                   }
                                 >
-                                  {finishButtonLabel}
+                                  {nextTaskId
+                                    ? saveDraftLabel
+                                    : finishButtonLabel}
                                 </SecondaryButton>
                               )}
                               <SecondaryButton
                                 isDisabled={!previousTaskId || isTaskLoading}
-                                onClick={() =>
-                                  setSelectedTaskId(previousTaskId)
-                                }
+                                onClick={() => navigateToTask(previousTaskId)}
                               >
                                 {t('Previous flip')}
                               </SecondaryButton>
                               <SecondaryButton
                                 isDisabled={!nextTaskId || isTaskLoading}
-                                onClick={() => setSelectedTaskId(nextTaskId)}
+                                onClick={() => navigateToTask(nextTaskId)}
                               >
                                 {t('Next flip')}
                               </SecondaryButton>
@@ -2959,6 +3668,9 @@ export default function AiHumanTeacherPage() {
                                 {getDraftHelperText(annotationDraft, t)}
                               </Text>
                             </Stack>
+                            <Text color="muted" fontSize="xs">
+                              {autosaveStatusText}
+                            </Text>
                           </Stack>
                         </Stack>
                       ) : (
@@ -3002,19 +3714,21 @@ export default function AiHumanTeacherPage() {
                     <Text>
                       {chunkDecisionDialog.mode === 'demo'
                         ? t(
-                            'This 5-flip demo chunk is complete. Choose whether to simulate training now, load another 5 demo flips, or save and return later.'
+                            'This 5-flip demo chunk is complete. Demo training is paused until you explicitly start it here. Choose whether to simulate training now or keep demo training stopped for now.'
                           )
                         : t(
-                            'This 5-flip training chunk is complete. Choose whether to train your AI now, load another 5 flips, or save and return later.'
+                            'This 5-flip training chunk is complete. Local training is paused until you explicitly start it here. Choose whether to start training now or keep training stopped for now.'
                           )}
                     </Text>
-                    {chunkDecisionDialog.mode === 'demo' ? (
-                      <Text color="muted" fontSize="sm">
-                        {t(
-                          'Demo mode never changes your real model. It only lets you test the full chunk workflow locally.'
-                        )}
-                      </Text>
-                    ) : null}
+                    <Text color="muted" fontSize="sm">
+                      {chunkDecisionDialog.mode === 'demo'
+                        ? t(
+                            'Demo mode never changes your real model. It only lets you test the full chunk workflow locally.'
+                          )
+                        : t(
+                            'If you do not press "Start training now", this chunk stays saved locally and can be trained later.'
+                          )}
+                    </Text>
                   </Stack>
                 </ModalBody>
                 <ModalFooter>
@@ -3024,8 +3738,8 @@ export default function AiHumanTeacherPage() {
                       onClick={() => handleChunkDecisionAction('train')}
                     >
                       {chunkDecisionDialog.mode === 'demo'
-                        ? t('Train demo now')
-                        : t('Train your AI now')}
+                        ? t('Start demo training now')
+                        : t('Start training now')}
                     </PrimaryButton>
                     {(
                       chunkDecisionDialog.mode === 'developer'
@@ -3036,14 +3750,22 @@ export default function AiHumanTeacherPage() {
                         isDisabled={isChunkDecisionBusy}
                         onClick={() => handleChunkDecisionAction('advance')}
                       >
-                        {t('Annotate 5 more flips')}
+                        {chunkDecisionDialog.mode === 'demo'
+                          ? t(
+                              'Keep demo training stopped and annotate 5 more flips'
+                            )
+                          : t(
+                              'Keep training stopped and annotate 5 more flips'
+                            )}
                       </SecondaryButton>
                     ) : null}
                     <SecondaryButton
                       isDisabled={isChunkDecisionBusy}
                       onClick={() => handleChunkDecisionAction('exit')}
                     >
-                      {t('Save and close')}
+                      {chunkDecisionDialog.mode === 'demo'
+                        ? t('Keep demo training stopped and save and close')
+                        : t('Keep training stopped and save and close')}
                     </SecondaryButton>
                   </Stack>
                 </ModalFooter>

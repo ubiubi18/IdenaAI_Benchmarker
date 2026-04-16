@@ -1472,6 +1472,13 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
     frame_captions: ['', '', '', ''],
     option_a_summary: '',
     option_b_summary: '',
+    panel_references: ['A', 'B', 'C'].map((code) => ({
+      code,
+      description: '',
+      panel_index: null,
+      x: null,
+      y: null,
+    })),
     text_required: null,
     sequence_markers_present: null,
     report_required: null,
@@ -1517,11 +1524,19 @@ function normalizeHumanTeacherDraftConfidence(value) {
 
   const parsed = Number.parseFloat(value)
 
-  if (!Number.isFinite(parsed)) {
+  if (!Number.isFinite(parsed) || parsed < 0) {
     return null
   }
 
-  return Math.min(Math.max(parsed, 0), 1)
+  if (parsed <= 1) {
+    return Math.min(5, Math.max(1, Math.round(parsed * 4 + 1)))
+  }
+
+  if (parsed > 5) {
+    return null
+  }
+
+  return Math.round(parsed)
 }
 
 function normalizeHumanTeacherDraftCaptions(value) {
@@ -1532,6 +1547,80 @@ function normalizeHumanTeacherDraftCaptions(value) {
   }
 
   return next.map((item) => normalizeHumanTeacherDraftText(item, 400))
+}
+
+function normalizeHumanTeacherDraftPanelIndex(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 3) {
+    return null
+  }
+
+  return parsed
+}
+
+function normalizeHumanTeacherDraftPanelCoordinate(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null
+  }
+
+  const parsed = Number.parseFloat(value)
+
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return Math.max(0, Math.min(1, parsed))
+}
+
+function normalizeHumanTeacherDraftPanelReferences(value) {
+  let source = []
+
+  if (Array.isArray(value)) {
+    source = value
+  } else if (value && typeof value === 'object') {
+    source = ['A', 'B', 'C'].map((code) => {
+      const raw =
+        value[code] ||
+        value[code.toLowerCase()] ||
+        value[String(code || '').toUpperCase()] ||
+        {}
+
+      return typeof raw === 'string' ? {code, description: raw} : {code, ...raw}
+    })
+  }
+  const byCode = new Map(
+    source
+      .map((entry, index) => {
+        const code = String(entry?.code || ['A', 'B', 'C'][index] || '')
+          .trim()
+          .toUpperCase()
+
+        return [code, entry]
+      })
+      .filter(([code]) => ['A', 'B', 'C'].includes(code))
+  )
+
+  return ['A', 'B', 'C'].map((code) => {
+    const raw = byCode.get(code) || {}
+    const panelIndex = normalizeHumanTeacherDraftPanelIndex(
+      raw.panel_index ?? raw.panelIndex
+    )
+
+    return {
+      code,
+      description: normalizeHumanTeacherDraftText(raw.description, 160),
+      panel_index: panelIndex,
+      x:
+        panelIndex === null
+          ? null
+          : normalizeHumanTeacherDraftPanelCoordinate(raw.x),
+      y:
+        panelIndex === null
+          ? null
+          : normalizeHumanTeacherDraftPanelCoordinate(raw.y),
+    }
+  })
 }
 
 function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
@@ -1555,6 +1644,9 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
     ),
     option_b_summary: normalizeHumanTeacherDraftText(
       source.option_b_summary || source.optionBSummary
+    ),
+    panel_references: normalizeHumanTeacherDraftPanelReferences(
+      source.panel_references || source.panelReferences
     ),
     text_required: normalizeHumanTeacherDraftBool(
       source.text_required || source.textRequired
@@ -1586,6 +1678,9 @@ function hasHumanTeacherAnnotationDraft(annotation = {}) {
       next.frame_captions.some(Boolean) ||
       next.option_a_summary ||
       next.option_b_summary ||
+      next.panel_references.some(
+        (reference) => reference.description || reference.panel_index !== null
+      ) ||
       next.report_reason ||
       next.final_answer ||
       next.why_answer ||
@@ -1602,6 +1697,7 @@ function isHumanTeacherAnnotationComplete(annotation = {}) {
   return Boolean(
     next.final_answer &&
       next.why_answer &&
+      next.confidence !== null &&
       (next.report_required !== true || next.report_reason)
   )
 }

@@ -1246,8 +1246,18 @@ describe('local-ai manager', () => {
         frame_captions: ['a', 'b', 'c', 'd'],
         option_a_summary: 'left story',
         option_b_summary: 'right story',
+        panel_references: [
+          {
+            code: 'A',
+            description: 'car',
+            panel_index: 0,
+            x: 0.25,
+            y: 0.35,
+          },
+        ],
         final_answer: 'left',
         why_answer: 'left is coherent',
+        confidence: 5,
       },
     })
 
@@ -1275,6 +1285,15 @@ describe('local-ai manager', () => {
       task: expect.objectContaining({
         taskId: 'flip-a::human-teacher',
         annotationStatus: 'complete',
+        annotation: expect.objectContaining({
+          panel_references: expect.arrayContaining([
+            expect.objectContaining({
+              code: 'A',
+              description: 'car',
+              panel_index: 0,
+            }),
+          ]),
+        }),
       }),
       workspace: expect.objectContaining({
         annotationsPath: path.join(
@@ -1382,6 +1401,7 @@ describe('local-ai manager', () => {
         option_b_summary: 'option b summary',
         final_answer: 'right',
         why_answer: 'testing the offline annotator path',
+        confidence: 5,
       },
     })
     const reloadedWorkspace = await manager.loadHumanTeacherDemoWorkspace({
@@ -1448,6 +1468,7 @@ describe('local-ai manager', () => {
           final_answer: 'left',
           why_answer: `demo reason for ${task.taskId}`,
           report_required: false,
+          confidence: 5,
         },
       })
     }
@@ -1560,6 +1581,7 @@ describe('local-ai manager', () => {
           final_answer: 'left',
           why_answer: `human reason for ${task.taskId}`,
           report_required: false,
+          confidence: 5,
         },
       })
     }
@@ -1772,6 +1794,7 @@ describe('local-ai manager', () => {
         final_answer: 'left',
         why_answer: 'only one flip is done',
         report_required: false,
+        confidence: 5,
       },
     })
 
@@ -1906,6 +1929,15 @@ describe('local-ai manager', () => {
         frame_captions: ['a', 'b', 'c', 'd'],
         option_a_summary: 'left story',
         option_b_summary: 'right story',
+        panel_references: [
+          {
+            code: 'A',
+            description: 'car',
+            panel_index: 0,
+            x: 0.25,
+            y: 0.35,
+          },
+        ],
         text_required: false,
         sequence_markers_present: false,
         report_required: false,
@@ -1922,6 +1954,14 @@ describe('local-ai manager', () => {
       currentEpoch: 13,
     })
     const taskPackage = await storage.readHumanTeacherPackage(filePath)
+    const normalizedRows = (await fs.readFile(
+      path.join(exportResult.outputDir, 'annotations.normalized.jsonl'),
+      'utf8'
+    ))
+      .trim()
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
 
     expect(importResult).toMatchObject({
       epoch: 12,
@@ -1932,6 +1972,19 @@ describe('local-ai manager', () => {
         invalidAnnotations: 0,
       }),
     })
+    expect(normalizedRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          panel_references: expect.arrayContaining([
+            expect.objectContaining({
+              code: 'A',
+              description: 'car',
+              panel_index: 0,
+            }),
+          ]),
+        }),
+      ])
+    )
     expect(taskPackage).toMatchObject({
       importedAnnotations: expect.objectContaining({
         normalizedRows: 1,
@@ -2019,6 +2072,7 @@ describe('local-ai manager', () => {
         option_b_summary: 'right story',
         final_answer: 'left',
         why_answer: 'left is coherent',
+        confidence: 5,
       })}\n`,
       'utf8'
     )
