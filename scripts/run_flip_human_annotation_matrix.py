@@ -29,6 +29,8 @@ MODE_MAPPING = {
     "followup_reasoning": "followup_reasoning",
     "hybrid": "hybrid",
 }
+SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
+RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 
 
 def run_command(command: List[str]) -> None:
@@ -213,7 +215,15 @@ def main() -> int:
         choices=sorted(MODE_MAPPING.keys()),
         help="Experiment modes to run",
     )
-    parser.add_argument("--model-path", default="mlx-community/Qwen2-VL-2B-Instruct-4bit")
+    parser.add_argument(
+        "--model-path",
+        default=SAFE_FALLBACK_MODEL_PATH,
+        help=(
+            "MLX model repo or local path for training and evaluation. "
+            f"Safe fallback: {SAFE_FALLBACK_MODEL_PATH}. "
+            f"Recommended upgrade on stronger Macs: {RECOMMENDED_MAC_MODEL_PATH}."
+        ),
+    )
     parser.add_argument("--train-take", type=int, default=0, help="Optional cap on training examples after preparation")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--steps", type=int, default=100)
@@ -259,6 +269,7 @@ def main() -> int:
         "epochKey": epoch_key,
         "epochRoot": str(epoch_root),
         "retentionEpochs": args.retention_epochs,
+        "modelPath": args.model_path,
         "trainSplit": args.train_split,
         "maxFlips": args.max_flips,
         "promptFamily": args.prompt_family,
@@ -273,6 +284,19 @@ def main() -> int:
         else [args.human_annotation_aggregation]
     )
     matrix_summary["humanAnnotationAggregations"] = aggregation_modes
+
+    print(
+        json.dumps(
+            {
+                "stage": "matrix_start",
+                "modelPath": args.model_path,
+                "trainSplit": args.train_split,
+                "maxFlips": args.max_flips,
+                "aggregations": aggregation_modes,
+            },
+            indent=2,
+        )
+    )
 
     for mode_key in args.modes:
         human_mode = MODE_MAPPING[mode_key]

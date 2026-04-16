@@ -33,6 +33,10 @@ from prepare_flip_challenge_mlx_vlm import (
 )
 
 
+SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
+RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+
+
 def patch_qwen_tokenizer_vocab() -> None:
     if not hasattr(Qwen2Tokenizer, "vocab"):
         Qwen2Tokenizer.vocab = property(lambda self: self.get_vocab())
@@ -1020,8 +1024,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--model-path",
-        default="mlx-community/Qwen2-VL-2B-Instruct-4bit",
-        help="MLX model repo or local path used as the base model",
+        default=SAFE_FALLBACK_MODEL_PATH,
+        help=(
+            "MLX model repo or local path used as the base model. "
+            f"Safe fallback: {SAFE_FALLBACK_MODEL_PATH}. "
+            f"Recommended upgrade on stronger Macs: {RECOMMENDED_MAC_MODEL_PATH}."
+        ),
     )
     parser.add_argument(
         "--adapter-path",

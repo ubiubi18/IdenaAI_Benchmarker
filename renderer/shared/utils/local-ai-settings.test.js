@@ -3,9 +3,13 @@ const {
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+  FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   buildLocalAiSettings,
+  buildRecommendedLocalAiMacPreset,
   buildLocalAiRuntimePreset,
   getLocalAiEndpointSafety,
   mergeLocalAiSettings,
@@ -132,6 +136,24 @@ describe('local-ai settings schema', () => {
       model: '',
       visionModel: '',
     })
+  })
+
+  it('builds a recommended Mac Ollama preset with qwen2.5vl:7b while keeping the 2B MLX fallback documented', () => {
+    expect(buildRecommendedLocalAiMacPreset()).toMatchObject({
+      runtimeBackend: 'ollama-direct',
+      baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+      endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+      runtimeType: 'ollama',
+      model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
+      visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+    })
+
+    expect(RECOMMENDED_LOCAL_AI_TRAINING_MODEL).toBe(
+      'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
+    )
+    expect(FALLBACK_LOCAL_AI_TRAINING_MODEL).toBe(
+      'mlx-community/Qwen2-VL-2B-Instruct-4bit'
+    )
   })
 
   it('accepts loopback-only Local AI endpoints', () => {

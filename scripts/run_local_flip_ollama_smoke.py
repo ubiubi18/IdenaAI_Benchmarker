@@ -32,6 +32,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_MODEL = "qwen2.5vl:7b"
+FALLBACK_MODEL = "moondream:latest"
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 DEFAULT_TIMEOUT_SECONDS = 120
 DIRECT_DECISION_SCHEMA: Dict[str, Any] = {
@@ -582,6 +583,17 @@ def call_ollama_chat(
             data = json.load(response)
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
+        detail_lower = detail.lower()
+        if (
+            model
+            and "model" in detail_lower
+            and (
+                "not found" in detail_lower
+                or "manifest unknown" in detail_lower
+                or "pull" in detail_lower
+            )
+        ):
+            detail = f"{detail}. Install it locally with: ollama pull {model}"
         raise RuntimeError(f"Ollama HTTP {error.code}: {detail}") from error
 
     latency_ms = int(round((time.time() - start) * 1000))
@@ -940,7 +952,14 @@ def main() -> int:
         default="samples/flips/flip-challenge-test-5-decoded-labeled.json",
         help="decoded FLIP JSON file",
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Ollama model id")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=(
+            "Ollama model id. Recommended on stronger Macs: "
+            f"{DEFAULT_MODEL}. Smaller fallback: {FALLBACK_MODEL}"
+        ),
+    )
     parser.add_argument(
         "--mode",
         choices=[

@@ -16,6 +16,7 @@ const {exportHumanTeacherTasks} = require('./human-teacher-export')
 const {importHumanTeacherAnnotations} = require('./human-teacher-import')
 const {resolveModelReference} = require('./model-reference')
 const {createModernTrainingCollector} = require('./modern-training')
+const {createDeveloperTrainingRunner} = require('./developer-training-runner')
 const {
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
   resolveLocalAiRuntimeAdapter,
@@ -217,6 +218,17 @@ function pickRuntimeInput(payload) {
   }
 
   return payload
+}
+
+function isDeveloperHumanTeacherTrainingRequest(payload) {
+  const input = pickRuntimeInput(payload)
+
+  return Boolean(
+    input &&
+      typeof input === 'object' &&
+      !Array.isArray(input) &&
+      input.developerHumanTeacher === true
+  )
 }
 
 function normalizeEpoch(value) {
@@ -1174,21 +1186,24 @@ function normalizeDeveloperLastTrainingState(value) {
   }
 
   const source = value
+  const status = String(source.status || '').trim() || null
   const offset = Number.parseInt(source.offset, 10)
   const rowCount = Number.parseInt(source.rowCount, 10)
 
   return {
     at: String(source.at || '').trim() || null,
-    status: String(source.status || '').trim() || null,
+    status,
     offset: Number.isFinite(offset)
       ? normalizeDeveloperHumanTeacherOffset(offset)
       : null,
     rowCount: Number.isFinite(rowCount) && rowCount > 0 ? rowCount : 0,
     failureReason:
-      String(
-        source.failureReason ||
-          extractDeveloperTrainingFailureReason(source.result)
-      ).trim() || null,
+      status === 'failed'
+        ? String(
+            source.failureReason ||
+              extractDeveloperTrainingFailureReason(source.result)
+          ).trim() || null
+        : null,
     result:
       source.result &&
       typeof source.result === 'object' &&
@@ -1967,6 +1982,7 @@ function createLocalAiManager({
   getModelReference,
   runtimeController,
   modernTrainingCollector,
+  developerTrainingRunner,
 } = {}) {
   const localAiStorage = storage || createLocalAiStorage()
   const localAiSidecar =
@@ -1983,6 +1999,8 @@ function createLocalAiManager({
       logger,
       storage: localAiStorage,
     })
+  const localAiDeveloperTrainingRunner =
+    developerTrainingRunner || createDeveloperTrainingRunner({logger, isDev})
   const initialRuntime = resolveLocalAiRuntimeAdapter()
   const state = {
     available: true,
@@ -3045,10 +3063,11 @@ function createLocalAiManager({
     await hydrate()
 
     const next = normalizeRuntimePayload(payload, state)
+    const developerHumanTeacher = isDeveloperHumanTeacherTrainingRequest(next)
 
     applyRuntimeState(next)
 
-    const result = await localAiSidecar.trainEpoch({
+    let result = await localAiSidecar.trainEpoch({
       ...next,
       baseUrl: state.baseUrl,
     })
@@ -3058,6 +3077,29 @@ function createLocalAiManager({
       checkedAt: new Date().toISOString(),
       lastError: result.lastError,
     })
+
+    if (
+      developerHumanTeacher &&
+      result &&
+      result.ok !== true &&
+      result.status === 'not_implemented' &&
+      localAiDeveloperTrainingRunner &&
+      typeof localAiDeveloperTrainingRunner.runEpoch === 'function'
+    ) {
+      result = await localAiDeveloperTrainingRunner.runEpoch({
+        ...next,
+        baseUrl: state.baseUrl,
+      })
+
+      updateSidecarState({
+        reachable: state.sidecarReachable,
+        checkedAt: new Date().toISOString(),
+        lastError:
+          result && result.ok === true
+            ? null
+            : extractDeveloperTrainingFailureReason(result),
+      })
+    }
 
     return {
       ...result,

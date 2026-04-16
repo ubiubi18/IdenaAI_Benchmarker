@@ -13,8 +13,15 @@ It is intended to answer:
 ## Current position
 
 Current practical baseline:
-- local training baseline: `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+- local training safe fallback: `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+- local training recommended upgrade on stronger Macs: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
 - local runtime vision baseline: `qwen2.5vl:7b` via Ollama where available
+
+Recommended local Mac preset:
+- Ollama base URL: `http://127.0.0.1:11434`
+- local vision runtime: `qwen2.5vl:7b`
+- local MLX training upgrade: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
+- smaller MLX fallback: `mlx-community/Qwen2-VL-2B-Instruct-4bit`
 
 Known findings so far:
 - older direct A/B runs collapsed to one option slot
@@ -215,6 +222,22 @@ Run these next in order:
 3. best of those two on fixed holdout `50`
 4. same winner on balanced holdout `50`
 5. swap-consistency run on `10`
+
+Recommended command sequence:
+
+```bash
+ollama pull qwen2.5vl:7b
+```
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/run_local_flip_ollama_smoke.py --input samples/flips/flip-challenge-test-20-decoded-labeled.json --model qwen2.5vl:7b --mode native_direct_ab --max-flips 10 --output .tmp/flip-train/smoke-qwen2.5vl-7b.json
+```
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/run_flip_human_annotation_matrix.py --output-root .tmp/flip-train/human-matrix-7b --train-split train --max-flips 30 --prompt-family runtime_aligned_native_frames_v2 --image-mode native_frames --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl --human-annotation-aggregations best_single deepfunding --eval-dataset-path .tmp/flip-train/pilot-val-200/hf-dataset --modes baseline weight_boost followup_reasoning hybrid --model-path mlx-community/Qwen2.5-VL-7B-Instruct-4bit
+```
 
 If `separate_candidate_scoring` becomes available before step 3, insert it
 immediately after step 2.

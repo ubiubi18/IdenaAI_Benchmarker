@@ -599,6 +599,46 @@ describe('local-ai sidecar', () => {
     })
   })
 
+  it('adds an install hint when the requested Ollama model is missing locally', async () => {
+    const httpClient = {
+      post: jest.fn(async () => {
+        const error = new Error(
+          'model "qwen2.5vl:7b" not found, try pulling it first'
+        )
+        error.response = {
+          status: 404,
+          data: {
+            error: {
+              message: 'model "qwen2.5vl:7b" not found, try pulling it first',
+            },
+          },
+        }
+        throw error
+      }),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        visionModel: 'qwen2.5vl:7b',
+        messages: [
+          {
+            role: 'user',
+            content: 'Describe the attached image.',
+            images: ['data:image/png;base64,AAA='],
+          },
+        ],
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      status: 'unavailable',
+      lastError: expect.stringContaining('ollama pull qwen2.5vl:7b'),
+    })
+  })
+
   it('returns a structured parse error for malformed Ollama chat responses', async () => {
     const httpClient = {
       post: jest.fn(async () => ({

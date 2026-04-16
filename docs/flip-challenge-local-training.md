@@ -37,6 +37,40 @@ That means:
 - local training uses a separate stack
 - the scripts in this repo are the recommended path for local experiments
 
+## Recommended local Mac path
+
+For the current human-annotation workflow on a Mac:
+- local annotation / inference recommendation:
+  - Ollama at `http://127.0.0.1:11434`
+  - vision model: `qwen2.5vl:7b`
+- local MLX training recommendation on stronger Macs:
+  - `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
+- safe smaller fallback:
+  - `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+
+Why both exist:
+- `qwen2.5vl:7b` is the stronger local image-grounded runtime path for annotation help and smoke benchmarking
+- `Qwen2.5-VL-7B-Instruct-4bit` is the straightforward MLX training upgrade path on stronger Macs
+- `Qwen2-VL-2B-Instruct-4bit` remains the smaller fallback when 7B is too slow, too hot, or too memory-heavy
+
+Recommended staged order:
+1. pull the Ollama model
+2. run a 10-flip local smoke benchmark
+3. run a small human-annotation matrix
+4. run a 7B pilot train
+5. run held-out evaluation before scaling further
+
+Recommended commands:
+
+```bash
+ollama pull qwen2.5vl:7b
+```
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/run_local_flip_ollama_smoke.py --input samples/flips/flip-challenge-test-20-decoded-labeled.json --model qwen2.5vl:7b --mode native_direct_ab --max-flips 10 --output .tmp/flip-train/smoke-qwen2.5vl-7b.json
+```
+
 ## Recommended staged approach
 
 Do not begin with a full-corpus run. Validate the pipeline first, then scale up in steps.
@@ -129,21 +163,31 @@ The prepared manifest will record:
 
 ## Stage 2: run a first LoRA pilot
 
-Recommended initial base:
+Safe initial base:
 - `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+
+Recommended upgrade base on a stronger Mac:
+- `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
 
 Pilot run:
 
 ```bash
 source .tmp/flip-train-venv/bin/activate
-python scripts/train_flip_challenge_mlx_vlm.py \
-  --dataset-path .tmp/flip-train/pilot-train-500/hf-dataset \
-  --model-path mlx-community/Qwen2-VL-2B-Instruct-4bit \
-  --output-dir .tmp/flip-train/runs/Idena-multimodal-v1-pilot-500 \
-  --epochs 1 \
-  --batch-size 1 \
-  --learning-rate 1e-4 \
-  --lora-rank 10
+python scripts/train_flip_challenge_mlx_vlm.py --dataset-path .tmp/flip-train/pilot-train-500/hf-dataset --model-path mlx-community/Qwen2-VL-2B-Instruct-4bit --output-dir .tmp/flip-train/runs/Idena-multimodal-v1-pilot-500-2b --epochs 1 --batch-size 1 --learning-rate 1e-4 --lora-rank 10
+```
+
+7B pilot run on a stronger Mac:
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/train_flip_challenge_mlx_vlm.py --dataset-path .tmp/flip-train/pilot-train-500/hf-dataset --model-path mlx-community/Qwen2.5-VL-7B-Instruct-4bit --output-dir .tmp/flip-train/runs/Idena-multimodal-v1-pilot-500-7b --epochs 1 --batch-size 1 --learning-rate 1e-4 --lora-rank 10
+```
+
+Held-out evaluation:
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/evaluate_flip_challenge_mlx_vlm.py --dataset-path .tmp/flip-train/pilot-val-200/hf-dataset --model-path mlx-community/Qwen2.5-VL-7B-Instruct-4bit --adapter-path .tmp/flip-train/runs/Idena-multimodal-v1-pilot-500-7b/adapters.safetensors --output .tmp/flip-train/runs/Idena-multimodal-v1-pilot-500-7b/eval.json
 ```
 
 If you prepared a human-assisted dataset, just point `--dataset-path` at that
@@ -178,16 +222,14 @@ matrix runner:
 
 ```bash
 source .tmp/flip-train-venv/bin/activate
-python scripts/run_flip_human_annotation_matrix.py \
-  --output-root .tmp/flip-train/human-matrix \
-  --train-split train \
-  --max-flips 30 \
-  --prompt-family runtime_aligned_native_frames_v2 \
-  --image-mode native_frames \
-  --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl \
-  --human-annotation-aggregations best_single deepfunding \
-  --eval-dataset-path .tmp/flip-train/pilot-val-200/hf-dataset \
-  --modes baseline weight_boost followup_reasoning hybrid
+python scripts/run_flip_human_annotation_matrix.py --output-root .tmp/flip-train/human-matrix --train-split train --max-flips 30 --prompt-family runtime_aligned_native_frames_v2 --image-mode native_frames --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl --human-annotation-aggregations best_single deepfunding --eval-dataset-path .tmp/flip-train/pilot-val-200/hf-dataset --modes baseline weight_boost followup_reasoning hybrid
+```
+
+Same matrix on the 7B MLX base:
+
+```bash
+source .tmp/flip-train-venv/bin/activate
+python scripts/run_flip_human_annotation_matrix.py --output-root .tmp/flip-train/human-matrix-7b --train-split train --max-flips 30 --prompt-family runtime_aligned_native_frames_v2 --image-mode native_frames --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl --human-annotation-aggregations best_single deepfunding --eval-dataset-path .tmp/flip-train/pilot-val-200/hf-dataset --modes baseline weight_boost followup_reasoning hybrid --model-path mlx-community/Qwen2.5-VL-7B-Instruct-4bit
 ```
 
 This runner keeps the current evaluator compatible and simply orchestrates:
@@ -266,7 +308,7 @@ Recommended first experiment:
 
 ## Larger model later, not first
 
-If you later want a stronger branded runtime, you can try a larger MLX base such as:
+If you later want a stronger local training base and your Mac can sustain it, use:
 - `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
 
 Do that only after the smaller pilot path is proven on your system.

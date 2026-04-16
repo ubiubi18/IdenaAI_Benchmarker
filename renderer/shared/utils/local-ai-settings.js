@@ -7,7 +7,12 @@ const LEGACY_LOCAL_AI_BASE_URL = 'http://127.0.0.1:5000'
 const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_LOCAL_AI_SIDECAR_BASE_URL = LEGACY_LOCAL_AI_BASE_URL
 const DEFAULT_LOCAL_AI_OLLAMA_MODEL = 'llama3.1:8b'
-const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'moondream:latest'
+const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen2.5vl:7b'
+const RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen2.5vl:7b'
+const RECOMMENDED_LOCAL_AI_TRAINING_MODEL =
+  'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
+const FALLBACK_LOCAL_AI_TRAINING_MODEL =
+  'mlx-community/Qwen2-VL-2B-Instruct-4bit'
 const LEGACY_LOCAL_AI_PUBLIC_MODEL_ID = 'idena-multimodal-v1'
 const LEGACY_LOCAL_AI_PUBLIC_VISION_ID = 'idena-vision-v1'
 const DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID = 'Idena-text-v1'
@@ -303,6 +308,13 @@ function buildLocalAiRuntimePreset(runtimeBackend = 'ollama-direct') {
   }
 }
 
+function buildRecommendedLocalAiMacPreset() {
+  return {
+    ...buildLocalAiRuntimePreset('ollama-direct'),
+    visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+  }
+}
+
 function isLegacySidecarDefaultConfig(source = {}) {
   const runtimeBackend = trimString(source.runtimeBackend).toLowerCase()
   const runtimeType = trimString(source.runtimeType).toLowerCase()
@@ -428,12 +440,16 @@ module.exports = {
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+  FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
   getLocalAiEndpointSafety,
   resolveLocalAiWireRuntimeType,
   buildLocalAiRuntimePreset,
+  buildRecommendedLocalAiMacPreset,
   buildLocalAiSettings,
   mergeLocalAiSettings,
 }

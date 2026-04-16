@@ -38,7 +38,7 @@ import {
   formatAiProviderLabel,
 } from '../shared/utils/ai-provider-readiness'
 import {
-  buildLocalAiRuntimePreset,
+  buildRecommendedLocalAiMacPreset,
   buildLocalAiSettings,
 } from '../shared/utils/local-ai-settings'
 import {
@@ -940,7 +940,7 @@ export default function AiChatPage() {
   const handleEnableLocalAi = React.useCallback(() => {
     updateLocalAiSettings({
       enabled: true,
-      ...buildLocalAiRuntimePreset('ollama-direct'),
+      ...buildRecommendedLocalAiMacPreset(),
     })
   }, [updateLocalAiSettings])
 
@@ -955,7 +955,7 @@ export default function AiChatPage() {
         ? {enabled: true}
         : {
             enabled: true,
-            ...buildLocalAiRuntimePreset('ollama-direct'),
+            ...buildRecommendedLocalAiMacPreset(),
           }
     const nextLocalAi = buildLocalAiSettings({
       ...localAi,

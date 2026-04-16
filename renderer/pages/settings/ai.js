@@ -45,6 +45,10 @@ import {
   DEFAULT_LOCAL_AI_SETTINGS,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
+  FALLBACK_LOCAL_AI_TRAINING_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+  buildRecommendedLocalAiMacPreset,
   buildLocalAiRuntimePreset,
   buildLocalAiSettings,
   getLocalAiEndpointSafety,
@@ -129,7 +133,7 @@ const CONSULT_PROVIDER_OPTIONS = MAIN_PROVIDER_OPTIONS.filter(
 const LOCAL_AI_RUNTIME_OPTIONS = [
   {
     value: 'ollama-direct',
-    label: 'Local runtime via Ollama (current default)',
+    label: 'Local runtime via Ollama (recommended on Mac)',
   },
   {value: 'sidecar-http', label: 'Legacy HTTP sidecar'},
 ]
@@ -711,13 +715,13 @@ export default function AiSettingsPage() {
   const applyRecommendedLocalAiSetup = useCallback(() => {
     updateLocalAiSettings({
       enabled: true,
-      ...buildLocalAiRuntimePreset('ollama-direct'),
+      ...buildRecommendedLocalAiMacPreset(),
     })
 
     notify(
-      t('Recommended IdenaAI setup applied'),
+      t('Recommended Mac local AI setup applied'),
       t(
-        'The app now brands the local stack as Idena-text-v1 and Idena-multimodal-v1. Ollama remains the local transport underneath, with compatibility overrides available for backend swaps.'
+        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen2.5vl:7b as the default local vision model. MLX local training remains a separate path, with Qwen2.5-VL-7B 4-bit as the recommended upgrade and Qwen2-VL-2B 4-bit kept as the fallback.'
       ),
       'success'
     )
@@ -2740,7 +2744,7 @@ export default function AiSettingsPage() {
               </Select>
               <Text color="muted" fontSize="sm" mt={1}>
                 {t(
-                  'Use the local runtime via Ollama unless you are intentionally running a custom legacy sidecar on another local port.'
+                  'Use Ollama for local Mac inference unless you are intentionally running a custom legacy sidecar on another local port.'
                 )}
               </Text>
             </SettingsFormControl>
@@ -2837,7 +2841,12 @@ export default function AiSettingsPage() {
               <Text color="muted" fontSize="sm" mt={1}>
                 {localAi.runtimeBackend === 'ollama-direct'
                   ? t(
-                      'Recommended local runtime endpoint: http://127.0.0.1:11434. Backend compatibility defaults on this machine are llama3.1:8b for text and moondream:latest for vision until you choose stronger overrides.'
+                      'Recommended local runtime endpoint: http://127.0.0.1:11434. Default local text model: llama3.1:8b. Default local vision model: {{visionModel}}. For local MLX training, {{trainingModel}} is the recommended upgrade path and {{fallbackModel}} remains the smaller fallback.',
+                      {
+                        visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+                        trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+                        fallbackModel: FALLBACK_LOCAL_AI_TRAINING_MODEL,
+                      }
                     )
                   : t(
                       'Use a loopback URL for a custom local sidecar, for example http://127.0.0.1:5000.'
@@ -2852,9 +2861,19 @@ export default function AiSettingsPage() {
 
             <Stack isInline spacing={2}>
               <SecondaryButton onClick={applyRecommendedLocalAiSetup}>
-                {t('Use recommended IdenaAI setup')}
+                {t('Use recommended Mac VLM setup')}
               </SecondaryButton>
             </Stack>
+            <Text color="muted" fontSize="sm">
+              {t(
+                'Default local annotation runtime: Ollama at http://127.0.0.1:11434 with {{visionModel}}. Recommended local MLX training upgrade: {{trainingModel}}. Smaller fallback: {{fallbackModel}}.',
+                {
+                  visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+                  trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+                  fallbackModel: FALLBACK_LOCAL_AI_TRAINING_MODEL,
+                }
+              )}
+            </Text>
 
             <Stack spacing={2} align="flex-start">
               <SecondaryButton
@@ -2912,7 +2931,10 @@ export default function AiSettingsPage() {
                   />
                   <Text color="muted" fontSize="sm" mt={1}>
                     {t(
-                      'Compatibility override for the current image-aware runtime path.'
+                      'Compatibility override for the current image-aware runtime path. On stronger Macs, {{visionModel}} is the recommended Ollama vision model. Install it with: ollama pull {{visionModel}}',
+                      {
+                        visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+                      }
                     )}
                   </Text>
                 </SettingsFormControl>

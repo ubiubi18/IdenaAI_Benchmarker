@@ -13,7 +13,7 @@ const DEFAULT_MODEL = ''
 const DEFAULT_RUNTIME = LOCAL_AI_RUNTIME
 const DEFAULT_RUNTIME_TYPE = 'sidecar'
 const DEFAULT_OLLAMA_ENDPOINT = LOCAL_AI_OLLAMA_DEFAULT_BASE_URL
-const DEFAULT_VISION_MODEL = 'moondream'
+const DEFAULT_VISION_MODEL = 'qwen2.5vl:7b'
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_FLIP_IMAGES = 8
 const MIN_TIMEOUT_MS = 1000
@@ -80,6 +80,35 @@ function createErrorMessage(
   ).trim()
 
   return status ? `${remoteMessage} (HTTP ${status})` : remoteMessage
+}
+
+function looksLikeMissingOllamaModel(message = '') {
+  const text = String(message || '')
+    .trim()
+    .toLowerCase()
+
+  return (
+    text.includes('model') &&
+    (text.includes('not found') ||
+      text.includes('pull') ||
+      text.includes('manifest unknown') ||
+      text.includes('file does not exist'))
+  )
+}
+
+function withOllamaInstallHint(message, model) {
+  const nextMessage = String(message || '').trim()
+  const nextModel = String(model || '').trim()
+
+  if (!nextMessage || !nextModel || !looksLikeMissingOllamaModel(nextMessage)) {
+    return nextMessage
+  }
+
+  if (nextMessage.includes(`ollama pull ${nextModel}`)) {
+    return nextMessage
+  }
+
+  return `${nextMessage}. Install it locally with: ollama pull ${nextModel}`
 }
 
 function normalizeModelList(data) {
@@ -1095,6 +1124,11 @@ function createLocalAiSidecar({
         lastError: null,
       }
     } catch (error) {
+      const lastError = withOllamaInstallHint(
+        createErrorMessage(error, 'Local AI Ollama request failed'),
+        modelValidation.model
+      )
+
       return {
         ok: false,
         status: 'unavailable',
@@ -1106,7 +1140,7 @@ function createLocalAiSidecar({
         endpoint,
         text: null,
         error: 'unavailable',
-        lastError: createErrorMessage(error, 'Local AI Ollama request failed'),
+        lastError,
       }
     }
   }
