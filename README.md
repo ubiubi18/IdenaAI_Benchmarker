@@ -108,6 +108,20 @@ faster pattern matcher. The goal is not only higher benchmark accuracy, but a
 solver that gradually behaves more like a helpful human partner who understands
 why a flip works or fails.
 
+Important consent warning: the intended federated-learning model means that
+people who use the human-teacher annotator are not just creating local notes.
+They are contributing annotation content, explanations, and related learning
+signals to a shared AI training ecosystem. Once those contributions have been
+exported into federated training artifacts, propagated to peers, or merged into
+shared model updates, they should be treated as effectively irreversible and
+not reliably withdrawable later. Anyone using this module must understand that
+data-protection consent is their own responsibility, must only contribute
+material they have the full right to share, and must knowingly approve that
+they are offering those contributions into a shared or co-owned learning pool.
+The user, not the app or the project maintainers, is solely responsible for
+ensuring they have the legal and practical right to submit that content for
+federated use.
+
 ## Current Loose Ends
 
 The main unfinished areas at the time of writing are:

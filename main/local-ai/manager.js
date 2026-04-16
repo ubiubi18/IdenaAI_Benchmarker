@@ -988,6 +988,16 @@ function resolveWorkspaceChildPath(baseDir, relativePath) {
   return resolvedPath
 }
 
+function resolveOptionalConstrainedPath(baseDir, candidatePath, fallbackPath) {
+  const rawCandidate = String(candidatePath || '').trim()
+
+  if (!rawCandidate) {
+    return String(fallbackPath || '').trim()
+  }
+
+  return resolveWorkspaceChildPath(baseDir, rawCandidate)
+}
+
 function getHumanTeacherAnnotationStatus(annotation = {}) {
   const hasDraft = hasHumanTeacherAnnotationDraft(annotation)
 
@@ -2892,15 +2902,33 @@ function createLocalAiManager({
 
     const outputDir = humanTeacherExportDir(localAiStorage, epoch)
     const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
-    const annotationsPath =
-      normalizeFilePath(next.annotationsPath) ||
-      path.join(outputDir, 'annotations.filled.jsonl')
-    const normalizedPath =
-      normalizeFilePath(next.outputJsonlPath) ||
-      humanTeacherNormalizedAnnotationsPath(localAiStorage, epoch)
-    const summaryPath =
-      normalizeFilePath(next.summaryPath) ||
-      humanTeacherImportSummaryPath(localAiStorage, epoch)
+    const defaultAnnotationsPath = path.join(
+      outputDir,
+      'annotations.filled.jsonl'
+    )
+    const defaultNormalizedPath = humanTeacherNormalizedAnnotationsPath(
+      localAiStorage,
+      epoch
+    )
+    const defaultSummaryPath = humanTeacherImportSummaryPath(
+      localAiStorage,
+      epoch
+    )
+    const annotationsPath = resolveOptionalConstrainedPath(
+      outputDir,
+      next.annotationsPath,
+      defaultAnnotationsPath
+    )
+    const normalizedPath = resolveOptionalConstrainedPath(
+      path.dirname(defaultNormalizedPath),
+      next.outputJsonlPath,
+      defaultNormalizedPath
+    )
+    const summaryPath = resolveOptionalConstrainedPath(
+      path.dirname(defaultSummaryPath),
+      next.summaryPath,
+      defaultSummaryPath
+    )
 
     if (!(await localAiStorage.exists(taskManifestPath))) {
       throw new Error(

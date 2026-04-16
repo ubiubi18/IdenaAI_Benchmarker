@@ -1516,6 +1516,103 @@ describe('local-ai manager', () => {
     ).resolves.toBe(true)
   })
 
+  it('rejects human-teacher import paths outside the managed workspace', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+          annotationStatus: 'pending',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const exportResult = await manager.exportHumanTeacherTasks({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+
+    await fs.writeFile(
+      path.join(exportResult.outputDir, 'annotations.filled.jsonl'),
+      `${JSON.stringify({
+        task_id: 'flip-a::human-teacher',
+        annotator: 'tester',
+        frame_captions: ['a', 'b', 'c', 'd'],
+        option_a_summary: 'left story',
+        option_b_summary: 'right story',
+        final_answer: 'left',
+        why_answer: 'left is coherent',
+      })}\n`,
+      'utf8'
+    )
+
+    await expect(
+      manager.importHumanTeacherAnnotations({
+        epoch: 12,
+        currentEpoch: 13,
+        annotationsPath: '/tmp/not-allowed.jsonl',
+      })
+    ).rejects.toThrow('Invalid human-teacher workspace path')
+
+    await expect(
+      manager.importHumanTeacherAnnotations({
+        epoch: 12,
+        currentEpoch: 13,
+        outputJsonlPath: '/tmp/not-allowed-normalized.jsonl',
+      })
+    ).rejects.toThrow('Invalid human-teacher workspace path')
+
+    await expect(
+      manager.importHumanTeacherAnnotations({
+        epoch: 12,
+        currentEpoch: 13,
+        summaryPath: '/tmp/not-allowed-summary.json',
+      })
+    ).rejects.toThrow('Invalid human-teacher workspace path')
+  })
+
   it('refreshes Local AI sidecar health and model status without requiring cloud providers', async () => {
     const manager = createLocalAiManager({
       logger: mockLogger(),
