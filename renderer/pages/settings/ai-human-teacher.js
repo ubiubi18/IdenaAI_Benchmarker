@@ -195,12 +195,22 @@ function hasDraftContent(annotation = {}) {
 function isCompleteDraft(annotation = {}) {
   const next = normalizeAnnotationDraft(annotation)
   return Boolean(
-    next.frame_captions.every((item) => String(item || '').trim()) &&
-      next.option_a_summary.trim() &&
-      next.option_b_summary.trim() &&
-      next.final_answer.trim() &&
-      next.why_answer.trim()
+    next.final_answer.trim() &&
+      next.why_answer.trim() &&
+      (next.report_required !== true || next.report_reason.trim())
   )
+}
+
+function getOrderedPanels(task = {}, order = []) {
+  const safeTask = task && typeof task === 'object' ? task : {}
+  const panels = Array.isArray(safeTask.panels) ? safeTask.panels : []
+  const panelsByIndex = new Map(
+    panels
+      .map((panel) => [Number(panel.index), panel])
+      .filter(([index]) => Number.isFinite(index))
+  )
+
+  return order.map((index) => panelsByIndex.get(Number(index))).filter(Boolean)
 }
 
 function getDraftStatusLabel(annotation, t) {
@@ -267,6 +277,28 @@ function formatOrder(order = []) {
     : 'n/a'
 }
 
+function InterviewPrompt({title, children}) {
+  return (
+    <Box borderWidth="1px" borderColor="gray.100" borderRadius="xl" p={4}>
+      <Box
+        bg="blue.50"
+        borderWidth="1px"
+        borderColor="blue.100"
+        borderRadius="lg"
+        px={3}
+        py={2}
+        mb={3}
+      >
+        <Text fontSize="sm" fontWeight={600} color="blue.500">
+          IdenaAI
+        </Text>
+        <Text mt={1}>{title}</Text>
+      </Box>
+      <Box>{children}</Box>
+    </Box>
+  )
+}
+
 export default function AiHumanTeacherPage() {
   const {t} = useTranslation()
   const router = useRouter()
@@ -311,6 +343,7 @@ export default function AiHumanTeacherPage() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = React.useState(false)
   const [isTaskLoading, setIsTaskLoading] = React.useState(false)
   const [isSavingTask, setIsSavingTask] = React.useState(false)
+  const [showAdvancedFields, setShowAdvancedFields] = React.useState(false)
 
   React.useEffect(() => {
     if (queryEpoch) {
@@ -632,6 +665,7 @@ export default function AiHumanTeacherPage() {
         setAnnotationDraft(
           normalizeAnnotationDraft(nextResult.task?.annotation || {})
         )
+        setShowAdvancedFields(false)
       } catch (nextError) {
         setTaskDetail(null)
         setAnnotationDraft(createEmptyAnnotationDraft())
@@ -674,6 +708,17 @@ export default function AiHumanTeacherPage() {
 
     return taskIds[selectedTaskIndex + 1] || ''
   }, [selectedTaskIndex, taskIds, workspace])
+
+  const leftPanels = React.useMemo(
+    () => getOrderedPanels(taskDetail, taskDetail?.leftOrder || []),
+    [taskDetail]
+  )
+  const rightPanels = React.useMemo(
+    () => getOrderedPanels(taskDetail, taskDetail?.rightOrder || []),
+    [taskDetail]
+  )
+  const hasDecision = Boolean(annotationDraft.final_answer)
+  const hasReason = Boolean(String(annotationDraft.why_answer || '').trim())
 
   const saveTaskDraft = React.useCallback(
     async (options = {}) => {
@@ -1196,210 +1241,443 @@ export default function AiHumanTeacherPage() {
                             <Text fontWeight={600}>
                               {taskDetail.flipHash || taskDetail.taskId}
                             </Text>
-                            <Text color="muted" fontSize="sm">
-                              {t('LEFT order')}:{' '}
-                              {formatOrder(taskDetail.leftOrder)}
-                            </Text>
-                            <Text color="muted" fontSize="sm">
-                              {t('RIGHT order')}:{' '}
-                              {formatOrder(taskDetail.rightOrder)}
+                            <Text color="muted" fontSize="sm" mt={1}>
+                              {t(
+                                'Review it like a normal flip test: choose the better story first, then add a short human explanation.'
+                              )}
                             </Text>
                           </Box>
 
-                          <SimpleGrid columns={[1, 2]} spacing={3}>
-                            {(taskDetail.panels || []).map((panel) => (
+                          <SimpleGrid columns={[1, 2]} spacing={4}>
+                            {[
+                              {
+                                key: 'left',
+                                label: t('LEFT story'),
+                                order: taskDetail.leftOrder,
+                                panels: leftPanels,
+                              },
+                              {
+                                key: 'right',
+                                label: t('RIGHT story'),
+                                order: taskDetail.rightOrder,
+                                panels: rightPanels,
+                              },
+                            ].map((story) => (
                               <Box
-                                key={panel.id}
+                                key={story.key}
                                 borderWidth="1px"
-                                borderColor="gray.100"
-                                borderRadius="md"
-                                overflow="hidden"
+                                borderColor={
+                                  annotationDraft.final_answer === story.key
+                                    ? 'blue.500'
+                                    : 'gray.200'
+                                }
+                                borderRadius="xl"
+                                p={3}
+                                bg={
+                                  annotationDraft.final_answer === story.key
+                                    ? 'rgba(87,143,255,0.06)'
+                                    : 'white'
+                                }
+                                cursor="pointer"
+                                onClick={() =>
+                                  setAnnotationDraft((current) => ({
+                                    ...current,
+                                    final_answer: story.key,
+                                  }))
+                                }
                               >
-                                <Image
-                                  src={panel.dataUrl}
-                                  alt={panel.id}
-                                  objectFit="contain"
-                                  w="full"
-                                  bg="gray.50"
-                                />
-                                <Box px={2} py={1}>
-                                  <Text fontSize="xs" color="muted">
-                                    {t('Panel')} {panel.index + 1}
+                                <Flex justify="space-between" align="center">
+                                  <Box>
+                                    <Text fontWeight={700}>{story.label}</Text>
+                                    <Text color="muted" fontSize="xs">
+                                      {t('Order')}: {formatOrder(story.order)}
+                                    </Text>
+                                  </Box>
+                                  <Text
+                                    color={
+                                      annotationDraft.final_answer === story.key
+                                        ? 'blue.500'
+                                        : 'muted'
+                                    }
+                                    fontSize="xs"
+                                    fontWeight={600}
+                                  >
+                                    {annotationDraft.final_answer === story.key
+                                      ? t('Selected')
+                                      : t('Tap to choose')}
                                   </Text>
-                                </Box>
+                                </Flex>
+
+                                <Stack spacing={3} mt={3}>
+                                  {story.panels.map((panel, panelIndex) => (
+                                    <Box
+                                      key={panel.id}
+                                      borderWidth="1px"
+                                      borderColor="gray.100"
+                                      borderRadius="lg"
+                                      overflow="hidden"
+                                      bg="gray.50"
+                                    >
+                                      <Image
+                                        src={panel.dataUrl}
+                                        alt={panel.id}
+                                        objectFit="contain"
+                                        w="full"
+                                        maxH="180px"
+                                        bg="gray.50"
+                                      />
+                                      <Box px={3} py={2} bg="white">
+                                        <Text fontSize="xs" color="muted">
+                                          {t('Step')} {panelIndex + 1}
+                                        </Text>
+                                      </Box>
+                                    </Box>
+                                  ))}
+                                </Stack>
                               </Box>
                             ))}
                           </SimpleGrid>
 
                           <Stack spacing={3}>
-                            <Box>
-                              <FormLabel>{t('Annotator')}</FormLabel>
-                              <Input
-                                value={annotationDraft.annotator}
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    annotator: e.target.value,
-                                  }))
-                                }
-                              />
-                            </Box>
+                            <InterviewPrompt
+                              title={t(
+                                'Which side feels more correct to you as a human looking at this flip?'
+                              )}
+                            >
+                              <Stack
+                                direction={['column', 'row']}
+                                spacing={2}
+                                flexWrap="wrap"
+                              >
+                                {annotationDraft.final_answer === 'left' ? (
+                                  <PrimaryButton
+                                    onClick={() =>
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        final_answer: 'left',
+                                      }))
+                                    }
+                                  >
+                                    {t('LEFT chosen')}
+                                  </PrimaryButton>
+                                ) : (
+                                  <SecondaryButton
+                                    onClick={() =>
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        final_answer: 'left',
+                                      }))
+                                    }
+                                  >
+                                    {t('Choose LEFT')}
+                                  </SecondaryButton>
+                                )}
 
-                            {annotationDraft.frame_captions.map(
-                              (caption, index) => (
-                                <Box key={`caption-${index}`}>
-                                  <FormLabel>
-                                    {t('Frame caption')} {index + 1}
-                                  </FormLabel>
-                                  <Input
-                                    value={caption}
+                                {annotationDraft.final_answer === 'right' ? (
+                                  <PrimaryButton
+                                    onClick={() =>
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        final_answer: 'right',
+                                      }))
+                                    }
+                                  >
+                                    {t('RIGHT chosen')}
+                                  </PrimaryButton>
+                                ) : (
+                                  <SecondaryButton
+                                    onClick={() =>
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        final_answer: 'right',
+                                      }))
+                                    }
+                                  >
+                                    {t('Choose RIGHT')}
+                                  </SecondaryButton>
+                                )}
+
+                                {annotationDraft.final_answer === 'skip' ? (
+                                  <PrimaryButton
+                                    onClick={() =>
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        final_answer: 'skip',
+                                      }))
+                                    }
+                                  >
+                                    {t('Skip chosen')}
+                                  </PrimaryButton>
+                                ) : (
+                                  <SecondaryButton
+                                    onClick={() =>
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        final_answer: 'skip',
+                                      }))
+                                    }
+                                  >
+                                    {t('Skip this flip')}
+                                  </SecondaryButton>
+                                )}
+                              </Stack>
+                            </InterviewPrompt>
+
+                            {hasDecision ? (
+                              <InterviewPrompt
+                                title={t(
+                                  'Why would a normal human choose that answer? Keep it short and concrete.'
+                                )}
+                              >
+                                <Textarea
+                                  placeholder={t(
+                                    'For example: the LEFT story has a clear sequence, while the RIGHT side mixes unrelated scenes.'
+                                  )}
+                                  value={annotationDraft.why_answer}
+                                  onChange={(e) =>
+                                    setAnnotationDraft((current) => ({
+                                      ...current,
+                                      why_answer: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </InterviewPrompt>
+                            ) : null}
+
+                            {hasDecision && hasReason ? (
+                              <InterviewPrompt
+                                title={t(
+                                  'Did you need readable text or explicit sequence markers to judge this flip?'
+                                )}
+                              >
+                                <Stack spacing={2}>
+                                  <Checkbox
+                                    isChecked={
+                                      annotationDraft.text_required === true
+                                    }
                                     onChange={(e) =>
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        frame_captions:
-                                          current.frame_captions.map(
-                                            (item, itemIndex) =>
-                                              itemIndex === index
-                                                ? e.target.value
-                                                : item
-                                          ),
+                                        text_required: e.target.checked
+                                          ? true
+                                          : null,
                                       }))
                                     }
-                                  />
+                                  >
+                                    {t('Readable text was required')}
+                                  </Checkbox>
+                                  <Checkbox
+                                    isChecked={
+                                      annotationDraft.sequence_markers_present ===
+                                      true
+                                    }
+                                    onChange={(e) =>
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        sequence_markers_present: e.target
+                                          .checked
+                                          ? true
+                                          : null,
+                                      }))
+                                    }
+                                  >
+                                    {t('Sequence markers were present')}
+                                  </Checkbox>
+                                </Stack>
+                              </InterviewPrompt>
+                            ) : null}
+
+                            {hasDecision && hasReason ? (
+                              <InterviewPrompt
+                                title={t(
+                                  'Does this flip need a report because it breaks the rules or depends on disallowed cues?'
+                                )}
+                              >
+                                <Stack spacing={3}>
+                                  <Checkbox
+                                    isChecked={
+                                      annotationDraft.report_required === true
+                                    }
+                                    onChange={(e) =>
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        report_required: e.target.checked
+                                          ? true
+                                          : null,
+                                      }))
+                                    }
+                                  >
+                                    {t('Yes, this should be reported')}
+                                  </Checkbox>
+
+                                  {annotationDraft.report_required === true ? (
+                                    <Textarea
+                                      placeholder={t(
+                                        'Short reason for why this should be reported.'
+                                      )}
+                                      value={annotationDraft.report_reason}
+                                      onChange={(e) =>
+                                        setAnnotationDraft((current) => ({
+                                          ...current,
+                                          report_reason: e.target.value,
+                                        }))
+                                      }
+                                    />
+                                  ) : null}
+                                </Stack>
+                              </InterviewPrompt>
+                            ) : null}
+
+                            {hasDecision && hasReason ? (
+                              <InterviewPrompt
+                                title={t(
+                                  'How confident are you in that judgment? This is optional.'
+                                )}
+                              >
+                                <Select
+                                  value={annotationDraft.confidence}
+                                  onChange={(e) =>
+                                    setAnnotationDraft((current) => ({
+                                      ...current,
+                                      confidence: e.target.value,
+                                    }))
+                                  }
+                                >
+                                  <option value="">{t('Optional')}</option>
+                                  <option value="1">{t('Low')}</option>
+                                  <option value="2">{t('Rather low')}</option>
+                                  <option value="3">{t('Medium')}</option>
+                                  <option value="4">{t('High')}</option>
+                                  <option value="5">{t('Very high')}</option>
+                                </Select>
+                              </InterviewPrompt>
+                            ) : null}
+
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.100"
+                              borderRadius="lg"
+                              p={3}
+                            >
+                              <Flex
+                                justify="space-between"
+                                align="center"
+                                gap={3}
+                              >
+                                <Box>
+                                  <Text fontWeight={600}>
+                                    {t('Optional detail')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t(
+                                      'Open this only when you want to teach extra captions or side summaries.'
+                                    )}
+                                  </Text>
                                 </Box>
-                              )
-                            )}
+                                <SecondaryButton
+                                  onClick={() =>
+                                    setShowAdvancedFields((current) => !current)
+                                  }
+                                >
+                                  {showAdvancedFields
+                                    ? t('Hide detail')
+                                    : t('Add detail')}
+                                </SecondaryButton>
+                              </Flex>
 
-                            <Box>
-                              <FormLabel>{t('OPTION A summary')}</FormLabel>
-                              <Textarea
-                                value={annotationDraft.option_a_summary}
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    option_a_summary: e.target.value,
-                                  }))
-                                }
-                              />
-                            </Box>
+                              {showAdvancedFields ? (
+                                <Stack spacing={3} mt={3}>
+                                  <InterviewPrompt
+                                    title={t(
+                                      'If you want, add a short note for each panel.'
+                                    )}
+                                  >
+                                    <Stack spacing={3}>
+                                      {annotationDraft.frame_captions.map(
+                                        (caption, index) => (
+                                          <Box key={`caption-${index}`}>
+                                            <FormLabel>
+                                              {t('Frame note')} {index + 1}
+                                            </FormLabel>
+                                            <Input
+                                              value={caption}
+                                              onChange={(e) =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    frame_captions:
+                                                      current.frame_captions.map(
+                                                        (item, itemIndex) =>
+                                                          itemIndex === index
+                                                            ? e.target.value
+                                                            : item
+                                                      ),
+                                                  })
+                                                )
+                                              }
+                                            />
+                                          </Box>
+                                        )
+                                      )}
+                                    </Stack>
+                                  </InterviewPrompt>
 
-                            <Box>
-                              <FormLabel>{t('OPTION B summary')}</FormLabel>
-                              <Textarea
-                                value={annotationDraft.option_b_summary}
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    option_b_summary: e.target.value,
-                                  }))
-                                }
-                              />
-                            </Box>
+                                  <InterviewPrompt
+                                    title={t(
+                                      'If the AI needs more help, summarize the LEFT and RIGHT stories in your own words.'
+                                    )}
+                                  >
+                                    <Stack spacing={3}>
+                                      <Box>
+                                        <FormLabel>
+                                          {t('LEFT summary')}
+                                        </FormLabel>
+                                        <Textarea
+                                          value={
+                                            annotationDraft.option_a_summary
+                                          }
+                                          onChange={(e) =>
+                                            setAnnotationDraft((current) => ({
+                                              ...current,
+                                              option_a_summary: e.target.value,
+                                            }))
+                                          }
+                                        />
+                                      </Box>
 
-                            <Stack spacing={2}>
-                              <Checkbox
-                                isChecked={
-                                  annotationDraft.text_required === true
-                                }
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    text_required: e.target.checked
-                                      ? true
-                                      : null,
-                                  }))
-                                }
-                              >
-                                {t('Readable text is required')}
-                              </Checkbox>
-                              <Checkbox
-                                isChecked={
-                                  annotationDraft.sequence_markers_present ===
-                                  true
-                                }
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    sequence_markers_present: e.target.checked
-                                      ? true
-                                      : null,
-                                  }))
-                                }
-                              >
-                                {t('Sequence markers are present')}
-                              </Checkbox>
-                              <Checkbox
-                                isChecked={
-                                  annotationDraft.report_required === true
-                                }
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    report_required: e.target.checked
-                                      ? true
-                                      : null,
-                                  }))
-                                }
-                              >
-                                {t('This flip should be reported')}
-                              </Checkbox>
-                            </Stack>
+                                      <Box>
+                                        <FormLabel>
+                                          {t('RIGHT summary')}
+                                        </FormLabel>
+                                        <Textarea
+                                          value={
+                                            annotationDraft.option_b_summary
+                                          }
+                                          onChange={(e) =>
+                                            setAnnotationDraft((current) => ({
+                                              ...current,
+                                              option_b_summary: e.target.value,
+                                            }))
+                                          }
+                                        />
+                                      </Box>
 
-                            <Box>
-                              <FormLabel>{t('Report reason')}</FormLabel>
-                              <Textarea
-                                value={annotationDraft.report_reason}
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    report_reason: e.target.value,
-                                  }))
-                                }
-                              />
-                            </Box>
-
-                            <Box>
-                              <FormLabel>{t('Final answer')}</FormLabel>
-                              <Select
-                                value={annotationDraft.final_answer}
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    final_answer: e.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="">{t('Choose')}</option>
-                                <option value="left">{t('left')}</option>
-                                <option value="right">{t('right')}</option>
-                                <option value="skip">{t('skip')}</option>
-                              </Select>
-                            </Box>
-
-                            <Box>
-                              <FormLabel>{t('Why this answer')}</FormLabel>
-                              <Textarea
-                                value={annotationDraft.why_answer}
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    why_answer: e.target.value,
-                                  }))
-                                }
-                              />
-                            </Box>
-
-                            <Box>
-                              <FormLabel>{t('Confidence (0-1)')}</FormLabel>
-                              <Input
-                                value={annotationDraft.confidence}
-                                onChange={(e) =>
-                                  setAnnotationDraft((current) => ({
-                                    ...current,
-                                    confidence: e.target.value,
-                                  }))
-                                }
-                              />
+                                      <Box>
+                                        <FormLabel>{t('Annotator')}</FormLabel>
+                                        <Input
+                                          value={annotationDraft.annotator}
+                                          onChange={(e) =>
+                                            setAnnotationDraft((current) => ({
+                                              ...current,
+                                              annotator: e.target.value,
+                                            }))
+                                          }
+                                        />
+                                      </Box>
+                                    </Stack>
+                                  </InterviewPrompt>
+                                </Stack>
+                              ) : null}
                             </Box>
 
                             <Stack isInline spacing={2} flexWrap="wrap">

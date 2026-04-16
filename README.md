@@ -122,6 +122,13 @@ The user, not the app or the project maintainers, is solely responsible for
 ensuring they have the legal and practical right to submit that content for
 federated use.
 
+The intended model-distribution side of that system is also identity-gated.
+Large base-model downloads should not be public or anonymous; they should be
+tied to real Idena identities, strict quotas, and a separate AI-specific
+contract rather than the normal `idena.social` communication feed. See
+[docs/federated-model-distribution.md](docs/federated-model-distribution.md)
+for the current protocol direction.
+
 ## Current Loose Ends
 
 The main unfinished areas at the time of writing are:
