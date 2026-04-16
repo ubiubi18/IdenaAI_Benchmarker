@@ -1,108 +1,75 @@
 # IdenaAI
 
-`IdenaAI` is an experimental desktop fork of `idena-desktop` for AI-assisted
-FLIP research.
-
-It combines three things in one codebase:
-- the Electron desktop client
-- optional local or hosted AI provider integration
-- FLIP data collection, human-teacher annotation, and local training helpers
+`IdenaAI` is the main experimental desktop fork of `idena-desktop` for:
+- local or hosted AI integration
+- in-app FLIP annotation and human-teacher flows
+- local FLIP training experiments tied to the desktop app
 
 This is research software, not a hardened wallet release.
 
 ## Current status
 
-What exists today:
-- the desktop app still works as an `idena-desktop`-style client
-- optional AI settings and local-runtime debugging are available
-- post-session human-teacher annotation exists in-app
-- an offline demo annotator path exists for testing without live session data
-- FLIP training scripts exist for local experiments on the Hugging Face
-  FLIP-Challenge dataset
-- human annotations can be injected into training prep in multiple modes:
-  `weight_boost`, `followup_reasoning`, `hybrid`
-- repeated human annotations can now be merged either by:
-  - `best_single`
-  - `deepfunding` weighted aggregation
+Available today:
+- AI settings and local runtime debugging
+- in-app human-teacher annotation, including demo mode
+- local FLIP training scripts in `scripts/`
+- human-assisted prep modes: `weight_boost`, `followup_reasoning`, `hybrid`
+- annotation aggregation modes: `best_single`, `deepfunding`
 
-What is still experimental or incomplete:
-- Electron hardening is improved but not complete
-- on-chain automation is not trustworthy enough for unattended use
-- federated learning is still a design/prototyping area, not a finished network
-- local AI model defaults and UX are still evolving
-- packaged releases should be treated as experimental community builds, not
-  polished end-user binaries
+Still experimental:
+- packaged builds
+- federated-learning workflow
+- unattended on-chain automation
+- some Local AI UX and runtime defaults
 
 ## Safety and privacy
 
-Use this repository as test software.
+Treat this repo as test software.
 
 Recommended precautions:
 - use a low-value or disposable Idena identity
-- keep API/provider budgets small
-- do not store valuable secrets in the repo
+- keep provider budgets small
+- do not store secrets in the repo
 - prefer a separate machine, VM, or OS user profile
-- review AI-generated flips manually before publishing anything on-chain
+- review AI-generated flips manually before publishing on-chain
 
-Human-teacher annotation has an additional consent implication:
-- if users contribute annotations for federated learning, those annotations may
-  later be incorporated into shared training artifacts or merged model updates
-- once propagated, those contributions should be treated as effectively
-  irreversible
-- contributors are solely responsible for making sure they have the right to
-  share that content
+If human annotations are later used for shared training, those contributions may
+become part of propagated model artifacts. Only share content you have the right
+to contribute.
 
 ## Install and run from source
 
-These steps are the current supported path.
-
-### 1. Prerequisites
-
-You need:
+Prerequisites:
 - `git`
 - `node` 20.x
 - `npm`
 - `python3`
 
-On macOS, install the Xcode command line tools first:
+On macOS:
 
 ```bash
 xcode-select --install
-```
-
-If you use Homebrew, a typical setup is:
-
-```bash
 brew install git node@20 python@3
 brew link --overwrite --force node@20
 ```
 
-### 2. Clone and install
+Clone and start:
 
 ```bash
 git clone https://github.com/ubiubi18/IdenaAI.git
 cd IdenaAI
 npm install
-```
-
-### 3. Start the desktop app in dev mode
-
-```bash
 npm start
 ```
 
-The dev renderer currently expects the local loopback renderer URL used by the
-app scripts. You do not need to start Next manually; `npm start` handles the
-desktop development flow.
-
-### 4. Optional production build
+Optional build:
 
 ```bash
 npm run build
 npm run dist
 ```
 
-Useful checks before packaging:
+Useful checks:
 
 ```bash
 npm run audit:privacy
@@ -110,60 +77,36 @@ npm run audit:electron
 npm test
 ```
 
-## Optional Local AI runtime
+## Local AI runtime
 
-If you want local inference, the current app expects a loopback-only runtime.
+For local inference, the app expects a loopback-only runtime.
 
-Typical local setup:
+Typical setup:
 - Ollama on `http://127.0.0.1:11434`
-- one or more multimodal/text models pulled locally
+- local text and multimodal models pulled on the same machine
 
-The app should only talk to local endpoints on this machine. Do not point Local
-AI at arbitrary remote URLs unless you intentionally switch to a hosted custom
-provider flow and understand the privacy/cost tradeoff.
+Do not point Local AI at arbitrary remote URLs unless you intentionally want a
+hosted-provider setup and accept the privacy and cost tradeoff.
 
-## Human-teacher loop
+## Training workflow
 
-The core long-term idea is not just synthetic AI-to-AI distillation.
+The local FLIP training stack lives in `scripts/`.
 
-`IdenaAI` is being built toward a decentralized human-teacher loop:
-- users solve flips in normal Idena sessions
-- after consensus, small batches can be reviewed voluntarily
-- the app can ask focused follow-up questions when a case is uncertain or
-  interesting
-- those answers can become higher-quality supervision for local training and
-  later federated aggregation
+It supports:
+- FLIP-Challenge dataset prep from Hugging Face
+- human-teacher annotation import
+- local LoRA pilot training
+- matrix comparison of baseline vs human-assisted modes
+- side-by-side comparison of `best_single` vs `deepfunding`
 
-The important part is the source of supervision:
-- blockchain consensus anchors the final outcome
-- humans add the missing reasoning layer
-- training can then compare raw consensus-only prep against richer
-  human-annotation modes
-
-## FLIP training pipeline
-
-The local training stack lives in `scripts/` and is intended for small pilot
-experiments first, not full-scale blind runs.
-
-Current pipeline capabilities:
-- prepare FLIP-Challenge slices from Hugging Face
-- inject normalized human-teacher annotations during dataset prep
-- run local LoRA pilots
-- compare baseline vs human-assisted modes with the matrix runner
-- compare annotation aggregation methods side by side:
-  - `best_single`
-  - `deepfunding`
-
-Start here for the full workflow:
+Start here:
 - [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
 
-Related notes:
+Related protocol/design notes:
 - [docs/federated-model-distribution.md](docs/federated-model-distribution.md)
 - [docs/federated-human-teacher-protocol.md](docs/federated-human-teacher-protocol.md)
 
-## Python training environment
-
-A typical local training environment looks like:
+Typical Python environment:
 
 ```bash
 python3 -m venv .tmp/flip-train-venv
@@ -172,18 +115,9 @@ python -m pip install -U pip setuptools wheel
 python -m pip install mlx-vlm pyarrow pillow datasets huggingface_hub torch torchvision scipy
 ```
 
-`scipy` is now needed if you want to use DeepFunding-based human-annotation
-aggregation during prep.
+## Related repo
 
-## Repository focus
-
-Use this repo if you want:
-- the desktop app
-- the in-app human-teacher flow
-- local AI experiments inside the client
-- the FLIP training scripts alongside the main app code
-
-If you only want the off-chain benchmarking and training fork, see:
+If you mainly want the off-chain benchmark and training fork, use:
 - [IdenaAI_Benchmarker](https://github.com/ubiubi18/IdenaAI_Benchmarker)
 
 ## License
