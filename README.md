@@ -74,6 +74,40 @@ research features:
 AI is optional. The app should still be usable like regular `idena-desktop`
 without enabling AI or adding API keys.
 
+## Human Teacher Loop
+
+The longer-term idea of `IdenaAI` is a decentralized human-teacher loop, not
+just another AI-to-AI distillation stack.
+
+In that model, real users annotate small post-consensus batches such as
+`20-30` flips per epoch from the sessions they already solve, plus a few flips
+they prepared themselves. That is the natural unit of work in Idena: people are
+already solving flips, already creating flips, and the protocol already
+produces a consensus outcome for those tasks.
+
+The intended flow is organic, not a separate enterprise labeling pipeline. When
+the local AI is unsure, disagrees with consensus, or notices a case it still
+does not understand, it can ask the user focused annotation questions about
+that specific flip. In some cases that may look more like a short discussion
+than a form: the user explains why one story feels coherent, why another one is
+implausible, whether readable text was actually required, or why a human common
+sense judgment says the flip should be reported.
+
+The genuinely new part is where the supervision comes from. Instead of relying
+only on synthetic labels or a hosted teacher model, the training signal is
+anchored in protocol-native human consensus and enriched by human explanation.
+The blockchain gives a way to filter bad annotation at scale, while humans add
+the missing reasoning layer that current models still struggle with: panel
+captions, coherence explanations, text-required flags, sequence-marker checks,
+reportability judgments, and plain human common sense about what story makes
+sense.
+
+Over time, the local AI is supposed to note those corrections, retain the
+useful patterns, and become a more human-aligned companion instead of just a
+faster pattern matcher. The goal is not only higher benchmark accuracy, but a
+solver that gradually behaves more like a helpful human partner who understands
+why a flip works or fails.
+
 ## Current Loose Ends
 
 The main unfinished areas at the time of writing are:
@@ -334,6 +368,10 @@ packages start as `draft` and can be marked `reviewed`, `approved`, or
 training, not federated sharing, and not cloud upload.
 Only locally approved packages are marked `federatedReady: true`, which is a
 local preparation step only and still does not perform any federated sharing.
+
+The longer-term idea is a decentralized human-teacher loop, not just another
+AI-to-AI distillation stack. See [Human Teacher Loop](#human-teacher-loop)
+above for the actual training direction this project is aiming at.
 
 Cheap or very small models failed most often in early testing. If results are poor, try different providers, models, and advanced settings, but watch cost and latency.
 
