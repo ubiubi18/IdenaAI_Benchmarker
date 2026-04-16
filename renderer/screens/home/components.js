@@ -120,11 +120,11 @@ export function UserInlineCard({
 
 export function UserStatList({title, children, ...props}) {
   return (
-    <Stack spacing="4" {...props}>
-      <Heading as="h4" fontSize="lg" fontWeight={500}>
+    <Stack spacing="3" {...props}>
+      <Heading as="h4" fontSize="md" fontWeight={500}>
         {title}
       </Heading>
-      <Stack spacing="4" bg="gray.50" px="10" py="8" rounded="lg">
+      <Stack spacing="3" bg="gray.50" px="8" py="6" rounded="lg">
         {children}
       </Stack>
     </Stack>

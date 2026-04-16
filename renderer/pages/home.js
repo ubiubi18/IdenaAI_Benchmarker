@@ -270,12 +270,20 @@ export default function ProfilePage() {
           )}
 
           <Page>
-            <Stack spacing={8}>
+            <Stack spacing={5}>
               <HomeFeaturedDestinations />
-              <Stack isInline spacing="10">
-                <Box>
-                  <Stack spacing={8} w="md" ref={activateInviteRef}>
-                    <UserInlineCard identity={identity} h={24}>
+              <Stack
+                direction={{base: 'column', xl: 'row'}}
+                spacing={6}
+                align="flex-start"
+              >
+                <Box flex={1} minW={0}>
+                  <Stack
+                    spacing={5}
+                    w={{base: 'full', xl: 'md'}}
+                    ref={activateInviteRef}
+                  >
+                    <UserInlineCard identity={identity} h={20}>
                       <ProfileTagList />
                     </UserInlineCard>
 
@@ -520,8 +528,8 @@ export default function ProfilePage() {
                   </Stack>
                 </Box>
 
-                <Stack spacing="10" w={200}>
-                  <Box minH={62} mt={6}>
+                <Stack spacing={5} w={{base: 'full', xl: 220}} flexShrink={0}>
+                  <Box minH={0} mt={0} w="full">
                     <OnboardingPopover
                       isOpen={eitherOnboardingState(
                         onboardingShowingStep(OnboardingStep.ActivateMining)
@@ -567,18 +575,18 @@ export default function ProfilePage() {
                       </OnboardingPopoverContent>
                     </OnboardingPopover>
                   </Box>
-                  <Stack spacing={1} align="flex-start">
+                  <Stack spacing={1} align="stretch" w="full">
                     <IconLink
                       href="/oracles/new"
                       icon={<OracleIcon boxSize={5} />}
-                      maxW={200}
+                      maxW="full"
                     >
                       {t('New voting')}
                     </IconLink>
                     <IconLink
                       href="/adn/new"
                       icon={<AdsIcon boxSize="5" />}
-                      maxW={200}
+                      maxW="full"
                     >
                       {t('New ad')}
                     </IconLink>
@@ -586,28 +594,28 @@ export default function ProfilePage() {
                       href="/flips/new"
                       icon={<PhotoIcon boxSize={5} />}
                       isDisabled={!canSubmitFlip}
-                      maxW={200}
+                      maxW="full"
                     >
                       {t('New flip')}
                     </IconLink>
                     <IconLink
                       href="/contacts?new"
                       isDisabled={!canInvite}
-                      maxW={200}
+                      maxW="full"
                       icon={<AddUserIcon boxSize={5} />}
                     >
                       {t('Invite')}
                     </IconLink>
                     <IconButton2
                       icon={<PooIcon />}
-                      maxW={200}
+                      maxW="full"
                       onClick={onOpenSpoilForm}
                     >
                       {t('Spoil invite')}
                     </IconButton2>
                     <IconButton2
                       icon={<PrivateKeyIcon />}
-                      maxW={200}
+                      maxW="full"
                       onClick={onOpenExportPk}
                     >
                       {t('Backup private key')}
@@ -615,7 +623,7 @@ export default function ProfilePage() {
                     <IconButton2
                       isDisabled={!canTerminate}
                       icon={<DeleteIcon />}
-                      maxW={200}
+                      maxW="full"
                       onClick={onOpenKillForm}
                     >
                       {t('Terminate')}
@@ -739,27 +747,31 @@ function HomeFeaturedDestinations() {
       bg="white"
       borderRadius="xl"
       boxShadow="0 2px 8px 0 rgba(83, 86, 92, 0.08), 0 1px 2px 0 rgba(83, 86, 92, 0.12)"
-      px={5}
-      py={3}
+      px={4}
+      py={2}
       w="full"
     >
       <Stack spacing={2}>
         <Stack
           direction={{base: 'column', xl: 'row'}}
           align="stretch"
-          spacing={3}
+          spacing={2}
         >
           <HomeFeaturedCard
             href="/ai-chat"
             icon={<ChatIcon boxSize={5} />}
             title={t('IdenaAI-GPT')}
             cta={t('Start chat')}
+            stamp={t('AI')}
+            stampColorScheme="blue"
           />
           <HomeFeaturedCard
             href="/social"
             icon={<GlobeIcon boxSize={5} />}
             title={t('idena.social')}
             cta={t('Open social')}
+            stamp={t('Live')}
+            stampColorScheme="green"
           />
         </Stack>
       </Stack>
@@ -767,61 +779,68 @@ function HomeFeaturedDestinations() {
   )
 }
 
-function HomeFeaturedCard({href, icon, title, context, cta, stamp}) {
+function HomeFeaturedCard({
+  href,
+  icon,
+  title,
+  context,
+  cta,
+  stamp,
+  stampColorScheme = 'purple',
+}) {
   return (
     <Box
       borderWidth="1px"
       borderColor="gray.100"
-      borderRadius="md"
-      px={4}
-      py={3}
+      borderRadius="lg"
+      px={3}
+      py={2}
       flex={1}
       bg="gray.50"
     >
-      <Stack spacing={2} h="full" align="flex-start">
-        <HStack justify="space-between" align="center" spacing={3} w="full">
-          <HStack spacing={3} align="center" minW={0}>
-            <Flex
-              align="center"
-              justify="center"
-              boxSize={10}
-              borderRadius="md"
-              bg="white"
-              color="gray.700"
-              flexShrink={0}
-            >
-              {icon}
-            </Flex>
-            <Stack spacing={0} minW={0}>
-              <HStack spacing={2} align="center">
-                <Heading as="h3" fontSize="md" fontWeight={500}>
-                  {title}
-                </Heading>
-                {stamp ? (
-                  <Badge
-                    colorScheme="purple"
-                    borderRadius="full"
-                    px={2}
-                    py="0.5"
-                    fontSize="2xs"
-                    textTransform="uppercase"
-                  >
-                    {stamp}
-                  </Badge>
-                ) : null}
-              </HStack>
-              {context ? (
-                <Text color="muted" fontSize="xs" lineHeight="base">
-                  {context}
-                </Text>
+      <HStack spacing={3} justify="space-between" align="center" minW={0}>
+        <HStack spacing={3} align="center" minW={0}>
+          <Flex
+            align="center"
+            justify="center"
+            boxSize={9}
+            borderRadius="lg"
+            bg="white"
+            color="brandBlue.500"
+            flexShrink={0}
+            boxShadow="inset 0 0 0 1px rgba(76, 124, 240, 0.08)"
+          >
+            {icon}
+          </Flex>
+          <Stack spacing={1} minW={0}>
+            <HStack spacing={2} align="center">
+              <Heading as="h3" fontSize="md" fontWeight={600}>
+                {title}
+              </Heading>
+              {stamp ? (
+                <Badge
+                  colorScheme={stampColorScheme}
+                  borderRadius="full"
+                  px={2}
+                  py="0.5"
+                  fontSize="2xs"
+                  textTransform="uppercase"
+                >
+                  {stamp}
+                </Badge>
               ) : null}
-            </Stack>
-          </HStack>
-          <IconLink href={href} icon={icon} maxW="full" flexShrink={0}>
-            {cta}
-          </IconLink>
+            </HStack>
+            {context ? (
+              <Text color="muted" fontSize="xs" lineHeight="base">
+                {context}
+              </Text>
+            ) : null}
+          </Stack>
         </HStack>
-      </Stack>
+        <IconLink href={href} icon={icon} maxW="full" flexShrink={0}>
+          {cta}
+        </IconLink>
+      </HStack>
     </Box>
   )
 }

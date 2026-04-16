@@ -1096,7 +1096,7 @@ export default function AiChatPage() {
               </HStack>
               <Text color="muted" maxW="3xl">
                 {t(
-                  'Choose whether you want to talk to your local AI directly or teach it on small FLIP chunks in developer mode.'
+                  'Pick the fastest path: open local chat now or teach the model on 5-flip chunks.'
                 )}
               </Text>
             </Stack>
@@ -1107,16 +1107,16 @@ export default function AiChatPage() {
               borderColor="gray.100"
               borderRadius="xl"
               px={4}
-              py={4}
+              py={3}
             >
-              <HStack spacing={2} wrap="wrap">
+              <HStack spacing={2} wrap="wrap" align="center">
                 <Badge colorScheme={runtimeStatusTone}>
                   {runtimeStatusLabel}
                 </Badge>
                 <Badge variant="subtle">
                   {formatAiProviderLabel('local-ai')}
                 </Badge>
-                <Text color="muted" fontSize="sm">
+                <Text color="muted" fontSize="sm" noOfLines={1}>
                   {t('Endpoint')}: {runtimePayload.baseUrl}
                 </Text>
               </HStack>
@@ -1140,7 +1140,7 @@ export default function AiChatPage() {
                   </Text>
                   <Text color="muted" flex={1}>
                     {t(
-                      'Annotate 5 bundled FLIP examples at a time, then train immediately or save and continue later. Annotated and trained flips are tracked locally.'
+                      'Annotate 5 bundled FLIP examples, train locally, and keep your saved or trained progress on this Mac.'
                     )}
                   </Text>
                   {isValidationRunning ? (
@@ -1180,7 +1180,7 @@ export default function AiChatPage() {
                   </Text>
                   <Text color="muted" flex={1}>
                     {t(
-                      'Open the dedicated local chat view, attach images, and ask the configured local runtime to reason about flips or general Idena tasks.'
+                      'Open direct local chat, attach images, and ask for FLIP reasoning or general Idena help.'
                     )}
                   </Text>
                   <PrimaryButton
@@ -1212,7 +1212,7 @@ export default function AiChatPage() {
               </HStack>
               <Text color="muted" maxW="3xl">
                 {t(
-                  'Ask the local runtime directly. You can also attach images or FLIP panels.'
+                  'Ask directly, add images when needed, and keep the chat local to this desktop profile.'
                 )}
               </Text>
             </Stack>
@@ -1223,16 +1223,16 @@ export default function AiChatPage() {
               borderColor="gray.100"
               borderRadius="xl"
               px={4}
-              py={4}
+              py={3}
             >
-              <Stack spacing={4}>
+              <Stack spacing={3}>
                 <Flex
                   align={['flex-start', 'center']}
                   direction={['column', 'row']}
                   justify="space-between"
                   gap={3}
                 >
-                  <Stack spacing={1}>
+                  <Stack spacing={1} minW={0}>
                     <HStack spacing={2} wrap="wrap">
                       <Badge colorScheme={runtimeStatusTone}>
                         {runtimeStatusLabel}
@@ -1241,12 +1241,9 @@ export default function AiChatPage() {
                         {formatAiProviderLabel('local-ai')}
                       </Badge>
                     </HStack>
-                    <Text color="muted" fontSize="sm">
-                      {t('Runtime')}: {backendLabel} · {t('Endpoint')}:{' '}
-                      {runtimePayload.baseUrl}
-                    </Text>
-                    <Text color="muted" fontSize="sm">
-                      {t('Models')}: {textModelLabel} · {multimodalModelLabel}
+                    <Text color="muted" fontSize="sm" noOfLines={2}>
+                      {t('Runtime')}: {backendLabel} · {textModelLabel} ·{' '}
+                      {multimodalModelLabel}
                     </Text>
                   </Stack>
 
@@ -1272,6 +1269,244 @@ export default function AiChatPage() {
             </Box>
 
             <Box
+              bg="white"
+              borderWidth="1px"
+              borderColor="blue.100"
+              borderRadius="xl"
+              px={4}
+              py={4}
+              boxShadow="sm"
+            >
+              <Stack spacing={3}>
+                <Input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  display="none"
+                  onChange={handlePickAttachments}
+                />
+                <Flex
+                  justify="space-between"
+                  align={['flex-start', 'center']}
+                  direction={['column', 'row']}
+                  gap={3}
+                >
+                  <Stack spacing={1}>
+                    <Text fontWeight={700}>{t('Ask IdenaAI-GPT')}</Text>
+                    <Text color="muted" fontSize="sm">
+                      {t(
+                        'Type a question directly. Add images only when they help the answer.'
+                      )}
+                    </Text>
+                  </Stack>
+                  <HStack spacing={2} alignSelf={['stretch', 'auto']}>
+                    <SecondaryButton
+                      leftIcon={<UploadIcon boxSize="4" />}
+                      onClick={handleOpenAttachmentPicker}
+                    >
+                      {t('Add images')}
+                    </SecondaryButton>
+                    {attachments.length > 0 && (
+                      <SecondaryButton
+                        leftIcon={<DeleteIcon boxSize="4" />}
+                        onClick={handleClearAttachments}
+                      >
+                        {t('Clear images')}
+                      </SecondaryButton>
+                    )}
+                  </HStack>
+                </Flex>
+
+                {hasRetainedFlipContext && (
+                  <Box
+                    bg="gray.50"
+                    borderWidth="1px"
+                    borderColor="gray.100"
+                    borderRadius="lg"
+                    px={3}
+                    py={3}
+                  >
+                    <Flex
+                      justify="space-between"
+                      align={['flex-start', 'center']}
+                      direction={['column', 'row']}
+                      gap={3}
+                    >
+                      <Stack spacing={1}>
+                        <Badge variant="subtle" colorScheme="gray">
+                          {t('Retained flip context')}
+                        </Badge>
+                        {retainedFlipContextSource && (
+                          <Text color="muted" fontSize="xs">
+                            {t('Context source')}: {retainedFlipContextSource}
+                          </Text>
+                        )}
+                      </Stack>
+                      <SecondaryButton onClick={handleClearFlipContext}>
+                        {t('Clear flip context')}
+                      </SecondaryButton>
+                    </Flex>
+                  </Box>
+                )}
+
+                {willUseRetainedFlipContext && (
+                  <Box
+                    bg="blue.50"
+                    borderWidth="1px"
+                    borderColor="blue.100"
+                    borderRadius="lg"
+                    px={3}
+                    py={3}
+                  >
+                    <HStack spacing={3} align="flex-start">
+                      <Badge colorScheme="blue">
+                        {t('Using last flip context')}
+                      </Badge>
+                      <Stack spacing={1}>
+                        <Text color="brandGray.500" fontSize="sm">
+                          {t(
+                            'This message will use the last discussed flip as context instead of resending those image panels.'
+                          )}
+                        </Text>
+                        {retainedFlipContextSource && (
+                          <Text color="muted" fontSize="xs">
+                            {t('Context source')}: {retainedFlipContextSource}
+                          </Text>
+                        )}
+                      </Stack>
+                    </HStack>
+                  </Box>
+                )}
+
+                {attachments.length > 0 && (
+                  <Box
+                    bg="gray.50"
+                    borderWidth="1px"
+                    borderColor="gray.100"
+                    borderRadius="xl"
+                    px={3}
+                    py={3}
+                  >
+                    <Stack spacing={3}>
+                      <HStack justify="space-between">
+                        <HStack spacing={2}>
+                          <PhotoIcon boxSize="4" color="brandBlue.500" />
+                          <Text fontWeight={600}>
+                            {t('Attached images ({{count}})', {
+                              count: attachments.length,
+                            })}
+                          </Text>
+                        </HStack>
+                        <Text color="muted" fontSize="sm">
+                          {attachments.length >= 2
+                            ? t('Ready for local flip analysis')
+                            : t('Ready for image chat')}
+                        </Text>
+                      </HStack>
+                      <SimpleGrid columns={[2, 2, 4]} spacing={3}>
+                        {attachments.map((attachment) => (
+                          <Box
+                            key={attachment.id}
+                            position="relative"
+                            borderRadius="lg"
+                            overflow="hidden"
+                            borderWidth="1px"
+                            borderColor="gray.100"
+                            bg="white"
+                          >
+                            <Image
+                              src={attachment.dataUrl}
+                              alt={attachment.fileName}
+                              objectFit="cover"
+                              w="full"
+                              h="108px"
+                            />
+                            <IconButton
+                              aria-label={t('Remove image')}
+                              icon={<DeleteIcon boxSize="4" />}
+                              size="xs"
+                              position="absolute"
+                              top={2}
+                              right={2}
+                              onClick={() =>
+                                handleRemoveAttachment(attachment.id)
+                              }
+                            />
+                            <Box px={2} py={2}>
+                              <Text fontSize="xs" color="muted" noOfLines={1}>
+                                {attachment.fileName}
+                              </Text>
+                            </Box>
+                          </Box>
+                        ))}
+                      </SimpleGrid>
+                    </Stack>
+                  </Box>
+                )}
+
+                <Textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={handleDraftKeyDown}
+                  minH="128px"
+                  bg="white"
+                  placeholder={t(
+                    'Ask about a flip, validation, your node, or strategy...'
+                  )}
+                />
+
+                <Flex
+                  justify="space-between"
+                  align={['flex-start', 'center']}
+                  direction={['column', 'row']}
+                  gap={3}
+                >
+                  <Stack spacing={2} minW={0}>
+                    <Text color="muted" fontSize="xs" fontWeight={600}>
+                      {t('Quick starts')}
+                    </Text>
+                    <HStack spacing={2} flexWrap="wrap">
+                      {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
+                        <Button
+                          key={prompt}
+                          size="sm"
+                          variant="ghost"
+                          colorScheme="blue"
+                          onClick={() => handleQuickPrompt(prompt)}
+                        >
+                          {t(prompt)}
+                        </Button>
+                      ))}
+                    </HStack>
+                  </Stack>
+                  <PrimaryButton
+                    leftIcon={<SendIcon boxSize="4" />}
+                    isLoading={isSending}
+                    onClick={handleSend}
+                    isDisabled={
+                      (!String(draft || '').trim() &&
+                        attachments.length === 0) ||
+                      !isRuntimeReady
+                    }
+                  >
+                    {t('Send')}
+                  </PrimaryButton>
+                </Flex>
+
+                <Text color="muted" fontSize="sm">
+                  {attachments.length > 0
+                    ? t(
+                        'Attached images and image-derived replies stay only in this live session. They are not stored in saved chat history.'
+                      )
+                    : t(
+                        'Conversation history is stored only in this desktop profile.'
+                      )}
+                </Text>
+              </Stack>
+            </Box>
+
+            <Box
               bg="gray.50"
               borderWidth="1px"
               borderColor="gray.100"
@@ -1291,9 +1526,7 @@ export default function AiChatPage() {
                   <Stack spacing={1}>
                     <Text fontWeight={600}>{t('Conversation')}</Text>
                     <Text color="muted" fontSize="sm">
-                      {t(
-                        'Use Cmd/Ctrl + Enter to send quickly. Clear the conversation at any time.'
-                      )}
+                      {t('Use Cmd/Ctrl + Enter to send quickly.')}
                     </Text>
                   </Stack>
                   <SecondaryButton onClick={handleClearConversation}>
@@ -1348,243 +1581,6 @@ export default function AiChatPage() {
                 </Box>
 
                 {lastError && <ErrorAlert>{lastError}</ErrorAlert>}
-
-                <Box
-                  bg="blue.50"
-                  borderWidth="1px"
-                  borderColor="blue.100"
-                  borderRadius="xl"
-                  px={4}
-                  py={4}
-                >
-                  <Stack spacing={3}>
-                    <Input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      display="none"
-                      onChange={handlePickAttachments}
-                    />
-                    <Flex
-                      justify="space-between"
-                      align={['flex-start', 'center']}
-                      direction={['column', 'row']}
-                      gap={3}
-                    >
-                      <Stack spacing={1}>
-                        <Text fontWeight={700}>{t('Ask IdenaAI-GPT')}</Text>
-                        <Text color="muted" fontSize="sm">
-                          {t(
-                            'Type a question, or attach images or FLIP panels and ask for analysis.'
-                          )}
-                        </Text>
-                      </Stack>
-                      <HStack spacing={2}>
-                        <SecondaryButton
-                          leftIcon={<UploadIcon boxSize="4" />}
-                          onClick={handleOpenAttachmentPicker}
-                        >
-                          {t('Add images')}
-                        </SecondaryButton>
-                        {attachments.length > 0 && (
-                          <SecondaryButton
-                            leftIcon={<DeleteIcon boxSize="4" />}
-                            onClick={handleClearAttachments}
-                          >
-                            {t('Clear images')}
-                          </SecondaryButton>
-                        )}
-                      </HStack>
-                    </Flex>
-
-                    {hasRetainedFlipContext && (
-                      <Box
-                        bg="gray.50"
-                        borderWidth="1px"
-                        borderColor="gray.100"
-                        borderRadius="lg"
-                        px={3}
-                        py={3}
-                      >
-                        <Flex
-                          justify="space-between"
-                          align={['flex-start', 'center']}
-                          direction={['column', 'row']}
-                          gap={3}
-                        >
-                          <Stack spacing={1}>
-                            <Badge variant="subtle" colorScheme="gray">
-                              {t('Retained flip context')}
-                            </Badge>
-                            {retainedFlipContextSource && (
-                              <Text color="muted" fontSize="xs">
-                                {t('Context source')}:{' '}
-                                {retainedFlipContextSource}
-                              </Text>
-                            )}
-                          </Stack>
-                          <SecondaryButton onClick={handleClearFlipContext}>
-                            {t('Clear flip context')}
-                          </SecondaryButton>
-                        </Flex>
-                      </Box>
-                    )}
-
-                    {willUseRetainedFlipContext && (
-                      <Box
-                        bg="blue.50"
-                        borderWidth="1px"
-                        borderColor="blue.100"
-                        borderRadius="lg"
-                        px={3}
-                        py={3}
-                      >
-                        <HStack spacing={3} align="flex-start">
-                          <Badge colorScheme="blue">
-                            {t('Using last flip context')}
-                          </Badge>
-                          <Stack spacing={1}>
-                            <Text color="brandGray.500" fontSize="sm">
-                              {t(
-                                'This message will use the last discussed flip as retained context instead of resending the earlier image panels.'
-                              )}
-                            </Text>
-                            {retainedFlipContextSource && (
-                              <Text color="muted" fontSize="xs">
-                                {t('Context source')}:{' '}
-                                {retainedFlipContextSource}
-                              </Text>
-                            )}
-                          </Stack>
-                        </HStack>
-                      </Box>
-                    )}
-
-                    {attachments.length > 0 && (
-                      <Box
-                        bg="gray.50"
-                        borderWidth="1px"
-                        borderColor="gray.100"
-                        borderRadius="xl"
-                        px={3}
-                        py={3}
-                      >
-                        <Stack spacing={3}>
-                          <HStack justify="space-between">
-                            <HStack spacing={2}>
-                              <PhotoIcon boxSize="4" color="brandBlue.500" />
-                              <Text fontWeight={600}>
-                                {t('Attached images ({{count}})', {
-                                  count: attachments.length,
-                                })}
-                              </Text>
-                            </HStack>
-                            <Text color="muted" fontSize="sm">
-                              {attachments.length >= 2
-                                ? t('Ready for local flip analysis')
-                                : t('Ready for image chat')}
-                            </Text>
-                          </HStack>
-                          <SimpleGrid columns={[2, 2, 4]} spacing={3}>
-                            {attachments.map((attachment) => (
-                              <Box
-                                key={attachment.id}
-                                position="relative"
-                                borderRadius="lg"
-                                overflow="hidden"
-                                borderWidth="1px"
-                                borderColor="gray.100"
-                                bg="white"
-                              >
-                                <Image
-                                  src={attachment.dataUrl}
-                                  alt={attachment.fileName}
-                                  objectFit="cover"
-                                  w="full"
-                                  h="108px"
-                                />
-                                <IconButton
-                                  aria-label={t('Remove image')}
-                                  icon={<DeleteIcon boxSize="4" />}
-                                  size="xs"
-                                  position="absolute"
-                                  top={2}
-                                  right={2}
-                                  onClick={() =>
-                                    handleRemoveAttachment(attachment.id)
-                                  }
-                                />
-                                <Box px={2} py={2}>
-                                  <Text
-                                    fontSize="xs"
-                                    color="muted"
-                                    noOfLines={1}
-                                  >
-                                    {attachment.fileName}
-                                  </Text>
-                                </Box>
-                              </Box>
-                            ))}
-                          </SimpleGrid>
-                        </Stack>
-                      </Box>
-                    )}
-
-                    <Stack spacing={2}>
-                      <Text color="muted" fontSize="xs" fontWeight={600}>
-                        {t('Quick starts')}
-                      </Text>
-                      <HStack spacing={2} flexWrap="wrap">
-                        {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
-                          <Button
-                            key={prompt}
-                            size="sm"
-                            variant="ghost"
-                            colorScheme="blue"
-                            onClick={() => handleQuickPrompt(prompt)}
-                          >
-                            {t(prompt)}
-                          </Button>
-                        ))}
-                      </HStack>
-                    </Stack>
-
-                    <Textarea
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                      onKeyDown={handleDraftKeyDown}
-                      minH="160px"
-                      bg="white"
-                      placeholder={t(
-                        'Ask Local AI something useful about flips, validation, node logs, or general strategy...'
-                      )}
-                    />
-                    <Flex justify="space-between" align="center" gap={3}>
-                      <Text color="muted" fontSize="sm">
-                        {attachments.length > 0
-                          ? t(
-                              'Attached images and image-derived AI replies stay only in this live session. They are not saved into chat history.'
-                            )
-                          : t(
-                              'Conversation history is stored only in this desktop profile.'
-                            )}
-                      </Text>
-                      <PrimaryButton
-                        leftIcon={<SendIcon boxSize="4" />}
-                        isLoading={isSending}
-                        onClick={handleSend}
-                        isDisabled={
-                          (!String(draft || '').trim() &&
-                            attachments.length === 0) ||
-                          !isRuntimeReady
-                        }
-                      >
-                        {t('Send')}
-                      </PrimaryButton>
-                    </Flex>
-                  </Stack>
-                </Box>
               </Stack>
             </Box>
           </Stack>

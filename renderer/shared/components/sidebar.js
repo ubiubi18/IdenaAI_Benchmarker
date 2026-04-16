@@ -294,7 +294,7 @@ export function Logo() {
       alt="Idena logo"
       w="14"
       mt="4"
-      mb="4"
+      mb="2"
       mx="auto"
     />
   )
@@ -306,8 +306,8 @@ function Navbar() {
   const [{todoCount}] = useVotingNotification()
 
   return (
-    <Nav>
-      <Box>
+    <Nav mt={2}>
+      <Box pb={4} borderBottomWidth="1px" borderBottomColor="whiteAlpha.100">
         <NavSectionTitle mt={0}>{t('Discover')}</NavSectionTitle>
         <NavItem href="/ai-chat" icon={ChatIcon} featured badge={t('AI')}>
           {t('IdenaAI-GPT')}
@@ -316,7 +316,7 @@ function Navbar() {
           {t('idena.social')}
         </NavItem>
       </Box>
-      <Box mt={7}>
+      <Box mt={5}>
         <NavSectionTitle mt={0}>{t('Workspace')}</NavSectionTitle>
         <NavItem href="/home" icon={ProfileIcon}>
           {t('My Idena')}
@@ -363,7 +363,7 @@ function NavSectionTitle({children, ...props}) {
       textTransform="uppercase"
       letterSpacing="0.06em"
       mt={4}
-      mb={1}
+      mb={2}
       px={2}
       {...props}
     >
@@ -407,8 +407,9 @@ function NavItem({href, icon, children, badge, featured = false}) {
       borderRadius="md"
       color={isActive ? 'white' : 'xwhite.050'}
       fontWeight={500}
-      minH={8}
+      minH={featured ? 9 : 8}
       px={2}
+      mb={featured ? 1 : 0}
       _hover={{
         bg: hoverBackgroundColor,
         color: 'white',

@@ -873,7 +873,8 @@ export default function AiHumanTeacherPage() {
   const [demoOffset, setDemoOffset] = React.useState(0)
   const [developerSessionState, setDeveloperSessionState] = React.useState(null)
   const [developerOffset, setDeveloperOffset] = React.useState(0)
-  const [developerActionResult, setDeveloperActionResult] = React.useState(null)
+  const [_developerActionResult, setDeveloperActionResult] =
+    React.useState(null)
   const [chunkDecisionDialog, setChunkDecisionDialog] = React.useState({
     isOpen: false,
     mode: '',
@@ -2313,6 +2314,7 @@ export default function AiHumanTeacherPage() {
       if (developerTrainingUnsupported) {
         return {
           tone: 'warning',
+          summary: t('Training backend unavailable'),
           title: t('Current local model: training backend unavailable'),
           detail:
             developerTrainedCount > 0
@@ -2330,6 +2332,7 @@ export default function AiHumanTeacherPage() {
 
       return {
         tone: 'error',
+        summary: t('Last training failed'),
         title: t('Current local model: latest training did not apply'),
         detail:
           developerTrainedCount > 0
@@ -2358,6 +2361,7 @@ export default function AiHumanTeacherPage() {
     if (developerPendingCount > 0 && developerTrainedCount > 0) {
       return {
         tone: 'warning',
+        summary: t('Model missing latest flips'),
         title: t('Current local model: partially up to date'),
         detail: t(
           'The active local model already includes {{trained}} trained flips, but {{pending}} newer annotated flips are not inside the model yet.',
@@ -2372,6 +2376,7 @@ export default function AiHumanTeacherPage() {
     if (developerPendingCount > 0) {
       return {
         tone: 'warning',
+        summary: t('Saved but not trained yet'),
         title: t('Current local model: not trained on your annotations yet'),
         detail: t(
           'You have {{pending}} annotated flips saved locally, but the active local model is still unchanged because those flips have not been trained yet.',
@@ -2385,6 +2390,7 @@ export default function AiHumanTeacherPage() {
     if (developerTrainedCount > 0) {
       return {
         tone: 'success',
+        summary: t('Up to date'),
         title: t('Current local model: trained and up to date'),
         detail: t(
           'The active local model already includes all {{trained}} human-annotated flips that were trained so far.',
@@ -2398,6 +2404,7 @@ export default function AiHumanTeacherPage() {
     if (developerAnnotatedCount > 0) {
       return {
         tone: 'info',
+        summary: t('No confirmed training yet'),
         title: t('Current local model: no confirmed training yet'),
         detail: t(
           'You already saved human annotations, but there is no confirmed local training run yet. Until training succeeds, the active model stays unchanged.'
@@ -2407,6 +2414,7 @@ export default function AiHumanTeacherPage() {
 
     return {
       tone: 'info',
+      summary: t('Baseline model'),
       title: t('Current local model: baseline'),
       detail: t(
         'No human-teacher flips have been trained into the active local model yet.'
@@ -2452,6 +2460,30 @@ export default function AiHumanTeacherPage() {
     developerRemainingCount > 0 &&
     developerOffset + DEVELOPER_TRAINING_CHUNK_SIZE <
       Number(developerSessionState?.totalAvailableTasks || 0)
+  const developerModelStatusBorderColor = React.useMemo(() => {
+    switch (developerModelStatus?.tone) {
+      case 'success':
+        return 'green.100'
+      case 'error':
+        return 'red.100'
+      case 'warning':
+        return 'orange.100'
+      default:
+        return 'blue.100'
+    }
+  }, [developerModelStatus?.tone])
+  const developerModelStatusBackground = React.useMemo(() => {
+    switch (developerModelStatus?.tone) {
+      case 'success':
+        return 'green.50'
+      case 'error':
+        return 'red.50'
+      case 'warning':
+        return 'orange.50'
+      default:
+        return 'blue.50'
+    }
+  }, [developerModelStatus?.tone])
   const savePrimaryLabel = nextTaskId ? t('Save and next flip') : t('Save flip')
   const saveDraftLabel = t('Save flip draft')
   const autosaveStatusText = React.useMemo(() => {
@@ -2839,7 +2871,22 @@ export default function AiHumanTeacherPage() {
                             'Click "Start training your AI" to open the next 5 flips from the bundled FLIP developer sample.'
                           )}
                     </Text>
-                    <SimpleGrid columns={[1, 3]} spacing={3}>
+                    <SimpleGrid columns={[1, 2, 4]} spacing={3}>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                        bg="gray.50"
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Active model')}
+                        </Text>
+                        <Text fontWeight={700}>
+                          {developerModelStatus?.summary || t('Baseline model')}
+                        </Text>
+                      </Box>
                       <Box
                         borderWidth="1px"
                         borderColor="gray.100"
@@ -2933,35 +2980,62 @@ export default function AiHumanTeacherPage() {
                       </Box>
                     ) : null}
                     {developerModelStatus ? (
-                      <Alert
-                        status={developerModelStatus.tone}
+                      <Box
+                        borderWidth="1px"
+                        borderColor={developerModelStatusBorderColor}
                         borderRadius="md"
+                        px={4}
+                        py={3}
+                        bg={developerModelStatusBackground}
                       >
-                        <Stack spacing={1}>
-                          <Text fontSize="sm" fontWeight={700}>
-                            {developerModelStatus.title}
-                          </Text>
-                          <Text fontSize="sm">
-                            {developerModelStatus.detail}
-                          </Text>
-                          {developerModelStatus.reason ? (
-                            <Text fontSize="sm">
-                              {t('Reason')}: {developerModelStatus.reason}
-                            </Text>
-                          ) : null}
-                          {developerLastTraining?.at ? (
+                        <Stack spacing={2}>
+                          <Flex
+                            justify="space-between"
+                            align={['flex-start', 'center']}
+                            direction={['column', 'row']}
+                            gap={2}
+                          >
+                            <Stack spacing={1}>
+                              <Text fontSize="sm" fontWeight={700}>
+                                {developerModelStatus.summary}
+                              </Text>
+                              <Text fontSize="sm">
+                                {developerModelStatus.detail}
+                              </Text>
+                            </Stack>
+                            {developerLastTraining?.at ? (
+                              <Text color="muted" fontSize="xs">
+                                {formatTimestamp(developerLastTraining.at)}
+                              </Text>
+                            ) : null}
+                          </Flex>
+                          {developerLastTraining?.status ? (
                             <Text color="muted" fontSize="xs">
-                              {t('Last training attempt')}:{' '}
-                              {formatTimestamp(developerLastTraining.at)}
-                              {developerLastTraining?.status
-                                ? ` · ${t('Status')}: ${
-                                    developerLastTraining.status
-                                  }`
-                                : ''}
+                              {t('Last training status')}:{' '}
+                              {developerLastTraining.status}
                             </Text>
                           ) : null}
                         </Stack>
-                      </Alert>
+                      </Box>
+                    ) : null}
+                    {developerModelStatus?.reason ? (
+                      <Box
+                        borderWidth="1px"
+                        borderColor="red.100"
+                        borderRadius="md"
+                        px={4}
+                        py={3}
+                        bg="red.50"
+                      >
+                        <Stack spacing={1}>
+                          <Text fontSize="sm" fontWeight={700}>
+                            {t('Why the last training stopped')}
+                          </Text>
+                          <Text fontSize="sm">
+                            {developerModelStatus.reason}
+                          </Text>
+                        </Stack>
+                      </Box>
                     ) : null}
                     <SimpleGrid columns={[1, 3]} spacing={3}>
                       <Box
@@ -3051,20 +3125,11 @@ export default function AiHumanTeacherPage() {
                     ) : null}
                     <Text color="muted" fontSize="xs">
                       {t('Chunk size')}: {DEVELOPER_TRAINING_CHUNK_SIZE} ·{' '}
-                      {t('Benchmark size')}: 100
+                      {t('Benchmark size')}: 100 ·{' '}
+                      {t(
+                        'The same holdout set is reused so later runs stay comparable.'
+                      )}
                     </Text>
-                    {result?.comparison100?.expectedPath ? (
-                      <Text color="muted" fontSize="xs">
-                        {t('Expected comparison record')}:{' '}
-                        {result.comparison100.expectedPath}
-                      </Text>
-                    ) : null}
-                    {developerActionResult?.statePath ? (
-                      <Text color="muted" fontSize="xs">
-                        {t('Developer state path')}:{' '}
-                        {developerActionResult.statePath}
-                      </Text>
-                    ) : null}
                   </Stack>
                 </Box>
               </>

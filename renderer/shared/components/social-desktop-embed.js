@@ -408,13 +408,13 @@ export default function SocialDesktopEmbed({
 
   const usingIndexerFallback = historyMode === 'indexer-api'
   const socialViewportHeight = showTechnicalDetails
-    ? 'calc(100vh - 226px)'
-    : 'calc(100vh - 118px)'
+    ? 'calc(100vh - 184px)'
+    : 'calc(100vh - 90px)'
 
   return (
     <Layout>
       <Page px={0} py={0} overflow="hidden" align="stretch">
-        <Box px={8} pt={3} pb={2} w="full">
+        <Box px={8} pt={2} pb={1} w="full">
           <Stack spacing={2} maxW="7xl">
             <Flex
               direction={{base: 'column', lg: 'row'}}
@@ -429,12 +429,11 @@ export default function SocialDesktopEmbed({
                 <Text
                   color="muted"
                   fontSize="sm"
-                  lineHeight="tall"
-                  noOfLines={2}
+                  lineHeight="base"
+                  noOfLines={1}
                 >
-                  Posting uses your own node RPC. Community history defaults to
-                  the official indexer fallback so the feed stays broader than
-                  RPC-only scans.
+                  Posting stays on your node. Community history can use the
+                  official indexer fallback for a broader feed.
                 </Text>
               </Box>
               <HStack spacing={2} flexWrap="wrap">
@@ -468,15 +467,25 @@ export default function SocialDesktopEmbed({
               </HStack>
             </Flex>
             {headerContent}
+            <HStack spacing={3} flexWrap="wrap">
+              <Text color="muted" fontSize="xs">
+                {usingIndexerFallback
+                  ? 'Community history: official indexer fallback'
+                  : 'Community history: node RPC only'}
+              </Text>
+              <Text color="muted" fontSize="xs">
+                Posting: your own node RPC
+              </Text>
+            </HStack>
             {(offline || syncing) && (
-              <Text color="orange.500" fontSize="sm" lineHeight="tall">
+              <Text color="orange.500" fontSize="xs" lineHeight="tall">
                 Your node is currently {offline ? 'offline' : 'syncing'}. The
                 social view may stay read-only or temporarily unavailable until
                 RPC becomes healthy.
               </Text>
             )}
             <Collapse in={showTechnicalDetails} animateOpacity>
-              <Stack spacing={2} pt={1}>
+              <Stack spacing={2} pt={0}>
                 <HStack spacing={4} flexWrap="wrap" align="center">
                   <HStack spacing={2}>
                     <Text fontSize="sm" lineHeight="short">
