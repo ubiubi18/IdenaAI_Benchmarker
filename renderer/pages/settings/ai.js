@@ -3421,6 +3421,37 @@ export default function AiSettingsPage() {
                   <Box bg="white" borderRadius="md" p={3}>
                     <Stack spacing={3}>
                       <Text fontWeight={500}>
+                        {t('Human Teacher Annotator')}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Open the post-session annotation tool, or load an offline demo batch from bundled sample flips to test the annotator without waiting for consensus.'
+                        )}
+                      </Text>
+                      <Stack isInline spacing={2} flexWrap="wrap">
+                        <SecondaryButton
+                          onClick={() =>
+                            router.push('/settings/ai-human-teacher')
+                          }
+                        >
+                          {t('Open Human Teacher Lab')}
+                        </SecondaryButton>
+                        <SecondaryButton
+                          onClick={() =>
+                            router.push(
+                              '/settings/ai-human-teacher?action=demo&sample=flip-challenge-test-5-decoded-labeled'
+                            )
+                          }
+                        >
+                          {t('Start Offline Demo')}
+                        </SecondaryButton>
+                      </Stack>
+                    </Stack>
+                  </Box>
+
+                  <Box bg="white" borderRadius="md" p={3}>
+                    <Stack spacing={3}>
+                      <Text fontWeight={500}>
                         {t('Local AI Training Package Review')}
                       </Text>
                       <Text color="muted" fontSize="sm">

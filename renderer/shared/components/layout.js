@@ -31,7 +31,7 @@ import {assign, createMachine} from 'xstate'
 import NextLink from 'next/link'
 import Sidebar from './sidebar'
 import {useDebounce} from '../hooks/use-debounce'
-import {useEpochState} from '../providers/epoch-context'
+import {EpochPeriod, useEpochState} from '../providers/epoch-context'
 import {loadPersistentStateValue, persistItem} from '../utils/persist'
 import {
   DnaSignInDialog,
@@ -418,6 +418,7 @@ function BenchmarkResearchBanner() {
 
   return (
     <>
+      <HumanTeacherLoopBanner />
       <Alert
         status={aiEnabled ? 'warning' : 'info'}
         borderRadius={0}
@@ -493,6 +494,202 @@ function BenchmarkResearchBanner() {
         }}
       />
     </>
+  )
+}
+
+function HumanTeacherLoopBanner() {
+  const {t} = useTranslation()
+  const router = useRouter()
+  const epoch = useEpochState()
+  const settings = useSettingsState()
+  const [summary, setSummary] = React.useState(null)
+  const [error, setError] = React.useState('')
+  const [loading, setLoading] = React.useState(false)
+  const [skipPending, setSkipPending] = React.useState(false)
+
+  const targetEpoch = React.useMemo(() => {
+    const nextEpochNumber = Number(epoch?.epoch)
+    return Number.isFinite(nextEpochNumber) && nextEpochNumber > 0
+      ? nextEpochNumber - 1
+      : null
+  }, [epoch?.epoch])
+  const currentEpoch = React.useMemo(() => {
+    const nextEpoch = Number(epoch?.epoch)
+    return Number.isFinite(nextEpoch) ? nextEpoch : null
+  }, [epoch?.epoch])
+  const currentPeriod = String(epoch?.currentPeriod || '').trim()
+
+  const isEligibleRoute =
+    typeof router.pathname === 'string' &&
+    !router.pathname.startsWith('/validation') &&
+    router.pathname !== '/settings/ai-human-teacher'
+  const isValidationPeriod = [
+    EpochPeriod.FlipLottery,
+    EpochPeriod.ShortSession,
+    EpochPeriod.LongSession,
+  ].includes(currentPeriod)
+  const localAiEnabled = Boolean(settings?.localAi?.enabled)
+  const captureEnabled = Boolean(settings?.localAi?.captureEnabled)
+  const shouldCheck =
+    isEligibleRoute &&
+    !isValidationPeriod &&
+    localAiEnabled &&
+    captureEnabled &&
+    targetEpoch !== null &&
+    global.localAi &&
+    typeof global.localAi.loadHumanTeacherPackage === 'function' &&
+    typeof global.localAi.buildHumanTeacherPackage === 'function'
+
+  React.useEffect(() => {
+    if (!shouldCheck) {
+      setSummary(null)
+      setError('')
+      return undefined
+    }
+
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setLoading(true)
+      setError('')
+
+      try {
+        let nextSummary = null
+
+        try {
+          nextSummary = await global.localAi.loadHumanTeacherPackage({
+            epoch: targetEpoch,
+            currentEpoch,
+          })
+        } catch (loadError) {
+          const message = String(
+            (loadError && loadError.message) || loadError || ''
+          ).trim()
+
+          if (!/human teacher package is unavailable/i.test(message)) {
+            throw loadError
+          }
+        }
+
+        if (!nextSummary) {
+          nextSummary = await global.localAi.buildHumanTeacherPackage({
+            epoch: targetEpoch,
+            currentEpoch,
+            batchSize: 30,
+            includePackage: true,
+            fetchFlipPayloads: true,
+            requireFlipPayloads: true,
+          })
+        }
+
+        if (!cancelled) {
+          setSummary(nextSummary)
+        }
+      } catch (nextError) {
+        if (!cancelled) {
+          setSummary(null)
+          setError(
+            String((nextError && nextError.message) || nextError || '').trim()
+          )
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }, 1200)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [currentEpoch, shouldCheck, targetEpoch])
+
+  const reviewStatus = String(summary?.package?.reviewStatus || 'draft')
+    .trim()
+    .toLowerCase()
+  const eligibleCount = Number(summary?.eligibleCount) || 0
+  const shouldShow =
+    shouldCheck && eligibleCount > 0 && reviewStatus === 'draft' && !loading
+
+  if (!shouldShow) {
+    return null
+  }
+
+  return (
+    <Alert
+      status="success"
+      borderRadius={0}
+      bg="green.50"
+      borderBottomWidth={1}
+      borderBottomColor="green.100"
+      alignItems="center"
+      py={2}
+    >
+      <Flex
+        w="full"
+        px={4}
+        justify="space-between"
+        align="center"
+        flexWrap="wrap"
+        gap={2}
+      >
+        <Stack spacing={0}>
+          <Text fontSize="sm" color="green.800" fontWeight={600}>
+            {t('Voluntary human-teacher batch is ready for epoch {{epoch}}.', {
+              epoch: targetEpoch,
+            })}
+          </Text>
+          <Text fontSize="sm" color="green.700">
+            {t(
+              '{{count}} consensus-backed flips can be annotated after the session. Skipping does not block incoming federated updates.',
+              {count: eligibleCount}
+            )}
+          </Text>
+          {error ? (
+            <Text fontSize="xs" color="green.700">
+              {error}
+            </Text>
+          ) : null}
+        </Stack>
+        <Stack isInline spacing={2} align="center">
+          <PrimaryButton
+            onClick={() =>
+              router.push(
+                `/settings/ai-human-teacher?epoch=${targetEpoch}&action=start`
+              )
+            }
+          >
+            {t('Annotate now')}
+          </PrimaryButton>
+          <SecondaryButton
+            isLoading={skipPending}
+            onClick={async () => {
+              setSkipPending(true)
+              setError('')
+              try {
+                const nextSummary =
+                  await global.localAi.updateHumanTeacherPackageReview({
+                    epoch: targetEpoch,
+                    currentEpoch,
+                    reviewStatus: 'rejected',
+                  })
+                setSummary(nextSummary)
+              } catch (nextError) {
+                setError(
+                  String(
+                    (nextError && nextError.message) || nextError || ''
+                  ).trim()
+                )
+              } finally {
+                setSkipPending(false)
+              }
+            }}
+          >
+            {t('Skip this epoch')}
+          </SecondaryButton>
+        </Stack>
+      </Flex>
+    </Alert>
   )
 }
 

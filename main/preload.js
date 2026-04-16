@@ -639,6 +639,8 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
   const source = isPlainObject(payload) ? payload : {}
   return {
     epoch: sanitizeInteger(source.epoch, null, 0),
+    currentEpoch: sanitizeInteger(source.currentEpoch, null, 0),
+    sampleName: sanitizeOptionalBoundedString(source.sampleName, 128),
     batchSize: sanitizeInteger(source.batchSize, null, 1, 50),
     includePackage: sanitizeBoolean(source.includePackage, false),
     refreshPublicFallback: sanitizeBoolean(source.refreshPublicFallback, false),
@@ -657,8 +659,33 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
     }),
     rpcUrl: sanitizeOptionalBoundedString(source.rpcUrl, 2048),
     rpcKey: sanitizeOptionalBoundedString(source.rpcKey, 512),
+    annotationsPath: sanitizeOptionalBoundedString(
+      source.annotationsPath,
+      4096
+    ),
+    outputJsonlPath: sanitizeOptionalBoundedString(
+      source.outputJsonlPath,
+      4096
+    ),
+    summaryPath: sanitizeOptionalBoundedString(source.summaryPath, 4096),
     adapterStrategy: sanitizeOptionalBoundedString(source.adapterStrategy, 64),
     trainingPolicy: sanitizeOptionalBoundedString(source.trainingPolicy, 64),
+  }
+}
+
+function sanitizeLocalAiAnnotationPayload(payload = {}) {
+  const source = isPlainObject(payload) ? payload : {}
+
+  return {
+    ...sanitizeLocalAiEpochPayload(source),
+    taskId: sanitizeOptionalBoundedString(source.taskId, 512),
+    annotation: sanitizeBoundedCloneable(source.annotation, {
+      maxDepth: 4,
+      maxArrayLength: 16,
+      maxObjectKeys: 32,
+      maxStringLength: 4000,
+      maxDataUrlLength: 2048,
+    }),
   }
 }
 
@@ -1129,6 +1156,46 @@ const localAiBridge = Object.freeze({
       'localAi.buildHumanTeacherPackage',
       sanitizeLocalAiEpochPayload(payload)
     ),
+  loadHumanTeacherDemoWorkspace: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherDemoWorkspace',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  loadHumanTeacherDemoTask: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherDemoTask',
+      sanitizeLocalAiAnnotationPayload(payload)
+    ),
+  loadHumanTeacherAnnotationWorkspace: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherAnnotationWorkspace',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  loadHumanTeacherAnnotationTask: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherAnnotationTask',
+      sanitizeLocalAiAnnotationPayload(payload)
+    ),
+  exportHumanTeacherTasks: (payload) =>
+    invokeCloneable(
+      'localAi.exportHumanTeacherTasks',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  saveHumanTeacherAnnotationDraft: (payload) =>
+    invokeCloneable(
+      'localAi.saveHumanTeacherAnnotationDraft',
+      sanitizeLocalAiAnnotationPayload(payload)
+    ),
+  saveHumanTeacherDemoDraft: (payload) =>
+    invokeCloneable(
+      'localAi.saveHumanTeacherDemoDraft',
+      sanitizeLocalAiAnnotationPayload(payload)
+    ),
+  importHumanTeacherAnnotations: (payload) =>
+    invokeCloneable(
+      'localAi.importHumanTeacherAnnotations',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
   updateTrainingCandidatePackageReview: (payload) =>
     invokeCloneable('localAi.updateTrainingCandidatePackageReview', {
       epoch: sanitizeInteger(payload && payload.epoch, null, 0),
@@ -1140,6 +1207,7 @@ const localAiBridge = Object.freeze({
   updateHumanTeacherPackageReview: (payload) =>
     invokeCloneable('localAi.updateHumanTeacherPackageReview', {
       epoch: sanitizeInteger(payload && payload.epoch, null, 0),
+      currentEpoch: sanitizeInteger(payload && payload.currentEpoch, null, 0),
       reviewStatus: sanitizeOptionalBoundedString(
         payload && payload.reviewStatus,
         64

@@ -739,20 +739,18 @@ function HomeFeaturedDestinations() {
     <Box
       bg="white"
       borderRadius="xl"
-      boxShadow="0 3px 12px 0 rgba(83, 86, 92, 0.1), 0 2px 3px 0 rgba(83, 86, 92, 0.2)"
-      px={6}
-      py={5}
+      boxShadow="0 2px 8px 0 rgba(83, 86, 92, 0.08), 0 1px 2px 0 rgba(83, 86, 92, 0.12)"
+      px={5}
+      py={4}
       w="full"
     >
-      <Stack spacing={4}>
+      <Stack spacing={3}>
         <Stack spacing={1}>
-          <Heading as="h2" fontSize="xl" fontWeight={500}>
-            {t('Use IdenaAI right away')}
+          <Heading as="h2" fontSize="lg" fontWeight={500}>
+            {t('Quick access')}
           </Heading>
-          <Text color="muted" fontSize="md" lineHeight="tall" maxW="3xl">
-            {t(
-              'The most active surfaces are now front and center: talk to your local AI assistant, jump into the community feed, or open the governance-focused DAO view.'
-            )}
+          <Text color="muted" fontSize="sm" lineHeight="base" maxW="2xl">
+            {t('Open chat, the community feed, or DAO tools.')}
           </Text>
         </Stack>
         <Stack
@@ -810,18 +808,18 @@ function HomeFeaturedCard({
     <Box
       borderWidth="1px"
       borderColor="gray.100"
-      borderRadius="lg"
+      borderRadius="md"
       px={4}
-      py={4}
+      py={3}
       flex={1}
-      bg="rgba(87, 143, 255, 0.06)"
+      bg="gray.50"
     >
-      <Stack spacing={3} h="full" align="flex-start">
-        <Stack spacing={2} w="full">
+      <Stack spacing={2} h="full" align="flex-start">
+        <Stack spacing={1.5} w="full">
           <HStack justify="space-between" align="flex-start" spacing={3}>
             <Text
               color="brandBlue.500"
-              fontSize="xs"
+              fontSize="2xs"
               fontWeight={600}
               textTransform="uppercase"
               letterSpacing="0.04em"
@@ -843,11 +841,11 @@ function HomeFeaturedCard({
           </HStack>
           <HStack spacing={2} align="center">
             {icon}
-            <Heading as="h3" fontSize="lg" fontWeight={500}>
+            <Heading as="h3" fontSize="md" fontWeight={500}>
               {title}
             </Heading>
           </HStack>
-          <Text color="muted" fontSize="sm" lineHeight="tall">
+          <Text color="muted" fontSize="sm" lineHeight="base">
             {description}
           </Text>
         </Stack>

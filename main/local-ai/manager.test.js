@@ -1,6 +1,7 @@
 const os = require('os')
 const path = require('path')
 const fs = require('fs-extra')
+const {encode} = require('rlp')
 
 const {createLocalAiStorage} = require('./storage')
 const {createLocalAiManager} = require('./manager')
@@ -945,6 +946,19 @@ describe('local-ai manager', () => {
     ])
   })
 
+  it('rejects human-teacher packaging for the current epoch', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await expect(
+      manager.buildHumanTeacherPackage({
+        epoch: 12,
+        currentEpoch: 12,
+      })
+    ).rejects.toThrow(
+      'Human-teacher packaging is only available after the session finishes and consensus exists for a past epoch'
+    )
+  })
+
   it('loads and updates saved human-teacher package review state locally', async () => {
     const filePath = storage.resolveLocalAiPath(
       'human-teacher',
@@ -998,6 +1012,508 @@ describe('local-ai manager', () => {
         annotationReady: true,
       }),
     })
+  })
+
+  it('exports human-teacher tasks into a local annotation workspace', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const result = await manager.exportHumanTeacherTasks({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+
+    expect(result).toMatchObject({
+      epoch: 12,
+      packagePath: filePath,
+      outputDir: storage.resolveLocalAiPath(
+        'human-teacher-exports',
+        'epoch-12-tasks'
+      ),
+      export: expect.objectContaining({
+        tasks: 1,
+      }),
+    })
+
+    await expect(
+      storage.exists(path.join(result.outputDir, 'tasks.jsonl'))
+    ).resolves.toBe(true)
+    await expect(
+      storage.exists(
+        path.join(
+          result.outputDir,
+          'tasks',
+          'flip-a-human-teacher',
+          'README.md'
+        )
+      )
+    ).resolves.toBe(true)
+  })
+
+  it('loads a human-teacher annotation workspace and saves a task draft', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+          annotationStatus: 'pending',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const exportResult = await manager.exportHumanTeacherTasks({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+    const workspace = await manager.loadHumanTeacherAnnotationWorkspace({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+    const task = await manager.loadHumanTeacherAnnotationTask({
+      epoch: 12,
+      currentEpoch: 13,
+      taskId: 'flip-a::human-teacher',
+    })
+    const saved = await manager.saveHumanTeacherAnnotationDraft({
+      epoch: 12,
+      currentEpoch: 13,
+      taskId: 'flip-a::human-teacher',
+      annotation: {
+        annotator: 'tester',
+        frame_captions: ['a', 'b', 'c', 'd'],
+        option_a_summary: 'left story',
+        option_b_summary: 'right story',
+        final_answer: 'left',
+        why_answer: 'left is coherent',
+      },
+    })
+
+    expect(workspace).toMatchObject({
+      epoch: 12,
+      workspace: expect.objectContaining({
+        taskCount: 1,
+        draftedCount: 0,
+        completedCount: 0,
+      }),
+    })
+    expect(task).toMatchObject({
+      epoch: 12,
+      task: expect.objectContaining({
+        taskId: 'flip-a::human-teacher',
+        panels: expect.arrayContaining([
+          expect.objectContaining({
+            dataUrl: expect.stringContaining('data:image/png;base64,'),
+          }),
+        ]),
+      }),
+    })
+    expect(saved).toMatchObject({
+      epoch: 12,
+      task: expect.objectContaining({
+        taskId: 'flip-a::human-teacher',
+        annotationStatus: 'complete',
+      }),
+      workspace: expect.objectContaining({
+        annotationsPath: path.join(
+          exportResult.outputDir,
+          'annotations.filled.jsonl'
+        ),
+      }),
+    })
+
+    await expect(storage.readHumanTeacherPackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({
+            taskId: 'flip-a::human-teacher',
+            annotationStatus: 'complete',
+          }),
+        ],
+      })
+    )
+  })
+
+  it('rejects opening annotation tasks when the human-teacher package is not approved', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'rejected',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: false,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+          annotationStatus: 'pending',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await expect(
+      manager.loadHumanTeacherAnnotationTask({
+        epoch: 12,
+        currentEpoch: 13,
+        taskId: 'flip-a::human-teacher',
+      })
+    ).rejects.toThrow(
+      'Human teacher package must be approved before annotation tasks can be opened'
+    )
+  })
+
+  it('loads an offline human-teacher demo workspace and saves a demo draft', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    const workspace = await manager.loadHumanTeacherDemoWorkspace({
+      sampleName: 'flip-challenge-test-5-decoded-labeled',
+      batchSize: 2,
+    })
+    const firstTaskId = workspace.workspace.tasks[0].taskId
+    const task = await manager.loadHumanTeacherDemoTask({
+      sampleName: 'flip-challenge-test-5-decoded-labeled',
+      taskId: firstTaskId,
+    })
+    const saved = await manager.saveHumanTeacherDemoDraft({
+      sampleName: 'flip-challenge-test-5-decoded-labeled',
+      taskId: firstTaskId,
+      annotation: {
+        annotator: 'offline-demo',
+        frame_captions: ['one', 'two', 'three', 'four'],
+        option_a_summary: 'option a summary',
+        option_b_summary: 'option b summary',
+        final_answer: 'right',
+        why_answer: 'testing the offline annotator path',
+      },
+    })
+    const reloadedWorkspace = await manager.loadHumanTeacherDemoWorkspace({
+      sampleName: 'flip-challenge-test-5-decoded-labeled',
+    })
+
+    expect(workspace).toMatchObject({
+      demo: true,
+      sampleName: 'flip-challenge-test-5-decoded-labeled',
+      workspace: expect.objectContaining({
+        taskCount: 2,
+        draftedCount: 0,
+        completedCount: 0,
+      }),
+    })
+    expect(task).toMatchObject({
+      demo: true,
+      task: expect.objectContaining({
+        taskId: firstTaskId,
+        panels: expect.arrayContaining([
+          expect.objectContaining({
+            dataUrl: expect.stringContaining('data:image/png;base64,'),
+          }),
+        ]),
+      }),
+    })
+    expect(saved).toMatchObject({
+      demo: true,
+      task: expect.objectContaining({
+        taskId: firstTaskId,
+        annotationStatus: 'complete',
+      }),
+    })
+    expect(reloadedWorkspace.workspace).toMatchObject({
+      taskCount: 2,
+      draftedCount: 1,
+      completedCount: 1,
+    })
+  })
+
+  it('requires explicit approval before exporting human-teacher tasks', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: '0x00',
+      privateHex: '0x00',
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      annotationReady: false,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          payloadPath,
+          words: {},
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await expect(
+      manager.exportHumanTeacherTasks({
+        epoch: 12,
+        currentEpoch: 13,
+      })
+    ).rejects.toThrow(
+      'Human teacher package must be approved before annotation tasks can be exported'
+    )
+  })
+
+  it('imports completed human-teacher annotations from the exported workspace', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+          annotationStatus: 'pending',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const exportResult = await manager.exportHumanTeacherTasks({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+    const filledPath = path.join(
+      exportResult.outputDir,
+      'annotations.filled.jsonl'
+    )
+
+    await fs.writeFile(
+      filledPath,
+      `${JSON.stringify({
+        task_id: 'flip-a::human-teacher',
+        annotator: 'tester',
+        frame_captions: ['a', 'b', 'c', 'd'],
+        option_a_summary: 'left story',
+        option_b_summary: 'right story',
+        text_required: false,
+        sequence_markers_present: false,
+        report_required: false,
+        report_reason: '',
+        final_answer: 'left',
+        why_answer: 'left is coherent',
+        confidence: 0.9,
+      })}\n`,
+      'utf8'
+    )
+
+    const importResult = await manager.importHumanTeacherAnnotations({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+    const taskPackage = await storage.readHumanTeacherPackage(filePath)
+
+    expect(importResult).toMatchObject({
+      epoch: 12,
+      packagePath: filePath,
+      import: expect.objectContaining({
+        normalizedRows: 1,
+        missingAnnotations: 0,
+        invalidAnnotations: 0,
+      }),
+    })
+    expect(taskPackage).toMatchObject({
+      importedAnnotations: expect.objectContaining({
+        normalizedRows: 1,
+        missingAnnotations: 0,
+      }),
+      items: [
+        expect.objectContaining({
+          taskId: 'flip-a::human-teacher',
+          annotationStatus: 'annotated',
+        }),
+      ],
+    })
+    await expect(
+      storage.exists(
+        path.join(exportResult.outputDir, 'annotations.normalized.jsonl')
+      )
+    ).resolves.toBe(true)
   })
 
   it('refreshes Local AI sidecar health and model status without requiring cloud providers', async () => {

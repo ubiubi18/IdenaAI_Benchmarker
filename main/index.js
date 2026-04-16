@@ -2274,12 +2274,82 @@ handleTrusted(
 
 handleTrusted(
   'localAi.buildHumanTeacherPackage',
-  withLocalAiTrainingEnabled(
-    'buildHumanTeacherPackage',
+  withLocalAiEnabled('buildHumanTeacherPackage', async (_event, payload) =>
+    localAiManager.buildHumanTeacherPackage(
+      buildLocalAiTrainHookPayload(payload)
+    )
+  )
+)
+
+handleTrusted(
+  'localAi.loadHumanTeacherDemoWorkspace',
+  withLocalAiEnabled('loadHumanTeacherDemoWorkspace', async (_event, payload) =>
+    localAiManager.loadHumanTeacherDemoWorkspace(
+      buildLocalAiEpochPayload(payload)
+    )
+  )
+)
+
+handleTrusted(
+  'localAi.loadHumanTeacherDemoTask',
+  withLocalAiEnabled('loadHumanTeacherDemoTask', async (_event, payload) =>
+    localAiManager.loadHumanTeacherDemoTask(buildLocalAiEpochPayload(payload))
+  )
+)
+
+handleTrusted(
+  'localAi.loadHumanTeacherAnnotationWorkspace',
+  withLocalAiEnabled(
+    'loadHumanTeacherAnnotationWorkspace',
     async (_event, payload) =>
-      localAiManager.buildHumanTeacherPackage(
-        buildLocalAiTrainHookPayload(payload)
+      localAiManager.loadHumanTeacherAnnotationWorkspace(
+        buildLocalAiEpochPayload(payload)
       )
+  )
+)
+
+handleTrusted(
+  'localAi.loadHumanTeacherAnnotationTask',
+  withLocalAiEnabled(
+    'loadHumanTeacherAnnotationTask',
+    async (_event, payload) =>
+      localAiManager.loadHumanTeacherAnnotationTask(
+        buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
+  'localAi.exportHumanTeacherTasks',
+  withLocalAiEnabled('exportHumanTeacherTasks', async (_event, payload) =>
+    localAiManager.exportHumanTeacherTasks(buildLocalAiEpochPayload(payload))
+  )
+)
+
+handleTrusted(
+  'localAi.saveHumanTeacherAnnotationDraft',
+  withLocalAiEnabled(
+    'saveHumanTeacherAnnotationDraft',
+    async (_event, payload) =>
+      localAiManager.saveHumanTeacherAnnotationDraft(
+        buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
+  'localAi.saveHumanTeacherDemoDraft',
+  withLocalAiEnabled('saveHumanTeacherDemoDraft', async (_event, payload) =>
+    localAiManager.saveHumanTeacherDemoDraft(buildLocalAiEpochPayload(payload))
+  )
+)
+
+handleTrusted(
+  'localAi.importHumanTeacherAnnotations',
+  withLocalAiEnabled('importHumanTeacherAnnotations', async (_event, payload) =>
+    localAiManager.importHumanTeacherAnnotations(
+      buildLocalAiEpochPayload(payload)
+    )
   )
 )
 
@@ -2294,7 +2364,7 @@ handleTrusted(
 
 handleTrusted(
   'localAi.updateHumanTeacherPackageReview',
-  withLocalAiTrainingEnabled(
+  withLocalAiEnabled(
     'updateHumanTeacherPackageReview',
     async (_event, payload) =>
       localAiManager.updateHumanTeacherPackageReview(payload)

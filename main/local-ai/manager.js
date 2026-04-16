@@ -5,6 +5,14 @@ const path = require('path')
 const {createLocalAiStorage} = require('./storage')
 const {resolveAdapterContract} = require('./adapter-contract')
 const {createLocalAiSidecar} = require('./sidecar')
+const {
+  DEFAULT_DEMO_SAMPLE_NAME,
+  buildHumanTeacherDemoWorkspace,
+  listHumanTeacherDemoSamples,
+  normalizeDemoSampleName,
+} = require('./human-teacher-demo')
+const {exportHumanTeacherTasks} = require('./human-teacher-export')
+const {importHumanTeacherAnnotations} = require('./human-teacher-import')
 const {resolveModelReference} = require('./model-reference')
 const {createModernTrainingCollector} = require('./modern-training')
 const {
@@ -203,6 +211,11 @@ function pickRuntimeInput(payload) {
 }
 
 function normalizeEpoch(value) {
+  const epoch = Number.parseInt(value, 10)
+  return Number.isFinite(epoch) ? epoch : null
+}
+
+function normalizeOptionalEpoch(value) {
   const epoch = Number.parseInt(value, 10)
   return Number.isFinite(epoch) ? epoch : null
 }
@@ -487,6 +500,36 @@ function humanTeacherPackagePath(storage, epoch) {
   )
 }
 
+function humanTeacherExportDir(storage, epoch) {
+  return storage.resolveLocalAiPath(
+    'human-teacher-exports',
+    `epoch-${epoch}-tasks`
+  )
+}
+
+function humanTeacherDemoDir(storage, sampleName = DEFAULT_DEMO_SAMPLE_NAME) {
+  return storage.resolveLocalAiPath(
+    'human-teacher-demo',
+    normalizeDemoSampleName(sampleName)
+  )
+}
+
+function humanTeacherNormalizedAnnotationsPath(storage, epoch) {
+  return storage.resolveLocalAiPath(
+    'human-teacher-exports',
+    `epoch-${epoch}-tasks`,
+    'annotations.normalized.jsonl'
+  )
+}
+
+function humanTeacherImportSummaryPath(storage, epoch) {
+  return storage.resolveLocalAiPath(
+    'human-teacher-exports',
+    `epoch-${epoch}-tasks`,
+    'annotations.import-summary.json'
+  )
+}
+
 function normalizeHumanTeacherBatchSize(value) {
   const batchSize = Number.parseInt(value, 10)
 
@@ -495,6 +538,18 @@ function normalizeHumanTeacherBatchSize(value) {
   }
 
   return Math.min(batchSize, MAX_HUMAN_TEACHER_BATCH_SIZE)
+}
+
+function assertPastHumanTeacherEpoch(epoch, currentEpoch, action) {
+  if (currentEpoch === null) {
+    return
+  }
+
+  if (epoch >= currentEpoch) {
+    throw new Error(
+      `Human-teacher ${action} is only available after the session finishes and consensus exists for a past epoch`
+    )
+  }
 }
 
 function reduceLatestCaptures(captures) {
@@ -731,6 +786,262 @@ function buildHumanTeacherItem(item) {
       requiresReportabilityCheck: true,
     },
   }
+}
+
+function buildDefaultHumanTeacherAnnotationRow(task = {}) {
+  return {
+    task_id: String(task.task_id || task.taskId || '').trim(),
+    annotator: '',
+    frame_captions: ['', '', '', ''],
+    option_a_summary: '',
+    option_b_summary: '',
+    text_required: null,
+    sequence_markers_present: null,
+    report_required: null,
+    report_reason: '',
+    final_answer: '',
+    why_answer: '',
+    confidence: null,
+  }
+}
+
+function normalizeHumanTeacherDraftText(value, maxLength = 2000) {
+  return String(value || '')
+    .trim()
+    .slice(0, maxLength)
+}
+
+function normalizeHumanTeacherDraftBool(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null
+  }
+
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  const raw = String(value).trim().toLowerCase()
+
+  if (['true', 'yes', '1'].includes(raw)) {
+    return true
+  }
+
+  if (['false', 'no', '0'].includes(raw)) {
+    return false
+  }
+
+  return null
+}
+
+function normalizeHumanTeacherDraftConfidence(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null
+  }
+
+  const parsed = Number.parseFloat(value)
+
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return Math.min(Math.max(parsed, 0), 1)
+}
+
+function normalizeHumanTeacherDraftCaptions(value) {
+  const next = Array.isArray(value) ? value.slice(0, 4) : []
+
+  while (next.length < 4) {
+    next.push('')
+  }
+
+  return next.map((item) => normalizeHumanTeacherDraftText(item, 400))
+}
+
+function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
+  const source =
+    annotation && typeof annotation === 'object' && !Array.isArray(annotation)
+      ? annotation
+      : {}
+  const finalAnswer = normalizeHumanTeacherDraftText(
+    source.final_answer || source.finalAnswer,
+    16
+  ).toLowerCase()
+
+  return {
+    ...buildDefaultHumanTeacherAnnotationRow(task),
+    annotator: normalizeHumanTeacherDraftText(source.annotator, 256),
+    frame_captions: normalizeHumanTeacherDraftCaptions(
+      source.frame_captions || source.frameCaptions
+    ),
+    option_a_summary: normalizeHumanTeacherDraftText(
+      source.option_a_summary || source.optionASummary
+    ),
+    option_b_summary: normalizeHumanTeacherDraftText(
+      source.option_b_summary || source.optionBSummary
+    ),
+    text_required: normalizeHumanTeacherDraftBool(
+      source.text_required || source.textRequired
+    ),
+    sequence_markers_present: normalizeHumanTeacherDraftBool(
+      source.sequence_markers_present || source.sequenceMarkersPresent
+    ),
+    report_required: normalizeHumanTeacherDraftBool(
+      source.report_required || source.reportRequired
+    ),
+    report_reason: normalizeHumanTeacherDraftText(
+      source.report_reason || source.reportReason
+    ),
+    final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
+      ? finalAnswer
+      : '',
+    why_answer: normalizeHumanTeacherDraftText(
+      source.why_answer || source.whyAnswer
+    ),
+    confidence: normalizeHumanTeacherDraftConfidence(source.confidence),
+  }
+}
+
+function hasHumanTeacherAnnotationDraft(annotation = {}) {
+  const next = normalizeHumanTeacherAnnotationDraft({}, annotation)
+
+  return Boolean(
+    next.annotator ||
+      next.frame_captions.some(Boolean) ||
+      next.option_a_summary ||
+      next.option_b_summary ||
+      next.report_reason ||
+      next.final_answer ||
+      next.why_answer ||
+      next.text_required !== null ||
+      next.sequence_markers_present !== null ||
+      next.report_required !== null ||
+      next.confidence !== null
+  )
+}
+
+function isHumanTeacherAnnotationComplete(annotation = {}) {
+  const next = normalizeHumanTeacherAnnotationDraft({}, annotation)
+
+  return Boolean(
+    next.frame_captions.length === 4 &&
+      next.frame_captions.every(Boolean) &&
+      next.option_a_summary &&
+      next.option_b_summary &&
+      next.final_answer &&
+      next.why_answer
+  )
+}
+
+async function readJsonlRows(filePath, fallbackValue = []) {
+  const targetPath = String(filePath || '').trim()
+
+  if (!targetPath) {
+    throw new Error('filePath is required')
+  }
+
+  try {
+    const rawBuffer = await fs.promises.readFile(targetPath)
+    const raw = rawBuffer.toString('utf8')
+
+    return raw
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return fallbackValue
+    }
+
+    throw error
+  }
+}
+
+async function writeJsonlRows(filePath, rows) {
+  const targetPath = String(filePath || '').trim()
+
+  if (!targetPath) {
+    throw new Error('filePath is required')
+  }
+
+  await fs.promises.mkdir(path.dirname(targetPath), {recursive: true})
+  await fs.promises.writeFile(
+    targetPath,
+    rows.length ? `${rows.map((row) => JSON.stringify(row)).join('\n')}\n` : '',
+    'utf8'
+  )
+
+  return targetPath
+}
+
+function resolveWorkspaceChildPath(baseDir, relativePath) {
+  const resolvedBaseDir = path.resolve(String(baseDir || '').trim())
+  const resolvedPath = path.resolve(resolvedBaseDir, String(relativePath || ''))
+
+  if (
+    resolvedPath !== resolvedBaseDir &&
+    !resolvedPath.startsWith(`${resolvedBaseDir}${path.sep}`)
+  ) {
+    throw new Error('Invalid human-teacher workspace path')
+  }
+
+  return resolvedPath
+}
+
+function getHumanTeacherAnnotationStatus(annotation = {}) {
+  const hasDraft = hasHumanTeacherAnnotationDraft(annotation)
+
+  if (!hasDraft) {
+    return 'pending'
+  }
+
+  return isHumanTeacherAnnotationComplete(annotation) ? 'complete' : 'drafted'
+}
+
+function buildHumanTeacherWorkspaceTasks(
+  taskRows,
+  annotationRows,
+  fallbackEpoch
+) {
+  const annotationsByTaskId = new Map(
+    annotationRows
+      .map((row) => [String(row && row.task_id ? row.task_id : '').trim(), row])
+      .filter(([taskId]) => taskId)
+  )
+
+  return taskRows.map((taskRow) => {
+    const taskId = String(
+      taskRow && taskRow.task_id ? taskRow.task_id : ''
+    ).trim()
+    const annotation = normalizeHumanTeacherAnnotationDraft(
+      taskRow,
+      annotationsByTaskId.get(taskId)
+    )
+    const annotationStatus = getHumanTeacherAnnotationStatus(annotation)
+
+    return {
+      taskId,
+      sampleId: taskRow.sample_id || taskId,
+      flipHash: taskRow.flip_hash || null,
+      epoch:
+        taskRow.epoch === null || typeof taskRow.epoch === 'undefined'
+          ? fallbackEpoch
+          : taskRow.epoch,
+      consensusAnswer: taskRow.final_answer || null,
+      consensusStrength: taskRow.consensus_strength || null,
+      leftOrder: Array.isArray(taskRow.left_order) ? taskRow.left_order : [],
+      rightOrder: Array.isArray(taskRow.right_order) ? taskRow.right_order : [],
+      hasDraft: hasHumanTeacherAnnotationDraft(annotation),
+      isComplete: isHumanTeacherAnnotationComplete(annotation),
+      annotationStatus,
+      demo:
+        taskRow.demo &&
+        typeof taskRow.demo === 'object' &&
+        !Array.isArray(taskRow.demo)
+          ? taskRow.demo
+          : null,
+    }
+  })
 }
 
 function createLocalAiManager({
@@ -1686,10 +1997,13 @@ function createLocalAiManager({
     const epoch = normalizeEpoch(
       typeof next.epoch !== 'undefined' ? next.epoch : payload
     )
+    const currentEpoch = normalizeOptionalEpoch(next.currentEpoch)
 
     if (epoch === null) {
       throw new Error('Epoch is required')
     }
+
+    assertPastHumanTeacherEpoch(epoch, currentEpoch, 'packaging')
 
     const batchSize = normalizeHumanTeacherBatchSize(next.batchSize)
     const excluded = []
@@ -1960,10 +2274,13 @@ function createLocalAiManager({
     const epoch = normalizeEpoch(
       typeof next.epoch !== 'undefined' ? next.epoch : payload
     )
+    const currentEpoch = normalizeOptionalEpoch(next.currentEpoch)
 
     if (epoch === null) {
       throw new Error('Epoch is required')
     }
+
+    assertPastHumanTeacherEpoch(epoch, currentEpoch, 'review')
 
     const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
     let taskPackage
@@ -1992,6 +2309,668 @@ function createLocalAiManager({
     }
   }
 
+  async function exportHumanTeacherTasksWorkspace(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+    const currentEpoch = normalizeOptionalEpoch(next.currentEpoch)
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    assertPastHumanTeacherEpoch(epoch, currentEpoch, 'export')
+
+    const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
+    const taskPackage = await localAiStorage.readHumanTeacherPackage(
+      nextPackagePath,
+      null
+    )
+
+    if (!taskPackage) {
+      throw new Error('Human teacher package is unavailable')
+    }
+
+    if ((Number(taskPackage.eligibleCount) || 0) <= 0) {
+      throw new Error(
+        'Human teacher package does not contain any eligible tasks'
+      )
+    }
+
+    if (
+      String(taskPackage.reviewStatus || '')
+        .trim()
+        .toLowerCase() !== 'approved'
+    ) {
+      throw new Error(
+        'Human teacher package must be approved before annotation tasks can be exported'
+      )
+    }
+
+    const outputDir = humanTeacherExportDir(localAiStorage, epoch)
+    const exportSummary = await exportHumanTeacherTasks({
+      packagePath: nextPackagePath,
+      outputDir,
+      take: next.batchSize,
+    })
+
+    return {
+      epoch,
+      eligibleCount: Number(taskPackage.eligibleCount) || 0,
+      excludedCount: Number(taskPackage.excludedCount) || 0,
+      packagePath: nextPackagePath,
+      package: taskPackage,
+      outputDir,
+      export: exportSummary,
+    }
+  }
+
+  async function loadHumanTeacherAnnotationWorkspace(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+    const currentEpoch = normalizeOptionalEpoch(next.currentEpoch)
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    assertPastHumanTeacherEpoch(epoch, currentEpoch, 'annotation workspace')
+
+    const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
+    const taskPackage = await localAiStorage.readHumanTeacherPackage(
+      nextPackagePath,
+      null
+    )
+
+    if (!taskPackage) {
+      throw new Error('Human teacher package is unavailable')
+    }
+
+    if (
+      String(taskPackage.reviewStatus || '')
+        .trim()
+        .toLowerCase() !== 'approved'
+    ) {
+      throw new Error(
+        'Human teacher package must be approved before the annotation workspace can be opened'
+      )
+    }
+
+    const outputDir = humanTeacherExportDir(localAiStorage, epoch)
+    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
+    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+
+    if (!(await localAiStorage.exists(taskManifestPath))) {
+      throw new Error(
+        'Human teacher task manifest is unavailable; export annotation tasks first'
+      )
+    }
+
+    const taskRows = await readJsonlRows(taskManifestPath, [])
+    const annotationRows = await readJsonlRows(annotationsPath, [])
+    const tasks = buildHumanTeacherWorkspaceTasks(
+      taskRows,
+      annotationRows,
+      epoch
+    )
+
+    return {
+      epoch,
+      eligibleCount: Number(taskPackage.eligibleCount) || 0,
+      excludedCount: Number(taskPackage.excludedCount) || 0,
+      packagePath: nextPackagePath,
+      package: taskPackage,
+      outputDir,
+      workspace: {
+        outputDir,
+        taskManifestPath,
+        annotationsPath,
+        taskCount: tasks.length,
+        draftedCount: tasks.filter((task) => task.hasDraft).length,
+        completedCount: tasks.filter((task) => task.isComplete).length,
+        tasks,
+      },
+    }
+  }
+
+  async function loadHumanTeacherDemoWorkspace(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const sampleName = normalizeDemoSampleName(next.sampleName)
+    const outputDir = humanTeacherDemoDir(localAiStorage, sampleName)
+    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
+    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+
+    const summary = (await localAiStorage.exists(taskManifestPath))
+      ? {
+          demo: true,
+          sampleName,
+          sampleLabel:
+            listHumanTeacherDemoSamples().find(
+              (item) => item.sampleName === sampleName
+            )?.label || sampleName,
+          outputDir,
+          tasks: 0,
+          manifestPath: taskManifestPath,
+          templatePath: path.join(outputDir, 'annotations.template.jsonl'),
+          filledPath: annotationsPath,
+          metadataPath: path.join(outputDir, 'demo-metadata.json'),
+        }
+      : await buildHumanTeacherDemoWorkspace({
+          outputDir,
+          sampleName,
+          take: next.batchSize,
+        })
+
+    const taskRows = await readJsonlRows(taskManifestPath, [])
+    const annotationRows = await readJsonlRows(annotationsPath, [])
+    const tasks = buildHumanTeacherWorkspaceTasks(
+      taskRows,
+      annotationRows,
+      null
+    )
+
+    return {
+      demo: true,
+      sampleName,
+      samples: listHumanTeacherDemoSamples(),
+      outputDir,
+      summary: {
+        ...summary,
+        tasks: taskRows.length,
+      },
+      workspace: {
+        outputDir,
+        taskManifestPath,
+        annotationsPath,
+        taskCount: tasks.length,
+        draftedCount: tasks.filter((task) => task.hasDraft).length,
+        completedCount: tasks.filter((task) => task.isComplete).length,
+        tasks,
+      },
+    }
+  }
+
+  async function loadHumanTeacherAnnotationTask(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+    const currentEpoch = normalizeOptionalEpoch(next.currentEpoch)
+    const taskId = String(next.taskId || '').trim()
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    if (!taskId) {
+      throw new Error('taskId is required')
+    }
+
+    assertPastHumanTeacherEpoch(epoch, currentEpoch, 'annotation task')
+
+    const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
+    const taskPackage = await localAiStorage.readHumanTeacherPackage(
+      nextPackagePath,
+      null
+    )
+
+    if (!taskPackage) {
+      throw new Error('Human teacher package is unavailable')
+    }
+
+    if (
+      String(taskPackage.reviewStatus || '')
+        .trim()
+        .toLowerCase() !== 'approved'
+    ) {
+      throw new Error(
+        'Human teacher package must be approved before annotation tasks can be opened'
+      )
+    }
+
+    const outputDir = humanTeacherExportDir(localAiStorage, epoch)
+    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
+    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+    const taskRows = await readJsonlRows(taskManifestPath, [])
+    const annotationRows = await readJsonlRows(annotationsPath, [])
+    const taskRow = taskRows.find(
+      (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
+    )
+
+    if (!taskRow) {
+      throw new Error('Human teacher task is unavailable')
+    }
+
+    const annotationRow = annotationRows.find(
+      (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
+    )
+    const panels = await Promise.all(
+      (Array.isArray(taskRow.panels) ? taskRow.panels : []).map(
+        async (panelRelativePath, index) => {
+          const panelPath = resolveWorkspaceChildPath(
+            outputDir,
+            panelRelativePath
+          )
+          const panelBuffer = await localAiStorage.readBuffer(panelPath)
+
+          return {
+            id: `panel-${index + 1}`,
+            index,
+            path: panelPath,
+            dataUrl: `data:image/png;base64,${panelBuffer.toString('base64')}`,
+          }
+        }
+      )
+    )
+
+    return {
+      epoch,
+      task: {
+        taskId,
+        sampleId: taskRow.sample_id || taskId,
+        flipHash: taskRow.flip_hash || null,
+        epoch: taskRow.epoch ?? epoch,
+        consensusAnswer: taskRow.final_answer || null,
+        consensusStrength: taskRow.consensus_strength || null,
+        leftOrder: Array.isArray(taskRow.left_order) ? taskRow.left_order : [],
+        rightOrder: Array.isArray(taskRow.right_order)
+          ? taskRow.right_order
+          : [],
+        words:
+          taskRow.words &&
+          typeof taskRow.words === 'object' &&
+          !Array.isArray(taskRow.words)
+            ? taskRow.words
+            : {},
+        panels,
+        annotation: normalizeHumanTeacherAnnotationDraft(
+          taskRow,
+          annotationRow
+        ),
+      },
+    }
+  }
+
+  async function loadHumanTeacherDemoTask(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const sampleName = normalizeDemoSampleName(next.sampleName)
+    const taskId = String(next.taskId || '').trim()
+
+    if (!taskId) {
+      throw new Error('taskId is required')
+    }
+
+    const outputDir = humanTeacherDemoDir(localAiStorage, sampleName)
+    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
+    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+
+    if (!(await localAiStorage.exists(taskManifestPath))) {
+      await buildHumanTeacherDemoWorkspace({
+        outputDir,
+        sampleName,
+        take: next.batchSize,
+      })
+    }
+
+    const taskRows = await readJsonlRows(taskManifestPath, [])
+    const annotationRows = await readJsonlRows(annotationsPath, [])
+    const taskRow = taskRows.find(
+      (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
+    )
+
+    if (!taskRow) {
+      throw new Error('Human teacher demo task is unavailable')
+    }
+
+    const annotationRow = annotationRows.find(
+      (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
+    )
+    const panels = await Promise.all(
+      (Array.isArray(taskRow.panels) ? taskRow.panels : []).map(
+        async (panelRelativePath, index) => {
+          const panelPath = resolveWorkspaceChildPath(
+            outputDir,
+            panelRelativePath
+          )
+          const panelBuffer = await localAiStorage.readBuffer(panelPath)
+
+          return {
+            id: `panel-${index + 1}`,
+            index,
+            path: panelPath,
+            dataUrl: `data:image/png;base64,${panelBuffer.toString('base64')}`,
+          }
+        }
+      )
+    )
+
+    return {
+      demo: true,
+      sampleName,
+      task: {
+        taskId,
+        sampleId: taskRow.sample_id || taskId,
+        flipHash: taskRow.flip_hash || null,
+        epoch: null,
+        consensusAnswer: taskRow.final_answer || null,
+        consensusStrength: taskRow.consensus_strength || null,
+        leftOrder: Array.isArray(taskRow.left_order) ? taskRow.left_order : [],
+        rightOrder: Array.isArray(taskRow.right_order)
+          ? taskRow.right_order
+          : [],
+        words:
+          taskRow.words &&
+          typeof taskRow.words === 'object' &&
+          !Array.isArray(taskRow.words)
+            ? taskRow.words
+            : {},
+        demo:
+          taskRow.demo &&
+          typeof taskRow.demo === 'object' &&
+          !Array.isArray(taskRow.demo)
+            ? taskRow.demo
+            : null,
+        panels,
+        annotation: normalizeHumanTeacherAnnotationDraft(
+          taskRow,
+          annotationRow
+        ),
+      },
+    }
+  }
+
+  async function saveHumanTeacherAnnotationDraft(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+    const currentEpoch = normalizeOptionalEpoch(next.currentEpoch)
+    const taskId = String(next.taskId || '').trim()
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    if (!taskId) {
+      throw new Error('taskId is required')
+    }
+
+    assertPastHumanTeacherEpoch(epoch, currentEpoch, 'annotation draft save')
+
+    const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
+    const taskPackage = await localAiStorage.readHumanTeacherPackage(
+      nextPackagePath,
+      null
+    )
+
+    if (!taskPackage) {
+      throw new Error('Human teacher package is unavailable')
+    }
+
+    if (
+      String(taskPackage.reviewStatus || '')
+        .trim()
+        .toLowerCase() !== 'approved'
+    ) {
+      throw new Error(
+        'Human teacher package must be approved before annotation drafts can be saved'
+      )
+    }
+
+    const outputDir = humanTeacherExportDir(localAiStorage, epoch)
+    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
+    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+    const taskRows = await readJsonlRows(taskManifestPath, [])
+    const taskRow = taskRows.find(
+      (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
+    )
+
+    if (!taskRow) {
+      throw new Error('Human teacher task is unavailable')
+    }
+
+    const annotationRows = await readJsonlRows(annotationsPath, [])
+    const nextAnnotation = normalizeHumanTeacherAnnotationDraft(
+      taskRow,
+      next.annotation
+    )
+    const annotationStatus = getHumanTeacherAnnotationStatus(nextAnnotation)
+    const nextAnnotationRows = annotationRows
+      .filter(
+        (row) => String(row && row.task_id ? row.task_id : '').trim() !== taskId
+      )
+      .concat(nextAnnotation)
+
+    await writeJsonlRows(annotationsPath, nextAnnotationRows)
+
+    const nextTaskPackage = {
+      ...taskPackage,
+      items: Array.isArray(taskPackage.items)
+        ? taskPackage.items.map((item) => {
+            const itemTaskId = String(
+              item && item.taskId ? item.taskId : ''
+            ).trim()
+
+            if (itemTaskId !== taskId) {
+              return item
+            }
+
+            return {
+              ...item,
+              annotationStatus,
+            }
+          })
+        : [],
+    }
+
+    await localAiStorage.writeJsonAtomic(nextPackagePath, nextTaskPackage)
+
+    return {
+      epoch,
+      packagePath: nextPackagePath,
+      package: nextTaskPackage,
+      task: {
+        taskId,
+        annotation: nextAnnotation,
+        annotationStatus,
+      },
+      workspace: {
+        annotationsPath,
+      },
+    }
+  }
+
+  async function saveHumanTeacherDemoDraft(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const sampleName = normalizeDemoSampleName(next.sampleName)
+    const taskId = String(next.taskId || '').trim()
+
+    if (!taskId) {
+      throw new Error('taskId is required')
+    }
+
+    const outputDir = humanTeacherDemoDir(localAiStorage, sampleName)
+    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
+    const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+
+    if (!(await localAiStorage.exists(taskManifestPath))) {
+      await buildHumanTeacherDemoWorkspace({
+        outputDir,
+        sampleName,
+        take: next.batchSize,
+      })
+    }
+
+    const taskRows = await readJsonlRows(taskManifestPath, [])
+    const taskRow = taskRows.find(
+      (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
+    )
+
+    if (!taskRow) {
+      throw new Error('Human teacher demo task is unavailable')
+    }
+
+    const annotationRows = await readJsonlRows(annotationsPath, [])
+    const nextAnnotation = normalizeHumanTeacherAnnotationDraft(
+      taskRow,
+      next.annotation
+    )
+    const annotationStatus = getHumanTeacherAnnotationStatus(nextAnnotation)
+    const nextAnnotationRows = annotationRows
+      .filter(
+        (row) => String(row && row.task_id ? row.task_id : '').trim() !== taskId
+      )
+      .concat(nextAnnotation)
+
+    await writeJsonlRows(annotationsPath, nextAnnotationRows)
+
+    return {
+      demo: true,
+      sampleName,
+      task: {
+        taskId,
+        annotation: nextAnnotation,
+        annotationStatus,
+      },
+      workspace: {
+        annotationsPath,
+      },
+    }
+  }
+
+  async function importHumanTeacherAnnotationsWorkspace(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+    const currentEpoch = normalizeOptionalEpoch(next.currentEpoch)
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    assertPastHumanTeacherEpoch(epoch, currentEpoch, 'annotation import')
+
+    const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
+    const taskPackage = await localAiStorage.readHumanTeacherPackage(
+      nextPackagePath,
+      null
+    )
+
+    if (!taskPackage) {
+      throw new Error('Human teacher package is unavailable')
+    }
+
+    if (
+      String(taskPackage.reviewStatus || '')
+        .trim()
+        .toLowerCase() !== 'approved'
+    ) {
+      throw new Error(
+        'Human teacher package must be approved before annotations can be imported'
+      )
+    }
+
+    const outputDir = humanTeacherExportDir(localAiStorage, epoch)
+    const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
+    const annotationsPath =
+      normalizeFilePath(next.annotationsPath) ||
+      path.join(outputDir, 'annotations.filled.jsonl')
+    const normalizedPath =
+      normalizeFilePath(next.outputJsonlPath) ||
+      humanTeacherNormalizedAnnotationsPath(localAiStorage, epoch)
+    const summaryPath =
+      normalizeFilePath(next.summaryPath) ||
+      humanTeacherImportSummaryPath(localAiStorage, epoch)
+
+    if (!(await localAiStorage.exists(taskManifestPath))) {
+      throw new Error(
+        'Human teacher task manifest is unavailable; export annotation tasks first'
+      )
+    }
+
+    if (!(await localAiStorage.exists(annotationsPath))) {
+      throw new Error(
+        'Filled annotation file is unavailable; complete annotations.filled.jsonl first'
+      )
+    }
+
+    const importSummary = await importHumanTeacherAnnotations({
+      taskManifestPath,
+      annotationsJsonlPath: annotationsPath,
+      outputJsonlPath: normalizedPath,
+      summaryPath,
+    })
+    const importedTaskIds = new Set(
+      (importSummary.rows || []).map((row) => String(row.task_id || '').trim())
+    )
+    const nextTaskPackage = {
+      ...taskPackage,
+      importedAnnotations: {
+        importedAt: new Date().toISOString(),
+        normalizedPath,
+        summaryPath,
+        sourceAnnotationsPath: annotationsPath,
+        taskManifestPath,
+        normalizedRows: Number(importSummary.normalizedRows) || 0,
+        missingAnnotations: Number(importSummary.missingAnnotations) || 0,
+        unmatchedAnnotations: Number(importSummary.unmatchedAnnotations) || 0,
+        invalidAnnotations: Number(importSummary.invalidAnnotations) || 0,
+      },
+      items: Array.isArray(taskPackage.items)
+        ? taskPackage.items.map((item) => {
+            const taskId = String(item && item.taskId ? item.taskId : '').trim()
+
+            return importedTaskIds.has(taskId)
+              ? {
+                  ...item,
+                  annotationStatus: 'annotated',
+                }
+              : item
+          })
+        : [],
+    }
+
+    await localAiStorage.writeJsonAtomic(nextPackagePath, nextTaskPackage)
+
+    return {
+      epoch,
+      eligibleCount: Number(nextTaskPackage.eligibleCount) || 0,
+      excludedCount: Number(nextTaskPackage.excludedCount) || 0,
+      packagePath: nextPackagePath,
+      package: nextTaskPackage,
+      outputDir,
+      import: {
+        normalizedPath,
+        summaryPath,
+        annotationsPath,
+        normalizedRows: Number(importSummary.normalizedRows) || 0,
+        missingAnnotations: Number(importSummary.missingAnnotations) || 0,
+        unmatchedAnnotations: Number(importSummary.unmatchedAnnotations) || 0,
+        invalidAnnotations: Number(importSummary.invalidAnnotations) || 0,
+      },
+    }
+  }
+
   return {
     status,
     start,
@@ -2011,8 +2990,16 @@ function createLocalAiManager({
     buildHumanTeacherPackage,
     loadTrainingCandidatePackage,
     loadHumanTeacherPackage,
+    loadHumanTeacherAnnotationWorkspace,
+    loadHumanTeacherAnnotationTask,
+    loadHumanTeacherDemoWorkspace,
+    loadHumanTeacherDemoTask,
     updateTrainingCandidatePackageReview,
     updateHumanTeacherPackageReview,
+    exportHumanTeacherTasks: exportHumanTeacherTasksWorkspace,
+    saveHumanTeacherAnnotationDraft,
+    saveHumanTeacherDemoDraft,
+    importHumanTeacherAnnotations: importHumanTeacherAnnotationsWorkspace,
   }
 }
 
