@@ -69,6 +69,13 @@ function sanitizeForPersistence(filePath, obj) {
     )
   }
 
+  if (normalizedPath.includes(`${path.sep}human-teacher${path.sep}`)) {
+    return sanitizeCollectionItems(
+      omitRawImageFields(normalizeHumanTeacherPackage(obj)),
+      'items'
+    )
+  }
+
   return obj
 }
 
@@ -132,6 +139,37 @@ function normalizeTrainingCandidatePackage(packageData) {
       reviewStatus
     ),
     federatedReady: getFederatedReadyFromReviewStatus(reviewStatus),
+  }
+}
+
+function getAnnotationReadyFromReviewStatus(reviewStatus) {
+  return (
+    normalizeTrainingPackageReviewStatus(reviewStatus, 'draft') === 'approved'
+  )
+}
+
+function normalizeHumanTeacherPackage(packageData) {
+  if (
+    !packageData ||
+    typeof packageData !== 'object' ||
+    Array.isArray(packageData)
+  ) {
+    return packageData
+  }
+
+  const reviewStatus = normalizeTrainingPackageReviewStatus(
+    packageData.reviewStatus,
+    'draft'
+  )
+
+  return {
+    ...packageData,
+    reviewStatus,
+    reviewedAt: normalizeTrainingPackageReviewedAt(
+      packageData.reviewedAt,
+      reviewStatus
+    ),
+    annotationReady: getAnnotationReadyFromReviewStatus(reviewStatus),
   }
 }
 
@@ -227,6 +265,25 @@ function createLocalAiStorage({
     }
   }
 
+  async function readHumanTeacherPackage(
+    filePath,
+    fallbackValue = NO_FALLBACK
+  ) {
+    try {
+      return normalizeHumanTeacherPackage(await readJson(filePath))
+    } catch (error) {
+      if (error && error.code === 'ENOENT' && fallbackValue !== NO_FALLBACK) {
+        if (fallbackValue === null) {
+          return null
+        }
+
+        return normalizeHumanTeacherPackage(fallbackValue)
+      }
+
+      throw error
+    }
+  }
+
   async function updateTrainingCandidatePackageReview(filePath, review = {}) {
     const targetPath = String(filePath || '').trim()
 
@@ -260,6 +317,41 @@ function createLocalAiStorage({
     await writeJsonAtomic(targetPath, nextPackage)
 
     return normalizeTrainingCandidatePackage(nextPackage)
+  }
+
+  async function updateHumanTeacherPackageReview(filePath, review = {}) {
+    const targetPath = String(filePath || '').trim()
+
+    if (!targetPath) {
+      throw new Error('filePath is required')
+    }
+
+    const reviewStatus = normalizeTrainingPackageReviewStatus(
+      review.reviewStatus,
+      ''
+    )
+
+    if (!TRAINING_PACKAGE_REVIEW_STATUSES.has(reviewStatus)) {
+      throw new Error('reviewStatus is invalid')
+    }
+
+    const currentPackage = await readHumanTeacherPackage(targetPath)
+    const nextPackage = {
+      ...currentPackage,
+      reviewStatus,
+      reviewedAt:
+        reviewStatus === 'draft'
+          ? null
+          : normalizeTrainingPackageReviewedAt(
+              review.reviewedAt || new Date().toISOString(),
+              reviewStatus
+            ),
+      annotationReady: getAnnotationReadyFromReviewStatus(reviewStatus),
+    }
+
+    await writeJsonAtomic(targetPath, nextPackage)
+
+    return normalizeHumanTeacherPackage(nextPackage)
   }
 
   async function writeBuffer(filePath, buffer) {
@@ -322,10 +414,12 @@ function createLocalAiStorage({
     fileSize,
     readJson,
     readBuffer,
+    readHumanTeacherPackage,
     readTrainingCandidatePackage,
     resolveLocalAiPath,
     sha256,
     sha256File,
+    updateHumanTeacherPackageReview,
     updateTrainingCandidatePackageReview,
     writeBuffer,
     writeJsonAtomic,

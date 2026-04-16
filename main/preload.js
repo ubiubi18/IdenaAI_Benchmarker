@@ -639,6 +639,7 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
   const source = isPlainObject(payload) ? payload : {}
   return {
     epoch: sanitizeInteger(source.epoch, null, 0),
+    batchSize: sanitizeInteger(source.batchSize, null, 1, 50),
     includePackage: sanitizeBoolean(source.includePackage, false),
     refreshPublicFallback: sanitizeBoolean(source.refreshPublicFallback, false),
     fetchFlipPayloads: sanitizeBoolean(source.fetchFlipPayloads, false),
@@ -647,6 +648,13 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
       source.allowPublicIndexerFallback,
       true
     ),
+    rankingPolicy: sanitizeBoundedCloneable(source.rankingPolicy, {
+      maxDepth: 4,
+      maxArrayLength: 16,
+      maxObjectKeys: 32,
+      maxStringLength: 1024,
+      maxDataUrlLength: 2048,
+    }),
     rpcUrl: sanitizeOptionalBoundedString(source.rpcUrl, 2048),
     rpcKey: sanitizeOptionalBoundedString(source.rpcKey, 512),
     adapterStrategy: sanitizeOptionalBoundedString(source.adapterStrategy, 64),
@@ -1106,13 +1114,31 @@ const localAiBridge = Object.freeze({
       'localAi.loadTrainingCandidatePackage',
       sanitizeLocalAiEpochPayload(payload)
     ),
+  loadHumanTeacherPackage: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherPackage',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
   buildTrainingCandidatePackage: (payload) =>
     invokeCloneable(
       'localAi.buildTrainingCandidatePackage',
       sanitizeLocalAiEpochPayload(payload)
     ),
+  buildHumanTeacherPackage: (payload) =>
+    invokeCloneable(
+      'localAi.buildHumanTeacherPackage',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
   updateTrainingCandidatePackageReview: (payload) =>
     invokeCloneable('localAi.updateTrainingCandidatePackageReview', {
+      epoch: sanitizeInteger(payload && payload.epoch, null, 0),
+      reviewStatus: sanitizeOptionalBoundedString(
+        payload && payload.reviewStatus,
+        64
+      ),
+    }),
+  updateHumanTeacherPackageReview: (payload) =>
+    invokeCloneable('localAi.updateHumanTeacherPackageReview', {
       epoch: sanitizeInteger(payload && payload.epoch, null, 0),
       reviewStatus: sanitizeOptionalBoundedString(
         payload && payload.reviewStatus,

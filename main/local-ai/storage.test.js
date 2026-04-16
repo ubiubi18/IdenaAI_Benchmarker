@@ -127,6 +127,45 @@ describe('local-ai storage', () => {
     })
   })
 
+  it('omits raw image-like fields from persisted human-teacher packages', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      eligibleCount: 1,
+      images: ['data:image/png;base64,AAA='],
+      items: [
+        {
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          images: ['left', 'right'],
+          rawImage: 'opaque',
+          rawImages: ['opaque-a', 'opaque-b'],
+          imageData: 'opaque-image-data',
+          base64: 'opaque-base64',
+          dataUrl: 'data:image/png;base64,BBB=',
+        },
+      ],
+    })
+
+    await expect(storage.readJson(filePath)).resolves.toEqual({
+      eligibleCount: 1,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      annotationReady: false,
+      items: [
+        {
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+        },
+      ],
+    })
+  })
+
   it('treats existing packages without reviewStatus as draft', async () => {
     const filePath = storage.resolveLocalAiPath(
       'training-candidates',
@@ -225,6 +264,62 @@ describe('local-ai storage', () => {
         reviewStatus: 'approved',
         reviewedAt: expect.any(String),
         federatedReady: true,
+      })
+    )
+  })
+
+  it('treats existing human-teacher packages without reviewStatus as draft', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      epoch: 12,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [],
+      excluded: [],
+    })
+
+    await expect(storage.readHumanTeacherPackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        schemaVersion: 1,
+        epoch: 12,
+        reviewStatus: 'draft',
+        reviewedAt: null,
+        annotationReady: false,
+      })
+    )
+  })
+
+  it('persists approved human-teacher package review updates', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      epoch: 12,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [],
+      excluded: [],
+    })
+
+    await storage.updateHumanTeacherPackageReview(filePath, {
+      reviewStatus: 'approved',
+    })
+
+    await expect(storage.readHumanTeacherPackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        reviewStatus: 'approved',
+        reviewedAt: expect.any(String),
+        annotationReady: true,
       })
     )
   })

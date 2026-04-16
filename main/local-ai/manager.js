@@ -14,8 +14,11 @@ const {
 
 const CAPTURE_INDEX_VERSION = 1
 const TRAINING_CANDIDATE_PACKAGE_VERSION = 1
+const HUMAN_TEACHER_PACKAGE_VERSION = 1
 const MAX_CAPTURE_INDEX_ITEMS = 1000
 const MAX_RECENT_CAPTURES = 20
+const DEFAULT_HUMAN_TEACHER_BATCH_SIZE = 30
+const MAX_HUMAN_TEACHER_BATCH_SIZE = 50
 const DEFAULT_RUNTIME_START_TIMEOUT_MS = 10 * 1000
 const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
 const OLLAMA_COMMAND_CANDIDATES = [
@@ -477,6 +480,23 @@ function trainingCandidatePackagePath(storage, epoch) {
   )
 }
 
+function humanTeacherPackagePath(storage, epoch) {
+  return storage.resolveLocalAiPath(
+    'human-teacher',
+    `epoch-${epoch}-tasks.json`
+  )
+}
+
+function normalizeHumanTeacherBatchSize(value) {
+  const batchSize = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(batchSize) || batchSize <= 0) {
+    return DEFAULT_HUMAN_TEACHER_BATCH_SIZE
+  }
+
+  return Math.min(batchSize, MAX_HUMAN_TEACHER_BATCH_SIZE)
+}
+
 function reduceLatestCaptures(captures) {
   const uniqueCaptures = new Map()
 
@@ -603,6 +623,113 @@ function buildTrainingCandidateItem(capture) {
     relevance: capture.relevance || null,
     best: capture.best === true,
     author: capture.author || null,
+  }
+}
+
+function sortHumanTeacherItems(items) {
+  return items.slice().sort((left, right) => {
+    const leftBest = left.best === true ? 1 : 0
+    const rightBest = right.best === true ? 1 : 0
+
+    if (leftBest !== rightBest) {
+      return rightBest - leftBest
+    }
+
+    const leftWeight = Number(left.trainingWeight) || 0
+    const rightWeight = Number(right.trainingWeight) || 0
+
+    if (leftWeight !== rightWeight) {
+      return rightWeight - leftWeight
+    }
+
+    const leftTimestamp = Number(left.timestamp) || 0
+    const rightTimestamp = Number(right.timestamp) || 0
+
+    if (leftTimestamp !== rightTimestamp) {
+      return rightTimestamp - leftTimestamp
+    }
+
+    return String(left.flipHash || '').localeCompare(
+      String(right.flipHash || '')
+    )
+  })
+}
+
+function buildHumanTeacherItem(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
+    throw new Error('invalid_item')
+  }
+
+  const flipHash = String(item.flipHash || item.cid || '').trim()
+
+  if (!flipHash) {
+    throw new Error('flip_hash_required')
+  }
+
+  const finalAnswer = String(
+    item.finalAnswer || item.consensusLabel || ''
+  ).trim()
+
+  if (!hasEligibleConsensusAnswer({finalAnswer})) {
+    throw new Error('final_consensus_required')
+  }
+
+  const payloadPath = normalizeFilePath(item.payloadPath)
+
+  if (!payloadPath) {
+    throw new Error('payload_path_required')
+  }
+
+  return {
+    taskId: `${flipHash}::human-teacher`,
+    sampleId: `${flipHash}::human-teacher`,
+    flipHash,
+    epoch: normalizeEpoch(item.epoch),
+    sessionType: normalizeSessionType(item.sessionType),
+    panelCount: normalizePanelCount(item.panelCount),
+    timestamp: Number(item.timestamp),
+    capturedAt: normalizePackagedCapturedAt(item.capturedAt),
+    finalAnswer,
+    consensusStrength: String(item.consensusStrength || '').trim() || null,
+    orders: Array.isArray(item.orders) ? item.orders : [],
+    selectedOrder: item.selectedOrder || null,
+    relevance: item.relevance || null,
+    best: item.best === true,
+    author:
+      normalizeAuthor(item.author) ||
+      normalizeAuthor(item.audit && item.audit.author) ||
+      null,
+    payloadPath,
+    trainingWeight:
+      Number.isFinite(Number(item.trainingWeight)) &&
+      Number(item.trainingWeight) > 0
+        ? Number(item.trainingWeight)
+        : null,
+    rankingSource: String(item.rankingSource || '').trim() || null,
+    source:
+      item.source &&
+      typeof item.source === 'object' &&
+      !Array.isArray(item.source)
+        ? item.source
+        : null,
+    words:
+      item.words && typeof item.words === 'object' && !Array.isArray(item.words)
+        ? item.words
+        : {
+            localNode: {},
+            publicIndexer: {},
+          },
+    audit:
+      item.audit && typeof item.audit === 'object' && !Array.isArray(item.audit)
+        ? item.audit
+        : null,
+    annotationStatus: 'pending',
+    annotationHints: {
+      requiresFrameCaptions: true,
+      requiresTextCheck: true,
+      requiresChronologyExplanation: true,
+      requiresReportabilityCheck: true,
+    },
   }
 }
 
@@ -1548,6 +1675,182 @@ function createLocalAiManager({
     }
   }
 
+  async function buildHumanTeacherPackage(payload) {
+    await hydrate()
+
+    if (state.loadError) {
+      throw new Error('Local AI capture index is unavailable')
+    }
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const batchSize = normalizeHumanTeacherBatchSize(next.batchSize)
+    const excluded = []
+    const packagedCandidates = []
+    const captureByFlipHash = new Map()
+
+    reduceLatestCaptures(state.captureIndex).forEach((capture) => {
+      const reasons = getExclusionReasons(capture, epoch)
+
+      if (reasons.length) {
+        excluded.push({
+          flipHash: capture.flipHash || null,
+          reasons,
+        })
+        return
+      }
+
+      try {
+        const item = buildTrainingCandidateItem(capture)
+        captureByFlipHash.set(capture.flipHash, capture)
+        packagedCandidates.push({
+          capture,
+          item,
+        })
+      } catch (error) {
+        excluded.push({
+          flipHash: capture.flipHash || null,
+          reasons: ['packaging_failed'],
+        })
+
+        if (logger && typeof logger.error === 'function') {
+          logger.error('Unable to package local AI human-teacher candidate', {
+            flipHash: capture.flipHash || null,
+            epoch,
+            error: error.toString(),
+          })
+        }
+      }
+    })
+
+    const ranked = await localAiModernTrainingCollector.buildCandidatePackage({
+      epoch,
+      candidates: packagedCandidates,
+      rankingPolicy: next.rankingPolicy || {
+        sourcePriority: 'local-node-first',
+      },
+      allowPublicIndexerFallback:
+        typeof next.allowPublicIndexerFallback === 'boolean'
+          ? next.allowPublicIndexerFallback
+          : true,
+      fetchFlipPayloads:
+        typeof next.fetchFlipPayloads === 'boolean'
+          ? next.fetchFlipPayloads
+          : true,
+      requireFlipPayloads:
+        typeof next.requireFlipPayloads === 'boolean'
+          ? next.requireFlipPayloads
+          : true,
+      rpcUrl: next.rpcUrl,
+      rpcKey: next.rpcKey,
+      refreshPublicFallback: next.refreshPublicFallback === true,
+    })
+
+    const finalExcluded = excluded.concat(ranked.excluded || [])
+    const finalItems = []
+
+    sortHumanTeacherItems(ranked.items || [])
+      .slice(0, batchSize)
+      .forEach((item) => {
+        try {
+          const originalCapture = captureByFlipHash.get(item.flipHash) || {}
+          finalItems.push(
+            buildHumanTeacherItem({
+              ...originalCapture,
+              ...item,
+              orders: Array.isArray(originalCapture.orders)
+                ? originalCapture.orders
+                : [],
+              selectedOrder: originalCapture.selectedOrder || null,
+              relevance: originalCapture.relevance || null,
+              best: originalCapture.best === true || item.best === true,
+              author:
+                item.author ||
+                originalCapture.author ||
+                (item.audit && item.audit.author) ||
+                null,
+            })
+          )
+        } catch (error) {
+          finalExcluded.push({
+            flipHash: item && item.flipHash ? item.flipHash : null,
+            reasons: ['annotation_packaging_failed'],
+          })
+
+          if (logger && typeof logger.error === 'function') {
+            logger.error('Unable to build local AI human-teacher task', {
+              flipHash: item && item.flipHash ? item.flipHash : null,
+              epoch,
+              error: error.toString(),
+            })
+          }
+        }
+      })
+
+    const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
+    const taskPackage = {
+      schemaVersion: HUMAN_TEACHER_PACKAGE_VERSION,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch,
+      createdAt: new Date().toISOString(),
+      batchSize,
+      candidatePoolSize: Array.isArray(ranked.items) ? ranked.items.length : 0,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      annotationReady: false,
+      eligibleCount: finalItems.length,
+      excludedCount: finalExcluded.length,
+      inconsistencyFlags: collectInconsistencyFlags(finalExcluded),
+      sourcePriority: ranked.sourcePriority,
+      rankingPolicy: ranked.rankingPolicy,
+      localIndexPath: ranked.localIndexPath,
+      fallbackIndexPath: ranked.fallbackIndexPath,
+      fallbackUsed: ranked.fallbackUsed,
+      items: finalItems,
+      excluded: finalExcluded,
+      annotationInstructions: {
+        batchGoal: 'human_explanation_for_consensus_flip',
+        requiredFields: [
+          'frameCaptions',
+          'optionASummary',
+          'optionBSummary',
+          'textRequired',
+          'sequenceMarkersPresent',
+          'reportRequired',
+          'finalAnswer',
+          'whyAnswer',
+        ],
+      },
+    }
+
+    await localAiStorage.writeJsonAtomic(nextPackagePath, taskPackage)
+
+    if (isDev && logger && typeof logger.debug === 'function') {
+      logger.debug('Local AI human-teacher package built', {
+        epoch,
+        eligibleCount: finalItems.length,
+        excludedCount: finalExcluded.length,
+        batchSize,
+        packagePath: nextPackagePath,
+      })
+    }
+
+    return {
+      epoch,
+      eligibleCount: finalItems.length,
+      excludedCount: finalExcluded.length,
+      packagePath: nextPackagePath,
+      package: next.includePackage ? taskPackage : undefined,
+    }
+  }
+
   async function loadTrainingCandidatePackage(payload) {
     await hydrate()
 
@@ -1619,6 +1922,76 @@ function createLocalAiManager({
     }
   }
 
+  async function loadHumanTeacherPackage(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
+    const taskPackage = await localAiStorage.readHumanTeacherPackage(
+      nextPackagePath,
+      null
+    )
+
+    if (!taskPackage) {
+      throw new Error('Human teacher package is unavailable')
+    }
+
+    return {
+      epoch,
+      eligibleCount: Number(taskPackage.eligibleCount) || 0,
+      excludedCount: Number(taskPackage.excludedCount) || 0,
+      packagePath: nextPackagePath,
+      package: taskPackage,
+    }
+  }
+
+  async function updateHumanTeacherPackageReview(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const nextPackagePath = humanTeacherPackagePath(localAiStorage, epoch)
+    let taskPackage
+
+    try {
+      taskPackage = await localAiStorage.updateHumanTeacherPackageReview(
+        nextPackagePath,
+        {
+          reviewStatus: next.reviewStatus,
+        }
+      )
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        throw new Error('Human teacher package is unavailable')
+      }
+
+      throw error
+    }
+
+    return {
+      epoch,
+      eligibleCount: Number(taskPackage.eligibleCount) || 0,
+      excludedCount: Number(taskPackage.excludedCount) || 0,
+      packagePath: nextPackagePath,
+      package: taskPackage,
+    }
+  }
+
   return {
     status,
     start,
@@ -1635,8 +2008,11 @@ function createLocalAiManager({
     loadAdapterArtifact,
     buildManifest,
     buildTrainingCandidatePackage,
+    buildHumanTeacherPackage,
     loadTrainingCandidatePackage,
+    loadHumanTeacherPackage,
     updateTrainingCandidatePackageReview,
+    updateHumanTeacherPackageReview,
   }
 }
 

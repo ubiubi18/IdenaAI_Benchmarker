@@ -2266,11 +2266,38 @@ handleTrusted(
 )
 
 handleTrusted(
+  'localAi.loadHumanTeacherPackage',
+  withLocalAiEnabled('loadHumanTeacherPackage', async (_event, payload) =>
+    localAiManager.loadHumanTeacherPackage(payload)
+  )
+)
+
+handleTrusted(
+  'localAi.buildHumanTeacherPackage',
+  withLocalAiTrainingEnabled(
+    'buildHumanTeacherPackage',
+    async (_event, payload) =>
+      localAiManager.buildHumanTeacherPackage(
+        buildLocalAiTrainHookPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
   'localAi.updateTrainingCandidatePackageReview',
   withLocalAiTrainingEnabled(
     'updateTrainingCandidatePackageReview',
     async (_event, payload) =>
       localAiManager.updateTrainingCandidatePackageReview(payload)
+  )
+)
+
+handleTrusted(
+  'localAi.updateHumanTeacherPackageReview',
+  withLocalAiTrainingEnabled(
+    'updateHumanTeacherPackageReview',
+    async (_event, payload) =>
+      localAiManager.updateHumanTeacherPackageReview(payload)
   )
 )
 

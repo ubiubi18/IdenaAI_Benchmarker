@@ -730,6 +730,276 @@ describe('local-ai manager', () => {
     })
   })
 
+  it('builds a bounded human-teacher package from ranked payload-backed candidates', async () => {
+    const captureIndexPath = storage.resolveLocalAiPath(
+      'captures',
+      'index.json'
+    )
+
+    await storage.writeJsonAtomic(captureIndexPath, {
+      version: 1,
+      capturedCount: 3,
+      captures: [
+        {
+          flipHash: 'flip-a',
+          epoch: 12,
+          sessionType: 'short',
+          panelCount: 4,
+          timestamp: 1710000003000,
+          capturedAt: '2026-01-01T00:03:00.000Z',
+          consensus: {
+            finalAnswer: 'left',
+            reported: false,
+            strength: 'Strong',
+          },
+          best: true,
+        },
+        {
+          flipHash: 'flip-b',
+          epoch: 12,
+          sessionType: 'short',
+          panelCount: 4,
+          timestamp: 1710000002000,
+          capturedAt: '2026-01-01T00:02:00.000Z',
+          consensus: {
+            finalAnswer: 'right',
+            reported: false,
+            strength: 'Weak',
+          },
+        },
+        {
+          flipHash: 'flip-c',
+          epoch: 12,
+          sessionType: 'short',
+          panelCount: 4,
+          timestamp: 1710000001000,
+          capturedAt: '2026-01-01T00:01:00.000Z',
+          consensus: {
+            finalAnswer: 'left',
+            reported: false,
+            strength: 'Strong',
+          },
+        },
+      ],
+    })
+
+    const modernTrainingCollector = {
+      buildCandidatePackage: jest.fn(async () => ({
+        items: [
+          {
+            flipHash: 'flip-a',
+            epoch: 12,
+            sessionType: 'short',
+            panelCount: 4,
+            timestamp: 1710000003000,
+            capturedAt: '2026-01-01T00:03:00.000Z',
+            finalAnswer: 'left',
+            consensusStrength: 'Strong',
+            best: true,
+            payloadPath: storage.resolveLocalAiPath(
+              'modern-payloads',
+              'epoch-12',
+              'flip-a.json'
+            ),
+            words: {localNode: {word1Index: 1, word2Index: 2}},
+            trainingWeight: 2.0,
+            rankingSource: 'public_indexer_fallback',
+            source: {
+              kind: 'modern',
+              name: 'public',
+              priority: 'local-node-first',
+            },
+            audit: {author: '0xabc'},
+          },
+          {
+            flipHash: 'flip-b',
+            epoch: 12,
+            sessionType: 'short',
+            panelCount: 4,
+            timestamp: 1710000002000,
+            capturedAt: '2026-01-01T00:02:00.000Z',
+            finalAnswer: 'right',
+            consensusStrength: 'Weak',
+            payloadPath: storage.resolveLocalAiPath(
+              'modern-payloads',
+              'epoch-12',
+              'flip-b.json'
+            ),
+            words: {localNode: {word1Index: 3, word2Index: 4}},
+            trainingWeight: 1.0,
+            rankingSource: 'local_node_indexer',
+            source: {
+              kind: 'modern',
+              name: 'local',
+              priority: 'local-node-first',
+            },
+            audit: {author: '0xdef'},
+          },
+          {
+            flipHash: 'flip-c',
+            epoch: 12,
+            sessionType: 'short',
+            panelCount: 4,
+            timestamp: 1710000001000,
+            capturedAt: '2026-01-01T00:01:00.000Z',
+            finalAnswer: 'left',
+            consensusStrength: 'Strong',
+            payloadPath: storage.resolveLocalAiPath(
+              'modern-payloads',
+              'epoch-12',
+              'flip-c.json'
+            ),
+            words: {localNode: {word1Index: 5, word2Index: 6}},
+            trainingWeight: 0.5,
+            rankingSource: 'local_node_indexer',
+            source: {
+              kind: 'modern',
+              name: 'local',
+              priority: 'local-node-first',
+            },
+            audit: {author: '0xghi'},
+          },
+        ],
+        excluded: [{flipHash: 'flip-z', reasons: ['missing_flip_payload']}],
+        sourcePriority: 'local-node-first',
+        rankingPolicy: {
+          sourcePriority: 'local-node-first',
+          allowPublicIndexerFallback: true,
+        },
+        localIndexPath: storage.resolveLocalAiPath(
+          'indexer',
+          'epochs',
+          'epoch-12.json'
+        ),
+        fallbackIndexPath: storage.resolveLocalAiPath(
+          'indexer-fallback',
+          'epochs',
+          'epoch-12.json'
+        ),
+        fallbackUsed: true,
+      })),
+    }
+
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      modernTrainingCollector,
+    })
+    const summary = await manager.buildHumanTeacherPackage({
+      epoch: 12,
+      batchSize: 2,
+    })
+    const taskPackage = await storage.readHumanTeacherPackage(
+      summary.packagePath
+    )
+
+    expect(modernTrainingCollector.buildCandidatePackage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        epoch: 12,
+        fetchFlipPayloads: true,
+        requireFlipPayloads: true,
+      })
+    )
+    expect(summary).toMatchObject({
+      epoch: 12,
+      eligibleCount: 2,
+      excludedCount: 1,
+    })
+    expect(taskPackage).toMatchObject({
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      batchSize: 2,
+      candidatePoolSize: 3,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      annotationReady: false,
+      eligibleCount: 2,
+      excludedCount: 1,
+      fallbackUsed: true,
+    })
+    expect(taskPackage.items).toEqual([
+      expect.objectContaining({
+        taskId: 'flip-a::human-teacher',
+        sampleId: 'flip-a::human-teacher',
+        flipHash: 'flip-a',
+        finalAnswer: 'left',
+        consensusStrength: 'Strong',
+        payloadPath: storage.resolveLocalAiPath(
+          'modern-payloads',
+          'epoch-12',
+          'flip-a.json'
+        ),
+        trainingWeight: 2,
+        annotationStatus: 'pending',
+      }),
+      expect.objectContaining({
+        taskId: 'flip-b::human-teacher',
+        sampleId: 'flip-b::human-teacher',
+        flipHash: 'flip-b',
+        finalAnswer: 'right',
+      }),
+    ])
+    expect(taskPackage.excluded).toEqual([
+      {flipHash: 'flip-z', reasons: ['missing_flip_payload']},
+    ])
+  })
+
+  it('loads and updates saved human-teacher package review state locally', async () => {
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'draft',
+      reviewedAt: null,
+      annotationReady: false,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          finalAnswer: 'left',
+          payloadPath: '/tmp/flip-a.json',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await expect(
+      manager.loadHumanTeacherPackage({epoch: 12})
+    ).resolves.toMatchObject({
+      epoch: 12,
+      packagePath: filePath,
+      package: expect.objectContaining({
+        reviewStatus: 'draft',
+        annotationReady: false,
+      }),
+    })
+
+    await expect(
+      manager.updateHumanTeacherPackageReview({
+        epoch: 12,
+        reviewStatus: 'approved',
+      })
+    ).resolves.toMatchObject({
+      epoch: 12,
+      packagePath: filePath,
+      package: expect.objectContaining({
+        reviewStatus: 'approved',
+        annotationReady: true,
+      }),
+    })
+  })
+
   it('refreshes Local AI sidecar health and model status without requiring cloud providers', async () => {
     const manager = createLocalAiManager({
       logger: mockLogger(),
