@@ -2,50 +2,44 @@
 
 `IdenaAI_Benchmarker` is the off-chain FLIP benchmarking and training fork.
 
-It is meant for:
-- comparing AI providers on the FLIP-Challenge dataset
-- running local FLIP training experiments
-- testing human-assisted training variants
-- exploring evaluation slices, bias, swap consistency, and aggregation methods
+Use it for:
+- FLIP-Challenge benchmarking
+- local FLIP training experiments
+- human-assisted training variants
+- evaluation slices, bias checks, swap consistency, and aggregation tests
 
-It is not a polished end-user app release.
+It is a research fork, not a polished end-user app release.
 
 ## Current status
 
-What exists today:
-- the desktop shell is still usable for benchmark-oriented AI experiments
-- FLIP-Challenge local training scripts are in active use
-- normalized human-teacher annotations can be included in training prep
-- the matrix runner can compare:
-  - baseline
+Available today:
+- benchmark-oriented desktop shell
+- active local FLIP training scripts
+- human-teacher annotation import during prep
+- matrix comparison of:
+  - `baseline`
   - `weight_boost`
   - `followup_reasoning`
   - `hybrid`
-- repeated human annotations can be merged by:
+- annotation aggregation by:
   - `best_single`
   - `deepfunding`
 
-What is still rough:
-- the codebase still shares a large amount of desktop-app structure with the
-  main repo
-- the desktop UI is secondary to the benchmark/training workflows
+Still rough:
+- a lot of shared structure with the main desktop repo
+- desktop UI is secondary to training and evaluation workflows
 
-## Important naming reality
+## Naming
 
-This repository is the benchmarker fork and now uses benchmarker-specific
-package metadata.
+This repo uses benchmarker-specific naming.
 
-That means:
-- the repository name is `IdenaAI_Benchmarker`
-- the package name is `idena-ai-benchmarker`
-- the Electron `productName` is `IdenaAI_Benchmarker`
-- you should still treat this as a source-run research fork first, not a
-  polished end-user release
+Current identifiers:
+- repository: `IdenaAI_Benchmarker`
+- package: `idena-ai-benchmarker`
+- Electron `productName`: `IdenaAI_Benchmarker`
+- human-facing name: `IdenaAI Benchmarker`
 
-So the safest assumption today is:
-- use separate checkouts
-- do not rely on packaged-app identity separation being perfect yet
-- prefer source runs for development and experiments
+Treat it as a source-run research fork first.
 
 ## Safety and privacy
 
@@ -67,11 +61,7 @@ npm test
 
 ## Install and run from source
 
-These are the current realistic steps.
-
-### 1. Prerequisites
-
-You need:
+Prerequisites:
 - `git`
 - `node` 20.x
 - `npm`
@@ -81,53 +71,29 @@ On macOS:
 
 ```bash
 xcode-select --install
-```
-
-Typical Homebrew setup:
-
-```bash
 brew install git node@20 python@3
 brew link --overwrite --force node@20
 ```
 
-### 2. Clone and install
+Clone and start:
 
 ```bash
 git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
 cd IdenaAI_Benchmarker
 npm install
-```
-
-### 3. Start the benchmarker in dev mode
-
-```bash
 npm start
 ```
 
-### 4. Optional build
+Optional build:
 
 ```bash
 npm run build
 npm run dist
 ```
 
-Important caveat:
-- this is still a research-oriented fork even though its package metadata is
-  now benchmarker-specific
-- prefer source runs for experiments and treat packaged artifacts as secondary
+Prefer source runs for experiments.
 
-## Large bundled artifacts
-
-This repository intentionally tracks a small set of large bundled static
-libraries under `idena-wasm-binding/lib/`.
-
-Rules:
-- do not add new large tracked binaries casually
-- if a new artifact is large, prefer Git LFS or release artifacts
-- keep the currently allowed bundled wasm libraries under review for formal
-  releases
-
-## Optional Local AI runtime
+## Local AI runtime
 
 For local inference tests, the current code expects a loopback runtime.
 
@@ -135,28 +101,24 @@ Typical setup:
 - Ollama on `http://127.0.0.1:11434`
 
 Keep Local AI endpoints on this machine unless you intentionally switch to a
-hosted custom-provider experiment.
+hosted-provider experiment.
 
 ## Training and evaluation
 
-This repo is the better place if your main goal is FLIP experiments rather than
-the desktop client itself.
+This repo is the better choice if your main goal is FLIP experiments rather
+than desktop-client integration.
 
-Current training/eval work includes:
-- local dataset preparation from the Hugging Face FLIP-Challenge dataset
+It supports:
+- FLIP-Challenge dataset prep
 - human-teacher annotation import
 - human-assisted prep modes
-- side-by-side comparison of annotation aggregation:
-  - `best_single`
-  - `deepfunding`
+- aggregation comparison of `best_single` vs `deepfunding`
 - matrix-runner experiments on fixed slices
 
 Start here:
 - [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
 
-## Python training environment
-
-Typical local environment:
+Typical Python environment:
 
 ```bash
 python3 -m venv .tmp/flip-train-venv
@@ -165,23 +127,9 @@ python -m pip install -U pip setuptools wheel
 python -m pip install mlx-vlm pyarrow pillow datasets huggingface_hub torch torchvision scipy
 ```
 
-`scipy` is required if you want DeepFunding-based annotation aggregation during
-training prep.
+## Related repo
 
-## Relationship to the main repo
-
-Use this repo if you mainly want:
-- off-chain benchmarking
-- training scripts
-- eval matrices
-- human-annotation experiments
-
-Use the main repo if you mainly want:
-- the full desktop app direction
-- the in-app human-teacher workflow
-- app/runtime integration work
-
-Main repo:
+Use the main repo if you want the app/runtime integration work:
 - [IdenaAI](https://github.com/ubiubi18/IdenaAI)
 
 ## License
