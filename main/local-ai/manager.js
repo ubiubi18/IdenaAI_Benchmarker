@@ -923,12 +923,9 @@ function isHumanTeacherAnnotationComplete(annotation = {}) {
   const next = normalizeHumanTeacherAnnotationDraft({}, annotation)
 
   return Boolean(
-    next.frame_captions.length === 4 &&
-      next.frame_captions.every(Boolean) &&
-      next.option_a_summary &&
-      next.option_b_summary &&
-      next.final_answer &&
-      next.why_answer
+    next.final_answer &&
+      next.why_answer &&
+      (next.report_required !== true || next.report_reason)
   )
 }
 
