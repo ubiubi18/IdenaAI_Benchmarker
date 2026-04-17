@@ -1,4 +1,4 @@
-# IdenaAI Benchmarker
+# IdenaAI Benchmarker NOT PRODUCTION READY, DONT USE!
 
 `IdenaAI_Benchmarker` is the off-chain FLIP benchmarking and training fork.
 
