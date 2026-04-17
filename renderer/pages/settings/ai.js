@@ -43,8 +43,8 @@ import {
 import {AiEnableDialog} from '../../shared/components/ai-enable-dialog'
 import {
   DEFAULT_LOCAL_AI_SETTINGS,
-  DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
-  DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
+  FIXED_LOCAL_AI_RUNTIME_BACKEND,
+  DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   buildLocalAiRuntimePreset,
   buildLocalAiSettings,
   getLocalAiEndpointSafety,
@@ -125,14 +125,6 @@ const MAIN_PROVIDER_OPTIONS = [
 const CONSULT_PROVIDER_OPTIONS = MAIN_PROVIDER_OPTIONS.filter(
   ({value}) => value !== 'local-ai'
 )
-
-const LOCAL_AI_RUNTIME_OPTIONS = [
-  {
-    value: 'ollama-direct',
-    label: 'Local runtime via Ollama (current default)',
-  },
-  {value: 'sidecar-http', label: 'Legacy HTTP sidecar'},
-]
 
 const DEFAULT_AI_SETTINGS = {
   enabled: false,
@@ -594,10 +586,6 @@ export default function AiSettingsPage() {
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
   const [latestModelsByProvider, setLatestModelsByProvider] = useState({})
   const [showAdvancedAiSettings, setShowAdvancedAiSettings] = useState(false)
-  const [
-    showLocalAiCompatibilityOverrides,
-    setShowLocalAiCompatibilityOverrides,
-  ] = useState(false)
   const setupSectionRef = React.useRef(null)
   const [isEnableDialogOpen, setIsEnableDialogOpen] = useState(false)
   const [isCheckingLocalAi, setIsCheckingLocalAi] = useState(false)
@@ -701,13 +689,6 @@ export default function AiSettingsPage() {
     })
   }
 
-  const applyLocalAiRuntimeBackend = useCallback(
-    (runtimeBackend) => {
-      updateLocalAiSettings(buildLocalAiRuntimePreset(runtimeBackend))
-    },
-    [updateLocalAiSettings]
-  )
-
   const applyRecommendedLocalAiSetup = useCallback(() => {
     updateLocalAiSettings({
       enabled: true,
@@ -715,9 +696,9 @@ export default function AiSettingsPage() {
     })
 
     notify(
-      t('Recommended IdenaAI setup applied'),
+      t('Fixed local Qwen setup applied'),
       t(
-        'The app now brands the local stack as Idena-text-v1 and Idena-multimodal-v1. Ollama remains the local transport underneath, with compatibility overrides available for backend swaps.'
+        'IdenaAI_Benchmarker now uses one local runtime lane only: Ollama on localhost with qwen3.5:9b for both text and image work.'
       ),
       'success'
     )
@@ -2709,115 +2690,35 @@ export default function AiSettingsPage() {
               />
             </Flex>
 
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Runtime mode')}</SettingsFormLabel>
-              <Select
-                value={localAi.runtimeMode || 'sidecar'}
-                onChange={(e) =>
-                  updateLocalAiSettings({runtimeMode: e.target.value})
-                }
-                w="xs"
-              >
-                <option value="sidecar">{t('Sidecar')}</option>
-              </Select>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Runtime backend')}</SettingsFormLabel>
-              <Select
-                value={
-                  localAi.runtimeBackend ||
-                  DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
-                }
-                onChange={(e) => applyLocalAiRuntimeBackend(e.target.value)}
-                w="xl"
-              >
-                {LOCAL_AI_RUNTIME_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {t(option.label)}
-                  </option>
-                ))}
-              </Select>
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'Use the local runtime via Ollama unless you are intentionally running a custom legacy sidecar on another local port.'
-                )}
-              </Text>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Reasoner backend')}</SettingsFormLabel>
-              <Input
-                value={localAi.reasonerBackend || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({reasonerBackend: e.target.value})
-                }
-                placeholder="local-reasoner"
-                w="xl"
-              />
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Vision backend')}</SettingsFormLabel>
-              <Input
-                value={localAi.visionBackend || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({visionBackend: e.target.value})
-                }
-                placeholder="local-vision"
-                w="xl"
-              />
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>
-                {t('Branded text model name')}
-              </SettingsFormLabel>
-              <Input
-                value={localAi.publicModelId || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({publicModelId: e.target.value})
-                }
-                placeholder={DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID}
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'This is the product-facing text identity exposed by IdenaAI, independent of the backend model override.'
-                )}
-              </Text>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>
-                {t('Branded multimodal model name')}
-              </SettingsFormLabel>
-              <Input
-                value={localAi.publicVisionId || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({publicVisionId: e.target.value})
-                }
-                placeholder={DEFAULT_LOCAL_AI_PUBLIC_VISION_ID}
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'Use this for the image-aware and flip-aware IdenaAI identity that sits above the local transport.'
-                )}
-              </Text>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Contract version')}</SettingsFormLabel>
-              <Input
-                value={localAi.contractVersion || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({contractVersion: e.target.value})
-                }
-                placeholder="idena-local/v1"
-                w="xl"
-              />
-            </SettingsFormControl>
+            <Box
+              p={4}
+              borderWidth="1px"
+              borderRadius="lg"
+              borderColor="gray.200"
+              bg="gray.50"
+            >
+              <Stack spacing={1}>
+                <Text fontWeight={600}>{t('Fixed local model lane')}</Text>
+                <Text fontSize="sm" color="muted">
+                  {t('Transport: Ollama direct on localhost')}
+                </Text>
+                <Text fontSize="sm" color="muted">
+                  {t('Runtime backend: {{backend}}', {
+                    backend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+                  })}
+                </Text>
+                <Text fontSize="sm" color="muted">
+                  {t('Text and image model: {{model}}', {
+                    model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
+                  })}
+                </Text>
+                <Text fontSize="sm" color="muted">
+                  {t(
+                    'Older local model overrides are disabled in this benchmarker so the runtime model stays identical to the model lane you benchmark and train.'
+                  )}
+                </Text>
+              </Stack>
+            </Box>
 
             <SettingsFormControl>
               <SettingsFormLabel>
@@ -2835,13 +2736,9 @@ export default function AiSettingsPage() {
                 w="xl"
               />
               <Text color="muted" fontSize="sm" mt={1}>
-                {localAi.runtimeBackend === 'ollama-direct'
-                  ? t(
-                      'Recommended local runtime endpoint: http://127.0.0.1:11434. Backend compatibility defaults on this machine are llama3.1:8b for text and moondream:latest for vision until you choose stronger overrides.'
-                    )
-                  : t(
-                      'Use a loopback URL for a custom local sidecar, for example http://127.0.0.1:5000.'
-                    )}
+                {t(
+                  'Recommended local runtime endpoint: http://127.0.0.1:11434. If qwen3.5:9b is missing there, install it with: ollama pull qwen3.5:9b'
+                )}
               </Text>
               {!localAiEndpointSafety.safe && (
                 <Text color="red.500" fontSize="sm" mt={1}>
@@ -2852,110 +2749,9 @@ export default function AiSettingsPage() {
 
             <Stack isInline spacing={2}>
               <SecondaryButton onClick={applyRecommendedLocalAiSetup}>
-                {t('Use recommended IdenaAI setup')}
+                {t('Use fixed qwen3.5 local setup')}
               </SecondaryButton>
             </Stack>
-
-            <Stack spacing={2} align="flex-start">
-              <SecondaryButton
-                onClick={() =>
-                  setShowLocalAiCompatibilityOverrides((value) => !value)
-                }
-              >
-                {showLocalAiCompatibilityOverrides
-                  ? t('Hide runtime compatibility overrides')
-                  : t('Show runtime compatibility overrides')}
-              </SecondaryButton>
-              <Text color="muted" fontSize="sm">
-                {t(
-                  'These legacy override fields are only for wire/runtime compatibility. They are not the public Idena product identity.'
-                )}
-              </Text>
-            </Stack>
-
-            {showLocalAiCompatibilityOverrides ? (
-              <>
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Reasoner model override')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={localAi.model || ''}
-                    onChange={(e) =>
-                      updateLocalAiSettings({model: e.target.value})
-                    }
-                    placeholder={t('Leave blank to use the runtime default')}
-                    w="xl"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Compatibility override for the current local runtime wire contract. This is not the product identity.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Vision model override')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={
-                      typeof localAi.visionModel === 'string'
-                        ? localAi.visionModel
-                        : ''
-                    }
-                    onChange={(e) =>
-                      updateLocalAiSettings({visionModel: e.target.value})
-                    }
-                    placeholder={t('Leave blank to use the runtime default')}
-                    w="xl"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Compatibility override for the current image-aware runtime path.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Wire runtime type')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={localAi.runtimeType || ''}
-                    onChange={(e) =>
-                      updateLocalAiSettings({runtimeType: e.target.value})
-                    }
-                    placeholder={localAiWireRuntimeType}
-                    w="xl"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Legacy compatibility field for the current runtime bridge. Leave blank unless you need to force a wire-level runtime.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Wire runtime family')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={localAi.runtimeFamily || ''}
-                    onChange={(e) =>
-                      updateLocalAiSettings({runtimeFamily: e.target.value})
-                    }
-                    placeholder={localAi.reasonerBackend || 'local-reasoner'}
-                    w="xl"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Legacy compatibility label retained for old payloads and persisted settings.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
-              </>
-            ) : null}
 
             <Flex align="center" justify="space-between">
               <Box>

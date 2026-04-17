@@ -990,7 +990,7 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
       ? annotation
       : {}
   const finalAnswer = normalizeHumanTeacherDraftText(
-    source.final_answer || source.finalAnswer,
+    source.final_answer ?? source.finalAnswer,
     16
   ).toLowerCase()
 
@@ -998,13 +998,13 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
     ...buildDefaultHumanTeacherAnnotationRow(task),
     annotator: normalizeHumanTeacherDraftText(source.annotator, 256),
     frame_captions: normalizeHumanTeacherDraftCaptions(
-      source.frame_captions || source.frameCaptions
+      source.frame_captions ?? source.frameCaptions
     ),
     option_a_summary: normalizeHumanTeacherDraftText(
-      source.option_a_summary || source.optionASummary
+      source.option_a_summary ?? source.optionASummary
     ),
     option_b_summary: normalizeHumanTeacherDraftText(
-      source.option_b_summary || source.optionBSummary
+      source.option_b_summary ?? source.optionBSummary
     ),
     ai_annotation: normalizeHumanTeacherAiAnnotation(
       source.ai_annotation ?? source.aiAnnotation
@@ -1014,22 +1014,22 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
       600
     ),
     text_required: normalizeHumanTeacherDraftBool(
-      source.text_required || source.textRequired
+      source.text_required ?? source.textRequired
     ),
     sequence_markers_present: normalizeHumanTeacherDraftBool(
-      source.sequence_markers_present || source.sequenceMarkersPresent
+      source.sequence_markers_present ?? source.sequenceMarkersPresent
     ),
     report_required: normalizeHumanTeacherDraftBool(
-      source.report_required || source.reportRequired
+      source.report_required ?? source.reportRequired
     ),
     report_reason: normalizeHumanTeacherDraftText(
-      source.report_reason || source.reportReason
+      source.report_reason ?? source.reportReason
     ),
     final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
       ? finalAnswer
       : '',
     why_answer: normalizeHumanTeacherDraftText(
-      source.why_answer || source.whyAnswer
+      source.why_answer ?? source.whyAnswer
     ),
     confidence: normalizeHumanTeacherDraftConfidence(source.confidence),
   }

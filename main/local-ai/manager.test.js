@@ -1327,9 +1327,15 @@ describe('local-ai manager', () => {
           final_answer: 'left',
           why_answer: 'AI draft summary',
           confidence: 5,
+          text_required: false,
+          sequence_markers_present: false,
+          report_required: false,
           rating: 'good',
         },
         ai_annotation_feedback: 'Mostly right, but it missed one clue.',
+        text_required: false,
+        sequence_markers_present: false,
+        report_required: false,
         final_answer: 'right',
         why_answer: 'testing the offline annotator path',
       },
@@ -1365,9 +1371,15 @@ describe('local-ai manager', () => {
         annotation: expect.objectContaining({
           ai_annotation: expect.objectContaining({
             final_answer: 'left',
+            text_required: false,
+            sequence_markers_present: false,
+            report_required: false,
             rating: 'good',
           }),
           ai_annotation_feedback: expect.stringContaining('missed one clue'),
+          text_required: false,
+          sequence_markers_present: false,
+          report_required: false,
         }),
         annotationStatus: 'complete',
       }),
@@ -1516,6 +1528,16 @@ describe('local-ai manager', () => {
       currentEpoch: 13,
     })
     const taskPackage = await storage.readHumanTeacherPackage(filePath)
+    const normalizedRows = (
+      await fs.readFile(
+        path.join(exportResult.outputDir, 'annotations.normalized.jsonl'),
+        'utf8'
+      )
+    )
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
 
     expect(importResult).toMatchObject({
       epoch: 12,
@@ -1538,6 +1560,15 @@ describe('local-ai manager', () => {
         }),
       ],
     })
+    expect(normalizedRows).toEqual([
+      expect.objectContaining({
+        task_id: 'flip-a::human-teacher',
+        text_required: false,
+        sequence_markers_present: false,
+        report_required: false,
+        confidence: 5,
+      }),
+    ])
     await expect(
       storage.exists(
         path.join(exportResult.outputDir, 'annotations.normalized.jsonl')

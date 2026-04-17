@@ -183,6 +183,28 @@ function normalizeAiAnnotationRating(value) {
   return AI_ANNOTATION_RATINGS.includes(next) ? next : ''
 }
 
+function normalizeAiAnnotationConfidence(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return ''
+  }
+
+  const parsed = Number.parseFloat(value)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return ''
+  }
+
+  if (parsed <= 1) {
+    return String(Math.min(5, Math.max(1, Math.round(parsed * 4 + 1))))
+  }
+
+  if (parsed > 5) {
+    return ''
+  }
+
+  return String(Math.round(parsed))
+}
+
 function normalizeAiAnnotationDraft(annotation = {}) {
   const next =
     annotation && typeof annotation === 'object' && !Array.isArray(annotation)
@@ -217,10 +239,7 @@ function normalizeAiAnnotationDraft(annotation = {}) {
     why_answer: String(next.why_answer ?? next.whyAnswer ?? '')
       .trim()
       .slice(0, 900),
-    confidence:
-      next.confidence === null || typeof next.confidence === 'undefined'
-        ? ''
-        : String(next.confidence).trim(),
+    confidence: normalizeAiAnnotationConfidence(next.confidence),
     text_required:
       Object.prototype.hasOwnProperty.call(next, 'text_required') ||
       Object.prototype.hasOwnProperty.call(next, 'textRequired')
@@ -996,7 +1015,7 @@ export default function AiHumanTeacherPage() {
       toast({
         render: () => (
           <Toast
-            title={t('AI draft unavailable')}
+            title={t('Local AI chat bridge missing')}
             description={t(
               'This build does not expose the Local AI chat bridge yet. Fully restart IdenaAI and try again.'
             )}
@@ -1015,9 +1034,10 @@ export default function AiHumanTeacherPage() {
       toast({
         render: () => (
           <Toast
-            title={t('AI draft unavailable')}
+            title={t('Current flip is missing panel images')}
             description={t(
-              'The current flip is missing ordered panel images, so the local AI draft could not start.'
+              'The local AI draft needs 8 ordered panel images, but only {{count}} were available for this flip.',
+              {count: orderedImages.length}
             )}
             status="error"
           />
@@ -1755,6 +1775,14 @@ export default function AiHumanTeacherPage() {
                                       'Ask the local AI to prefill this flip, then review and correct it like a normal human annotation.'
                                     )}
                                   </Text>
+                                  <Text color="muted" fontSize="xs" mt={1}>
+                                    {t('Locked local draft model: {{model}}', {
+                                      model:
+                                        localAi?.visionModel ||
+                                        localAi?.model ||
+                                        'qwen3.5:9b',
+                                    })}
+                                  </Text>
                                   {localAi?.enabled !== true ? (
                                     <Text color="muted" fontSize="xs" mt={1}>
                                       {t(
@@ -1790,8 +1818,14 @@ export default function AiHumanTeacherPage() {
                                     </Text>
                                     <Text fontSize="sm" color="muted">
                                       {t(
-                                        'Answer: {{answer}} · Confidence: {{confidence}}/5',
+                                        'Model: {{model}} · Answer: {{answer}} · Confidence: {{confidence}}/5',
                                         {
+                                          model:
+                                            currentAiAnnotation.model ||
+                                            currentAiAnnotation.vision_model ||
+                                            localAi?.visionModel ||
+                                            localAi?.model ||
+                                            'qwen3.5:9b',
                                           answer: formatDecisionLabel(
                                             currentAiAnnotation.final_answer,
                                             t

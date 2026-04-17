@@ -1,6 +1,6 @@
 const {createLocalAiSidecar} = require('./sidecar')
 
-function mockOllamaChatResponse(content, model = 'llama3.1:8b') {
+function mockOllamaChatResponse(content, model = 'qwen3.5:9b') {
   return {
     data: {
       model,
@@ -264,9 +264,20 @@ describe('local-ai sidecar', () => {
     expect(httpClient.post).toHaveBeenCalledTimes(1)
   })
 
-  it('returns a structured config error when the Ollama model is missing', async () => {
+  it('uses the fixed qwen runtime model when chat omits an explicit model', async () => {
     const httpClient = {
-      post: jest.fn(),
+      post: jest.fn(async () => ({
+        data: {
+          model: 'qwen3.5:9b',
+          message: {
+            role: 'assistant',
+            content: 'Hello from the fixed runtime.',
+          },
+        },
+        config: {
+          url: 'http://127.0.0.1:11434/api/chat',
+        },
+      })),
     }
     const sidecar = createLocalAiSidecar({httpClient})
 
@@ -278,13 +289,20 @@ describe('local-ai sidecar', () => {
         input: 'Hello',
       })
     ).resolves.toMatchObject({
-      ok: false,
-      status: 'config_error',
+      ok: true,
+      status: 'ok',
       provider: 'local-ai',
       runtimeType: 'ollama',
-      error: 'model_required',
+      model: 'qwen3.5:9b',
+      content: 'Hello from the fixed runtime.',
     })
-    expect(httpClient.post).not.toHaveBeenCalled()
+    expect(httpClient.post).toHaveBeenCalledWith(
+      'http://127.0.0.1:11434/api/chat',
+      expect.objectContaining({
+        model: 'qwen3.5:9b',
+      }),
+      expect.any(Object)
+    )
   })
 
   it('rejects malformed Ollama model identifiers before sending a request', async () => {

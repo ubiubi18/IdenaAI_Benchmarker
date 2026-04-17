@@ -9,11 +9,11 @@ const {
 } = require('./runtime-adapter')
 
 const DEFAULT_BASE_URL = 'http://localhost:5000'
-const DEFAULT_MODEL = ''
+const DEFAULT_MODEL = 'qwen3.5:9b'
 const DEFAULT_RUNTIME = LOCAL_AI_RUNTIME
 const DEFAULT_RUNTIME_TYPE = 'sidecar'
 const DEFAULT_OLLAMA_ENDPOINT = LOCAL_AI_OLLAMA_DEFAULT_BASE_URL
-const DEFAULT_VISION_MODEL = 'moondream'
+const DEFAULT_VISION_MODEL = 'qwen3.5:9b'
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_FLIP_IMAGES = 8
 const MIN_TIMEOUT_MS = 1000
@@ -32,7 +32,6 @@ const CHECKER_CLASSIFICATIONS = new Set([
 ])
 const CHECKER_CONFIDENCES = new Set(['low', 'medium', 'high'])
 const ALLOWED_RESPONSE_FORMATS = new Set(['json'])
-const PREFERRED_OLLAMA_MULTIMODAL_MODELS = ['qwen2.5vl:7b']
 const OCR_FIRST_CHAT_PATTERN =
   /\b(text|read|ocr|screenshot|transcribe|quote|what does it say|what should i answer)\b/i
 
@@ -80,6 +79,36 @@ function createErrorMessage(
   ).trim()
 
   return status ? `${remoteMessage} (HTTP ${status})` : remoteMessage
+}
+
+function looksLikeMissingOllamaModel(message) {
+  const text = String(message || '')
+    .trim()
+    .toLowerCase()
+
+  return (
+    text.includes('model') &&
+    (text.includes('not found') ||
+      text.includes('pull') ||
+      text.includes('manifest') ||
+      text.includes('no such file'))
+  )
+}
+
+function withOllamaInstallHint(message, model) {
+  const nextMessage = String(message || '').trim()
+  const nextModel = String(model || '').trim()
+
+  if (
+    !nextMessage ||
+    !nextModel ||
+    !looksLikeMissingOllamaModel(nextMessage) ||
+    nextMessage.includes(`ollama pull ${nextModel}`)
+  ) {
+    return nextMessage
+  }
+
+  return `${nextMessage}. IdenaAI_Benchmarker is locked to ${nextModel}. Install it locally with: ollama pull ${nextModel}`
 }
 
 function normalizeModelList(data) {
@@ -155,11 +184,7 @@ function buildVisionModelCandidates(model, includesImages) {
     return primary ? [primary] : []
   }
 
-  return [
-    ...new Set(
-      [...PREFERRED_OLLAMA_MULTIMODAL_MODELS, primary].filter(Boolean)
-    ),
-  ]
+  return primary ? [primary] : []
 }
 
 function estimateBase64Bytes(value) {
@@ -943,8 +968,11 @@ function createLocalAiSidecar({
     const nextRuntimeBackend = runtimeAdapter.runtimeBackend
     const nextRuntimeType = runtimeAdapter.runtimeType
     const nextBaseUrl = runtimeAdapter.baseUrl
-    const nextModel = String(model || '').trim()
-    const nextVisionModel = normalizeVisionModel(visionModel, '')
+    const nextModel = String(model || DEFAULT_MODEL).trim()
+    const nextVisionModel = normalizeVisionModel(
+      visionModel,
+      DEFAULT_VISION_MODEL
+    )
     const nextMessages = Array.isArray(messages) ? messages : []
     const includesImages = nextMessages.some(
       (item) => Array.isArray(item && item.images) && item.images.length > 0
@@ -1095,6 +1123,11 @@ function createLocalAiSidecar({
         lastError: null,
       }
     } catch (error) {
+      const errorMessage = withOllamaInstallHint(
+        createErrorMessage(error, 'Local AI Ollama request failed'),
+        modelValidation.model
+      )
+
       return {
         ok: false,
         status: 'unavailable',
@@ -1106,7 +1139,7 @@ function createLocalAiSidecar({
         endpoint,
         text: null,
         error: 'unavailable',
-        lastError: createErrorMessage(error, 'Local AI Ollama request failed'),
+        lastError: errorMessage,
       }
     }
   }

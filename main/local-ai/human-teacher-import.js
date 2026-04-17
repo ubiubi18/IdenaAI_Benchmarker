@@ -177,10 +177,10 @@ function normalizeAnnotation(taskRow, annotationRow) {
     option_a_summary: trimText(annotationRow.option_a_summary),
     option_b_summary: trimText(annotationRow.option_b_summary),
     ai_annotation: normalizeAiAnnotation(
-      annotationRow.ai_annotation || annotationRow.aiAnnotation
+      annotationRow.ai_annotation ?? annotationRow.aiAnnotation
     ),
     ai_annotation_feedback: trimText(
-      annotationRow.ai_annotation_feedback ||
+      annotationRow.ai_annotation_feedback ??
         annotationRow.aiAnnotationFeedback,
       600
     ),

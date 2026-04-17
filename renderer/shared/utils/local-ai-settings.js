@@ -6,8 +6,9 @@ const LEGACY_LOCAL_AI_CONTRACT_VERSION = 'phi-sidecar/v1'
 const LEGACY_LOCAL_AI_BASE_URL = 'http://127.0.0.1:5000'
 const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_LOCAL_AI_SIDECAR_BASE_URL = LEGACY_LOCAL_AI_BASE_URL
-const DEFAULT_LOCAL_AI_OLLAMA_MODEL = 'llama3.1:8b'
-const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'moondream:latest'
+const FIXED_LOCAL_AI_RUNTIME_BACKEND = 'ollama-direct'
+const DEFAULT_LOCAL_AI_OLLAMA_MODEL = 'qwen3.5:9b'
+const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen3.5:9b'
 const LEGACY_LOCAL_AI_PUBLIC_MODEL_ID = 'idena-multimodal-v1'
 const LEGACY_LOCAL_AI_PUBLIC_VISION_ID = 'idena-vision-v1'
 const DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID = 'Idena-text-v1'
@@ -16,7 +17,7 @@ const DEFAULT_LOCAL_AI_PUBLIC_VISION_ID = 'Idena-multimodal-v1'
 const DEFAULT_LOCAL_AI_SETTINGS = {
   enabled: false,
   runtimeMode: 'sidecar',
-  runtimeBackend: 'ollama-direct',
+  runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
   reasonerBackend: 'local-reasoner',
   visionBackend: 'local-vision',
   publicModelId: DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
@@ -221,7 +222,7 @@ function normalizeEndpoint(source = {}) {
   return normalizeBaseUrl(source)
 }
 
-function normalizeLegacyRuntimeFamily(source = {}) {
+function _normalizeLegacyRuntimeFamily(source = {}) {
   const explicit = trimString(source.runtimeFamily)
   if (explicit) {
     return explicit
@@ -277,23 +278,9 @@ function resolveLocalAiWireRuntimeType(settings = {}) {
   }
 }
 
-function buildLocalAiRuntimePreset(runtimeBackend = 'ollama-direct') {
-  const nextRuntimeBackend = normalizeRuntimeBackend({runtimeBackend})
-
-  if (nextRuntimeBackend === 'sidecar-http') {
-    return {
-      runtimeBackend: nextRuntimeBackend,
-      baseUrl: DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
-      endpoint: DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
-      runtimeType: 'sidecar',
-      runtimeFamily: '',
-      model: '',
-      visionModel: '',
-    }
-  }
-
+function buildLocalAiRuntimePreset() {
   return {
-    runtimeBackend: 'ollama-direct',
+    runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
     baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
     endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
     runtimeType: 'ollama',
@@ -352,7 +339,7 @@ function buildLocalAiSettings(settings = {}) {
   const normalizedSettings = {
     ...DEFAULT_LOCAL_AI_SETTINGS,
     ...source,
-    runtimeBackend: normalizeRuntimeBackend(source),
+    runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
     reasonerBackend:
       trimString(source.reasonerBackend) ||
       DEFAULT_LOCAL_AI_SETTINGS.reasonerBackend,
@@ -361,20 +348,18 @@ function buildLocalAiSettings(settings = {}) {
       DEFAULT_LOCAL_AI_SETTINGS.visionBackend,
     publicModelId: normalizePublicModelId(source.publicModelId),
     publicVisionId: normalizePublicVisionId(source.publicVisionId),
-    baseUrl: normalizeBaseUrl(source),
-    endpoint: normalizeEndpoint(source),
-    runtimeType: trimString(source.runtimeType),
-    runtimeFamily: normalizeLegacyRuntimeFamily(source),
-    model:
-      trimString(source.model) ||
-      (normalizeRuntimeBackend(source) === 'ollama-direct'
-        ? DEFAULT_LOCAL_AI_OLLAMA_MODEL
-        : ''),
-    visionModel:
-      trimString(source.visionModel) ||
-      (normalizeRuntimeBackend(source) === 'ollama-direct'
-        ? DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL
-        : ''),
+    baseUrl: normalizeBaseUrl({
+      ...source,
+      runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+    }),
+    endpoint: normalizeEndpoint({
+      ...source,
+      runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+    }),
+    runtimeType: 'ollama',
+    runtimeFamily: '',
+    model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
+    visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
     adapterStrategy:
       trimString(source.adapterStrategy) ||
       DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy,
@@ -425,6 +410,7 @@ module.exports = {
   LEGACY_LOCAL_AI_VISION_MODEL,
   LEGACY_LOCAL_AI_CONTRACT_VERSION,
   DEFAULT_LOCAL_AI_SETTINGS,
+  FIXED_LOCAL_AI_RUNTIME_BACKEND,
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,

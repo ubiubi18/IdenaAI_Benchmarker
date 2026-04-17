@@ -1,5 +1,6 @@
 const {
   DEFAULT_LOCAL_AI_SETTINGS,
+  FIXED_LOCAL_AI_RUNTIME_BACKEND,
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
@@ -62,6 +63,20 @@ describe('local-ai settings schema', () => {
     expect(settings.publicVisionId).toBe(DEFAULT_LOCAL_AI_PUBLIC_VISION_ID)
   })
 
+  it('forces the fixed local qwen runtime even if older local models were saved', () => {
+    const settings = buildLocalAiSettings({
+      runtimeBackend: 'sidecar-http',
+      runtimeType: 'sidecar',
+      model: 'llama3.1:8b',
+      visionModel: 'moondream:latest',
+    })
+
+    expect(settings.runtimeBackend).toBe(FIXED_LOCAL_AI_RUNTIME_BACKEND)
+    expect(settings.runtimeType).toBe('ollama')
+    expect(settings.model).toBe(DEFAULT_LOCAL_AI_OLLAMA_MODEL)
+    expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
+  })
+
   it('keeps explicit neutral fields and nested preferences when merging', () => {
     const settings = mergeLocalAiSettings(
       buildLocalAiSettings({
@@ -75,7 +90,7 @@ describe('local-ai settings schema', () => {
       }
     )
 
-    expect(settings.runtimeBackend).toBe('adapter-gateway')
+    expect(settings.runtimeBackend).toBe(FIXED_LOCAL_AI_RUNTIME_BACKEND)
     expect(settings.publicModelId).toBe('Idena-text-v2')
     expect(settings.federated.enabled).toBe(true)
     expect(settings.federated.minExamples).toBe(5)
@@ -116,7 +131,7 @@ describe('local-ai settings schema', () => {
 
   it('builds explicit backend presets for the settings UI', () => {
     expect(buildLocalAiRuntimePreset('ollama-direct')).toMatchObject({
-      runtimeBackend: 'ollama-direct',
+      runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
       baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       runtimeType: 'ollama',
@@ -125,12 +140,12 @@ describe('local-ai settings schema', () => {
     })
 
     expect(buildLocalAiRuntimePreset('sidecar-http')).toMatchObject({
-      runtimeBackend: 'sidecar-http',
-      baseUrl: 'http://127.0.0.1:5000',
-      endpoint: 'http://127.0.0.1:5000',
-      runtimeType: 'sidecar',
-      model: '',
-      visionModel: '',
+      runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+      baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+      endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+      runtimeType: 'ollama',
+      model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
+      visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
     })
   })
 
