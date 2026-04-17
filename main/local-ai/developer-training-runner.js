@@ -665,6 +665,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
     runtimeTrainingDir,
     sampleName,
     annotationsJsonlPath,
+    humanTeacherSystemPrompt = '',
   }) {
     const sampleJsonPath = path.join(samplesDir, `${sampleName}.json`)
 
@@ -702,7 +703,14 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         'runtime_aligned_native_frames_v2',
         '--image-mode',
         'native_frames',
-      ],
+      ].concat(
+        String(humanTeacherSystemPrompt || '').trim()
+          ? [
+              '--human-teacher-system-prompt',
+              String(humanTeacherSystemPrompt || '').trim(),
+            ]
+          : []
+      ),
     })
 
     const manifest = await readJsonIfExists(manifestPath, null)
@@ -994,6 +1002,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         runtimeTrainingDir,
         sampleName: request.sampleName,
         annotationsJsonlPath: annotatedAnnotationsPath,
+        humanTeacherSystemPrompt: request.developerHumanTeacherSystemPrompt,
       })
       const training = await runTraining({
         runtimeTrainingDir,
@@ -1020,6 +1029,8 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         latestTrainingSummaryPath: training.summaryPath,
         latestComparisonPath: comparisonPath,
         latestHoldoutPath: comparison.holdout.datasetPath,
+        developerHumanTeacherSystemPrompt:
+          String(request.developerHumanTeacherSystemPrompt || '').trim() || '',
         lastTrainedAt: new Date().toISOString(),
         lastEvaluatedAt: comparison.summary.evaluatedAt,
       })
@@ -1033,6 +1044,8 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         preparedDatasetPath: prepared.datasetPath,
         preparedManifestPath: prepared.manifestPath,
         trainingSummaryPath: training.summaryPath,
+        developerHumanTeacherSystemPrompt:
+          String(request.developerHumanTeacherSystemPrompt || '').trim() || '',
         acceptedRows:
           normalizeInteger(prepared.manifest && prepared.manifest.count) ||
           null,

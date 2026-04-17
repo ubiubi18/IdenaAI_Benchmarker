@@ -24,17 +24,24 @@ import {SettingsSection} from '../../screens/settings/components'
 import {PrimaryButton, SecondaryButton} from '../../shared/components/button'
 import {rewardWithConfetti} from '../../shared/utils/onboarding'
 import {
+  useSettingsDispatch,
+  useSettingsState,
+} from '../../shared/providers/settings-context'
+import {DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT} from '../../shared/utils/local-ai-settings'
+import {
   Checkbox,
   FormLabel,
   Input,
   Select,
   Textarea,
+  Toast,
 } from '../../shared/components/components'
 import {useEpochState} from '../../shared/providers/epoch-context'
 
 const HUMAN_TEACHER_SET_LIMIT = 30
 const AUTO_SAVE_DELAY_MS = 2500
 const PANEL_REFERENCE_CODES = ['A', 'B', 'C']
+const AI_ANNOTATION_RATINGS = ['good', 'bad', 'wrong']
 
 function createEmptyPanelReference(code) {
   return {
@@ -116,6 +123,131 @@ function normalizePanelReferences(value) {
   })
 }
 
+function createEmptyAiAnnotationDraft() {
+  return {
+    generated_at: '',
+    runtime_backend: '',
+    runtime_type: '',
+    model: '',
+    vision_model: '',
+    final_answer: '',
+    why_answer: '',
+    confidence: '',
+    text_required: null,
+    sequence_markers_present: null,
+    report_required: null,
+    report_reason: '',
+    option_a_summary: '',
+    option_b_summary: '',
+    rating: '',
+  }
+}
+
+function normalizeAiAnnotationRating(value) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return AI_ANNOTATION_RATINGS.includes(next) ? next : ''
+}
+
+function normalizeAiAnnotationDraft(annotation = {}) {
+  const next =
+    annotation && typeof annotation === 'object' && !Array.isArray(annotation)
+      ? {
+          ...createEmptyAiAnnotationDraft(),
+          ...annotation,
+        }
+      : createEmptyAiAnnotationDraft()
+  const finalAnswer = String(next.final_answer ?? next.finalAnswer ?? '')
+    .trim()
+    .toLowerCase()
+  const normalized = {
+    ...createEmptyAiAnnotationDraft(),
+    generated_at: String(next.generated_at ?? next.generatedAt ?? '')
+      .trim()
+      .slice(0, 64),
+    runtime_backend: String(next.runtime_backend ?? next.runtimeBackend ?? '')
+      .trim()
+      .slice(0, 64),
+    runtime_type: String(next.runtime_type ?? next.runtimeType ?? '')
+      .trim()
+      .slice(0, 64),
+    model: String(next.model || '')
+      .trim()
+      .slice(0, 256),
+    vision_model: String(next.vision_model || next.visionModel || '')
+      .trim()
+      .slice(0, 256),
+    final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
+      ? finalAnswer
+      : '',
+    why_answer: String(next.why_answer ?? next.whyAnswer ?? '')
+      .trim()
+      .slice(0, 900),
+    confidence:
+      next.confidence === null || typeof next.confidence === 'undefined'
+        ? ''
+        : String(next.confidence).trim(),
+    text_required:
+      Object.prototype.hasOwnProperty.call(next, 'text_required') ||
+      Object.prototype.hasOwnProperty.call(next, 'textRequired')
+        ? next.text_required ?? next.textRequired
+        : null,
+    sequence_markers_present:
+      Object.prototype.hasOwnProperty.call(next, 'sequence_markers_present') ||
+      Object.prototype.hasOwnProperty.call(next, 'sequenceMarkersPresent')
+        ? next.sequence_markers_present ?? next.sequenceMarkersPresent
+        : null,
+    report_required:
+      Object.prototype.hasOwnProperty.call(next, 'report_required') ||
+      Object.prototype.hasOwnProperty.call(next, 'reportRequired')
+        ? next.report_required ?? next.reportRequired
+        : null,
+    report_reason: String(next.report_reason ?? next.reportReason ?? '')
+      .trim()
+      .slice(0, 400),
+    option_a_summary: String(next.option_a_summary ?? next.optionASummary ?? '')
+      .trim()
+      .slice(0, 400),
+    option_b_summary: String(next.option_b_summary ?? next.optionBSummary ?? '')
+      .trim()
+      .slice(0, 400),
+    rating: normalizeAiAnnotationRating(next.rating),
+  }
+
+  return hasAiAnnotationContent(normalized) ? normalized : null
+}
+
+function hasAiAnnotationContent(annotation = {}) {
+  const next =
+    annotation && typeof annotation === 'object' && !Array.isArray(annotation)
+      ? annotation
+      : null
+
+  if (!next) {
+    return false
+  }
+
+  return Boolean(
+    next.generated_at ||
+      next.runtime_backend ||
+      next.runtime_type ||
+      next.model ||
+      next.vision_model ||
+      next.final_answer ||
+      next.why_answer ||
+      next.option_a_summary ||
+      next.option_b_summary ||
+      next.rating ||
+      next.report_reason ||
+      next.text_required !== null ||
+      next.sequence_markers_present !== null ||
+      next.report_required !== null ||
+      next.confidence !== ''
+  )
+}
+
 function hasPanelReferenceContent(reference = {}) {
   return Boolean(
     String(reference.description || '').trim() || reference.panel_index !== null
@@ -128,7 +260,7 @@ function formatErrorMessage(error) {
   const message = raw.replace(prefix, '').trim()
 
   if (
-    /No handler registered for 'localAi\.(?:loadHumanTeacherDemoWorkspace|loadHumanTeacherDemoTask|saveHumanTeacherDemoDraft|finalizeHumanTeacherDemoChunk|runHumanTeacherDeveloperComparison|loadHumanTeacherAnnotationWorkspace|loadHumanTeacherAnnotationTask|saveHumanTeacherAnnotationDraft|importHumanTeacherAnnotations|exportHumanTeacherTasks)'/i.test(
+    /No handler registered for 'localAi\.(?:loadHumanTeacherDemoWorkspace|loadHumanTeacherDemoTask|saveHumanTeacherDemoDraft|finalizeHumanTeacherDemoChunk|runHumanTeacherDeveloperComparison|loadHumanTeacherAnnotationWorkspace|loadHumanTeacherAnnotationTask|saveHumanTeacherAnnotationDraft|importHumanTeacherAnnotations|exportHumanTeacherTasks|chat)'/i.test(
       message
     )
   ) {
@@ -282,6 +414,8 @@ function createEmptyAnnotationDraft() {
     frame_captions: ['', '', '', ''],
     option_a_summary: '',
     option_b_summary: '',
+    ai_annotation: null,
+    ai_annotation_feedback: '',
     panel_references: PANEL_REFERENCE_CODES.map((code) =>
       createEmptyPanelReference(code)
     ),
@@ -314,12 +448,35 @@ function normalizeAnnotationDraft(annotation = {}) {
     annotator: String(next.annotator || ''),
     option_a_summary: String(next.option_a_summary || ''),
     option_b_summary: String(next.option_b_summary || ''),
-    panel_references: normalizePanelReferences(
-      next.panel_references || next.panelReferences
+    ai_annotation: normalizeAiAnnotationDraft(
+      next.ai_annotation ?? next.aiAnnotation
     ),
-    report_reason: String(next.report_reason || ''),
-    final_answer: String(next.final_answer || ''),
-    why_answer: String(next.why_answer || ''),
+    ai_annotation_feedback: String(
+      next.ai_annotation_feedback ?? next.aiAnnotationFeedback ?? ''
+    )
+      .trim()
+      .slice(0, 600),
+    panel_references: normalizePanelReferences(
+      next.panel_references ?? next.panelReferences
+    ),
+    text_required:
+      Object.prototype.hasOwnProperty.call(next, 'text_required') ||
+      Object.prototype.hasOwnProperty.call(next, 'textRequired')
+        ? next.text_required ?? next.textRequired
+        : null,
+    sequence_markers_present:
+      Object.prototype.hasOwnProperty.call(next, 'sequence_markers_present') ||
+      Object.prototype.hasOwnProperty.call(next, 'sequenceMarkersPresent')
+        ? next.sequence_markers_present ?? next.sequenceMarkersPresent
+        : null,
+    report_required:
+      Object.prototype.hasOwnProperty.call(next, 'report_required') ||
+      Object.prototype.hasOwnProperty.call(next, 'reportRequired')
+        ? next.report_required ?? next.reportRequired
+        : null,
+    report_reason: String(next.report_reason ?? ''),
+    final_answer: String(next.final_answer ?? ''),
+    why_answer: String(next.why_answer ?? ''),
     confidence:
       next.confidence === null || typeof next.confidence === 'undefined'
         ? ''
@@ -334,6 +491,8 @@ function hasDraftContent(annotation = {}) {
       next.frame_captions.some((item) => String(item || '').trim()) ||
       next.option_a_summary.trim() ||
       next.option_b_summary.trim() ||
+      hasAiAnnotationContent(next.ai_annotation) ||
+      next.ai_annotation_feedback.trim() ||
       next.panel_references.some((reference) =>
         hasPanelReferenceContent(reference)
       ) ||
@@ -367,6 +526,104 @@ function getOrderedPanels(task = {}, order = []) {
   )
 
   return order.map((index) => panelsByIndex.get(Number(index))).filter(Boolean)
+}
+
+function parseAiAnnotationResponse(text = '') {
+  const raw = String(text || '').trim()
+
+  if (!raw) {
+    throw new Error('Local AI returned an empty draft response.')
+  }
+
+  const direct = () => JSON.parse(raw)
+  const fromFence = () => {
+    const match = raw.match(/```(?:json)?\s*([\s\S]+?)\s*```/iu)
+    if (!match) {
+      throw new Error('No JSON object found in the Local AI draft response.')
+    }
+    return JSON.parse(String(match[1] || '').trim())
+  }
+
+  try {
+    return direct()
+  } catch {
+    return fromFence()
+  }
+}
+
+function buildAiAnnotationSystemPrompt(basePrompt = '') {
+  const prefix = String(basePrompt || '').trim()
+
+  return [
+    prefix || DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
+    'You are generating a developer-only draft annotation for human review.',
+    'Do not collapse into a left-only or right-only habit.',
+    'Return JSON only.',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function buildAiAnnotationUserPrompt() {
+  return [
+    'Draft a human-teacher annotation for this Idena FLIP.',
+    'Images 1-4 show the LEFT candidate in temporal order.',
+    'Images 5-8 show the RIGHT candidate in temporal order.',
+    'Use skip if the flip is ambiguous, report-worthy, or lacks a clear better story.',
+    'Keep the reason short and concrete.',
+    'Return JSON only with this exact schema:',
+    '{"final_answer":"left|right|skip","why_answer":"...","confidence":1|2|3|4|5,"text_required":true|false,"sequence_markers_present":true|false,"report_required":true|false,"report_reason":"...","option_a_summary":"short LEFT story summary","option_b_summary":"short RIGHT story summary"}',
+    'If report_required is false, report_reason must be an empty string.',
+  ].join(' ')
+}
+
+function buildStoredAiAnnotation(aiAnnotation, result = {}) {
+  const normalized = normalizeAiAnnotationDraft({
+    ...aiAnnotation,
+    generated_at: new Date().toISOString(),
+    runtime_backend: result.runtimeBackend || result.runtime_backend || '',
+    runtime_type: result.runtimeType || result.runtime_type || '',
+    model: result.model || '',
+    vision_model: result.visionModel || result.vision_model || '',
+  })
+
+  if (!normalized) {
+    throw new Error('Local AI returned an empty draft annotation.')
+  }
+
+  return normalized
+}
+
+function applyAiAnnotationToDraft(currentDraft, aiAnnotation) {
+  return normalizeAnnotationDraft({
+    ...currentDraft,
+    ai_annotation: aiAnnotation,
+    final_answer: aiAnnotation.final_answer || '',
+    why_answer: aiAnnotation.why_answer || '',
+    confidence: aiAnnotation.confidence || '',
+    text_required: aiAnnotation.text_required,
+    sequence_markers_present: aiAnnotation.sequence_markers_present,
+    report_required: aiAnnotation.report_required,
+    report_reason: aiAnnotation.report_reason || '',
+    option_a_summary: aiAnnotation.option_a_summary || '',
+    option_b_summary: aiAnnotation.option_b_summary || '',
+  })
+}
+
+function formatDecisionLabel(value, t) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+  if (next === 'left') {
+    return t('LEFT')
+  }
+  if (next === 'right') {
+    return t('RIGHT')
+  }
+  if (next === 'skip') {
+    return t('SKIP')
+  }
+  return t('Unknown')
 }
 
 function getDraftStatusLabel(annotation, t) {
@@ -808,6 +1065,8 @@ export default function AiHumanTeacherPage() {
   const {t} = useTranslation()
   const router = useRouter()
   const toast = useToast()
+  const {localAi} = useSettingsState()
+  const {updateLocalAiSettings} = useSettingsDispatch()
   const epochState = useEpochState()
   const queryEpoch = String(router.query?.epoch || '').trim()
   const fallbackEpoch = React.useMemo(() => {
@@ -836,6 +1095,7 @@ export default function AiHumanTeacherPage() {
   const queryDemoSample = String(router.query?.sample || '').trim()
   const autoStartKeyRef = React.useRef('')
   const shouldFlushAutosaveRef = React.useRef(false)
+  const localPilotTrainingRef = React.useRef(null)
 
   const [epoch, setEpoch] = React.useState(queryEpoch || fallbackEpoch)
   const [result, setResult] = React.useState(null)
@@ -867,18 +1127,37 @@ export default function AiHumanTeacherPage() {
     React.useState(false)
   const [isRunningDeveloperComparison, setIsRunningDeveloperComparison] =
     React.useState(false)
+  const [isGeneratingAiDraft, setIsGeneratingAiDraft] = React.useState(false)
   const [showReferenceTool, setShowReferenceTool] = React.useState(false)
   const [showAdvancedFields, setShowAdvancedFields] = React.useState(false)
   const [demoSessionState, setDemoSessionState] = React.useState(null)
   const [demoOffset, setDemoOffset] = React.useState(0)
   const [developerSessionState, setDeveloperSessionState] = React.useState(null)
   const [developerOffset, setDeveloperOffset] = React.useState(0)
+  const [isPromptToolsOpen, setIsPromptToolsOpen] = React.useState(false)
+  const [isPromptEditingUnlocked, setIsPromptEditingUnlocked] =
+    React.useState(false)
+  const [showPromptResetConfirm, setShowPromptResetConfirm] =
+    React.useState(false)
+  const [developerPromptDraft, setDeveloperPromptDraft] = React.useState(
+    DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT
+  )
   const [_developerActionResult, setDeveloperActionResult] =
     React.useState(null)
   const [chunkDecisionDialog, setChunkDecisionDialog] = React.useState({
     isOpen: false,
     mode: '',
   })
+  const [contributionDialog, setContributionDialog] = React.useState({
+    isOpen: false,
+    mode: '',
+  })
+  const [isExportingContributionBundle, setIsExportingContributionBundle] =
+    React.useState(false)
+  const [externalContributionBundle, setExternalContributionBundle] =
+    React.useState(null)
+  const [externalContributionError, setExternalContributionError] =
+    React.useState('')
   const [lastPersistedDraft, setLastPersistedDraft] = React.useState({
     key: '',
     snapshot: '',
@@ -928,6 +1207,104 @@ export default function AiHumanTeacherPage() {
     return global.localAi
   }, [])
 
+  const savedDeveloperPromptOverride = React.useMemo(
+    () => String(localAi?.developerHumanTeacherSystemPrompt || '').trim(),
+    [localAi?.developerHumanTeacherSystemPrompt]
+  )
+  const effectiveDeveloperPrompt = React.useMemo(
+    () => savedDeveloperPromptOverride || DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
+    [savedDeveloperPromptOverride]
+  )
+  const hasCustomDeveloperPrompt = Boolean(savedDeveloperPromptOverride)
+  const shareHumanTeacherAnnotationsWithNetwork = Boolean(
+    localAi?.shareHumanTeacherAnnotationsWithNetwork
+  )
+
+  React.useEffect(() => {
+    if (!isPromptEditingUnlocked) {
+      setDeveloperPromptDraft(effectiveDeveloperPrompt)
+    }
+  }, [effectiveDeveloperPrompt, isPromptEditingUnlocked])
+
+  const openPromptTools = React.useCallback(() => {
+    setIsPromptToolsOpen(true)
+    setShowPromptResetConfirm(false)
+  }, [])
+
+  const closePromptTools = React.useCallback(() => {
+    setIsPromptToolsOpen(false)
+    setIsPromptEditingUnlocked(false)
+    setShowPromptResetConfirm(false)
+    setDeveloperPromptDraft(effectiveDeveloperPrompt)
+  }, [effectiveDeveloperPrompt])
+
+  const unlockPromptEditing = React.useCallback(() => {
+    setIsPromptToolsOpen(true)
+    setIsPromptEditingUnlocked(true)
+    setShowPromptResetConfirm(false)
+    setDeveloperPromptDraft(effectiveDeveloperPrompt)
+  }, [effectiveDeveloperPrompt])
+
+  const applyDeveloperPrompt = React.useCallback(() => {
+    const normalizedPrompt = String(developerPromptDraft || '').trim()
+
+    if (!normalizedPrompt) {
+      toast({
+        render: () => (
+          <Toast title={t('Prompt cannot be empty')}>
+            {t(
+              'Use the app default prompt or enter a complete custom human-teacher system prompt before applying.'
+            )}
+          </Toast>
+        ),
+      })
+      return
+    }
+
+    updateLocalAiSettings({
+      developerHumanTeacherSystemPrompt:
+        normalizedPrompt === DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT
+          ? ''
+          : normalizedPrompt,
+    })
+    setIsPromptEditingUnlocked(false)
+    setShowPromptResetConfirm(false)
+    setDeveloperPromptDraft(normalizedPrompt)
+    const appliedPromptMessage =
+      normalizedPrompt === DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT
+        ? t(
+            'The developer human-teacher trainer will use the app default prompt.'
+          )
+        : t(
+            'The developer human-teacher trainer will use your custom system prompt on the next training run.'
+          )
+    toast({
+      render: () => (
+        <Toast title={t('Developer prompt updated')}>
+          {appliedPromptMessage}
+        </Toast>
+      ),
+    })
+  }, [developerPromptDraft, t, toast, updateLocalAiSettings])
+
+  const resetDeveloperPromptToDefault = React.useCallback(() => {
+    updateLocalAiSettings({
+      developerHumanTeacherSystemPrompt: '',
+    })
+    setIsPromptEditingUnlocked(false)
+    setShowPromptResetConfirm(false)
+    setDeveloperPromptDraft(DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT)
+    toast({
+      render: () => (
+        <Toast title={t('Developer prompt reset')}>
+          {t(
+            'The developer human-teacher trainer is back on the app default system prompt.'
+          )}
+        </Toast>
+      ),
+    })
+  }, [t, toast, updateLocalAiSettings])
+
   const openChunkDecisionDialog = React.useCallback((mode) => {
     setChunkDecisionDialog({
       isOpen: true,
@@ -941,6 +1318,120 @@ export default function AiHumanTeacherPage() {
       mode: '',
     })
   }, [])
+
+  const openContributionDialog = React.useCallback((mode) => {
+    setContributionDialog({
+      isOpen: true,
+      mode,
+    })
+  }, [])
+
+  const closeContributionDialog = React.useCallback(() => {
+    if (isExportingContributionBundle) {
+      return
+    }
+
+    setContributionDialog({
+      isOpen: false,
+      mode: '',
+    })
+  }, [isExportingContributionBundle])
+
+  const openLocalPilotTrainingDialog = React.useCallback(() => {
+    openContributionDialog('local')
+  }, [openContributionDialog])
+
+  const scrollToLocalPilotTraining = React.useCallback(() => {
+    const nextNode = localPilotTrainingRef.current
+
+    if (nextNode && typeof nextNode.scrollIntoView === 'function') {
+      nextNode.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }
+  }, [])
+
+  const enableAnnotationSharing = React.useCallback(() => {
+    if (!shareHumanTeacherAnnotationsWithNetwork) {
+      updateLocalAiSettings({
+        shareHumanTeacherAnnotationsWithNetwork: true,
+      })
+      toast({
+        render: () => (
+          <Toast title={t('Annotation-sharing consent saved')}>
+            {t(
+              'The app stored your future network-sharing consent locally. The later P2P exchange flow can reuse it without asking again.'
+            )}
+          </Toast>
+        ),
+      })
+    }
+
+    openContributionDialog('share')
+  }, [
+    openContributionDialog,
+    shareHumanTeacherAnnotationsWithNetwork,
+    t,
+    toast,
+    updateLocalAiSettings,
+  ])
+
+  const exportExternalTrainingBundle = React.useCallback(async () => {
+    const nextAnnotatedCount =
+      Number(developerSessionState?.annotatedCount) || 0
+
+    if (nextAnnotatedCount <= 0) {
+      toast({
+        render: () => (
+          <Toast title={t('No completed annotations yet')}>
+            {t(
+              'Complete at least one developer flip before exporting an external GPU training bundle.'
+            )}
+          </Toast>
+        ),
+      })
+      return
+    }
+
+    openContributionDialog('external')
+    setIsExportingContributionBundle(true)
+    setExternalContributionError('')
+    setExternalContributionBundle(null)
+
+    try {
+      const nextBundle = await ensureBridge().exportHumanTeacherDeveloperBundle(
+        {
+          sampleName: demoSampleName,
+          runtimeBackend: localAi?.runtimeBackend,
+          runtimeType: localAi?.runtimeType,
+          baseUrl: localAi?.baseUrl,
+          model: localAi?.model,
+          visionModel: localAi?.visionModel,
+          developerHumanTeacherSystemPrompt: effectiveDeveloperPrompt,
+        }
+      )
+
+      setExternalContributionBundle(nextBundle)
+    } catch (nextError) {
+      setExternalContributionError(formatErrorMessage(nextError))
+    } finally {
+      setIsExportingContributionBundle(false)
+    }
+  }, [
+    demoSampleName,
+    developerSessionState?.annotatedCount,
+    effectiveDeveloperPrompt,
+    ensureBridge,
+    localAi?.baseUrl,
+    localAi?.model,
+    localAi?.runtimeBackend,
+    localAi?.runtimeType,
+    localAi?.visionModel,
+    openContributionDialog,
+    t,
+    toast,
+  ])
 
   const loadPackage = React.useCallback(
     async ({forceRebuild = false} = {}) => {
@@ -1240,6 +1731,28 @@ export default function AiHumanTeacherPage() {
     ]
   )
 
+  const continueWithLocalPilotTraining = React.useCallback(async () => {
+    setContributionDialog({
+      isOpen: false,
+      mode: '',
+    })
+
+    if (!workspace || annotationSourceMode !== 'developer') {
+      await loadDeveloperSession()
+    }
+
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        scrollToLocalPilotTraining()
+      }, 120)
+    }
+  }, [
+    annotationSourceMode,
+    loadDeveloperSession,
+    scrollToLocalPilotTraining,
+    workspace,
+  ])
+
   const startAnnotationFlow = React.useCallback(async () => {
     const nextEpoch = String(epoch || '').trim()
 
@@ -1494,6 +2007,151 @@ export default function AiHumanTeacherPage() {
     () => normalizeAnnotationDraft(annotationDraft),
     [annotationDraft]
   )
+  const currentAiAnnotation = React.useMemo(
+    () => normalizeAiAnnotationDraft(annotationDraft.ai_annotation),
+    [annotationDraft.ai_annotation]
+  )
+  const requestAiAnnotationDraft = React.useCallback(async () => {
+    if (annotationSourceMode !== 'developer') {
+      return
+    }
+
+    if (localAi?.enabled !== true) {
+      toast({
+        render: () => (
+          <Toast title={t('Enable local AI first')}>
+            {t(
+              'The AI draft button uses the local runtime. Turn on Local AI in AI settings, then try again.'
+            )}
+          </Toast>
+        ),
+      })
+      return
+    }
+
+    if (!global.localAi || typeof global.localAi.chat !== 'function') {
+      toast({
+        render: () => (
+          <Toast title={t('AI draft unavailable')}>
+            {t(
+              'This build does not expose the Local AI chat bridge yet. Fully restart IdenaAI and try again.'
+            )}
+          </Toast>
+        ),
+      })
+      return
+    }
+
+    const orderedImages = [...leftPanels, ...rightPanels]
+      .map((panel) => panel?.dataUrl)
+      .filter(Boolean)
+
+    if (orderedImages.length !== 8) {
+      toast({
+        render: () => (
+          <Toast title={t('AI draft unavailable')}>
+            {t(
+              'The current flip is missing ordered panel images, so the local AI draft could not start.'
+            )}
+          </Toast>
+        ),
+      })
+      return
+    }
+
+    setIsGeneratingAiDraft(true)
+    setError('')
+
+    try {
+      const bridge = ensureBridge()
+      const aiDraftResult = await bridge.chat({
+        baseUrl: localAi?.baseUrl,
+        runtimeBackend: localAi?.runtimeBackend,
+        runtimeType: localAi?.runtimeType,
+        model: localAi?.model,
+        visionModel: localAi?.visionModel,
+        timeoutMs: 45000,
+        responseFormat: 'json',
+        generationOptions: {
+          temperature: 0,
+          numPredict: 256,
+        },
+        messages: [
+          {
+            role: 'system',
+            content: buildAiAnnotationSystemPrompt(effectiveDeveloperPrompt),
+          },
+          {
+            role: 'user',
+            content: buildAiAnnotationUserPrompt(),
+            images: orderedImages,
+          },
+        ],
+      })
+
+      const aiText = String(
+        aiDraftResult?.text || aiDraftResult?.content || ''
+      ).trim()
+
+      if (!aiDraftResult?.ok || !aiText) {
+        throw new Error(
+          String(aiDraftResult?.lastError || '').trim() ||
+            t('The local AI runtime did not return a usable annotation draft.')
+        )
+      }
+
+      const aiAnnotation = buildStoredAiAnnotation(
+        parseAiAnnotationResponse(aiText),
+        aiDraftResult
+      )
+
+      setAnnotationDraft((current) =>
+        applyAiAnnotationToDraft(current, aiAnnotation)
+      )
+      setShowAdvancedFields(
+        Boolean(aiAnnotation.option_a_summary || aiAnnotation.option_b_summary)
+      )
+      toast({
+        render: () => (
+          <Toast title={t('AI draft applied')}>
+            {t(
+              'The local AI filled a draft for this flip. Review it, edit it, and tell the AI what it got wrong if needed.'
+            )}
+          </Toast>
+        ),
+      })
+    } catch (draftError) {
+      const detail = String(
+        (draftError && draftError.message) || draftError || ''
+      ).trim()
+      toast({
+        render: () => (
+          <Toast title={t('AI draft failed')}>
+            {detail ||
+              t(
+                'The local AI runtime could not produce a draft for this flip.'
+              )}
+          </Toast>
+        ),
+      })
+    } finally {
+      setIsGeneratingAiDraft(false)
+    }
+  }, [
+    annotationSourceMode,
+    effectiveDeveloperPrompt,
+    ensureBridge,
+    leftPanels,
+    localAi?.baseUrl,
+    localAi?.enabled,
+    localAi?.model,
+    localAi?.runtimeBackend,
+    localAi?.runtimeType,
+    localAi?.visionModel,
+    rightPanels,
+    t,
+    toast,
+  ])
   const currentDraftSnapshot = React.useMemo(
     () => JSON.stringify(normalizedDraft),
     [normalizedDraft]
@@ -2267,12 +2925,32 @@ export default function AiHumanTeacherPage() {
   }, [annotationSourceMode, importAnnotations, saveTaskDraft, t, toast])
 
   const packageSummary = describeHumanTeacherPackage(t, result)
+  const trimmedDeveloperPromptDraft = String(developerPromptDraft || '').trim()
+  const developerPromptMatchesSaved =
+    trimmedDeveloperPromptDraft === effectiveDeveloperPrompt
+  const developerPromptMatchesDefault =
+    trimmedDeveloperPromptDraft === DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT
+  const developerPromptApplyLabel = developerPromptMatchesDefault
+    ? t('Apply app default prompt')
+    : t('Apply custom prompt')
   const reviewStatus = normalizeReviewStatus(result?.package?.reviewStatus)
   const eligibleCount = Number(result?.eligibleCount) || 0
   const importedAnnotations = result?.package?.importedAnnotations || null
   const isDeveloperSourceMode = annotationSourceMode === 'developer'
   const isDemoMode = annotationSourceMode === 'demo'
   const chunkDecisionMode = chunkDecisionDialog.mode
+  const contributionDialogMode = contributionDialog.mode
+  const contributionDialogTitle = React.useMemo(() => {
+    if (contributionDialogMode === 'share') {
+      return t('Share annotations with the network')
+    }
+
+    if (contributionDialogMode === 'external') {
+      return t('Train on external GPU')
+    }
+
+    return t('Train AI on this system (not recommended!)')
+  }, [contributionDialogMode, t])
   const isChunkDecisionBusy = isSavingTask || isFinalizingDeveloperChunk
   const demoRemainingCount = Number(demoSessionState?.remainingTaskCount) || 0
   const demoCanAdvance =
@@ -2286,6 +2964,7 @@ export default function AiHumanTeacherPage() {
     Number(developerSessionState?.pendingTrainingCount) || 0
   const developerAnnotatedCount =
     Number(developerSessionState?.annotatedCount) || 0
+  const developerCanExportContributionBundle = developerAnnotatedCount > 0
   const developerTrainedCount = Number(developerSessionState?.trainedCount) || 0
   const developerRemainingCount =
     Number(developerSessionState?.remainingTaskCount) || 0
@@ -2294,12 +2973,22 @@ export default function AiHumanTeacherPage() {
     developerComparison?.status || 'not_loaded'
   ).trim()
   const developerLastTraining = developerSessionState?.lastTraining || null
+  const developerSupportsLocalTraining =
+    developerSessionState?.supportsLocalTraining !== false
   const developerLastTrainingFailureReason =
     developerLastTraining?.failureReason ||
     extractTrainingFailureReason(developerLastTraining?.result)
-  const developerTrainingUnsupported = isTrainingUnsupportedReason(
-    developerLastTrainingFailureReason
-  )
+  const developerTrainingUnsupported =
+    !developerSupportsLocalTraining &&
+    isTrainingUnsupportedReason(developerLastTrainingFailureReason)
+  const developerHasLegacyUnsupportedFailure =
+    developerSupportsLocalTraining &&
+    isTrainingUnsupportedReason(developerLastTrainingFailureReason)
+  const developerDisplayedFailureReason = developerHasLegacyUnsupportedFailure
+    ? t(
+        'A previous attempt failed on the older sidecar-only training path. Local MLX training is available now, so you can retry training or rerun the benchmark.'
+      )
+    : developerLastTrainingFailureReason
   const developerModelStatus = React.useMemo(() => {
     if (!isDeveloperMode) {
       return null
@@ -2354,7 +3043,7 @@ export default function AiHumanTeacherPage() {
                   count: developerPendingCount,
                 }
               ),
-        reason: developerLastTrainingFailureReason,
+        reason: developerDisplayedFailureReason,
       }
     }
 
@@ -2422,8 +3111,8 @@ export default function AiHumanTeacherPage() {
     }
   }, [
     developerAnnotatedCount,
+    developerDisplayedFailureReason,
     developerLastTraining?.at,
-    developerLastTrainingFailureReason,
     developerLastTraining?.status,
     developerPendingCount,
     developerTrainingUnsupported,
@@ -2450,7 +3139,7 @@ export default function AiHumanTeacherPage() {
       : null
   const developerCanRunComparison =
     isDeveloperMode &&
-    !developerTrainingUnsupported &&
+    developerSupportsLocalTraining &&
     (developerTrainedCount > 0 || developerPendingCount > 0) &&
     !isRunningDeveloperComparison
   const developerCanAdvance =
@@ -2805,6 +3494,131 @@ export default function AiHumanTeacherPage() {
                   </Stack>
                 </Alert>
 
+                <Box
+                  borderWidth="1px"
+                  borderColor="gray.100"
+                  borderRadius="md"
+                  p={4}
+                >
+                  <Stack spacing={3}>
+                    <Box>
+                      <Text fontWeight={600}>
+                        {t('Developer training prompt')}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {hasCustomDeveloperPrompt
+                          ? t(
+                              'A custom human-teacher system prompt is active for developer training.'
+                            )
+                          : t(
+                              'Developer training is currently using the app default human-teacher system prompt.'
+                            )}
+                      </Text>
+                    </Box>
+
+                    <Stack isInline spacing={3} flexWrap="wrap">
+                      {!isPromptToolsOpen ? (
+                        <SecondaryButton onClick={openPromptTools}>
+                          {t('Open prompt tools')}
+                        </SecondaryButton>
+                      ) : (
+                        <>
+                          {!isPromptEditingUnlocked ? (
+                            <PrimaryButton onClick={unlockPromptEditing}>
+                              {t('Unlock prompt editing')}
+                            </PrimaryButton>
+                          ) : null}
+                          <SecondaryButton onClick={closePromptTools}>
+                            {t('Close prompt tools')}
+                          </SecondaryButton>
+                        </>
+                      )}
+                    </Stack>
+
+                    {isPromptToolsOpen ? (
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.50"
+                        borderRadius="md"
+                        bg="gray.50"
+                        p={3}
+                      >
+                        <Stack spacing={3}>
+                          <Text fontSize="sm" color="muted">
+                            {isPromptEditingUnlocked
+                              ? t(
+                                  'Editing is unlocked. Changes only apply after you explicitly save them.'
+                                )
+                              : t(
+                                  'Prompt tools are open in safe mode. Unlock editing before changing the training prompt.'
+                                )}
+                          </Text>
+
+                          <Textarea
+                            value={developerPromptDraft}
+                            onChange={(e) =>
+                              setDeveloperPromptDraft(e.target.value)
+                            }
+                            minH="180px"
+                            isDisabled={!isPromptEditingUnlocked}
+                            fontSize="sm"
+                          />
+
+                          <Text fontSize="sm" color="muted">
+                            {hasCustomDeveloperPrompt
+                              ? t(
+                                  'Current source: custom prompt. Reset is intentionally hidden behind an extra step.'
+                                )
+                              : t('Current source: app default prompt.')}
+                          </Text>
+
+                          {isPromptEditingUnlocked ? (
+                            <Stack isInline spacing={3} flexWrap="wrap">
+                              <PrimaryButton
+                                onClick={applyDeveloperPrompt}
+                                isDisabled={
+                                  !trimmedDeveloperPromptDraft ||
+                                  developerPromptMatchesSaved
+                                }
+                              >
+                                {developerPromptApplyLabel}
+                              </PrimaryButton>
+                              <SecondaryButton
+                                onClick={() =>
+                                  setDeveloperPromptDraft(
+                                    effectiveDeveloperPrompt
+                                  )
+                                }
+                                isDisabled={developerPromptMatchesSaved}
+                              >
+                                {t('Revert draft')}
+                              </SecondaryButton>
+                              {hasCustomDeveloperPrompt &&
+                              showPromptResetConfirm ? (
+                                <SecondaryButton
+                                  onClick={resetDeveloperPromptToDefault}
+                                >
+                                  {t('Reset to app default')}
+                                </SecondaryButton>
+                              ) : null}
+                              {hasCustomDeveloperPrompt &&
+                              !showPromptResetConfirm ? (
+                                <SecondaryButton
+                                  onClick={() =>
+                                    setShowPromptResetConfirm(true)
+                                  }
+                                >
+                                  {t('Reveal reset option')}
+                                </SecondaryButton>
+                              ) : null}
+                            </Stack>
+                          ) : null}
+                        </Stack>
+                      </Box>
+                    ) : null}
+                  </Stack>
+                </Box>
+
                 <Stack isInline spacing={3} align="end" flexWrap="wrap">
                   <Box minW="280px">
                     <Text fontSize="sm" fontWeight={500} mb={1}>
@@ -2836,6 +3650,149 @@ export default function AiHumanTeacherPage() {
                 </Stack>
 
                 <Box
+                  borderWidth="1px"
+                  borderColor="gray.100"
+                  borderRadius="md"
+                  p={4}
+                >
+                  <Stack spacing={4}>
+                    <Box>
+                      <Text fontWeight={600}>
+                        {t('What do you want to do with your annotations?')}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Choose whether to keep future network-sharing consent, export a provider-neutral external GPU bundle, or keep using small local pilot training on this system.'
+                        )}
+                      </Text>
+                    </Box>
+
+                    <SimpleGrid columns={[1, 1, 3]} spacing={3}>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="green.100"
+                        borderRadius="md"
+                        p={3}
+                        bg="green.50"
+                      >
+                        <Stack spacing={3} h="full">
+                          <Box>
+                            <Text fontWeight={700}>
+                              {t('Share annotations with the network')}
+                            </Text>
+                            <Text color="muted" fontSize="sm" mt={1}>
+                              {t(
+                                'One click stores your consent locally today so a later P2P sharing and cross-check flow can reuse it.'
+                              )}
+                            </Text>
+                          </Box>
+                          <Text color="muted" fontSize="xs">
+                            {shareHumanTeacherAnnotationsWithNetwork
+                              ? t(
+                                  'Current status: sharing consent is already stored on this desktop profile.'
+                                )
+                              : t(
+                                  'Current status: no sharing consent stored yet.'
+                                )}
+                          </Text>
+                          <SecondaryButton
+                            mt="auto"
+                            onClick={enableAnnotationSharing}
+                          >
+                            {shareHumanTeacherAnnotationsWithNetwork
+                              ? t('Review sharing consent')
+                              : t('Allow annotation sharing')}
+                          </SecondaryButton>
+                        </Stack>
+                      </Box>
+
+                      <Box
+                        borderWidth="1px"
+                        borderColor="blue.100"
+                        borderRadius="md"
+                        p={3}
+                        bg="blue.50"
+                      >
+                        <Stack spacing={3} h="full">
+                          <Box>
+                            <Text fontWeight={700}>
+                              {t('Train on external GPU')}
+                            </Text>
+                            <Text color="muted" fontSize="sm" mt={1}>
+                              {t(
+                                'Recommended for serious runs. The app exports one provider-neutral bundle and opens a simple FAQ right away.'
+                              )}
+                            </Text>
+                          </Box>
+                          <Text color="muted" fontSize="xs">
+                            {t(
+                              'Use this when you want heavier training without heating up this machine.'
+                            )}
+                          </Text>
+                          <PrimaryButton
+                            mt="auto"
+                            isDisabled={!developerCanExportContributionBundle}
+                            isLoading={isExportingContributionBundle}
+                            onClick={exportExternalTrainingBundle}
+                          >
+                            {t('Export external training bundle')}
+                          </PrimaryButton>
+                        </Stack>
+                      </Box>
+
+                      <Box
+                        borderWidth="1px"
+                        borderColor="orange.100"
+                        borderRadius="md"
+                        p={3}
+                        bg="orange.50"
+                      >
+                        <Stack spacing={3} h="full">
+                          <Box>
+                            <Text fontWeight={700}>
+                              {t('Train AI on this system (not recommended!)')}
+                            </Text>
+                            <Text color="muted" fontSize="sm" mt={1}>
+                              {t(
+                                'Small local chunks are still useful, but this path should stay a personal pilot path instead of the main scaling path.'
+                              )}
+                            </Text>
+                          </Box>
+                          <Stack spacing={1}>
+                            <Text color="muted" fontSize="xs">
+                              {t('Possible for small local experiments')}
+                            </Text>
+                            <Text color="muted" fontSize="xs">
+                              {t(
+                                'Not recommended for long or large training runs'
+                              )}
+                            </Text>
+                            <Text color="muted" fontSize="xs">
+                              {t('Creates heavy heat and power draw')}
+                            </Text>
+                            <Text color="muted" fontSize="xs">
+                              {t('Can reduce battery health on laptops')}
+                            </Text>
+                            <Text color="muted" fontSize="xs">
+                              {t(
+                                'Use a dedicated training machine or external GPU for serious training'
+                              )}
+                            </Text>
+                          </Stack>
+                          <SecondaryButton
+                            mt="auto"
+                            onClick={openLocalPilotTrainingDialog}
+                          >
+                            {t('Review local pilot training')}
+                          </SecondaryButton>
+                        </Stack>
+                      </Box>
+                    </SimpleGrid>
+                  </Stack>
+                </Box>
+
+                <Box
+                  ref={localPilotTrainingRef}
                   borderWidth="1px"
                   borderColor="gray.100"
                   borderRadius="md"
@@ -3099,7 +4056,7 @@ export default function AiHumanTeacherPage() {
                       </Text>
                     ) : (
                       <Text color="muted" fontSize="sm">
-                        {developerTrainingUnsupported
+                        {!developerSupportsLocalTraining
                           ? t(
                               'No benchmark result yet because the current Local AI runtime cannot train or run the held-out comparison.'
                             )
@@ -3426,7 +4383,7 @@ export default function AiHumanTeacherPage() {
                   <Text color="muted" fontSize="sm">
                     {isDeveloperMode
                       ? t(
-                          'This developer loop uses 5 bundled FLIP samples at a time. Annotate them one by one, then choose whether to train immediately or load the next 5 flips.'
+                          'This local pilot path uses 5 bundled FLIP samples at a time. Annotate them one by one, then choose whether to train immediately or load the next 5 flips. Use it for small personal experiments, not for long or large production runs.'
                         )
                       : t(
                           'This uses the selected epoch annotation set. The app keeps you on one current flip at a time and saves your notes flip by flip.'
@@ -3637,7 +4594,8 @@ export default function AiHumanTeacherPage() {
                                             updatePanelReference(
                                               reference.code,
                                               {
-                                                description: e.target.value,
+                                                description:
+                                                  e?.target?.value || '',
                                               }
                                             )
                                           }
@@ -3829,6 +4787,235 @@ export default function AiHumanTeacherPage() {
                           </SimpleGrid>
 
                           <Stack spacing={3}>
+                            {isDeveloperSourceMode ? (
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.100"
+                                borderRadius="lg"
+                                p={3}
+                                bg="white"
+                              >
+                                <Flex
+                                  justify="space-between"
+                                  align={['flex-start', 'center']}
+                                  gap={3}
+                                  direction={['column', 'row']}
+                                >
+                                  <Box>
+                                    <Text fontWeight={600}>
+                                      {t('Optional AI draft')}
+                                    </Text>
+                                    <Text color="muted" fontSize="sm">
+                                      {t(
+                                        'Ask the local AI to prefill this flip, then review and correct it like a normal human-teacher annotation.'
+                                      )}
+                                    </Text>
+                                  </Box>
+                                  <PrimaryButton
+                                    onClick={requestAiAnnotationDraft}
+                                    isLoading={isGeneratingAiDraft}
+                                    loadingText={t('Drafting')}
+                                  >
+                                    {currentAiAnnotation
+                                      ? t('Re-run AI draft')
+                                      : t('Ask AI to draft this flip')}
+                                  </PrimaryButton>
+                                </Flex>
+
+                                {currentAiAnnotation ? (
+                                  <Box
+                                    mt={3}
+                                    p={3}
+                                    borderRadius="lg"
+                                    bg="gray.50"
+                                    borderWidth="1px"
+                                    borderColor="gray.100"
+                                  >
+                                    <Stack spacing={2}>
+                                      <Text fontSize="sm" fontWeight={600}>
+                                        {t('Current AI draft')}
+                                      </Text>
+                                      <Text fontSize="sm" color="muted">
+                                        {t(
+                                          'Answer: {{answer}} · Confidence: {{confidence}}/5',
+                                          {
+                                            answer: formatDecisionLabel(
+                                              currentAiAnnotation.final_answer,
+                                              t
+                                            ),
+                                            confidence:
+                                              currentAiAnnotation.confidence ||
+                                              '?',
+                                          }
+                                        )}
+                                      </Text>
+                                      {currentAiAnnotation.why_answer ? (
+                                        <Text fontSize="sm">
+                                          {currentAiAnnotation.why_answer}
+                                        </Text>
+                                      ) : null}
+                                      {currentAiAnnotation.option_a_summary ||
+                                      currentAiAnnotation.option_b_summary ? (
+                                        <Box fontSize="xs" color="muted">
+                                          {currentAiAnnotation.option_a_summary ? (
+                                            <Text>
+                                              {t('LEFT summary')}:&nbsp;
+                                              {
+                                                currentAiAnnotation.option_a_summary
+                                              }
+                                            </Text>
+                                          ) : null}
+                                          {currentAiAnnotation.option_b_summary ? (
+                                            <Text>
+                                              {t('RIGHT summary')}:&nbsp;
+                                              {
+                                                currentAiAnnotation.option_b_summary
+                                              }
+                                            </Text>
+                                          ) : null}
+                                        </Box>
+                                      ) : null}
+                                      <Box>
+                                        <Text
+                                          fontSize="xs"
+                                          color="muted"
+                                          mb={2}
+                                        >
+                                          {t('Rate this AI draft')}
+                                        </Text>
+                                        <Stack
+                                          direction={['column', 'row']}
+                                          spacing={2}
+                                          flexWrap="wrap"
+                                        >
+                                          {currentAiAnnotation.rating ===
+                                          'good' ? (
+                                            <PrimaryButton
+                                              onClick={() =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    ai_annotation: {
+                                                      ...(normalizeAiAnnotationDraft(
+                                                        current.ai_annotation
+                                                      ) ||
+                                                        createEmptyAiAnnotationDraft()),
+                                                      rating: 'good',
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                            >
+                                              {t('Good')}
+                                            </PrimaryButton>
+                                          ) : (
+                                            <SecondaryButton
+                                              onClick={() =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    ai_annotation: {
+                                                      ...(normalizeAiAnnotationDraft(
+                                                        current.ai_annotation
+                                                      ) ||
+                                                        createEmptyAiAnnotationDraft()),
+                                                      rating: 'good',
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                            >
+                                              {t('Good')}
+                                            </SecondaryButton>
+                                          )}
+                                          {currentAiAnnotation.rating ===
+                                          'bad' ? (
+                                            <PrimaryButton
+                                              onClick={() =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    ai_annotation: {
+                                                      ...(normalizeAiAnnotationDraft(
+                                                        current.ai_annotation
+                                                      ) ||
+                                                        createEmptyAiAnnotationDraft()),
+                                                      rating: 'bad',
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                            >
+                                              {t('Bad')}
+                                            </PrimaryButton>
+                                          ) : (
+                                            <SecondaryButton
+                                              onClick={() =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    ai_annotation: {
+                                                      ...(normalizeAiAnnotationDraft(
+                                                        current.ai_annotation
+                                                      ) ||
+                                                        createEmptyAiAnnotationDraft()),
+                                                      rating: 'bad',
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                            >
+                                              {t('Bad')}
+                                            </SecondaryButton>
+                                          )}
+                                          {currentAiAnnotation.rating ===
+                                          'wrong' ? (
+                                            <PrimaryButton
+                                              onClick={() =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    ai_annotation: {
+                                                      ...(normalizeAiAnnotationDraft(
+                                                        current.ai_annotation
+                                                      ) ||
+                                                        createEmptyAiAnnotationDraft()),
+                                                      rating: 'wrong',
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                            >
+                                              {t('Wrong')}
+                                            </PrimaryButton>
+                                          ) : (
+                                            <SecondaryButton
+                                              onClick={() =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    ai_annotation: {
+                                                      ...(normalizeAiAnnotationDraft(
+                                                        current.ai_annotation
+                                                      ) ||
+                                                        createEmptyAiAnnotationDraft()),
+                                                      rating: 'wrong',
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                            >
+                                              {t('Wrong')}
+                                            </SecondaryButton>
+                                          )}
+                                        </Stack>
+                                      </Box>
+                                    </Stack>
+                                  </Box>
+                                ) : null}
+                              </Box>
+                            ) : null}
+
                             <InterviewPrompt
                               title={t(
                                 'Which side feels more correct to you as a human looking at this flip?'
@@ -3924,12 +5111,14 @@ export default function AiHumanTeacherPage() {
                                     'For example: the LEFT story has a clear sequence, while the RIGHT side mixes unrelated scenes.'
                                   )}
                                   value={annotationDraft.why_answer}
-                                  onChange={(e) =>
+                                  onChange={(e) => {
+                                    const nextValue = e?.target?.value || ''
+
                                     setAnnotationDraft((current) => ({
                                       ...current,
-                                      why_answer: e.target.value,
+                                      why_answer: nextValue,
                                     }))
-                                  }
+                                  }}
                                 />
                                 {activePanelReferences.length ? (
                                   <Text color="muted" fontSize="xs" mt={2}>
@@ -3944,6 +5133,34 @@ export default function AiHumanTeacherPage() {
                               </InterviewPrompt>
                             ) : null}
 
+                            {isDeveloperSourceMode && currentAiAnnotation ? (
+                              <InterviewPrompt
+                                title={t(
+                                  'What did the AI get wrong? Keep it to one or two short sentences.'
+                                )}
+                              >
+                                <Textarea
+                                  placeholder={t(
+                                    'For example: the AI assumed the car falls before the crash, but the human sequence shows the crash first and the fall only after that.'
+                                  )}
+                                  value={annotationDraft.ai_annotation_feedback}
+                                  onChange={(e) => {
+                                    const nextValue = e?.target?.value || ''
+
+                                    setAnnotationDraft((current) => ({
+                                      ...current,
+                                      ai_annotation_feedback: nextValue,
+                                    }))
+                                  }}
+                                />
+                                <Text color="muted" fontSize="xs" mt={2}>
+                                  {t(
+                                    'This extra note is stored with the flip so the later training dataset can learn from your correction of the AI draft.'
+                                  )}
+                                </Text>
+                              </InterviewPrompt>
+                            ) : null}
+
                             {hasDecision && hasReason ? (
                               <InterviewPrompt
                                 title={t(
@@ -3955,14 +5172,15 @@ export default function AiHumanTeacherPage() {
                                     isChecked={
                                       annotationDraft.text_required === true
                                     }
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                      const isChecked =
+                                        e?.target?.checked === true
+
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        text_required: e.target.checked
-                                          ? true
-                                          : null,
+                                        text_required: isChecked ? true : null,
                                       }))
-                                    }
+                                    }}
                                   >
                                     {t('Readable text was required')}
                                   </Checkbox>
@@ -3971,15 +5189,17 @@ export default function AiHumanTeacherPage() {
                                       annotationDraft.sequence_markers_present ===
                                       true
                                     }
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                      const isChecked =
+                                        e?.target?.checked === true
+
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        sequence_markers_present: e.target
-                                          .checked
+                                        sequence_markers_present: isChecked
                                           ? true
                                           : null,
                                       }))
-                                    }
+                                    }}
                                   >
                                     {t('Sequence markers were present')}
                                   </Checkbox>
@@ -3998,14 +5218,17 @@ export default function AiHumanTeacherPage() {
                                     isChecked={
                                       annotationDraft.report_required === true
                                     }
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                      const isChecked =
+                                        e?.target?.checked === true
+
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        report_required: e.target.checked
+                                        report_required: isChecked
                                           ? true
                                           : null,
                                       }))
-                                    }
+                                    }}
                                   >
                                     {t('Yes, this should be reported')}
                                   </Checkbox>
@@ -4016,12 +5239,14 @@ export default function AiHumanTeacherPage() {
                                         'Short reason for why this should be reported.'
                                       )}
                                       value={annotationDraft.report_reason}
-                                      onChange={(e) =>
+                                      onChange={(e) => {
+                                        const nextValue = e?.target?.value || ''
+
                                         setAnnotationDraft((current) => ({
                                           ...current,
-                                          report_reason: e.target.value,
+                                          report_reason: nextValue,
                                         }))
-                                      }
+                                      }}
                                     />
                                   ) : null}
                                 </Stack>
@@ -4036,12 +5261,14 @@ export default function AiHumanTeacherPage() {
                               >
                                 <Select
                                   value={annotationDraft.confidence}
-                                  onChange={(e) =>
+                                  onChange={(e) => {
+                                    const nextValue = e?.target?.value || ''
+
                                     setAnnotationDraft((current) => ({
                                       ...current,
-                                      confidence: e.target.value,
+                                      confidence: nextValue,
                                     }))
-                                  }
+                                  }}
                                 >
                                   <option value="">
                                     {t('Choose confidence')}
@@ -4103,7 +5330,10 @@ export default function AiHumanTeacherPage() {
                                             </FormLabel>
                                             <Input
                                               value={caption}
-                                              onChange={(e) =>
+                                              onChange={(e) => {
+                                                const nextValue =
+                                                  e?.target?.value || ''
+
                                                 setAnnotationDraft(
                                                   (current) => ({
                                                     ...current,
@@ -4111,12 +5341,12 @@ export default function AiHumanTeacherPage() {
                                                       current.frame_captions.map(
                                                         (item, itemIndex) =>
                                                           itemIndex === index
-                                                            ? e.target.value
+                                                            ? nextValue
                                                             : item
                                                       ),
                                                   })
                                                 )
-                                              }
+                                              }}
                                             />
                                           </Box>
                                         )
@@ -4138,12 +5368,15 @@ export default function AiHumanTeacherPage() {
                                           value={
                                             annotationDraft.option_a_summary
                                           }
-                                          onChange={(e) =>
+                                          onChange={(e) => {
+                                            const nextValue =
+                                              e?.target?.value || ''
+
                                             setAnnotationDraft((current) => ({
                                               ...current,
-                                              option_a_summary: e.target.value,
+                                              option_a_summary: nextValue,
                                             }))
-                                          }
+                                          }}
                                         />
                                       </Box>
 
@@ -4155,12 +5388,15 @@ export default function AiHumanTeacherPage() {
                                           value={
                                             annotationDraft.option_b_summary
                                           }
-                                          onChange={(e) =>
+                                          onChange={(e) => {
+                                            const nextValue =
+                                              e?.target?.value || ''
+
                                             setAnnotationDraft((current) => ({
                                               ...current,
-                                              option_b_summary: e.target.value,
+                                              option_b_summary: nextValue,
                                             }))
-                                          }
+                                          }}
                                         />
                                       </Box>
 
@@ -4168,12 +5404,15 @@ export default function AiHumanTeacherPage() {
                                         <FormLabel>{t('Annotator')}</FormLabel>
                                         <Input
                                           value={annotationDraft.annotator}
-                                          onChange={(e) =>
+                                          onChange={(e) => {
+                                            const nextValue =
+                                              e?.target?.value || ''
+
                                             setAnnotationDraft((current) => ({
                                               ...current,
-                                              annotator: e.target.value,
+                                              annotator: nextValue,
                                             }))
-                                          }
+                                          }}
                                         />
                                       </Box>
                                     </Stack>
@@ -4368,6 +5607,378 @@ export default function AiHumanTeacherPage() {
                         ? t('Keep demo training stopped and save and close')
                         : t('Keep training stopped and save and close')}
                     </SecondaryButton>
+                  </Stack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
+            <Modal
+              isOpen={contributionDialog.isOpen}
+              onClose={closeContributionDialog}
+              closeOnOverlayClick={!isExportingContributionBundle}
+              closeOnEsc={!isExportingContributionBundle}
+              isCentered
+              size="xl"
+            >
+              <ModalOverlay />
+              <ModalContent>
+                <ModalHeader>{contributionDialogTitle}</ModalHeader>
+                <ModalBody>
+                  {contributionDialogMode === 'share' ? (
+                    <Stack spacing={4}>
+                      <Text>
+                        {shareHumanTeacherAnnotationsWithNetwork
+                          ? t(
+                              'Your future annotation-sharing consent is already stored on this desktop profile.'
+                            )
+                          : t(
+                              'The app can store your future annotation-sharing consent locally with one click.'
+                            )}
+                      </Text>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="green.100"
+                        borderRadius="md"
+                        px={4}
+                        py={3}
+                        bg="green.50"
+                      >
+                        <Stack spacing={2}>
+                          <Text fontWeight={700}>
+                            {t('What this means today')}
+                          </Text>
+                          <Text fontSize="sm">
+                            {t(
+                              'This only stores your consent for a later P2P sharing and cross-check flow. It does not upload anything yet, and it does not touch wallet secrets or your whole desktop profile.'
+                            )}
+                          </Text>
+                          <Text fontSize="sm">
+                            {t(
+                              'When the network-sharing transport exists later, the app can reuse this consent without asking you again every time.'
+                            )}
+                          </Text>
+                        </Stack>
+                      </Box>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'The eventual goal is that normal users can contribute annotation work with one safe click, while stronger nodes handle the larger public training jobs.'
+                        )}
+                      </Text>
+                    </Stack>
+                  ) : null}
+
+                  {contributionDialogMode === 'external' ? (
+                    <Stack spacing={4}>
+                      <Text>
+                        {t(
+                          'This is the recommended path for serious training runs. The app exports one provider-neutral bundle, then you can use any managed jobs provider, GPU pod provider, or cloud VM.'
+                        )}
+                      </Text>
+
+                      {isExportingContributionBundle ? (
+                        <Box
+                          borderWidth="1px"
+                          borderColor="blue.100"
+                          borderRadius="md"
+                          px={4}
+                          py={3}
+                          bg="blue.50"
+                        >
+                          <Stack spacing={2}>
+                            <Text fontWeight={700}>
+                              {t('Preparing external training bundle')}
+                            </Text>
+                            <Progress
+                              size="sm"
+                              isIndeterminate
+                              colorScheme="blue"
+                            />
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'The app is packaging your normalized annotations, manifest, and README into one folder now.'
+                              )}
+                            </Text>
+                          </Stack>
+                        </Box>
+                      ) : null}
+
+                      {externalContributionError ? (
+                        <Alert status="error" borderRadius="md">
+                          <Stack spacing={1}>
+                            <Text fontWeight={700}>
+                              {t('Bundle export failed')}
+                            </Text>
+                            <Text fontSize="sm">
+                              {externalContributionError}
+                            </Text>
+                          </Stack>
+                        </Alert>
+                      ) : null}
+
+                      {externalContributionBundle ? (
+                        <>
+                          <Box
+                            borderWidth="1px"
+                            borderColor="blue.100"
+                            borderRadius="md"
+                            px={4}
+                            py={3}
+                            bg="blue.50"
+                          >
+                            <Stack spacing={2}>
+                              <Text fontWeight={700}>{t('Bundle ready')}</Text>
+                              <Text fontSize="sm">
+                                {t(
+                                  'Upload this whole folder to the machine or provider you want to use.'
+                                )}
+                              </Text>
+                              <Text
+                                color="muted"
+                                fontSize="xs"
+                                wordBreak="break-all"
+                              >
+                                {externalContributionBundle.outputDir}
+                              </Text>
+                            </Stack>
+                          </Box>
+
+                          <Stack spacing={2}>
+                            <Text fontWeight={700}>
+                              {t('Simple path for normal users')}
+                            </Text>
+                            <Text fontSize="sm">
+                              {t(
+                                '1. Rent one GPU computer from any managed jobs provider, GPU pod provider, or cloud VM.'
+                              )}
+                            </Text>
+                            <Text fontSize="sm">
+                              {t(
+                                '2. Upload this whole folder to that machine.'
+                              )}
+                            </Text>
+                            <Text fontSize="sm">
+                              {t(
+                                '3. Start with a benchmark-only smoke run before doing a longer training run.'
+                              )}
+                            </Text>
+                            <Text fontSize="sm">
+                              {t(
+                                '4. For serious training, use the recommended MLX base {{model}}.',
+                                {
+                                  model:
+                                    externalContributionBundle.recommendedTrainingModel,
+                                }
+                              )}
+                            </Text>
+                            <Text fontSize="sm">
+                              {t(
+                                '5. If that is too heavy, fall back to {{strongFallback}} or {{safeFallback}}.',
+                                {
+                                  strongFallback:
+                                    externalContributionBundle.strongerFallbackTrainingModel,
+                                  safeFallback:
+                                    externalContributionBundle.safeFallbackTrainingModel,
+                                }
+                              )}
+                            </Text>
+                            <Text fontSize="sm">
+                              {t(
+                                '6. After training, run the fixed held-out comparison on {{count}} unseen flips and keep the result JSON plus the adapter artifact together.',
+                                {
+                                  count:
+                                    externalContributionBundle.recommendedBenchmarkFlips,
+                                }
+                              )}
+                            </Text>
+                          </Stack>
+
+                          <SimpleGrid columns={[1, 2]} spacing={3}>
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.100"
+                              borderRadius="md"
+                              px={3}
+                              py={2}
+                              bg="gray.50"
+                            >
+                              <Text color="muted" fontSize="xs">
+                                {t('Annotated rows')}
+                              </Text>
+                              <Text fontWeight={700}>
+                                {Number(
+                                  externalContributionBundle.annotatedCount
+                                ) || 0}
+                              </Text>
+                            </Box>
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.100"
+                              borderRadius="md"
+                              px={3}
+                              py={2}
+                              bg="gray.50"
+                            >
+                              <Text color="muted" fontSize="xs">
+                                {t('Benchmark size')}
+                              </Text>
+                              <Text fontWeight={700}>
+                                {Number(
+                                  externalContributionBundle.recommendedBenchmarkFlips
+                                ) || 0}
+                              </Text>
+                            </Box>
+                          </SimpleGrid>
+
+                          <Box
+                            borderWidth="1px"
+                            borderColor="gray.100"
+                            borderRadius="md"
+                            px={4}
+                            py={3}
+                            bg="gray.50"
+                          >
+                            <Stack spacing={1}>
+                              <Text fontSize="sm" fontWeight={700}>
+                                {t('Important files')}
+                              </Text>
+                              <Text
+                                color="muted"
+                                fontSize="xs"
+                                wordBreak="break-all"
+                              >
+                                {t('Bundle folder')}:{' '}
+                                {externalContributionBundle.outputDir}
+                              </Text>
+                              <Text
+                                color="muted"
+                                fontSize="xs"
+                                wordBreak="break-all"
+                              >
+                                {t('Manifest')}:{' '}
+                                {externalContributionBundle.manifestPath}
+                              </Text>
+                              <Text
+                                color="muted"
+                                fontSize="xs"
+                                wordBreak="break-all"
+                              >
+                                {t('README')}:{' '}
+                                {externalContributionBundle.readmePath}
+                              </Text>
+                              <Text
+                                color="muted"
+                                fontSize="xs"
+                                wordBreak="break-all"
+                              >
+                                {t('Annotations')}:{' '}
+                                {externalContributionBundle.annotationsPath}
+                              </Text>
+                            </Stack>
+                          </Box>
+                        </>
+                      ) : null}
+                    </Stack>
+                  ) : null}
+
+                  {contributionDialogMode === 'local' ? (
+                    <Stack spacing={4}>
+                      <Text>
+                        {t(
+                          'Local training is still useful right after your own small annotation chunk, especially if you want one quick personal experiment on this machine.'
+                        )}
+                      </Text>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="orange.100"
+                        borderRadius="md"
+                        px={4}
+                        py={3}
+                        bg="orange.50"
+                      >
+                        <Stack spacing={2}>
+                          <Text fontWeight={700}>
+                            {t('Before you continue')}
+                          </Text>
+                          <Text fontSize="sm">
+                            {t('Possible for small local experiments')}
+                          </Text>
+                          <Text fontSize="sm">
+                            {t(
+                              'Not recommended for long or large training runs'
+                            )}
+                          </Text>
+                          <Text fontSize="sm">
+                            {t('Creates heavy heat and power draw')}
+                          </Text>
+                          <Text fontSize="sm">
+                            {t('Can reduce battery health on laptops')}
+                          </Text>
+                          <Text fontSize="sm">
+                            {t(
+                              'Use a dedicated training machine or external GPU for serious training'
+                            )}
+                          </Text>
+                        </Stack>
+                      </Box>
+                      {!developerSupportsLocalTraining ? (
+                        <Alert status="warning" borderRadius="md">
+                          <Text fontSize="sm">
+                            {t(
+                              'This desktop profile still needs a working local training backend before the pilot path can run here.'
+                            )}
+                          </Text>
+                        </Alert>
+                      ) : null}
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Recommended use: annotate a small chunk, run one local pilot, inspect the result, and move anything serious to a dedicated trainer or external GPU.'
+                        )}
+                      </Text>
+                    </Stack>
+                  ) : null}
+                </ModalBody>
+                <ModalFooter>
+                  <Stack spacing={2} w="full">
+                    {contributionDialogMode === 'external' ? (
+                      <>
+                        {externalContributionError ? (
+                          <PrimaryButton
+                            isLoading={isExportingContributionBundle}
+                            onClick={exportExternalTrainingBundle}
+                          >
+                            {t('Try export again')}
+                          </PrimaryButton>
+                        ) : null}
+                        {externalContributionBundle ? (
+                          <PrimaryButton onClick={closeContributionDialog}>
+                            {t('I have the bundle')}
+                          </PrimaryButton>
+                        ) : null}
+                        <SecondaryButton
+                          isDisabled={isExportingContributionBundle}
+                          onClick={closeContributionDialog}
+                        >
+                          {t('Close')}
+                        </SecondaryButton>
+                      </>
+                    ) : null}
+
+                    {contributionDialogMode === 'share' ? (
+                      <PrimaryButton onClick={closeContributionDialog}>
+                        {t('Keep this consent')}
+                      </PrimaryButton>
+                    ) : null}
+
+                    {contributionDialogMode === 'local' ? (
+                      <>
+                        <PrimaryButton onClick={continueWithLocalPilotTraining}>
+                          {t('Continue with local pilot training')}
+                        </PrimaryButton>
+                        <SecondaryButton onClick={closeContributionDialog}>
+                          {t('Close')}
+                        </SecondaryButton>
+                      </>
+                    ) : null}
                   </Stack>
                 </ModalFooter>
               </ModalContent>

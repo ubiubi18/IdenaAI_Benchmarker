@@ -630,6 +630,10 @@ function sanitizeLocalAiRuntimePayload(payload = {}) {
     generationOptions: sanitizeLocalAiGenerationOptions(
       source.generationOptions
     ),
+    developerHumanTeacherSystemPrompt: sanitizeOptionalBoundedString(
+      source.developerHumanTeacherSystemPrompt,
+      8000
+    ),
     input: sanitizedInput,
   }
 }
@@ -677,6 +681,10 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
     summaryPath: sanitizeOptionalBoundedString(source.summaryPath, 4096),
     adapterStrategy: sanitizeOptionalBoundedString(source.adapterStrategy, 64),
     trainingPolicy: sanitizeOptionalBoundedString(source.trainingPolicy, 64),
+    developerHumanTeacherSystemPrompt: sanitizeOptionalBoundedString(
+      source.developerHumanTeacherSystemPrompt,
+      8000
+    ),
   }
 }
 
@@ -1171,6 +1179,11 @@ const localAiBridge = Object.freeze({
   loadHumanTeacherDeveloperSession: (payload) =>
     invokeCloneable(
       'localAi.loadHumanTeacherDeveloperSession',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  exportHumanTeacherDeveloperBundle: (payload) =>
+    invokeCloneable(
+      'localAi.exportHumanTeacherDeveloperBundle',
       sanitizeLocalAiEpochPayload(payload)
     ),
   loadHumanTeacherDemoTask: (payload) =>

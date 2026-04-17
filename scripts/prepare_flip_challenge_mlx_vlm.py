@@ -777,6 +777,20 @@ def aggregate_annotation_fields(
         **representative,
         "final_answer": aggregated_answer,
         "why_answer": why_answer,
+        "ai_annotation": representative.get("ai_annotation") or representative.get("aiAnnotation"),
+        "ai_annotation_rating": str(
+            (
+                representative.get("ai_annotation")
+                or representative.get("aiAnnotation")
+                or {}
+            ).get("rating")
+            or ""
+        ).strip().lower()[:32],
+        "ai_annotation_feedback": str(
+            representative.get("ai_annotation_feedback")
+            or representative.get("aiAnnotationFeedback")
+            or ""
+        ).strip()[:600],
         "text_required": weighted_bool("text_required"),
         "sequence_markers_present": weighted_bool("sequence_markers_present"),
         "report_required": weighted_bool("report_required"),
@@ -990,6 +1004,14 @@ def should_apply_human_followup(mode: str) -> bool:
     return normalize_human_annotation_mode(mode) in {"followup_reasoning", "hybrid"}
 
 
+HUMAN_TEACHER_SYSTEM_PROMPT = (
+    "Use human-teacher guidance without collapsing into a left-only or right-only bias. "
+    "Prefer one side only when concrete visual chronology, readable text, reportability cues, "
+    "or explicit human annotation supports it. If the evidence is weak or conflicting, stay cautious "
+    "and do not force the same side by habit."
+)
+
+
 def build_human_teacher_followup_prompt(record: Dict[str, Any]) -> str:
     prompt_family = str(record.get("prompt_family") or "").strip().lower()
     if prompt_family == "candidate_label_native_frames_v1":
@@ -1004,13 +1026,37 @@ def build_human_teacher_followup_prompt(record: Dict[str, Any]) -> str:
         )
     return (
         "Human teacher follow-up: briefly explain why the selected story is the "
-        "better answer, and mention text/reportability concerns if they matter."
+        "better answer, mention text/reportability concerns if they matter, and "
+        "include any explicit correction of a bad AI draft."
     )
+
+
+def normalize_ai_annotation(annotation: Dict[str, Any]) -> Dict[str, Any]:
+    raw = annotation.get("ai_annotation") or annotation.get("aiAnnotation") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    final_answer = str(raw.get("final_answer") or raw.get("finalAnswer") or "").strip().lower()
+    rating = str(raw.get("rating") or "").strip().lower()
+    return {
+        "final_answer": final_answer if final_answer in ANNOTATION_FINAL_ANSWERS else "",
+        "why_answer": str(raw.get("why_answer") or raw.get("whyAnswer") or "").strip()[:900],
+        "option_a_summary": str(raw.get("option_a_summary") or raw.get("optionASummary") or "").strip()[:400],
+        "option_b_summary": str(raw.get("option_b_summary") or raw.get("optionBSummary") or "").strip()[:400],
+        "report_reason": str(raw.get("report_reason") or raw.get("reportReason") or "").strip()[:400],
+        "rating": rating if rating in {"good", "bad", "wrong"} else "",
+    }
 
 
 def summarize_human_annotation(record: Dict[str, Any], annotation: Dict[str, Any]) -> str:
     reasons: List[str] = []
     why_answer = str(annotation.get("why_answer") or "").strip()
+    ai_annotation = normalize_ai_annotation(annotation)
+    ai_annotation_feedback = str(
+        annotation.get("ai_annotation_feedback")
+        or annotation.get("aiAnnotationFeedback")
+        or ""
+    ).strip()[:600]
     if why_answer:
         reasons.append(why_answer)
 
@@ -1047,6 +1093,20 @@ def summarize_human_annotation(record: Dict[str, Any], annotation: Dict[str, Any
             reasons.append(f"Reportability note: {report_reason}")
         else:
             reasons.append("The flip should be reported instead of solved normally.")
+    if ai_annotation.get("final_answer") in ANNOTATION_FINAL_ANSWERS:
+        reasons.append(
+            f"AI draft before human correction chose {ai_annotation['final_answer'].upper()}."
+        )
+    if ai_annotation.get("why_answer"):
+        reasons.append(f"AI draft reasoning: {ai_annotation['why_answer']}")
+    if ai_annotation.get("rating") == "good":
+        reasons.append("The human rated the AI draft as good.")
+    elif ai_annotation.get("rating") == "bad":
+        reasons.append("The human rated the AI draft as bad.")
+    elif ai_annotation.get("rating") == "wrong":
+        reasons.append("The human rated the AI draft as completely wrong.")
+    if ai_annotation_feedback:
+        reasons.append(f"Human correction to the AI draft: {ai_annotation_feedback}")
 
     if not reasons:
         reasons.append("Human teacher confirms the decision using common-sense chronology and visual coherence.")
@@ -1105,9 +1165,21 @@ def attach_human_annotation(
 
     if should_apply_human_followup(mode):
         original_messages = copy.deepcopy(record.get("messages") or [])
+        system_message = {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": HUMAN_TEACHER_SYSTEM_PROMPT,
+                }
+            ],
+        }
         if original_messages:
-            next_record["evaluation_messages"] = [copy.deepcopy(original_messages[0])]
-        next_record["messages"] = original_messages + [
+            next_record["evaluation_messages"] = [
+                copy.deepcopy(system_message),
+                copy.deepcopy(original_messages[0]),
+            ]
+        next_record["messages"] = [copy.deepcopy(system_message)] + original_messages + [
             {
                 "role": "user",
                 "content": [

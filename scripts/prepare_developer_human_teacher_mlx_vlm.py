@@ -39,6 +39,12 @@ DATA_URL_RE = re.compile(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", re.DOTAL
 TASK_ID_RE = re.compile(r"^demo:(?P<sample>[^:]+):(?P<index>\d+)$")
 VALID_ANSWERS = {"left", "right", "skip"}
 PROMPT_FAMILY_CHOICES = sorted(PROMPT_FAMILIES.keys()) + ["auto"]
+HUMAN_TEACHER_SYSTEM_PROMPT = (
+    "Use human-teacher guidance without collapsing into a left-only or right-only bias. "
+    "Prefer left or right only when the visual chronology, readable text, reportability cues, "
+    "or explicit human annotation meaningfully support that side. "
+    "If the evidence is weak or conflicting, stay cautious and do not default to one side."
+)
 
 
 def trim_text(value: Any, max_length: int = 2000) -> str:
@@ -206,6 +212,35 @@ def summarize_panel_references(references: List[Dict[str, Any]]) -> str:
     return "; ".join(labels)
 
 
+def normalize_ai_annotation(value: Any) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    final_answer = trim_text(raw.get("final_answer") or raw.get("finalAnswer"), 16).lower()
+    rating = trim_text(raw.get("rating"), 32).lower()
+    return {
+        "generated_at": trim_text(raw.get("generated_at") or raw.get("generatedAt"), 64),
+        "runtime_backend": trim_text(raw.get("runtime_backend") or raw.get("runtimeBackend"), 64),
+        "runtime_type": trim_text(raw.get("runtime_type") or raw.get("runtimeType"), 64),
+        "model": trim_text(raw.get("model"), 256),
+        "vision_model": trim_text(raw.get("vision_model") or raw.get("visionModel"), 256),
+        "final_answer": final_answer if final_answer in VALID_ANSWERS else "",
+        "why_answer": trim_text(raw.get("why_answer") or raw.get("whyAnswer"), 900),
+        "confidence": normalize_confidence(raw.get("confidence")),
+        "text_required": normalize_bool(raw.get("text_required") if "text_required" in raw else raw.get("textRequired")),
+        "sequence_markers_present": normalize_bool(
+            raw.get("sequence_markers_present")
+            if "sequence_markers_present" in raw
+            else raw.get("sequenceMarkersPresent")
+        ),
+        "report_required": normalize_bool(
+            raw.get("report_required") if "report_required" in raw else raw.get("reportRequired")
+        ),
+        "report_reason": trim_text(raw.get("report_reason") or raw.get("reportReason"), 400),
+        "option_a_summary": trim_text(raw.get("option_a_summary") or raw.get("optionASummary"), 400),
+        "option_b_summary": trim_text(raw.get("option_b_summary") or raw.get("optionBSummary"), 400),
+        "rating": rating if rating in {"good", "bad", "wrong"} else "",
+    }
+
+
 def build_human_reasoning_summary(annotation: Dict[str, Any]) -> str:
     final_answer = trim_text(annotation.get("final_answer"), 16).lower()
     why_answer = trim_text(annotation.get("why_answer"), 900)
@@ -214,6 +249,11 @@ def build_human_reasoning_summary(annotation: Dict[str, Any]) -> str:
     sequence_markers = normalize_bool(annotation.get("sequence_markers_present"))
     report_required = normalize_bool(annotation.get("report_required"))
     report_reason = trim_text(annotation.get("report_reason"), 400)
+    ai_annotation = normalize_ai_annotation(annotation.get("ai_annotation") or annotation.get("aiAnnotation"))
+    ai_annotation_feedback = trim_text(
+        annotation.get("ai_annotation_feedback") or annotation.get("aiAnnotationFeedback"),
+        600,
+    )
     references = summarize_panel_references(
         normalize_panel_references(annotation.get("panel_references"))
     )
@@ -234,6 +274,18 @@ def build_human_reasoning_summary(annotation: Dict[str, Any]) -> str:
             parts.append(f"Report note: {report_reason}")
         else:
             parts.append("The flip should be reported instead of solved normally.")
+    if ai_annotation.get("final_answer") in VALID_ANSWERS:
+        parts.append(f"AI draft before human correction chose {ai_annotation['final_answer'].upper()}.")
+    if ai_annotation.get("why_answer"):
+        parts.append(f"AI draft reasoning: {ai_annotation['why_answer']}")
+    if ai_annotation.get("rating") == "good":
+        parts.append("The human rated the AI draft as good.")
+    elif ai_annotation.get("rating") == "bad":
+        parts.append("The human rated the AI draft as bad.")
+    elif ai_annotation.get("rating") == "wrong":
+        parts.append("The human rated the AI draft as completely wrong.")
+    if ai_annotation_feedback:
+        parts.append(f"Human correction to the AI draft: {ai_annotation_feedback}")
     if references:
         parts.append(f"Panel references: {references}.")
     if not parts:
@@ -244,8 +296,8 @@ def build_human_reasoning_summary(annotation: Dict[str, Any]) -> str:
 def build_human_followup_prompt() -> str:
     return (
         "Human teacher follow-up: learn the human reasoning for this same flip, "
-        "including any reportability flags, text requirements, confidence, and "
-        "optional A/B/C panel references."
+        "including any reportability flags, text requirements, confidence, optional "
+        "A/B/C panel references, and any explicit correction of a bad AI draft."
     )
 
 
@@ -267,6 +319,7 @@ def build_record(
     prompt_template: str,
     prompt_family: str,
     image_mode: str,
+    human_teacher_system_prompt: str,
 ) -> Dict[str, Any]:
     final_answer = trim_text(annotation.get("final_answer"), 16).lower()
     if final_answer not in VALID_ANSWERS:
@@ -324,8 +377,20 @@ def build_record(
         training_target,
         len(training_images),
     )
-    evaluation_messages = [copy.deepcopy(base_messages[0])]
-    messages = list(base_messages) + [
+    evaluation_messages = [
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": human_teacher_system_prompt}],
+        },
+        copy.deepcopy(base_messages[0]),
+    ]
+    messages = [
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": human_teacher_system_prompt}],
+        },
+        *list(base_messages),
+    ] + [
         {
             "role": "user",
             "content": [{"type": "text", "text": build_human_followup_prompt()}],
@@ -339,6 +404,11 @@ def build_record(
     ]
     panel_references = normalize_panel_references(annotation.get("panel_references"))
     confidence = normalize_confidence(annotation.get("confidence"))
+    ai_annotation = normalize_ai_annotation(annotation.get("ai_annotation") or annotation.get("aiAnnotation"))
+    ai_annotation_feedback = trim_text(
+        annotation.get("ai_annotation_feedback") or annotation.get("aiAnnotationFeedback"),
+        600,
+    )
     consensus_answer = trim_text(
         annotation.get("consensus_answer") or flip_record.get("expected_answer"), 16
     ).lower() or None
@@ -401,6 +471,9 @@ def build_record(
         "annotator": trim_text(annotation.get("annotator"), 256) or None,
         "why_answer": trim_text(annotation.get("why_answer"), 900),
         "confidence": confidence,
+        "ai_annotation": ai_annotation,
+        "ai_annotation_rating": ai_annotation.get("rating") or "",
+        "ai_annotation_feedback": ai_annotation_feedback,
         "text_required": normalize_bool(annotation.get("text_required")),
         "sequence_markers_present": normalize_bool(annotation.get("sequence_markers_present")),
         "report_required": normalize_bool(annotation.get("report_required")),
@@ -439,6 +512,11 @@ def main() -> int:
         choices=["composite", "native_frames"],
         default="native_frames",
     )
+    parser.add_argument(
+        "--human-teacher-system-prompt",
+        type=str,
+        default=HUMAN_TEACHER_SYSTEM_PROMPT,
+    )
     args = parser.parse_args()
 
     sample_name = trim_text(args.sample_name, 256)
@@ -456,6 +534,10 @@ def main() -> int:
         prompt_family=args.prompt_family,
         prompt_template=args.prompt_template,
         image_mode=args.image_mode,
+    )
+    human_teacher_system_prompt = (
+        trim_text(args.human_teacher_system_prompt, 8000)
+        or HUMAN_TEACHER_SYSTEM_PROMPT
     )
     sample_payload = load_sample(args.sample_json_path.resolve())
     flip_index = build_flip_index(sample_payload, sample_name)
@@ -483,6 +565,7 @@ def main() -> int:
                 prompt_template=prompt_template,
                 prompt_family=prompt_family,
                 image_mode=args.image_mode,
+                human_teacher_system_prompt=human_teacher_system_prompt,
             )
         except Exception:
             invalid += 1
@@ -521,6 +604,7 @@ def main() -> int:
         "invalidAnnotations": invalid,
         "promptFamily": prompt_family,
         "imageMode": normalize_image_mode(args.image_mode),
+        "humanTeacherSystemPrompt": human_teacher_system_prompt,
         "countsByAnswer": counts_by_answer,
         "hfDatasetPath": str(hf_dataset_dir),
         "jsonlPath": str(jsonl_path),

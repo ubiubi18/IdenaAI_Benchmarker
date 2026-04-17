@@ -159,6 +159,55 @@ async function loadJsonl(filePath) {
     .map((line) => JSON.parse(line))
 }
 
+function normalizeAiAnnotation(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const rating = String(value.rating || '')
+    .trim()
+    .toLowerCase()
+  const rawFinalAnswer = trimText(value.final_answer || value.finalAnswer, 16)
+  const finalAnswer = ['left', 'right', 'skip'].includes(
+    rawFinalAnswer.toLowerCase()
+  )
+    ? rawFinalAnswer.toLowerCase()
+    : null
+  const next = {
+    generated_at: trimText(value.generated_at || value.generatedAt, 64) || null,
+    runtime_backend:
+      trimText(value.runtime_backend || value.runtimeBackend, 64) || null,
+    runtime_type: trimText(value.runtime_type || value.runtimeType, 64) || null,
+    model: trimText(value.model, 256) || null,
+    vision_model:
+      trimText(value.vision_model || value.visionModel, 256) || null,
+    final_answer: finalAnswer,
+    why_answer: trimText(value.why_answer || value.whyAnswer, 900),
+    confidence: normalizeConfidence(value.confidence),
+    text_required: normalizeBool(value.text_required ?? value.textRequired),
+    sequence_markers_present: normalizeBool(
+      value.sequence_markers_present ?? value.sequenceMarkersPresent
+    ),
+    report_required: normalizeBool(
+      value.report_required ?? value.reportRequired
+    ),
+    report_reason: trimText(value.report_reason || value.reportReason, 400),
+    option_a_summary: trimText(
+      value.option_a_summary || value.optionASummary,
+      400
+    ),
+    option_b_summary: trimText(
+      value.option_b_summary || value.optionBSummary,
+      400
+    ),
+    rating: ['good', 'bad', 'wrong'].includes(rating) ? rating : '',
+  }
+
+  return Object.values(next).some((item) => item !== null && item !== '')
+    ? next
+    : null
+}
+
 function normalizeAnnotation(taskRow, annotationRow) {
   const frameCaptions = normalizeCaptions(annotationRow.frame_captions)
 
@@ -171,6 +220,14 @@ function normalizeAnnotation(taskRow, annotationRow) {
     frame_captions: frameCaptions,
     option_a_summary: trimText(annotationRow.option_a_summary),
     option_b_summary: trimText(annotationRow.option_b_summary),
+    ai_annotation: normalizeAiAnnotation(
+      annotationRow.ai_annotation || annotationRow.aiAnnotation
+    ),
+    ai_annotation_feedback: trimText(
+      annotationRow.ai_annotation_feedback ||
+        annotationRow.aiAnnotationFeedback,
+      600
+    ),
     panel_references: normalizePanelReferences(
       annotationRow.panel_references || annotationRow.panelReferences
     ),

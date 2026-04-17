@@ -14,6 +14,8 @@ const STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL =
   'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
 const FALLBACK_LOCAL_AI_TRAINING_MODEL =
   'mlx-community/Qwen2-VL-2B-Instruct-4bit'
+const DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT =
+  'Use human-teacher guidance without collapsing into a left-only or right-only bias. Prefer left or right only when the visual chronology, readable text, reportability cues, or explicit human annotation meaningfully support that side. If the evidence is weak or conflicting, stay cautious and do not default to one side.'
 const LEGACY_LOCAL_AI_PUBLIC_MODEL_ID = 'idena-multimodal-v1'
 const LEGACY_LOCAL_AI_PUBLIC_VISION_ID = 'idena-vision-v1'
 const DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID = 'Idena-text-v1'
@@ -35,6 +37,8 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
   adapterStrategy: 'lora-first',
   trainingPolicy: 'approved-post-consensus-only',
+  developerHumanTeacherSystemPrompt: '',
+  shareHumanTeacherAnnotationsWithNetwork: false,
   contractVersion: 'idena-local/v1',
   captureEnabled: false,
   trainEnabled: false,
@@ -266,6 +270,11 @@ function normalizePublicVisionId(value) {
   return nextValue
 }
 
+function normalizeDeveloperHumanTeacherSystemPrompt(value) {
+  const nextValue = String(value || '').trim()
+  return nextValue.slice(0, 8000)
+}
+
 function resolveLocalAiWireRuntimeType(settings = {}) {
   const explicit = trimString(settings.runtimeType)
   if (explicit) {
@@ -394,6 +403,12 @@ function buildLocalAiSettings(settings = {}) {
     trainingPolicy:
       trimString(source.trainingPolicy) ||
       DEFAULT_LOCAL_AI_SETTINGS.trainingPolicy,
+    developerHumanTeacherSystemPrompt:
+      normalizeDeveloperHumanTeacherSystemPrompt(
+        source.developerHumanTeacherSystemPrompt
+      ),
+    shareHumanTeacherAnnotationsWithNetwork:
+      source.shareHumanTeacherAnnotationsWithNetwork === true,
     contractVersion: normalizeContractVersion(source.contractVersion),
     federated: {
       ...DEFAULT_LOCAL_AI_SETTINGS.federated,
@@ -445,6 +460,7 @@ module.exports = {
   RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
+  DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,

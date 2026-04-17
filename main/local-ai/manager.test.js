@@ -22,6 +22,16 @@ function mockLogger() {
   }
 }
 
+async function readJsonl(filePath) {
+  const raw = await fs.readFile(filePath, 'utf8')
+
+  return raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+}
+
 describe('local-ai manager', () => {
   let tempDir
   let storage
@@ -1246,6 +1256,22 @@ describe('local-ai manager', () => {
         frame_captions: ['a', 'b', 'c', 'd'],
         option_a_summary: 'left story',
         option_b_summary: 'right story',
+        ai_annotation: {
+          generated_at: '2026-04-17T12:00:00.000Z',
+          runtime_backend: 'ollama-direct',
+          runtime_type: 'ollama',
+          model: 'llama3.1:8b',
+          vision_model: 'qwen2.5vl:7b',
+          final_answer: 'right',
+          why_answer: 'the AI overvalued the mirrored motion',
+          confidence: 2,
+          rating: 'wrong',
+          text_required: false,
+          sequence_markers_present: false,
+          report_required: false,
+        },
+        ai_annotation_feedback:
+          'The AI ignored that the fall happens only after the crash on the left path.',
         panel_references: [
           {
             code: 'A',
@@ -1286,6 +1312,16 @@ describe('local-ai manager', () => {
         taskId: 'flip-a::human-teacher',
         annotationStatus: 'complete',
         annotation: expect.objectContaining({
+          ai_annotation: expect.objectContaining({
+            final_answer: 'right',
+            rating: 'wrong',
+            text_required: false,
+            sequence_markers_present: false,
+            report_required: false,
+          }),
+          ai_annotation_feedback: expect.stringContaining(
+            'ignored that the fall happens only after the crash'
+          ),
           panel_references: expect.arrayContaining([
             expect.objectContaining({
               code: 'A',
@@ -1526,6 +1562,145 @@ describe('local-ai manager', () => {
       })
     ).rejects.toThrow(
       'Demo chunk finalization must choose either training now or advancing to the next chunk, not both'
+    )
+  })
+
+  it('expands the existing developer annotation pool to the balanced 500-flip slice without losing prior annotations', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkSize: 5,
+        totalAvailableTasks: 20,
+        currentOffset: 5,
+        annotatedTaskIds: [
+          'demo:flip-challenge-test-20-decoded-labeled:1',
+          'demo:flip-challenge-test-20-decoded-labeled:2',
+          'demo:flip-challenge-test-20-decoded-labeled:3',
+          'demo:flip-challenge-test-20-decoded-labeled:4',
+          'demo:flip-challenge-test-20-decoded-labeled:5',
+        ],
+        pendingTrainingTaskIds: [
+          'demo:flip-challenge-test-20-decoded-labeled:1',
+          'demo:flip-challenge-test-20-decoded-labeled:2',
+          'demo:flip-challenge-test-20-decoded-labeled:3',
+          'demo:flip-challenge-test-20-decoded-labeled:4',
+          'demo:flip-challenge-test-20-decoded-labeled:5',
+        ],
+        trainedTaskIds: [],
+        chunks: [],
+        comparison100: {
+          status: 'not_loaded',
+          history: [],
+        },
+      }
+    )
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(session).toMatchObject({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 5,
+      workspace: expect.objectContaining({
+        taskCount: 5,
+      }),
+      state: expect.objectContaining({
+        totalAvailableTasks: 500,
+        supportsLocalTraining: true,
+        annotatedCount: 5,
+        pendingTrainingCount: 5,
+        remainingTaskCount: 495,
+      }),
+    })
+    expect(session.workspace.tasks[0].taskId).toBe(
+      'demo:flip-challenge-test-20-decoded-labeled:6'
+    )
+  })
+
+  it('exports a provider-neutral external training bundle from developer annotations', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    for (const task of session.workspace.tasks) {
+      await manager.saveHumanTeacherDeveloperDraft({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+        taskId: task.taskId,
+        annotation: {
+          annotator: 'developer-test',
+          final_answer: 'left',
+          why_answer: `export ${task.taskId} for external training`,
+          report_required: false,
+          confidence: 5,
+        },
+      })
+    }
+
+    await manager.finalizeHumanTeacherDeveloperChunk({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+    })
+
+    const exported = await manager.exportHumanTeacherDeveloperBundle({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      runtimeBackend: 'ollama-direct',
+      model: 'llama3.1:8b',
+      visionModel: 'qwen2.5vl:7b',
+      developerHumanTeacherSystemPrompt:
+        'Use human-teacher guidance without collapsing into one side.',
+    })
+    const manifest = await fs.readJson(exported.manifestPath)
+    const readme = await fs.readFile(exported.readmePath, 'utf8')
+    const normalizedRows = await readJsonl(exported.annotationsPath)
+
+    expect(exported).toMatchObject({
+      developer: true,
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      annotatedCount: 5,
+      pendingCount: 5,
+      trainedCount: 0,
+      recommendedTrainingModel: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+      recommendedBenchmarkFlips: 200,
+    })
+    expect(normalizedRows).toHaveLength(5)
+    expect(manifest).toMatchObject({
+      bundleType: 'idenaai-human-teacher-external-training',
+      developerSession: expect.objectContaining({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+      }),
+      runtime: expect.objectContaining({
+        runtimeBackend: 'ollama-direct',
+        model: 'llama3.1:8b',
+        visionModel: 'qwen2.5vl:7b',
+      }),
+      training: expect.objectContaining({
+        recommendedModel: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+        strongerFallbackModel: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
+        safeFallbackModel: 'mlx-community/Qwen2-VL-2B-Instruct-4bit',
+      }),
+      files: expect.objectContaining({
+        annotations: expect.objectContaining({
+          rowCount: 5,
+          sha256: expect.any(String),
+        }),
+      }),
+    })
+    expect(readme).toContain('Simple path for normal users:')
+    expect(readme).toContain(
+      'Upload only this folder to the machine or provider you want to use.'
     )
   })
 
@@ -2206,6 +2381,15 @@ describe('local-ai manager', () => {
         final_answer: 'left',
         why_answer: 'left is coherent',
         confidence: 0.9,
+        ai_annotation: {
+          final_answer: 'right',
+          why_answer: 'the AI thought the right sequence was smoother',
+          confidence: 2,
+          rating: 'bad',
+          text_required: false,
+        },
+        ai_annotation_feedback:
+          'The AI missed that the left path preserves the same actor and object across all four panels.',
       })}\n`,
       'utf8'
     )
@@ -2238,6 +2422,14 @@ describe('local-ai manager', () => {
     expect(normalizedRows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          ai_annotation: expect.objectContaining({
+            final_answer: 'right',
+            rating: 'bad',
+            text_required: false,
+          }),
+          ai_annotation_feedback: expect.stringContaining(
+            'left path preserves the same actor'
+          ),
           panel_references: expect.arrayContaining([
             expect.objectContaining({
               code: 'A',

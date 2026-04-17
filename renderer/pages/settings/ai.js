@@ -598,6 +598,8 @@ export default function AiSettingsPage() {
   const [isRefreshingAllModels, setIsRefreshingAllModels] = useState(false)
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
   const [latestModelsByProvider, setLatestModelsByProvider] = useState({})
+  const [showProviderSetup, setShowProviderSetup] = useState(false)
+  const [showLocalAiSetup, setShowLocalAiSetup] = useState(false)
   const [showAdvancedAiSettings, setShowAdvancedAiSettings] = useState(false)
   const [
     showLocalAiCompatibilityOverrides,
@@ -1469,6 +1471,10 @@ export default function AiSettingsPage() {
       return
     }
 
+    if (router.query?.setup === '1') {
+      setShowProviderSetup(true)
+    }
+
     if (
       router.query?.setup === '1' &&
       setupSectionRef.current &&
@@ -1562,6 +1568,67 @@ export default function AiSettingsPage() {
     providerKeyStatus.requiredProviders,
     t,
   ])
+  const externalProviderChoice = isLocalAiPrimaryProvider
+    ? 'openai'
+    : activeProvider
+  const externalAiSummary = aiSolver.enabled
+    ? t(
+        'Insert one or multiple AI provider API keys here. Click Advanced if you need more settings later.'
+      )
+    : t(
+        'Use this when you want an external AI provider via API instead of a local runtime.'
+      )
+  const localAiSummary = localAi.enabled
+    ? t(
+        'Local AI custom settings are active now. Click Advanced if you need more settings.'
+      )
+    : t(
+        'Use this when you want to run AI locally on this machine instead of through an external API.'
+      )
+  const enableExternalProviderSetup = useCallback(() => {
+    updateAiSolverSettings({
+      enabled: true,
+      provider: externalProviderChoice,
+      model: resolveDefaultModelForProvider(externalProviderChoice, localAi),
+    })
+    setShowProviderSetup(true)
+    setShowLocalAiSetup(false)
+  }, [externalProviderChoice, localAi, updateAiSolverSettings])
+  const enableLocalAiSetup = useCallback(() => {
+    updateLocalAiSettings({enabled: true})
+    updateAiSolverSettings({
+      enabled: true,
+      provider: 'local-ai',
+      model: resolveDefaultModelForProvider('local-ai', {
+        ...localAi,
+        enabled: true,
+      }),
+    })
+    setShowLocalAiSetup(true)
+    setShowProviderSetup(false)
+  }, [localAi, updateAiSolverSettings, updateLocalAiSettings])
+  const toggleProviderSetup = useCallback(() => {
+    setShowProviderSetup((value) => {
+      const nextValue = !value
+
+      if (nextValue) {
+        setShowLocalAiSetup(false)
+      }
+
+      return nextValue
+    })
+  }, [])
+  const toggleLocalAiSetup = useCallback(() => {
+    setShowLocalAiSetup((value) => {
+      const nextValue = !value
+
+      if (nextValue) {
+        setShowProviderSetup(false)
+      }
+
+      return nextValue
+    })
+  }, [])
   const localAiPackageReviewStatusUi = useMemo(
     () =>
       describeLocalAiTrainingPackageReviewStatus(
@@ -1635,20 +1702,6 @@ export default function AiSettingsPage() {
         <SettingsSection title={t('AI')}>
           <Stack spacing={4}>
             <Box
-              bg="blue.012"
-              borderWidth="1px"
-              borderColor="blue.050"
-              p={4}
-              borderRadius="md"
-            >
-              <Text color="muted">
-                {t(
-                  'Enable experimental AI features if you want AI solving or AI-assisted flip generation.'
-                )}
-              </Text>
-            </Box>
-
-            <Box
               ref={setupSectionRef}
               borderWidth="1px"
               borderColor="blue.100"
@@ -1656,35 +1709,13 @@ export default function AiSettingsPage() {
               p={4}
               bg="blue.012"
             >
-              <Stack spacing={3}>
-                <Text fontWeight={600}>{t('Step 1: Set up AI access')}</Text>
-                <Text color="muted" fontSize="sm">
-                  {t(
-                    'First choose one main provider and complete its setup. Cloud providers use session API keys. Local AI uses the runtime in the Local AI section below. If you want multi-provider runs later, enable more providers in Advanced settings.'
-                  )}
-                </Text>
-                <UnorderedList spacing={1} color="muted" fontSize="sm">
-                  <ListItem>{t('First: turn AI on.')}</ListItem>
-                  <ListItem>{t('Second: choose one main provider.')}</ListItem>
-                  <ListItem>
-                    {t(
-                      'Third: either load a session API key or make sure the Local AI runtime is reachable, then test the connection.'
-                    )}
-                  </ListItem>
-                  <ListItem>
-                    {t(
-                      'Optional later: add more providers in Advanced settings.'
-                    )}
-                  </ListItem>
-                </UnorderedList>
+              <Stack spacing={4}>
                 <Flex align="center" justify="space-between">
                   <Box>
-                    <Text fontWeight={500}>
-                      {t('Enable optional AI features')}
-                    </Text>
-                    <Text color="muted">
+                    <Text fontWeight={600}>{t('Choose AI access')}</Text>
+                    <Text color="muted" fontSize="sm">
                       {t(
-                        'When enabled, a setup popup asks for provider setup. Cloud providers use session API keys; Local AI uses the runtime below.'
+                        'Start with one simple path. Open advanced settings only when you really need them.'
                       )}
                     </Text>
                   </Box>
@@ -1699,2135 +1730,1979 @@ export default function AiSettingsPage() {
                     }}
                   />
                 </Flex>
-              </Stack>
-            </Box>
 
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Main AI provider')}</SettingsFormLabel>
-              <Select
-                value={activeProvider}
-                onChange={(e) => updateProvider(e.target.value)}
-                w="xs"
-              >
-                {MAIN_PROVIDER_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </Select>
-            </SettingsFormControl>
-
-            <Flex align="center" justify="space-between">
-              <Box>
-                <Text fontWeight={500}>{t('Current setup state')}</Text>
-                <Text color="muted">
-                  {providerKeyStatusUi.detail ||
-                    t('Choose a provider and complete its required setup.')}
-                </Text>
-              </Box>
-              <Text fontWeight={600} color={providerKeyStatusUi.color}>
-                {providerKeyStatusUi.label}
-              </Text>
-            </Flex>
-
-            {isCustomConfigProvider(activeProvider) && (
-              <Stack spacing={3}>
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Custom provider name')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={aiSolver.customProviderName}
-                    onChange={(e) =>
-                      updateAiSolverSettings({
-                        customProviderName: e.target.value,
-                      })
-                    }
-                    w="xl"
-                  />
-                </SettingsFormControl>
-                <SettingsFormControl>
-                  <SettingsFormLabel>{t('API base URL')}</SettingsFormLabel>
-                  <Input
-                    value={aiSolver.customProviderBaseUrl}
-                    onChange={(e) =>
-                      updateAiSolverSettings({
-                        customProviderBaseUrl: e.target.value,
-                      })
-                    }
-                    placeholder="https://api.openai.com/v1"
-                    w="xl"
-                  />
-                </SettingsFormControl>
-                <SettingsFormControl>
-                  <SettingsFormLabel>{t('Chat path')}</SettingsFormLabel>
-                  <Input
-                    value={aiSolver.customProviderChatPath}
-                    onChange={(e) =>
-                      updateAiSolverSettings({
-                        customProviderChatPath: e.target.value,
-                      })
-                    }
-                    placeholder="/chat/completions"
-                    w="xl"
-                  />
-                </SettingsFormControl>
-              </Stack>
-            )}
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Model preset')}</SettingsFormLabel>
-              <Select
-                value={presetValue}
-                onChange={(e) => {
-                  if (e.target.value !== 'custom') {
-                    updateAiSolverSettings({model: e.target.value})
-                  }
-                }}
-                w="xs"
-              >
-                {modelPresets.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-                <option value="custom">{t('Custom model id')}</option>
-              </Select>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Model')}</SettingsFormLabel>
-              <Input
-                value={activeModel}
-                onChange={(e) =>
-                  updateAiSolverSettings({
-                    model: e.target.value,
-                  })
-                }
-                w="xs"
-              />
-            </SettingsFormControl>
-
-            <Box
-              borderWidth="1px"
-              borderColor="blue.050"
-              borderRadius="md"
-              p={3}
-            >
-              <Stack spacing={2}>
-                <Text fontWeight={500}>
-                  {t('Step 2: Choose what you want')}
-                </Text>
-                <Text color="muted" fontSize="sm">
-                  {t(
-                    'After the provider setup works, you can use one AI page for all flows: AI Flip Builder, AI Solver, off-chain benchmark, and on-chain automatic flow.'
-                  )}
-                </Text>
-                <UnorderedList spacing={1} color="muted" fontSize="sm">
-                  <ListItem>
-                    {t(
-                      'AI Flip Builder: generate a story draft and build flip images.'
-                    )}
-                  </ListItem>
-                  <ListItem>
-                    {t('AI Solver: help solve validation flips.')}
-                  </ListItem>
-                  <ListItem>
-                    {t(
-                      'Off-chain benchmark: test queue runs locally without publishing.'
-                    )}
-                  </ListItem>
-                  <ListItem>
-                    {t(
-                      'On-chain automatic flow: generate, build, and publish with extra caution.'
-                    )}
-                  </ListItem>
-                </UnorderedList>
-                <Stack isInline spacing={2}>
-                  <PrimaryButton
-                    isDisabled={!providerKeyStatus.primaryReady}
-                    onClick={() => router.push('/flips/new?autostep=submit')}
+                <Stack spacing={3}>
+                  <Box
+                    borderWidth="1px"
+                    borderColor="blue.100"
+                    borderRadius="md"
+                    p={3}
+                    bg="white"
                   >
-                    {t('Open AI Flip Builder')}
-                  </PrimaryButton>
-                  <PrimaryButton
-                    isDisabled={!providerKeyStatus.primaryReady}
-                    onClick={enableAutomaticNextValidationSession}
+                    <Stack spacing={3}>
+                      <Box>
+                        <Text fontWeight={600}>
+                          {t('Enable external AI provider via API')}
+                        </Text>
+                        <Text color="muted" fontSize="sm" mt={1}>
+                          {externalAiSummary}
+                        </Text>
+                      </Box>
+                      <Text color="muted" fontSize="xs">
+                        {t('Current provider')}:{' '}
+                        {formatAiProviderLabel(externalProviderChoice)} ·{' '}
+                        {providerKeyStatusUi.label}
+                      </Text>
+                      <Stack isInline spacing={2} flexWrap="wrap">
+                        <PrimaryButton onClick={enableExternalProviderSetup}>
+                          {t('Enable external AI provider via API')}
+                        </PrimaryButton>
+                        <SecondaryButton onClick={toggleProviderSetup}>
+                          {showProviderSetup
+                            ? t('Hide provider setup')
+                            : t('Advanced')}
+                        </SecondaryButton>
+                      </Stack>
+                    </Stack>
+                  </Box>
+
+                  <Box
+                    borderWidth="1px"
+                    borderColor="green.100"
+                    borderRadius="md"
+                    p={3}
+                    bg="white"
                   >
-                    {t('Enable auto-solve next session')}
-                  </PrimaryButton>
-                </Stack>
-                <Stack isInline spacing={2}>
-                  <SecondaryButton
-                    isDisabled={!providerKeyStatus.primaryReady}
-                    onClick={() => router.push('/validation?previewAi=1')}
-                  >
-                    {t('Test flip solver off-chain')}
-                  </SecondaryButton>
-                  <SecondaryButton
-                    isDisabled={!providerKeyStatus.primaryReady}
-                    onClick={() =>
-                      router.push(
-                        '/flips/new?focus=ai-benchmark&autostep=submit'
-                      )
-                    }
-                  >
-                    {t('Open off-chain benchmark')}
-                  </SecondaryButton>
-                  <SecondaryButton isDisabled={!providerKeyStatus.primaryReady}>
-                    {t('Open on-chain automatic flow')}
-                  </SecondaryButton>
+                    <Stack spacing={3}>
+                      <Box>
+                        <Text fontWeight={600}>{t('Enable local AI')}</Text>
+                        <Text color="muted" fontSize="sm" mt={1}>
+                          {localAiSummary}
+                        </Text>
+                      </Box>
+                      <Text color="muted" fontSize="xs">
+                        {t('Current runtime')}: {localAiRuntimeStatus.title}
+                      </Text>
+                      <Stack isInline spacing={2} flexWrap="wrap">
+                        <PrimaryButton onClick={enableLocalAiSetup}>
+                          {t('Enable local AI')}
+                        </PrimaryButton>
+                        <SecondaryButton onClick={toggleLocalAiSetup}>
+                          {showLocalAiSetup
+                            ? t('Hide local AI')
+                            : t('Advanced')}
+                        </SecondaryButton>
+                      </Stack>
+                    </Stack>
+                  </Box>
                 </Stack>
               </Stack>
             </Box>
 
-            <Stack isInline justify="flex-end">
-              <SecondaryButton
-                onClick={() => setShowAdvancedAiSettings((v) => !v)}
-              >
-                {showAdvancedAiSettings
-                  ? t('Hide advanced AI settings')
-                  : t('Advanced AI settings')}
-              </SecondaryButton>
-            </Stack>
-
-            {showAdvancedAiSettings ? (
+            {showProviderSetup ? (
               <>
-                <Stack isInline justify="flex-start" spacing={2} align="center">
-                  <SecondaryButton
-                    isLoading={isRefreshingModels}
-                    isDisabled={isRefreshingAllModels}
-                    onClick={async () => {
-                      setIsRefreshingModels(true)
-                      try {
-                        const result = await refreshModelsForProvider(
-                          activeProvider
-                        )
-
-                        notify(
-                          t('Latest models loaded'),
-                          t('{{provider}} returned {{count}} models', {
-                            provider: result.provider,
-                            count: result.count,
-                          })
-                        )
-                      } catch (error) {
-                        notify(
-                          t('Unable to load latest models'),
-                          formatErrorForToast(error),
-                          'error'
-                        )
-                      } finally {
-                        setIsRefreshingModels(false)
-                      }
-                    }}
+                <SettingsFormControl>
+                  <SettingsFormLabel>{t('Main AI provider')}</SettingsFormLabel>
+                  <Select
+                    value={activeProvider}
+                    onChange={(e) => updateProvider(e.target.value)}
+                    w="xs"
                   >
-                    {t('Check latest models')}
-                  </SecondaryButton>
-                  <SecondaryButton
-                    isLoading={isRefreshingAllModels}
-                    isDisabled={isRefreshingModels}
-                    onClick={async () => {
-                      setIsRefreshingAllModels(true)
-                      try {
-                        const providers = MAIN_PROVIDER_OPTIONS.map(
-                          (item) => item.value
-                        )
-                        let loaded = 0
-                        let skipped = 0
-                        let failed = 0
-                        const failedProviders = []
+                    {MAIN_PROVIDER_OPTIONS.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </Select>
+                </SettingsFormControl>
 
-                        // Run sequentially to avoid rate spikes and noisy provider errors.
-                        // eslint-disable-next-line no-restricted-syntax
-                        for (const provider of providers) {
-                          try {
-                            // eslint-disable-next-line no-await-in-loop
-                            const hasKey = await hasSessionKeyForProvider(
-                              provider
-                            )
-                            if (!hasKey) {
-                              skipped += 1
-                              // eslint-disable-next-line no-continue
-                              continue
-                            }
-                            // eslint-disable-next-line no-await-in-loop
-                            await refreshModelsForProvider(provider)
-                            loaded += 1
-                          } catch (error) {
-                            failed += 1
-                            failedProviders.push(provider)
-                          }
-                        }
-
-                        notify(
-                          t('Latest model scan finished'),
-                          [
-                            t(
-                              '{{loaded}} loaded, {{skipped}} skipped (provider not ready), {{failed}} failed',
-                              {
-                                loaded,
-                                skipped,
-                                failed,
-                              }
-                            ),
-                            skipped > 0
-                              ? t(
-                                  'Cloud providers need a session API key. Local AI needs the local runtime to be enabled and reachable.'
-                                )
-                              : null,
-                            failedProviders.length > 0
-                              ? t('Failed: {{providers}}', {
-                                  providers: failedProviders
-                                    .map((provider) =>
-                                      formatAiProviderLabel(provider)
-                                    )
-                                    .join(', '),
-                                })
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(' '),
-                          failed > 0 ? 'warning' : 'success'
-                        )
-                      } catch (error) {
-                        notify(
-                          t('Unable to scan latest models'),
-                          formatErrorForToast(error),
-                          'error'
-                        )
-                      } finally {
-                        setIsRefreshingAllModels(false)
-                      }
-                    }}
-                  >
-                    {t('Check all providers')}
-                  </SecondaryButton>
-                  <Text color="muted" fontSize="sm">
-                    {t('Loaded: {{count}}', {
-                      count: dynamicModelPresets.length,
-                    })}
+                <Flex align="center" justify="space-between">
+                  <Box>
+                    <Text fontWeight={500}>{t('Current setup state')}</Text>
+                    <Text color="muted">
+                      {providerKeyStatusUi.detail ||
+                        t('Choose a provider and complete its required setup.')}
+                    </Text>
+                  </Box>
+                  <Text fontWeight={600} color={providerKeyStatusUi.color}>
+                    {providerKeyStatusUi.label}
                   </Text>
-                </Stack>
-
-                <Flex align="center" justify="space-between">
-                  <Box>
-                    <Text fontWeight={500}>{t('Consult multiple APIs')}</Text>
-                    <Text color="muted" fontSize="sm">
-                      {t(
-                        'Optional: consult up to 3 models in parallel and decide each flip by averaged probabilities.'
-                      )}
-                    </Text>
-                  </Box>
-                  <Switch
-                    isChecked={!!aiSolver.ensembleEnabled}
-                    onChange={() =>
-                      updateAiSolverSettings({
-                        ensembleEnabled: !aiSolver.ensembleEnabled,
-                      })
-                    }
-                  />
                 </Flex>
 
-                <Flex align="center" justify="space-between">
-                  <Box>
-                    <Text fontWeight={500}>{t('Legacy heuristic vote')}</Text>
-                    <Text color="muted" fontSize="sm">
-                      {t(
-                        'Adds a local legacy frame-continuity heuristic as an additional weighted vote (no cloud API call).'
-                      )}
-                    </Text>
-                  </Box>
-                  <Switch
-                    isChecked={!!aiSolver.legacyHeuristicEnabled}
-                    onChange={() =>
-                      updateAiSolverSettings({
-                        legacyHeuristicEnabled:
-                          !aiSolver.legacyHeuristicEnabled,
-                      })
-                    }
-                  />
-                </Flex>
-
-                {aiSolver.legacyHeuristicEnabled && (
+                {isCustomConfigProvider(activeProvider) && (
                   <Stack spacing={3}>
                     <SettingsFormControl>
                       <SettingsFormLabel>
-                        {t('Legacy heuristic weight')}
+                        {t('Custom provider name')}
                       </SettingsFormLabel>
                       <Input
-                        type="number"
-                        step="0.05"
-                        min={0.05}
-                        max={10}
-                        value={legacyHeuristicWeight}
+                        value={aiSolver.customProviderName}
                         onChange={(e) =>
                           updateAiSolverSettings({
-                            legacyHeuristicWeight: weightOrFallback(
-                              e.target.value,
-                              1
-                            ),
+                            customProviderName: e.target.value,
                           })
                         }
-                        w="sm"
+                        w="xl"
                       />
                     </SettingsFormControl>
+                    <SettingsFormControl>
+                      <SettingsFormLabel>{t('API base URL')}</SettingsFormLabel>
+                      <Input
+                        value={aiSolver.customProviderBaseUrl}
+                        onChange={(e) =>
+                          updateAiSolverSettings({
+                            customProviderBaseUrl: e.target.value,
+                          })
+                        }
+                        placeholder="https://api.openai.com/v1"
+                        w="xl"
+                      />
+                    </SettingsFormControl>
+                    <SettingsFormControl>
+                      <SettingsFormLabel>{t('Chat path')}</SettingsFormLabel>
+                      <Input
+                        value={aiSolver.customProviderChatPath}
+                        onChange={(e) =>
+                          updateAiSolverSettings({
+                            customProviderChatPath: e.target.value,
+                          })
+                        }
+                        placeholder="/chat/completions"
+                        w="xl"
+                      />
+                    </SettingsFormControl>
+                  </Stack>
+                )}
+
+                <SettingsFormControl>
+                  <SettingsFormLabel>{t('Model preset')}</SettingsFormLabel>
+                  <Select
+                    value={presetValue}
+                    onChange={(e) => {
+                      if (e.target.value !== 'custom') {
+                        updateAiSolverSettings({model: e.target.value})
+                      }
+                    }}
+                    w="xs"
+                  >
+                    {modelPresets.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                    <option value="custom">{t('Custom model id')}</option>
+                  </Select>
+                </SettingsFormControl>
+
+                <SettingsFormControl>
+                  <SettingsFormLabel>{t('Model')}</SettingsFormLabel>
+                  <Input
+                    value={activeModel}
+                    onChange={(e) =>
+                      updateAiSolverSettings({
+                        model: e.target.value,
+                      })
+                    }
+                    w="xs"
+                  />
+                </SettingsFormControl>
+
+                <Box
+                  borderWidth="1px"
+                  borderColor="blue.050"
+                  borderRadius="md"
+                  p={3}
+                >
+                  <Stack spacing={2}>
+                    <Text fontWeight={500}>
+                      {t('Step 2: Choose what you want')}
+                    </Text>
+                    <Text color="muted" fontSize="sm">
+                      {t(
+                        'After the provider setup works, you can use one AI page for all flows: AI Flip Builder, AI Solver, off-chain benchmark, and on-chain automatic flow.'
+                      )}
+                    </Text>
+                    <UnorderedList spacing={1} color="muted" fontSize="sm">
+                      <ListItem>
+                        {t(
+                          'AI Flip Builder: generate a story draft and build flip images.'
+                        )}
+                      </ListItem>
+                      <ListItem>
+                        {t('AI Solver: help solve validation flips.')}
+                      </ListItem>
+                      <ListItem>
+                        {t(
+                          'Off-chain benchmark: test queue runs locally without publishing.'
+                        )}
+                      </ListItem>
+                      <ListItem>
+                        {t(
+                          'On-chain automatic flow: generate, build, and publish with extra caution.'
+                        )}
+                      </ListItem>
+                    </UnorderedList>
+                    <Stack isInline spacing={2}>
+                      <PrimaryButton
+                        isDisabled={!providerKeyStatus.primaryReady}
+                        onClick={() =>
+                          router.push('/flips/new?autostep=submit')
+                        }
+                      >
+                        {t('Open AI Flip Builder')}
+                      </PrimaryButton>
+                      <PrimaryButton
+                        isDisabled={!providerKeyStatus.primaryReady}
+                        onClick={enableAutomaticNextValidationSession}
+                      >
+                        {t('Enable auto-solve next session')}
+                      </PrimaryButton>
+                    </Stack>
+                    <Stack isInline spacing={2}>
+                      <SecondaryButton
+                        isDisabled={!providerKeyStatus.primaryReady}
+                        onClick={() => router.push('/validation?previewAi=1')}
+                      >
+                        {t('Test flip solver off-chain')}
+                      </SecondaryButton>
+                      <SecondaryButton
+                        isDisabled={!providerKeyStatus.primaryReady}
+                        onClick={() =>
+                          router.push(
+                            '/flips/new?focus=ai-benchmark&autostep=submit'
+                          )
+                        }
+                      >
+                        {t('Open off-chain benchmark')}
+                      </SecondaryButton>
+                      <SecondaryButton
+                        isDisabled={!providerKeyStatus.primaryReady}
+                      >
+                        {t('Open on-chain automatic flow')}
+                      </SecondaryButton>
+                    </Stack>
+                  </Stack>
+                </Box>
+
+                <Stack isInline justify="flex-end">
+                  <SecondaryButton
+                    onClick={() => setShowAdvancedAiSettings((v) => !v)}
+                  >
+                    {showAdvancedAiSettings
+                      ? t('Hide advanced AI settings')
+                      : t('Advanced AI settings')}
+                  </SecondaryButton>
+                </Stack>
+
+                {showAdvancedAiSettings ? (
+                  <>
+                    <Stack
+                      isInline
+                      justify="flex-start"
+                      spacing={2}
+                      align="center"
+                    >
+                      <SecondaryButton
+                        isLoading={isRefreshingModels}
+                        isDisabled={isRefreshingAllModels}
+                        onClick={async () => {
+                          setIsRefreshingModels(true)
+                          try {
+                            const result = await refreshModelsForProvider(
+                              activeProvider
+                            )
+
+                            notify(
+                              t('Latest models loaded'),
+                              t('{{provider}} returned {{count}} models', {
+                                provider: result.provider,
+                                count: result.count,
+                              })
+                            )
+                          } catch (error) {
+                            notify(
+                              t('Unable to load latest models'),
+                              formatErrorForToast(error),
+                              'error'
+                            )
+                          } finally {
+                            setIsRefreshingModels(false)
+                          }
+                        }}
+                      >
+                        {t('Check latest models')}
+                      </SecondaryButton>
+                      <SecondaryButton
+                        isLoading={isRefreshingAllModels}
+                        isDisabled={isRefreshingModels}
+                        onClick={async () => {
+                          setIsRefreshingAllModels(true)
+                          try {
+                            const providers = MAIN_PROVIDER_OPTIONS.map(
+                              (item) => item.value
+                            )
+                            let loaded = 0
+                            let skipped = 0
+                            let failed = 0
+                            const failedProviders = []
+
+                            // Run sequentially to avoid rate spikes and noisy provider errors.
+                            // eslint-disable-next-line no-restricted-syntax
+                            for (const provider of providers) {
+                              try {
+                                // eslint-disable-next-line no-await-in-loop
+                                const hasKey = await hasSessionKeyForProvider(
+                                  provider
+                                )
+                                if (!hasKey) {
+                                  skipped += 1
+                                  // eslint-disable-next-line no-continue
+                                  continue
+                                }
+                                // eslint-disable-next-line no-await-in-loop
+                                await refreshModelsForProvider(provider)
+                                loaded += 1
+                              } catch (error) {
+                                failed += 1
+                                failedProviders.push(provider)
+                              }
+                            }
+
+                            notify(
+                              t('Latest model scan finished'),
+                              [
+                                t(
+                                  '{{loaded}} loaded, {{skipped}} skipped (provider not ready), {{failed}} failed',
+                                  {
+                                    loaded,
+                                    skipped,
+                                    failed,
+                                  }
+                                ),
+                                skipped > 0
+                                  ? t(
+                                      'Cloud providers need a session API key. Local AI needs the local runtime to be enabled and reachable.'
+                                    )
+                                  : null,
+                                failedProviders.length > 0
+                                  ? t('Failed: {{providers}}', {
+                                      providers: failedProviders
+                                        .map((provider) =>
+                                          formatAiProviderLabel(provider)
+                                        )
+                                        .join(', '),
+                                    })
+                                  : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' '),
+                              failed > 0 ? 'warning' : 'success'
+                            )
+                          } catch (error) {
+                            notify(
+                              t('Unable to scan latest models'),
+                              formatErrorForToast(error),
+                              'error'
+                            )
+                          } finally {
+                            setIsRefreshingAllModels(false)
+                          }
+                        }}
+                      >
+                        {t('Check all providers')}
+                      </SecondaryButton>
+                      <Text color="muted" fontSize="sm">
+                        {t('Loaded: {{count}}', {
+                          count: dynamicModelPresets.length,
+                        })}
+                      </Text>
+                    </Stack>
+
                     <Flex align="center" justify="space-between">
                       <Box>
                         <Text fontWeight={500}>
-                          {t('Legacy-only run mode')}
+                          {t('Consult multiple APIs')}
                         </Text>
                         <Text color="muted" fontSize="sm">
                           {t(
-                            'When enabled, runs use only the legacy heuristic and do not require a cloud provider API key.'
+                            'Optional: consult up to 3 models in parallel and decide each flip by averaged probabilities.'
                           )}
                         </Text>
                       </Box>
                       <Switch
-                        isChecked={!!aiSolver.legacyHeuristicOnly}
+                        isChecked={!!aiSolver.ensembleEnabled}
                         onChange={() =>
                           updateAiSolverSettings({
-                            legacyHeuristicOnly: !aiSolver.legacyHeuristicOnly,
+                            ensembleEnabled: !aiSolver.ensembleEnabled,
                           })
                         }
                       />
                     </Flex>
-                  </Stack>
-                )}
 
-                {aiSolver.ensembleEnabled && (
-                  <Stack
-                    spacing={3}
-                    borderWidth="1px"
-                    borderColor="gray.100"
-                    p={3}
-                  >
-                    <Text color="muted" fontSize="sm">
-                      {t(
-                        'Primary provider/model is consultant #1. Add consultant #2 and #3 below. Each provider needs its own loaded API key.'
-                      )}
-                    </Text>
+                    <Flex align="center" justify="space-between">
+                      <Box>
+                        <Text fontWeight={500}>
+                          {t('Legacy heuristic vote')}
+                        </Text>
+                        <Text color="muted" fontSize="sm">
+                          {t(
+                            'Adds a local legacy frame-continuity heuristic as an additional weighted vote (no cloud API call).'
+                          )}
+                        </Text>
+                      </Box>
+                      <Switch
+                        isChecked={!!aiSolver.legacyHeuristicEnabled}
+                        onChange={() =>
+                          updateAiSolverSettings({
+                            legacyHeuristicEnabled:
+                              !aiSolver.legacyHeuristicEnabled,
+                          })
+                        }
+                      />
+                    </Flex>
+
+                    {aiSolver.legacyHeuristicEnabled && (
+                      <Stack spacing={3}>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Legacy heuristic weight')}
+                          </SettingsFormLabel>
+                          <Input
+                            type="number"
+                            step="0.05"
+                            min={0.05}
+                            max={10}
+                            value={legacyHeuristicWeight}
+                            onChange={(e) =>
+                              updateAiSolverSettings({
+                                legacyHeuristicWeight: weightOrFallback(
+                                  e.target.value,
+                                  1
+                                ),
+                              })
+                            }
+                            w="sm"
+                          />
+                        </SettingsFormControl>
+                        <Flex align="center" justify="space-between">
+                          <Box>
+                            <Text fontWeight={500}>
+                              {t('Legacy-only run mode')}
+                            </Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'When enabled, runs use only the legacy heuristic and do not require a cloud provider API key.'
+                              )}
+                            </Text>
+                          </Box>
+                          <Switch
+                            isChecked={!!aiSolver.legacyHeuristicOnly}
+                            onChange={() =>
+                              updateAiSolverSettings({
+                                legacyHeuristicOnly:
+                                  !aiSolver.legacyHeuristicOnly,
+                              })
+                            }
+                          />
+                        </Flex>
+                      </Stack>
+                    )}
+
+                    {aiSolver.ensembleEnabled && (
+                      <Stack
+                        spacing={3}
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        p={3}
+                      >
+                        <Text color="muted" fontSize="sm">
+                          {t(
+                            'Primary provider/model is consultant #1. Add consultant #2 and #3 below. Each provider needs its own loaded API key.'
+                          )}
+                        </Text>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Consultant #1 weight')}
+                          </SettingsFormLabel>
+                          <Input
+                            type="number"
+                            step="0.05"
+                            min={0.05}
+                            max={10}
+                            value={ensemblePrimaryWeight}
+                            onChange={(e) =>
+                              updateAiSolverSettings({
+                                ensemblePrimaryWeight: weightOrFallback(
+                                  e.target.value,
+                                  1
+                                ),
+                              })
+                            }
+                            w="sm"
+                          />
+                        </SettingsFormControl>
+
+                        <Flex align="center" justify="space-between">
+                          <Text fontWeight={500}>{t('Consultant #2')}</Text>
+                          <Switch
+                            isChecked={!!aiSolver.ensembleProvider2Enabled}
+                            onChange={() =>
+                              updateAiSolverSettings({
+                                ensembleProvider2Enabled:
+                                  !aiSolver.ensembleProvider2Enabled,
+                              })
+                            }
+                          />
+                        </Flex>
+
+                        {aiSolver.ensembleProvider2Enabled && (
+                          <Stack spacing={2}>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Provider')}
+                              </SettingsFormLabel>
+                              <Select
+                                value={ensembleProvider2}
+                                onChange={(e) =>
+                                  updateAiSolverSettings({
+                                    ensembleProvider2: e.target.value,
+                                    ensembleModel2:
+                                      DEFAULT_MODELS[e.target.value],
+                                  })
+                                }
+                                w="sm"
+                              >
+                                {CONSULT_PROVIDER_OPTIONS.map((item) => (
+                                  <option
+                                    key={`ensemble2-provider-${item.value}`}
+                                    value={item.value}
+                                  >
+                                    {item.label}
+                                  </option>
+                                ))}
+                              </Select>
+                            </SettingsFormControl>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Model preset')}
+                              </SettingsFormLabel>
+                              <Select
+                                value={
+                                  ensemblePresets2.includes(ensembleModel2)
+                                    ? ensembleModel2
+                                    : 'custom'
+                                }
+                                onChange={(e) => {
+                                  if (e.target.value !== 'custom') {
+                                    updateAiSolverSettings({
+                                      ensembleModel2: e.target.value,
+                                    })
+                                  }
+                                }}
+                                w="sm"
+                              >
+                                {ensemblePresets2.map((value) => (
+                                  <option
+                                    key={`ensemble2-${value}`}
+                                    value={value}
+                                  >
+                                    {value}
+                                  </option>
+                                ))}
+                                <option value="custom">
+                                  {t('Custom model id')}
+                                </option>
+                              </Select>
+                            </SettingsFormControl>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Model')}
+                              </SettingsFormLabel>
+                              <Input
+                                value={ensembleModel2}
+                                onChange={(e) =>
+                                  updateAiSolverSettings({
+                                    ensembleModel2: e.target.value,
+                                  })
+                                }
+                                w="sm"
+                              />
+                            </SettingsFormControl>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Weight')}
+                              </SettingsFormLabel>
+                              <Input
+                                type="number"
+                                step="0.05"
+                                min={0.05}
+                                max={10}
+                                value={ensembleProvider2Weight}
+                                onChange={(e) =>
+                                  updateAiSolverSettings({
+                                    ensembleProvider2Weight: weightOrFallback(
+                                      e.target.value,
+                                      1
+                                    ),
+                                  })
+                                }
+                                w="sm"
+                              />
+                            </SettingsFormControl>
+                          </Stack>
+                        )}
+
+                        <Flex align="center" justify="space-between">
+                          <Text fontWeight={500}>{t('Consultant #3')}</Text>
+                          <Switch
+                            isChecked={!!aiSolver.ensembleProvider3Enabled}
+                            onChange={() =>
+                              updateAiSolverSettings({
+                                ensembleProvider3Enabled:
+                                  !aiSolver.ensembleProvider3Enabled,
+                              })
+                            }
+                          />
+                        </Flex>
+
+                        {aiSolver.ensembleProvider3Enabled && (
+                          <Stack spacing={2}>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Provider')}
+                              </SettingsFormLabel>
+                              <Select
+                                value={ensembleProvider3}
+                                onChange={(e) =>
+                                  updateAiSolverSettings({
+                                    ensembleProvider3: e.target.value,
+                                    ensembleModel3:
+                                      DEFAULT_MODELS[e.target.value],
+                                  })
+                                }
+                                w="sm"
+                              >
+                                {CONSULT_PROVIDER_OPTIONS.map((item) => (
+                                  <option
+                                    key={`ensemble3-provider-${item.value}`}
+                                    value={item.value}
+                                  >
+                                    {item.label}
+                                  </option>
+                                ))}
+                              </Select>
+                            </SettingsFormControl>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Model preset')}
+                              </SettingsFormLabel>
+                              <Select
+                                value={
+                                  ensemblePresets3.includes(ensembleModel3)
+                                    ? ensembleModel3
+                                    : 'custom'
+                                }
+                                onChange={(e) => {
+                                  if (e.target.value !== 'custom') {
+                                    updateAiSolverSettings({
+                                      ensembleModel3: e.target.value,
+                                    })
+                                  }
+                                }}
+                                w="sm"
+                              >
+                                {ensemblePresets3.map((value) => (
+                                  <option
+                                    key={`ensemble3-${value}`}
+                                    value={value}
+                                  >
+                                    {value}
+                                  </option>
+                                ))}
+                                <option value="custom">
+                                  {t('Custom model id')}
+                                </option>
+                              </Select>
+                            </SettingsFormControl>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Model')}
+                              </SettingsFormLabel>
+                              <Input
+                                value={ensembleModel3}
+                                onChange={(e) =>
+                                  updateAiSolverSettings({
+                                    ensembleModel3: e.target.value,
+                                  })
+                                }
+                                w="sm"
+                              />
+                            </SettingsFormControl>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Weight')}
+                              </SettingsFormLabel>
+                              <Input
+                                type="number"
+                                step="0.05"
+                                min={0.05}
+                                max={10}
+                                value={ensembleProvider3Weight}
+                                onChange={(e) =>
+                                  updateAiSolverSettings({
+                                    ensembleProvider3Weight: weightOrFallback(
+                                      e.target.value,
+                                      1
+                                    ),
+                                  })
+                                }
+                                w="sm"
+                              />
+                            </SettingsFormControl>
+                          </Stack>
+                        )}
+                      </Stack>
+                    )}
+
+                    <SettingsFormControl>
+                      <SettingsFormLabel>{t('Run mode')}</SettingsFormLabel>
+                      <Select
+                        value={aiSolver.mode || 'manual'}
+                        onChange={(e) =>
+                          updateAiSolverSettings({mode: e.target.value})
+                        }
+                        w="xs"
+                      >
+                        <option value="manual">{t('Manual one-click')}</option>
+                        <option value="session-auto">
+                          {t('Auto-run each validation session')}
+                        </option>
+                      </Select>
+                    </SettingsFormControl>
+
+                    {aiSolver.mode === 'session-auto' && (
+                      <SettingsFormControl>
+                        <SettingsFormLabel>
+                          {t('Delayed auto-report')}
+                        </SettingsFormLabel>
+                        <Stack spacing={3}>
+                          <Flex align="center" justify="space-between">
+                            <Text color="muted" fontSize="sm" maxW="lg" mr={4}>
+                              {t(
+                                'If manual reporting has not started within the grace period after the automatic keyword step begins, let AI review bad flips and submit the long session automatically.'
+                              )}
+                            </Text>
+                            <Switch
+                              isChecked={Boolean(aiSolver.autoReportEnabled)}
+                              onChange={(e) =>
+                                updateAiSolverSettings({
+                                  autoReportEnabled: e.target.checked,
+                                })
+                              }
+                            />
+                          </Flex>
+
+                          {aiSolver.autoReportEnabled && (
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Manual reporting grace period (minutes)')}
+                              </SettingsFormLabel>
+                              <Input
+                                type="number"
+                                min="1"
+                                max="60"
+                                step="1"
+                                value={aiSolver.autoReportDelayMinutes ?? 10}
+                                onChange={(e) =>
+                                  updateNumberField(
+                                    'autoReportDelayMinutes',
+                                    e.target.value
+                                  )
+                                }
+                                w="xs"
+                              />
+                            </SettingsFormControl>
+                          )}
+                        </Stack>
+                      </SettingsFormControl>
+                    )}
+
                     <SettingsFormControl>
                       <SettingsFormLabel>
-                        {t('Consultant #1 weight')}
+                        {t('Benchmark profile')}
                       </SettingsFormLabel>
-                      <Input
-                        type="number"
-                        step="0.05"
-                        min={0.05}
-                        max={10}
-                        value={ensemblePrimaryWeight}
+                      <Select
+                        value={aiSolver.benchmarkProfile || 'strict'}
                         onChange={(e) =>
                           updateAiSolverSettings({
-                            ensemblePrimaryWeight: weightOrFallback(
-                              e.target.value,
-                              1
-                            ),
+                            benchmarkProfile: e.target.value,
+                          })
+                        }
+                        w="xs"
+                      >
+                        <option value="strict">{t('Strict default')}</option>
+                        <option value="custom">{t('Custom research')}</option>
+                      </Select>
+                    </SettingsFormControl>
+
+                    <Text color="muted" fontSize="sm">
+                      {aiSolver.benchmarkProfile === 'strict'
+                        ? t(
+                            'Strict profile targets 6 flips within 60 seconds with fixed retry/output limits and sequential pacing for fair customer-side benchmark comparison.'
+                          )
+                        : t(
+                            'Custom profile allows local overrides for exploratory research. All custom settings are logged in benchmark metrics.'
+                          )}
+                    </Text>
+
+                    <SettingsFormControl>
+                      <SettingsFormLabel>
+                        {t('Flip vision mode')}
+                      </SettingsFormLabel>
+                      <Select
+                        value={aiSolver.flipVisionMode || 'composite'}
+                        onChange={(e) =>
+                          updateAiSolverSettings({
+                            flipVisionMode: e.target.value,
                           })
                         }
                         w="sm"
-                      />
+                      >
+                        <option value="composite">
+                          {t('Composite (2 story images)')}
+                        </option>
+                        <option value="frames_single_pass">
+                          {t('Frame-by-frame in one pass')}
+                        </option>
+                        <option value="frames_two_pass">
+                          {t('Frame analysis then decision')}
+                        </option>
+                      </Select>
+                      <Text color="muted" fontSize="sm" mt={1}>
+                        {t(
+                          'Choose whether AI compares 2 composed story images or reasons over all 8 ordered frames.'
+                        )}
+                      </Text>
                     </SettingsFormControl>
 
-                    <Flex align="center" justify="space-between">
-                      <Text fontWeight={500}>{t('Consultant #2')}</Text>
-                      <Switch
-                        isChecked={!!aiSolver.ensembleProvider2Enabled}
-                        onChange={() =>
-                          updateAiSolverSettings({
-                            ensembleProvider2Enabled:
-                              !aiSolver.ensembleProvider2Enabled,
-                          })
-                        }
-                      />
-                    </Flex>
-
-                    {aiSolver.ensembleProvider2Enabled && (
-                      <Stack spacing={2}>
-                        <SettingsFormControl>
-                          <SettingsFormLabel>{t('Provider')}</SettingsFormLabel>
-                          <Select
-                            value={ensembleProvider2}
-                            onChange={(e) =>
-                              updateAiSolverSettings({
-                                ensembleProvider2: e.target.value,
-                                ensembleModel2: DEFAULT_MODELS[e.target.value],
-                              })
-                            }
-                            w="sm"
-                          >
-                            {CONSULT_PROVIDER_OPTIONS.map((item) => (
-                              <option
-                                key={`ensemble2-provider-${item.value}`}
-                                value={item.value}
-                              >
-                                {item.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </SettingsFormControl>
+                    {aiSolver.benchmarkProfile === 'custom' && (
+                      <Stack spacing={3}>
                         <SettingsFormControl>
                           <SettingsFormLabel>
-                            {t('Model preset')}
-                          </SettingsFormLabel>
-                          <Select
-                            value={
-                              ensemblePresets2.includes(ensembleModel2)
-                                ? ensembleModel2
-                                : 'custom'
-                            }
-                            onChange={(e) => {
-                              if (e.target.value !== 'custom') {
-                                updateAiSolverSettings({
-                                  ensembleModel2: e.target.value,
-                                })
-                              }
-                            }}
-                            w="sm"
-                          >
-                            {ensemblePresets2.map((value) => (
-                              <option key={`ensemble2-${value}`} value={value}>
-                                {value}
-                              </option>
-                            ))}
-                            <option value="custom">
-                              {t('Custom model id')}
-                            </option>
-                          </Select>
-                        </SettingsFormControl>
-                        <SettingsFormControl>
-                          <SettingsFormLabel>{t('Model')}</SettingsFormLabel>
-                          <Input
-                            value={ensembleModel2}
-                            onChange={(e) =>
-                              updateAiSolverSettings({
-                                ensembleModel2: e.target.value,
-                              })
-                            }
-                            w="sm"
-                          />
-                        </SettingsFormControl>
-                        <SettingsFormControl>
-                          <SettingsFormLabel>{t('Weight')}</SettingsFormLabel>
-                          <Input
-                            type="number"
-                            step="0.05"
-                            min={0.05}
-                            max={10}
-                            value={ensembleProvider2Weight}
-                            onChange={(e) =>
-                              updateAiSolverSettings({
-                                ensembleProvider2Weight: weightOrFallback(
-                                  e.target.value,
-                                  1
-                                ),
-                              })
-                            }
-                            w="sm"
-                          />
-                        </SettingsFormControl>
-                      </Stack>
-                    )}
-
-                    <Flex align="center" justify="space-between">
-                      <Text fontWeight={500}>{t('Consultant #3')}</Text>
-                      <Switch
-                        isChecked={!!aiSolver.ensembleProvider3Enabled}
-                        onChange={() =>
-                          updateAiSolverSettings({
-                            ensembleProvider3Enabled:
-                              !aiSolver.ensembleProvider3Enabled,
-                          })
-                        }
-                      />
-                    </Flex>
-
-                    {aiSolver.ensembleProvider3Enabled && (
-                      <Stack spacing={2}>
-                        <SettingsFormControl>
-                          <SettingsFormLabel>{t('Provider')}</SettingsFormLabel>
-                          <Select
-                            value={ensembleProvider3}
-                            onChange={(e) =>
-                              updateAiSolverSettings({
-                                ensembleProvider3: e.target.value,
-                                ensembleModel3: DEFAULT_MODELS[e.target.value],
-                              })
-                            }
-                            w="sm"
-                          >
-                            {CONSULT_PROVIDER_OPTIONS.map((item) => (
-                              <option
-                                key={`ensemble3-provider-${item.value}`}
-                                value={item.value}
-                              >
-                                {item.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </SettingsFormControl>
-                        <SettingsFormControl>
-                          <SettingsFormLabel>
-                            {t('Model preset')}
-                          </SettingsFormLabel>
-                          <Select
-                            value={
-                              ensemblePresets3.includes(ensembleModel3)
-                                ? ensembleModel3
-                                : 'custom'
-                            }
-                            onChange={(e) => {
-                              if (e.target.value !== 'custom') {
-                                updateAiSolverSettings({
-                                  ensembleModel3: e.target.value,
-                                })
-                              }
-                            }}
-                            w="sm"
-                          >
-                            {ensemblePresets3.map((value) => (
-                              <option key={`ensemble3-${value}`} value={value}>
-                                {value}
-                              </option>
-                            ))}
-                            <option value="custom">
-                              {t('Custom model id')}
-                            </option>
-                          </Select>
-                        </SettingsFormControl>
-                        <SettingsFormControl>
-                          <SettingsFormLabel>{t('Model')}</SettingsFormLabel>
-                          <Input
-                            value={ensembleModel3}
-                            onChange={(e) =>
-                              updateAiSolverSettings({
-                                ensembleModel3: e.target.value,
-                              })
-                            }
-                            w="sm"
-                          />
-                        </SettingsFormControl>
-                        <SettingsFormControl>
-                          <SettingsFormLabel>{t('Weight')}</SettingsFormLabel>
-                          <Input
-                            type="number"
-                            step="0.05"
-                            min={0.05}
-                            max={10}
-                            value={ensembleProvider3Weight}
-                            onChange={(e) =>
-                              updateAiSolverSettings({
-                                ensembleProvider3Weight: weightOrFallback(
-                                  e.target.value,
-                                  1
-                                ),
-                              })
-                            }
-                            w="sm"
-                          />
-                        </SettingsFormControl>
-                      </Stack>
-                    )}
-                  </Stack>
-                )}
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>{t('Run mode')}</SettingsFormLabel>
-                  <Select
-                    value={aiSolver.mode || 'manual'}
-                    onChange={(e) =>
-                      updateAiSolverSettings({mode: e.target.value})
-                    }
-                    w="xs"
-                  >
-                    <option value="manual">{t('Manual one-click')}</option>
-                    <option value="session-auto">
-                      {t('Auto-run each validation session')}
-                    </option>
-                  </Select>
-                </SettingsFormControl>
-
-                {aiSolver.mode === 'session-auto' && (
-                  <SettingsFormControl>
-                    <SettingsFormLabel>
-                      {t('Delayed auto-report')}
-                    </SettingsFormLabel>
-                    <Stack spacing={3}>
-                      <Flex align="center" justify="space-between">
-                        <Text color="muted" fontSize="sm" maxW="lg" mr={4}>
-                          {t(
-                            'If manual reporting has not started within the grace period after the automatic keyword step begins, let AI review bad flips and submit the long session automatically.'
-                          )}
-                        </Text>
-                        <Switch
-                          isChecked={Boolean(aiSolver.autoReportEnabled)}
-                          onChange={(e) =>
-                            updateAiSolverSettings({
-                              autoReportEnabled: e.target.checked,
-                            })
-                          }
-                        />
-                      </Flex>
-
-                      {aiSolver.autoReportEnabled && (
-                        <SettingsFormControl>
-                          <SettingsFormLabel>
-                            {t('Manual reporting grace period (minutes)')}
+                            {t('Session deadline (ms)')}
                           </SettingsFormLabel>
                           <Input
                             type="number"
-                            min="1"
-                            max="60"
-                            step="1"
-                            value={aiSolver.autoReportDelayMinutes ?? 10}
+                            min={10000}
+                            max={180000}
+                            value={aiSolver.deadlineMs}
+                            onChange={(e) =>
+                              updateNumberField('deadlineMs', e.target.value)
+                            }
+                            w="xs"
+                          />
+                        </SettingsFormControl>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Request timeout (ms)')}
+                          </SettingsFormLabel>
+                          <Input
+                            type="number"
+                            min={1000}
+                            max={30000}
+                            value={aiSolver.requestTimeoutMs}
                             onChange={(e) =>
                               updateNumberField(
-                                'autoReportDelayMinutes',
+                                'requestTimeoutMs',
                                 e.target.value
                               )
                             }
                             w="xs"
                           />
                         </SettingsFormControl>
-                      )}
-                    </Stack>
-                  </SettingsFormControl>
-                )}
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Benchmark profile')}
-                  </SettingsFormLabel>
-                  <Select
-                    value={aiSolver.benchmarkProfile || 'strict'}
-                    onChange={(e) =>
-                      updateAiSolverSettings({benchmarkProfile: e.target.value})
-                    }
-                    w="xs"
-                  >
-                    <option value="strict">{t('Strict default')}</option>
-                    <option value="custom">{t('Custom research')}</option>
-                  </Select>
-                </SettingsFormControl>
-
-                <Text color="muted" fontSize="sm">
-                  {aiSolver.benchmarkProfile === 'strict'
-                    ? t(
-                        'Strict profile targets 6 flips within 60 seconds with fixed retry/output limits and sequential pacing for fair customer-side benchmark comparison.'
-                      )
-                    : t(
-                        'Custom profile allows local overrides for exploratory research. All custom settings are logged in benchmark metrics.'
-                      )}
-                </Text>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>{t('Flip vision mode')}</SettingsFormLabel>
-                  <Select
-                    value={aiSolver.flipVisionMode || 'composite'}
-                    onChange={(e) =>
-                      updateAiSolverSettings({
-                        flipVisionMode: e.target.value,
-                      })
-                    }
-                    w="sm"
-                  >
-                    <option value="composite">
-                      {t('Composite (2 story images)')}
-                    </option>
-                    <option value="frames_single_pass">
-                      {t('Frame-by-frame in one pass')}
-                    </option>
-                    <option value="frames_two_pass">
-                      {t('Frame analysis then decision')}
-                    </option>
-                  </Select>
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Choose whether AI compares 2 composed story images or reasons over all 8 ordered frames.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
-
-                {aiSolver.benchmarkProfile === 'custom' && (
-                  <Stack spacing={3}>
-                    <SettingsFormControl>
-                      <SettingsFormLabel>
-                        {t('Session deadline (ms)')}
-                      </SettingsFormLabel>
-                      <Input
-                        type="number"
-                        min={10000}
-                        max={180000}
-                        value={aiSolver.deadlineMs}
-                        onChange={(e) =>
-                          updateNumberField('deadlineMs', e.target.value)
-                        }
-                        w="xs"
-                      />
-                    </SettingsFormControl>
-                    <SettingsFormControl>
-                      <SettingsFormLabel>
-                        {t('Request timeout (ms)')}
-                      </SettingsFormLabel>
-                      <Input
-                        type="number"
-                        min={1000}
-                        max={30000}
-                        value={aiSolver.requestTimeoutMs}
-                        onChange={(e) =>
-                          updateNumberField('requestTimeoutMs', e.target.value)
-                        }
-                        w="xs"
-                      />
-                    </SettingsFormControl>
-                    <SettingsFormControl>
-                      <SettingsFormLabel>
-                        {t('Max concurrency')}
-                      </SettingsFormLabel>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={6}
-                        value={aiSolver.maxConcurrency}
-                        onChange={(e) =>
-                          updateNumberField('maxConcurrency', e.target.value)
-                        }
-                        w="xs"
-                      />
-                    </SettingsFormControl>
-                    <SettingsFormControl>
-                      <SettingsFormLabel>
-                        {t('Inter-flip delay (ms)')}
-                      </SettingsFormLabel>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={5000}
-                        value={aiSolver.interFlipDelayMs}
-                        onChange={(e) =>
-                          updateNumberField('interFlipDelayMs', e.target.value)
-                        }
-                        w="xs"
-                      />
-                    </SettingsFormControl>
-                    <SettingsFormControl>
-                      <SettingsFormLabel>{t('Max retries')}</SettingsFormLabel>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={3}
-                        value={aiSolver.maxRetries}
-                        onChange={(e) =>
-                          updateNumberField('maxRetries', e.target.value)
-                        }
-                        w="xs"
-                      />
-                    </SettingsFormControl>
-                    <SettingsFormControl>
-                      <SettingsFormLabel>
-                        {t('Max output tokens')}
-                      </SettingsFormLabel>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={8192}
-                        value={aiSolver.maxOutputTokens}
-                        onChange={(e) =>
-                          updateNumberField('maxOutputTokens', e.target.value)
-                        }
-                        w="xs"
-                      />
-                      <Text fontSize="xs" color="muted">
-                        {t(
-                          'Use 0 for auto. Timeouts and session deadline stay the real hard limits.'
-                        )}
-                      </Text>
-                    </SettingsFormControl>
-
-                    <SettingsFormControl>
-                      <SettingsFormLabel>{t('Temperature')}</SettingsFormLabel>
-                      <Input
-                        type="number"
-                        step="0.05"
-                        min={0}
-                        max={2}
-                        value={aiSolver.temperature}
-                        onChange={(e) =>
-                          updateFloatField('temperature', e.target.value)
-                        }
-                        w="xs"
-                      />
-                    </SettingsFormControl>
-
-                    <Flex align="center" justify="space-between">
-                      <Box>
-                        <Text fontWeight={500}>{t('Force decision')}</Text>
-                        <Text color="muted" fontSize="sm">
-                          {t(
-                            'Avoid final skip answers. If uncertainty remains, choose a side deterministically.'
-                          )}
-                        </Text>
-                      </Box>
-                      <Switch
-                        isChecked={!!aiSolver.forceDecision}
-                        onChange={() =>
-                          updateAiSolverSettings({
-                            forceDecision: !aiSolver.forceDecision,
-                          })
-                        }
-                      />
-                    </Flex>
-
-                    <Flex align="center" justify="space-between">
-                      <Box>
-                        <Text fontWeight={500}>
-                          {t('Uncertainty second pass')}
-                        </Text>
-                        <Text color="muted" fontSize="sm">
-                          {t(
-                            'If uncertain and enough time remains, run an additional reasoning pass before final answer.'
-                          )}
-                        </Text>
-                      </Box>
-                      <Switch
-                        isChecked={!!aiSolver.uncertaintyRepromptEnabled}
-                        onChange={() =>
-                          updateAiSolverSettings({
-                            uncertaintyRepromptEnabled:
-                              !aiSolver.uncertaintyRepromptEnabled,
-                          })
-                        }
-                      />
-                    </Flex>
-
-                    {aiSolver.uncertaintyRepromptEnabled && (
-                      <>
                         <SettingsFormControl>
                           <SettingsFormLabel>
-                            {t('Uncertainty confidence threshold (0-1)')}
+                            {t('Max concurrency')}
+                          </SettingsFormLabel>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={6}
+                            value={aiSolver.maxConcurrency}
+                            onChange={(e) =>
+                              updateNumberField(
+                                'maxConcurrency',
+                                e.target.value
+                              )
+                            }
+                            w="xs"
+                          />
+                        </SettingsFormControl>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Inter-flip delay (ms)')}
+                          </SettingsFormLabel>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={5000}
+                            value={aiSolver.interFlipDelayMs}
+                            onChange={(e) =>
+                              updateNumberField(
+                                'interFlipDelayMs',
+                                e.target.value
+                              )
+                            }
+                            w="xs"
+                          />
+                        </SettingsFormControl>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Max retries')}
+                          </SettingsFormLabel>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={3}
+                            value={aiSolver.maxRetries}
+                            onChange={(e) =>
+                              updateNumberField('maxRetries', e.target.value)
+                            }
+                            w="xs"
+                          />
+                        </SettingsFormControl>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Max output tokens')}
+                          </SettingsFormLabel>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={8192}
+                            value={aiSolver.maxOutputTokens}
+                            onChange={(e) =>
+                              updateNumberField(
+                                'maxOutputTokens',
+                                e.target.value
+                              )
+                            }
+                            w="xs"
+                          />
+                          <Text fontSize="xs" color="muted">
+                            {t(
+                              'Use 0 for auto. Timeouts and session deadline stay the real hard limits.'
+                            )}
+                          </Text>
+                        </SettingsFormControl>
+
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Temperature')}
                           </SettingsFormLabel>
                           <Input
                             type="number"
                             step="0.05"
                             min={0}
-                            max={1}
-                            value={aiSolver.uncertaintyConfidenceThreshold}
+                            max={2}
+                            value={aiSolver.temperature}
                             onChange={(e) =>
-                              updateFloatField(
-                                'uncertaintyConfidenceThreshold',
-                                e.target.value
-                              )
+                              updateFloatField('temperature', e.target.value)
                             }
                             w="xs"
                           />
                         </SettingsFormControl>
 
-                        <SettingsFormControl>
-                          <SettingsFormLabel>
-                            {t('Min remaining time for second pass (ms)')}
-                          </SettingsFormLabel>
-                          <Input
-                            type="number"
-                            min={500}
-                            max={30000}
-                            value={aiSolver.uncertaintyRepromptMinRemainingMs}
-                            onChange={(e) =>
-                              updateNumberField(
-                                'uncertaintyRepromptMinRemainingMs',
-                                e.target.value
-                              )
-                            }
-                            w="xs"
-                          />
-                        </SettingsFormControl>
-
-                        <SettingsFormControl>
-                          <SettingsFormLabel>
-                            {t('Second-pass extra instruction (optional)')}
-                          </SettingsFormLabel>
-                          <Input
-                            value={
-                              aiSolver.uncertaintyRepromptInstruction || ''
-                            }
-                            onChange={(e) =>
+                        <Flex align="center" justify="space-between">
+                          <Box>
+                            <Text fontWeight={500}>{t('Force decision')}</Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'Avoid final skip answers. If uncertainty remains, choose a side deterministically.'
+                              )}
+                            </Text>
+                          </Box>
+                          <Switch
+                            isChecked={!!aiSolver.forceDecision}
+                            onChange={() =>
                               updateAiSolverSettings({
-                                uncertaintyRepromptInstruction: e.target.value,
+                                forceDecision: !aiSolver.forceDecision,
                               })
                             }
+                          />
+                        </Flex>
+
+                        <Flex align="center" justify="space-between">
+                          <Box>
+                            <Text fontWeight={500}>
+                              {t('Uncertainty second pass')}
+                            </Text>
+                            <Text color="muted" fontSize="sm">
+                              {t(
+                                'If uncertain and enough time remains, run an additional reasoning pass before final answer.'
+                              )}
+                            </Text>
+                          </Box>
+                          <Switch
+                            isChecked={!!aiSolver.uncertaintyRepromptEnabled}
+                            onChange={() =>
+                              updateAiSolverSettings({
+                                uncertaintyRepromptEnabled:
+                                  !aiSolver.uncertaintyRepromptEnabled,
+                              })
+                            }
+                          />
+                        </Flex>
+
+                        {aiSolver.uncertaintyRepromptEnabled && (
+                          <>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Uncertainty confidence threshold (0-1)')}
+                              </SettingsFormLabel>
+                              <Input
+                                type="number"
+                                step="0.05"
+                                min={0}
+                                max={1}
+                                value={aiSolver.uncertaintyConfidenceThreshold}
+                                onChange={(e) =>
+                                  updateFloatField(
+                                    'uncertaintyConfidenceThreshold',
+                                    e.target.value
+                                  )
+                                }
+                                w="xs"
+                              />
+                            </SettingsFormControl>
+
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Min remaining time for second pass (ms)')}
+                              </SettingsFormLabel>
+                              <Input
+                                type="number"
+                                min={500}
+                                max={30000}
+                                value={
+                                  aiSolver.uncertaintyRepromptMinRemainingMs
+                                }
+                                onChange={(e) =>
+                                  updateNumberField(
+                                    'uncertaintyRepromptMinRemainingMs',
+                                    e.target.value
+                                  )
+                                }
+                                w="xs"
+                              />
+                            </SettingsFormControl>
+
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Second-pass extra instruction (optional)')}
+                              </SettingsFormLabel>
+                              <Input
+                                value={
+                                  aiSolver.uncertaintyRepromptInstruction || ''
+                                }
+                                onChange={(e) =>
+                                  updateAiSolverSettings({
+                                    uncertaintyRepromptInstruction:
+                                      e.target.value,
+                                  })
+                                }
+                                w="xl"
+                                placeholder={t(
+                                  'Example: Compare temporal order strictly, then pick the more coherent narrative.'
+                                )}
+                              />
+                            </SettingsFormControl>
+                          </>
+                        )}
+
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Prompt template override (optional)')}
+                          </SettingsFormLabel>
+                          <Textarea
+                            value={aiSolver.promptTemplateOverride || ''}
+                            onChange={(e) =>
+                              updateAiSolverSettings({
+                                promptTemplateOverride: e.target.value,
+                              })
+                            }
+                            minH="120px"
+                            maxH="280px"
                             w="xl"
                             placeholder={t(
-                              'Example: Compare temporal order strictly, then pick the more coherent narrative.'
+                              'Use {{hash}}, {{allowSkip}}, {{secondPass}}, {{allowedAnswers}} placeholders.'
                             )}
                           />
                         </SettingsFormControl>
-                      </>
+                      </Stack>
                     )}
-
-                    <SettingsFormControl>
-                      <SettingsFormLabel>
-                        {t('Prompt template override (optional)')}
-                      </SettingsFormLabel>
-                      <Textarea
-                        value={aiSolver.promptTemplateOverride || ''}
-                        onChange={(e) =>
-                          updateAiSolverSettings({
-                            promptTemplateOverride: e.target.value,
-                          })
-                        }
-                        minH="120px"
-                        maxH="280px"
-                        w="xl"
-                        placeholder={t(
-                          'Use {{hash}}, {{allowSkip}}, {{secondPass}}, {{allowedAnswers}} placeholders.'
-                        )}
-                      />
-                    </SettingsFormControl>
-                  </Stack>
-                )}
+                  </>
+                ) : null}
               </>
             ) : null}
           </Stack>
         </SettingsSection>
 
-        <SettingsSection title={t('Local AI')}>
-          <Stack spacing={4}>
-            <Text color="muted" fontSize="sm">
-              {t(
-                'These settings are local-only and opt-in. IdenaAI should expose its own branded text and multimodal identities here; the runtime backend below is only the local transport and compatibility layer.'
-              )}
-            </Text>
-
-            <Flex align="center" justify="space-between">
-              <Box>
-                <Text fontWeight={500}>{t('Enable local AI')}</Text>
-                <Text color="muted" fontSize="sm">
-                  {t(
-                    'Keep this off until a local runtime is available on this machine.'
-                  )}
-                </Text>
-              </Box>
-              <Switch
-                isChecked={!!localAi.enabled}
-                onChange={() =>
-                  updateLocalAiSettings({enabled: !localAi.enabled})
-                }
-              />
-            </Flex>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Runtime mode')}</SettingsFormLabel>
-              <Select
-                value={localAi.runtimeMode || 'sidecar'}
-                onChange={(e) =>
-                  updateLocalAiSettings({runtimeMode: e.target.value})
-                }
-                w="xs"
-              >
-                <option value="sidecar">{t('Sidecar')}</option>
-              </Select>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Runtime backend')}</SettingsFormLabel>
-              <Select
-                value={
-                  localAi.runtimeBackend ||
-                  DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
-                }
-                onChange={(e) => applyLocalAiRuntimeBackend(e.target.value)}
-                w="xl"
-              >
-                {LOCAL_AI_RUNTIME_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {t(option.label)}
-                  </option>
-                ))}
-              </Select>
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'Use Ollama for local Mac inference unless you are intentionally running a custom legacy sidecar on another local port.'
-                )}
-              </Text>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Reasoner backend')}</SettingsFormLabel>
-              <Input
-                value={localAi.reasonerBackend || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({reasonerBackend: e.target.value})
-                }
-                placeholder="local-reasoner"
-                w="xl"
-              />
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Vision backend')}</SettingsFormLabel>
-              <Input
-                value={localAi.visionBackend || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({visionBackend: e.target.value})
-                }
-                placeholder="local-vision"
-                w="xl"
-              />
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>
-                {t('Branded text model name')}
-              </SettingsFormLabel>
-              <Input
-                value={localAi.publicModelId || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({publicModelId: e.target.value})
-                }
-                placeholder={DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID}
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'This is the product-facing text identity exposed by IdenaAI, independent of the backend model override.'
-                )}
-              </Text>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>
-                {t('Branded multimodal model name')}
-              </SettingsFormLabel>
-              <Input
-                value={localAi.publicVisionId || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({publicVisionId: e.target.value})
-                }
-                placeholder={DEFAULT_LOCAL_AI_PUBLIC_VISION_ID}
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {t(
-                  'Use this for the image-aware and flip-aware IdenaAI identity that sits above the local transport.'
-                )}
-              </Text>
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>{t('Contract version')}</SettingsFormLabel>
-              <Input
-                value={localAi.contractVersion || ''}
-                onChange={(e) =>
-                  updateLocalAiSettings({contractVersion: e.target.value})
-                }
-                placeholder="idena-local/v1"
-                w="xl"
-              />
-            </SettingsFormControl>
-
-            <SettingsFormControl>
-              <SettingsFormLabel>
-                {t('Local runtime endpoint')}
-              </SettingsFormLabel>
-              <Input
-                value={localAiRuntimeUrl}
-                onChange={(e) =>
-                  updateLocalAiSettings({
-                    baseUrl: e.target.value,
-                    endpoint: e.target.value,
-                  })
-                }
-                placeholder="http://127.0.0.1:11434"
-                w="xl"
-              />
-              <Text color="muted" fontSize="sm" mt={1}>
-                {localAi.runtimeBackend === 'ollama-direct'
-                  ? t(
-                      'Recommended local runtime endpoint: http://127.0.0.1:11434. Default local text model: llama3.1:8b. Default local vision model: {{visionModel}}. Local MLX training is a separate path: {{trainingModel}} is the recommended strong-Mac target, {{strongFallbackModel}} is the stronger fallback, and {{fallbackModel}} remains the safe minimum fallback.',
-                      {
-                        visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
-                        trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-                        strongFallbackModel:
-                          STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
-                        fallbackModel: FALLBACK_LOCAL_AI_TRAINING_MODEL,
-                      }
-                    )
-                  : t(
-                      'Use a loopback URL for a custom local sidecar, for example http://127.0.0.1:5000.'
-                    )}
-              </Text>
-              {!localAiEndpointSafety.safe && (
-                <Text color="red.500" fontSize="sm" mt={1}>
-                  {localAiEndpointSafety.message}
-                </Text>
-              )}
-            </SettingsFormControl>
-
-            <Stack isInline spacing={2}>
-              <SecondaryButton onClick={applyRecommendedLocalAiSetup}>
-                {t('Use recommended Mac VLM setup')}
-              </SecondaryButton>
-            </Stack>
-            <Text color="muted" fontSize="sm">
-              {t(
-                'Runtime model: Ollama at http://127.0.0.1:11434 with {{visionModel}}. Training model: {{trainingModel}}. Benchmark and matrix runs use that MLX base by default. Stronger fallback: {{strongFallbackModel}}. Safe fallback: {{fallbackModel}}.',
-                {
-                  visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
-                  trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-                  strongFallbackModel: STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
-                  fallbackModel: FALLBACK_LOCAL_AI_TRAINING_MODEL,
-                }
-              )}
-            </Text>
-
-            <Stack spacing={2} align="flex-start">
-              <SecondaryButton
-                onClick={() =>
-                  setShowLocalAiCompatibilityOverrides((value) => !value)
-                }
-              >
-                {showLocalAiCompatibilityOverrides
-                  ? t('Hide runtime compatibility overrides')
-                  : t('Show runtime compatibility overrides')}
-              </SecondaryButton>
+        {showLocalAiSetup ? (
+          <SettingsSection title={t('Local AI')}>
+            <Stack spacing={4}>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'These legacy override fields are only for wire/runtime compatibility. They are not the public Idena product identity.'
+                  'These settings are local-only and opt-in. IdenaAI should expose its own branded text and multimodal identities here; the runtime backend below is only the local transport and compatibility layer.'
                 )}
               </Text>
-            </Stack>
 
-            {showLocalAiCompatibilityOverrides ? (
-              <>
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Reasoner model override')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={localAi.model || ''}
-                    onChange={(e) =>
-                      updateLocalAiSettings({model: e.target.value})
-                    }
-                    placeholder={t('Leave blank to use the runtime default')}
-                    w="xl"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Compatibility override for the current local runtime wire contract. This is not the product identity.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Vision model override')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={
-                      typeof localAi.visionModel === 'string'
-                        ? localAi.visionModel
-                        : ''
-                    }
-                    onChange={(e) =>
-                      updateLocalAiSettings({visionModel: e.target.value})
-                    }
-                    placeholder={t('Leave blank to use the runtime default')}
-                    w="xl"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Compatibility override for the current image-aware runtime path. On stronger Macs, {{visionModel}} is the recommended Ollama vision model. Install it with: ollama pull {{visionModel}}',
-                      {
-                        visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
-                      }
-                    )}
-                  </Text>
-                </SettingsFormControl>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Wire runtime type')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={localAi.runtimeType || ''}
-                    onChange={(e) =>
-                      updateLocalAiSettings({runtimeType: e.target.value})
-                    }
-                    placeholder={localAiWireRuntimeType}
-                    w="xl"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Legacy compatibility field for the current runtime bridge. Leave blank unless you need to force a wire-level runtime.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Wire runtime family')}
-                  </SettingsFormLabel>
-                  <Input
-                    value={localAi.runtimeFamily || ''}
-                    onChange={(e) =>
-                      updateLocalAiSettings({runtimeFamily: e.target.value})
-                    }
-                    placeholder={localAi.reasonerBackend || 'local-reasoner'}
-                    w="xl"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Legacy compatibility label retained for old payloads and persisted settings.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
-              </>
-            ) : null}
-
-            <Flex align="center" justify="space-between">
-              <Box>
-                <Text fontWeight={500}>
-                  {t('Capture eligible flips locally')}
-                </Text>
-                <Text color="muted" fontSize="sm">
-                  {t(
-                    'Stores the local capture preference only. This does not change cloud-provider behavior.'
-                  )}
-                </Text>
-              </Box>
-              <Switch
-                isChecked={!!localAi.captureEnabled}
-                onChange={() =>
-                  updateLocalAiSettings({
-                    captureEnabled: !localAi.captureEnabled,
-                  })
-                }
-              />
-            </Flex>
-
-            <Box
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="md"
-              p={3}
-            >
-              <Stack spacing={3}>
+              <Flex align="center" justify="space-between">
                 <Box>
-                  <Text fontWeight={500}>{t('Training ranking policy')}</Text>
+                  <Text fontWeight={500}>{t('Enable local AI')}</Text>
                   <Text color="muted" fontSize="sm">
                     {t(
-                      'Modern flips should be ranked from your own local node and local index snapshot first. Public indexer data is only a fallback when local ranking data is missing.'
+                      'Keep this off until a local runtime is available on this machine.'
                     )}
                   </Text>
                 </Box>
+                <Switch
+                  isChecked={!!localAi.enabled}
+                  onChange={() =>
+                    updateLocalAiSettings({enabled: !localAi.enabled})
+                  }
+                />
+              </Flex>
 
-                <Flex align="center" justify="space-between">
-                  <Box>
-                    <Text fontWeight={500}>
-                      {t('Allow public indexer fallback')}
-                    </Text>
-                    <Text color="muted" fontSize="sm">
-                      {t(
-                        'Keep ranking alive if your local index snapshot is incomplete or offline during a training-package build.'
+              <SettingsFormControl>
+                <SettingsFormLabel>{t('Runtime mode')}</SettingsFormLabel>
+                <Select
+                  value={localAi.runtimeMode || 'sidecar'}
+                  onChange={(e) =>
+                    updateLocalAiSettings({runtimeMode: e.target.value})
+                  }
+                  w="xs"
+                >
+                  <option value="sidecar">{t('Sidecar')}</option>
+                </Select>
+              </SettingsFormControl>
+
+              <SettingsFormControl>
+                <SettingsFormLabel>{t('Runtime backend')}</SettingsFormLabel>
+                <Select
+                  value={
+                    localAi.runtimeBackend ||
+                    DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
+                  }
+                  onChange={(e) => applyLocalAiRuntimeBackend(e.target.value)}
+                  w="xl"
+                >
+                  {LOCAL_AI_RUNTIME_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {t(option.label)}
+                    </option>
+                  ))}
+                </Select>
+                <Text color="muted" fontSize="sm" mt={1}>
+                  {t(
+                    'Use Ollama for local Mac inference unless you are intentionally running a custom legacy sidecar on another local port.'
+                  )}
+                </Text>
+              </SettingsFormControl>
+
+              <SettingsFormControl>
+                <SettingsFormLabel>{t('Reasoner backend')}</SettingsFormLabel>
+                <Input
+                  value={localAi.reasonerBackend || ''}
+                  onChange={(e) =>
+                    updateLocalAiSettings({reasonerBackend: e.target.value})
+                  }
+                  placeholder="local-reasoner"
+                  w="xl"
+                />
+              </SettingsFormControl>
+
+              <SettingsFormControl>
+                <SettingsFormLabel>{t('Vision backend')}</SettingsFormLabel>
+                <Input
+                  value={localAi.visionBackend || ''}
+                  onChange={(e) =>
+                    updateLocalAiSettings({visionBackend: e.target.value})
+                  }
+                  placeholder="local-vision"
+                  w="xl"
+                />
+              </SettingsFormControl>
+
+              <SettingsFormControl>
+                <SettingsFormLabel>
+                  {t('Branded text model name')}
+                </SettingsFormLabel>
+                <Input
+                  value={localAi.publicModelId || ''}
+                  onChange={(e) =>
+                    updateLocalAiSettings({publicModelId: e.target.value})
+                  }
+                  placeholder={DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID}
+                  w="xl"
+                />
+                <Text color="muted" fontSize="sm" mt={1}>
+                  {t(
+                    'This is the product-facing text identity exposed by IdenaAI, independent of the backend model override.'
+                  )}
+                </Text>
+              </SettingsFormControl>
+
+              <SettingsFormControl>
+                <SettingsFormLabel>
+                  {t('Branded multimodal model name')}
+                </SettingsFormLabel>
+                <Input
+                  value={localAi.publicVisionId || ''}
+                  onChange={(e) =>
+                    updateLocalAiSettings({publicVisionId: e.target.value})
+                  }
+                  placeholder={DEFAULT_LOCAL_AI_PUBLIC_VISION_ID}
+                  w="xl"
+                />
+                <Text color="muted" fontSize="sm" mt={1}>
+                  {t(
+                    'Use this for the image-aware and flip-aware IdenaAI identity that sits above the local transport.'
+                  )}
+                </Text>
+              </SettingsFormControl>
+
+              <SettingsFormControl>
+                <SettingsFormLabel>{t('Contract version')}</SettingsFormLabel>
+                <Input
+                  value={localAi.contractVersion || ''}
+                  onChange={(e) =>
+                    updateLocalAiSettings({contractVersion: e.target.value})
+                  }
+                  placeholder="idena-local/v1"
+                  w="xl"
+                />
+              </SettingsFormControl>
+
+              <SettingsFormControl>
+                <SettingsFormLabel>
+                  {t('Local runtime endpoint')}
+                </SettingsFormLabel>
+                <Input
+                  value={localAiRuntimeUrl}
+                  onChange={(e) =>
+                    updateLocalAiSettings({
+                      baseUrl: e.target.value,
+                      endpoint: e.target.value,
+                    })
+                  }
+                  placeholder="http://127.0.0.1:11434"
+                  w="xl"
+                />
+                <Text color="muted" fontSize="sm" mt={1}>
+                  {localAi.runtimeBackend === 'ollama-direct'
+                    ? t(
+                        'Recommended local runtime endpoint: http://127.0.0.1:11434. Default local text model: llama3.1:8b. Default local vision model: {{visionModel}}. Local MLX training is a separate path: {{trainingModel}} is the recommended strong-Mac target, {{strongFallbackModel}} is the stronger fallback, and {{fallbackModel}} remains the safe minimum fallback.',
+                        {
+                          visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+                          trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+                          strongFallbackModel:
+                            STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
+                          fallbackModel: FALLBACK_LOCAL_AI_TRAINING_MODEL,
+                        }
+                      )
+                    : t(
+                        'Use a loopback URL for a custom local sidecar, for example http://127.0.0.1:5000.'
                       )}
-                    </Text>
-                  </Box>
-                  <Switch
-                    isChecked={
-                      localAi.rankingPolicy.allowPublicIndexerFallback !== false
-                    }
-                    onChange={() =>
-                      updateLocalAiSettings({
-                        rankingPolicy: {
-                          allowPublicIndexerFallback:
-                            localAi.rankingPolicy.allowPublicIndexerFallback ===
-                            false,
-                        },
-                      })
-                    }
-                  />
-                </Flex>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Extra-flip baseline')}
-                  </SettingsFormLabel>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={String(localAi.rankingPolicy.extraFlipBaseline ?? 3)}
-                    onChange={(e) =>
-                      updateLocalAiSettings({
-                        rankingPolicy: {
-                          extraFlipBaseline: Number.parseInt(
-                            e.target.value,
-                            10
-                          ),
-                        },
-                      })
-                    }
-                    w="xs"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Authors above this flip count in one epoch are downweighted as extra-flip producers.'
-                    )}
+                </Text>
+                {!localAiEndpointSafety.safe && (
+                  <Text color="red.500" fontSize="sm" mt={1}>
+                    {localAiEndpointSafety.message}
                   </Text>
-                </SettingsFormControl>
+                )}
+              </SettingsFormControl>
 
-                <Flex align="center" justify="space-between">
-                  <Box>
-                    <Text fontWeight={500}>{t('Exclude bad authors')}</Text>
-                    <Text color="muted" fontSize="sm">
-                      {t(
-                        'Drop flips entirely when the author is flagged for WrongWords in the ranking layer.'
-                      )}
-                    </Text>
-                  </Box>
-                  <Switch
-                    isChecked={localAi.rankingPolicy.excludeBadAuthors === true}
-                    onChange={() =>
-                      updateLocalAiSettings({
-                        rankingPolicy: {
-                          excludeBadAuthors:
-                            localAi.rankingPolicy.excludeBadAuthors !== true,
-                        },
-                      })
-                    }
-                  />
-                </Flex>
-
-                <Flex align="center" justify="space-between">
-                  <Box>
-                    <Text fontWeight={500}>
-                      {t('Exclude repeated report offenders')}
-                    </Text>
-                    <Text color="muted" fontSize="sm">
-                      {t(
-                        'Optionally remove flips from authors who repeatedly accumulate reported or wrongWords-style penalties.'
-                      )}
-                    </Text>
-                  </Box>
-                  <Switch
-                    isChecked={
-                      localAi.rankingPolicy.excludeRepeatReportOffenders ===
-                      true
-                    }
-                    onChange={() =>
-                      updateLocalAiSettings({
-                        rankingPolicy: {
-                          excludeRepeatReportOffenders:
-                            localAi.rankingPolicy
-                              .excludeRepeatReportOffenders !== true,
-                        },
-                      })
-                    }
-                  />
-                </Flex>
-
-                <SettingsFormControl>
-                  <SettingsFormLabel>
-                    {t('Allowed repeat offenses before exclusion')}
-                  </SettingsFormLabel>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={String(
-                      localAi.rankingPolicy.maxRepeatReportOffenses ?? 1
-                    )}
-                    onChange={(e) =>
-                      updateLocalAiSettings({
-                        rankingPolicy: {
-                          maxRepeatReportOffenses: Number.parseInt(
-                            e.target.value,
-                            10
-                          ),
-                        },
-                      })
-                    }
-                    w="xs"
-                  />
-                  <Text color="muted" fontSize="sm" mt={1}>
-                    {t(
-                      'Used only when repeated-offender exclusion is enabled. Higher-quality modern flips automatically receive stronger training weights.'
-                    )}
-                  </Text>
-                </SettingsFormControl>
+              <Stack isInline spacing={2}>
+                <SecondaryButton onClick={applyRecommendedLocalAiSetup}>
+                  {t('Use recommended Mac VLM setup')}
+                </SecondaryButton>
               </Stack>
-            </Box>
+              <Text color="muted" fontSize="sm">
+                {t(
+                  'Runtime model: Ollama at http://127.0.0.1:11434 with {{visionModel}}. Training model: {{trainingModel}}. Benchmark and matrix runs use that MLX base by default. Stronger fallback: {{strongFallbackModel}}. Safe fallback: {{fallbackModel}}.',
+                  {
+                    visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+                    trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+                    strongFallbackModel:
+                      STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
+                    fallbackModel: FALLBACK_LOCAL_AI_TRAINING_MODEL,
+                  }
+                )}
+              </Text>
 
-            <Flex align="center" justify="space-between">
-              <Box>
-                <Text fontWeight={500}>{t('Enable federated updates')}</Text>
+              <Stack spacing={2} align="flex-start">
+                <SecondaryButton
+                  onClick={() =>
+                    setShowLocalAiCompatibilityOverrides((value) => !value)
+                  }
+                >
+                  {showLocalAiCompatibilityOverrides
+                    ? t('Hide runtime compatibility overrides')
+                    : t('Show runtime compatibility overrides')}
+                </SecondaryButton>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'Stores the future federated-learning preference only. No background sharing starts in this build.'
+                    'These legacy override fields are only for wire/runtime compatibility. They are not the public Idena product identity.'
                   )}
                 </Text>
-              </Box>
-              <Switch
-                isChecked={!!localAi.federated.enabled}
-                onChange={() =>
-                  updateLocalAiSettings({
-                    federated: {
-                      enabled: !localAi.federated.enabled,
-                    },
-                  })
-                }
-              />
-            </Flex>
+              </Stack>
 
-            <Box
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="md"
-              p={3}
-            >
-              <Stack spacing={2}>
-                <Text fontWeight={500}>{t('Runtime control')}</Text>
-                <Text color="muted" fontSize="sm">
-                  {t(
-                    'These controls only probe or mark the optional local runtime. Cloud provider flows stay unchanged unless you explicitly choose Local AI.'
-                  )}
-                </Text>
-                <Box bg="gray.50" borderRadius="md" p={3}>
-                  <Stack spacing={1}>
-                    <Text color={localAiRuntimeStatus.tone} fontWeight={500}>
-                      {localAiRuntimeStatus.title}
+              {showLocalAiCompatibilityOverrides ? (
+                <>
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Reasoner model override')}
+                    </SettingsFormLabel>
+                    <Input
+                      value={localAi.model || ''}
+                      onChange={(e) =>
+                        updateLocalAiSettings({model: e.target.value})
+                      }
+                      placeholder={t('Leave blank to use the runtime default')}
+                      w="xl"
+                    />
+                    <Text color="muted" fontSize="sm" mt={1}>
+                      {t(
+                        'Compatibility override for the current local runtime wire contract. This is not the product identity.'
+                      )}
                     </Text>
-                    <Text color="muted" fontSize="sm">
-                      {localAiRuntimeStatus.description}
+                  </SettingsFormControl>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Vision model override')}
+                    </SettingsFormLabel>
+                    <Input
+                      value={
+                        typeof localAi.visionModel === 'string'
+                          ? localAi.visionModel
+                          : ''
+                      }
+                      onChange={(e) =>
+                        updateLocalAiSettings({visionModel: e.target.value})
+                      }
+                      placeholder={t('Leave blank to use the runtime default')}
+                      w="xl"
+                    />
+                    <Text color="muted" fontSize="sm" mt={1}>
+                      {t(
+                        'Compatibility override for the current image-aware runtime path. On stronger Macs, {{visionModel}} is the recommended Ollama vision model. Install it with: ollama pull {{visionModel}}',
+                        {
+                          visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+                        }
+                      )}
                     </Text>
-                  </Stack>
+                  </SettingsFormControl>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Wire runtime type')}
+                    </SettingsFormLabel>
+                    <Input
+                      value={localAi.runtimeType || ''}
+                      onChange={(e) =>
+                        updateLocalAiSettings({runtimeType: e.target.value})
+                      }
+                      placeholder={localAiWireRuntimeType}
+                      w="xl"
+                    />
+                    <Text color="muted" fontSize="sm" mt={1}>
+                      {t(
+                        'Legacy compatibility field for the current runtime bridge. Leave blank unless you need to force a wire-level runtime.'
+                      )}
+                    </Text>
+                  </SettingsFormControl>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Wire runtime family')}
+                    </SettingsFormLabel>
+                    <Input
+                      value={localAi.runtimeFamily || ''}
+                      onChange={(e) =>
+                        updateLocalAiSettings({runtimeFamily: e.target.value})
+                      }
+                      placeholder={localAi.reasonerBackend || 'local-reasoner'}
+                      w="xl"
+                    />
+                    <Text color="muted" fontSize="sm" mt={1}>
+                      {t(
+                        'Legacy compatibility label retained for old payloads and persisted settings.'
+                      )}
+                    </Text>
+                  </SettingsFormControl>
+                </>
+              ) : null}
+
+              <Flex align="center" justify="space-between">
+                <Box>
+                  <Text fontWeight={500}>
+                    {t('Capture eligible flips locally')}
+                  </Text>
+                  <Text color="muted" fontSize="sm">
+                    {t(
+                      'Stores the local capture preference only. This does not change cloud-provider behavior.'
+                    )}
+                  </Text>
                 </Box>
-                <Stack isInline spacing={2}>
-                  <SecondaryButton
-                    isDisabled={!localAi.enabled || isStartingLocalAi}
-                    onClick={async () => {
-                      setIsStartingLocalAi(true)
+                <Switch
+                  isChecked={!!localAi.captureEnabled}
+                  onChange={() =>
+                    updateLocalAiSettings({
+                      captureEnabled: !localAi.captureEnabled,
+                    })
+                  }
+                />
+              </Flex>
 
-                      try {
-                        const result = normalizeLocalAiStatusResult(
-                          await ensureLocalAiBridge().start(
-                            localAiRuntimePayload
-                          ),
-                          localAiRuntimeUrl
-                        )
-                        setLocalAiStatusResult(result)
-
-                        notify(
-                          t('Local AI runtime updated'),
-                          formatLocalAiStatusDescription(result, t),
-                          result && result.status === 'ok'
-                            ? 'success'
-                            : 'warning'
-                        )
-                      } catch (error) {
-                        notify(
-                          t('Unable to start Local AI'),
-                          formatErrorForToast(error),
-                          'error'
-                        )
-                      } finally {
-                        setIsStartingLocalAi(false)
-                      }
-                    }}
-                  >
-                    {t('Start local runtime')}
-                  </SecondaryButton>
-                  <SecondaryButton
-                    isDisabled={!localAi.enabled || isStoppingLocalAi}
-                    onClick={async () => {
-                      setIsStoppingLocalAi(true)
-
-                      try {
-                        await ensureLocalAiBridge().stop()
-                        setLocalAiStatusResult(
-                          normalizeLocalAiStatusResult(
-                            {
-                              enabled: true,
-                              status: 'error',
-                              runtime:
-                                localAi.runtimeBackend ||
-                                DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
-                              baseUrl: localAiRuntimeUrl,
-                              error: t('Local AI runtime is idle.'),
-                              lastError: t('Local AI runtime is idle.'),
-                            },
-                            localAiRuntimeUrl
-                          )
-                        )
-
-                        notify(
-                          t('Local AI runtime stopped'),
-                          t(
-                            'The optional Local AI bridge is now idle. Existing cloud providers were not changed.'
-                          ),
-                          'info'
-                        )
-                      } catch (error) {
-                        notify(
-                          t('Unable to stop Local AI'),
-                          formatErrorForToast(error),
-                          'error'
-                        )
-                      } finally {
-                        setIsStoppingLocalAi(false)
-                      }
-                    }}
-                  >
-                    {t('Stop local runtime')}
-                  </SecondaryButton>
-                  <SecondaryButton
-                    isDisabled={!localAi.enabled || isCheckingLocalAi}
-                    onClick={async () => {
-                      try {
-                        const result = await requestLocalAiStatus()
-
-                        notify(
-                          result && result.status === 'ok'
-                            ? t('Local AI runtime reachable')
-                            : t('Local AI runtime unavailable'),
-                          formatLocalAiStatusDescription(result, t),
-                          result && result.status === 'ok'
-                            ? 'success'
-                            : 'warning'
-                        )
-                      } catch (error) {
-                        notify(
-                          t('Unable to check Local AI status'),
-                          formatErrorForToast(error),
-                          'error'
-                        )
-                      }
-                    }}
-                  >
-                    {t('Check status')}
-                  </SecondaryButton>
-                </Stack>
-                <Text color="muted" fontSize="sm">
-                  {t(
-                    'Choose Local AI as the main provider above to route the solver through this runtime. OpenAI-compatible (custom) remains available for third-party compatible endpoints.'
-                  )}
-                </Text>
-              </Stack>
-            </Box>
-
-            {localAi.enabled ? (
               <Box
                 borderWidth="1px"
-                borderColor="orange.100"
+                borderColor="gray.100"
                 borderRadius="md"
                 p={3}
-                bg="orange.012"
               >
                 <Stack spacing={3}>
-                  <Text fontWeight={500}>{t('Local AI Debug')}</Text>
-                  <Text color="muted" fontSize="sm">
-                    {t('Developer test tools. No cloud fallback.')}
-                  </Text>
+                  <Box>
+                    <Text fontWeight={500}>{t('Training ranking policy')}</Text>
+                    <Text color="muted" fontSize="sm">
+                      {t(
+                        'Modern flips should be ranked from your own local node and local index snapshot first. Public indexer data is only a fallback when local ranking data is missing.'
+                      )}
+                    </Text>
+                  </Box>
 
-                  <Box bg="white" borderRadius="md" p={3}>
-                    <Stack spacing={2}>
-                      <Flex align="center" justify="space-between">
-                        <Box>
-                          <Text fontWeight={500}>{t('Runtime status')}</Text>
-                          <Text color="muted" fontSize="sm">
-                            {localAiRuntimeStatus.description}
+                  <Flex align="center" justify="space-between">
+                    <Box>
+                      <Text fontWeight={500}>
+                        {t('Allow public indexer fallback')}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Keep ranking alive if your local index snapshot is incomplete or offline during a training-package build.'
+                        )}
+                      </Text>
+                    </Box>
+                    <Switch
+                      isChecked={
+                        localAi.rankingPolicy.allowPublicIndexerFallback !==
+                        false
+                      }
+                      onChange={() =>
+                        updateLocalAiSettings({
+                          rankingPolicy: {
+                            allowPublicIndexerFallback:
+                              localAi.rankingPolicy
+                                .allowPublicIndexerFallback === false,
+                          },
+                        })
+                      }
+                    />
+                  </Flex>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Extra-flip baseline')}
+                    </SettingsFormLabel>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={String(
+                        localAi.rankingPolicy.extraFlipBaseline ?? 3
+                      )}
+                      onChange={(e) =>
+                        updateLocalAiSettings({
+                          rankingPolicy: {
+                            extraFlipBaseline: Number.parseInt(
+                              e.target.value,
+                              10
+                            ),
+                          },
+                        })
+                      }
+                      w="xs"
+                    />
+                    <Text color="muted" fontSize="sm" mt={1}>
+                      {t(
+                        'Authors above this flip count in one epoch are downweighted as extra-flip producers.'
+                      )}
+                    </Text>
+                  </SettingsFormControl>
+
+                  <Flex align="center" justify="space-between">
+                    <Box>
+                      <Text fontWeight={500}>{t('Exclude bad authors')}</Text>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Drop flips entirely when the author is flagged for WrongWords in the ranking layer.'
+                        )}
+                      </Text>
+                    </Box>
+                    <Switch
+                      isChecked={
+                        localAi.rankingPolicy.excludeBadAuthors === true
+                      }
+                      onChange={() =>
+                        updateLocalAiSettings({
+                          rankingPolicy: {
+                            excludeBadAuthors:
+                              localAi.rankingPolicy.excludeBadAuthors !== true,
+                          },
+                        })
+                      }
+                    />
+                  </Flex>
+
+                  <Flex align="center" justify="space-between">
+                    <Box>
+                      <Text fontWeight={500}>
+                        {t('Exclude repeated report offenders')}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'Optionally remove flips from authors who repeatedly accumulate reported or wrongWords-style penalties.'
+                        )}
+                      </Text>
+                    </Box>
+                    <Switch
+                      isChecked={
+                        localAi.rankingPolicy.excludeRepeatReportOffenders ===
+                        true
+                      }
+                      onChange={() =>
+                        updateLocalAiSettings({
+                          rankingPolicy: {
+                            excludeRepeatReportOffenders:
+                              localAi.rankingPolicy
+                                .excludeRepeatReportOffenders !== true,
+                          },
+                        })
+                      }
+                    />
+                  </Flex>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Allowed repeat offenses before exclusion')}
+                    </SettingsFormLabel>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={String(
+                        localAi.rankingPolicy.maxRepeatReportOffenses ?? 1
+                      )}
+                      onChange={(e) =>
+                        updateLocalAiSettings({
+                          rankingPolicy: {
+                            maxRepeatReportOffenses: Number.parseInt(
+                              e.target.value,
+                              10
+                            ),
+                          },
+                        })
+                      }
+                      w="xs"
+                    />
+                    <Text color="muted" fontSize="sm" mt={1}>
+                      {t(
+                        'Used only when repeated-offender exclusion is enabled. Higher-quality modern flips automatically receive stronger training weights.'
+                      )}
+                    </Text>
+                  </SettingsFormControl>
+                </Stack>
+              </Box>
+
+              <Flex align="center" justify="space-between">
+                <Box>
+                  <Text fontWeight={500}>{t('Enable federated updates')}</Text>
+                  <Text color="muted" fontSize="sm">
+                    {t(
+                      'Stores the future federated-learning preference only. No background sharing starts in this build.'
+                    )}
+                  </Text>
+                </Box>
+                <Switch
+                  isChecked={!!localAi.federated.enabled}
+                  onChange={() =>
+                    updateLocalAiSettings({
+                      federated: {
+                        enabled: !localAi.federated.enabled,
+                      },
+                    })
+                  }
+                />
+              </Flex>
+
+              <Box
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="md"
+                p={3}
+              >
+                <Stack spacing={2}>
+                  <Text fontWeight={500}>{t('Runtime control')}</Text>
+                  <Text color="muted" fontSize="sm">
+                    {t(
+                      'These controls only probe or mark the optional local runtime. Cloud provider flows stay unchanged unless you explicitly choose Local AI.'
+                    )}
+                  </Text>
+                  <Box bg="gray.50" borderRadius="md" p={3}>
+                    <Stack spacing={1}>
+                      <Text color={localAiRuntimeStatus.tone} fontWeight={500}>
+                        {localAiRuntimeStatus.title}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {localAiRuntimeStatus.description}
+                      </Text>
+                    </Stack>
+                  </Box>
+                  <Stack isInline spacing={2}>
+                    <SecondaryButton
+                      isDisabled={!localAi.enabled || isStartingLocalAi}
+                      onClick={async () => {
+                        setIsStartingLocalAi(true)
+
+                        try {
+                          const result = normalizeLocalAiStatusResult(
+                            await ensureLocalAiBridge().start(
+                              localAiRuntimePayload
+                            ),
+                            localAiRuntimeUrl
+                          )
+                          setLocalAiStatusResult(result)
+
+                          notify(
+                            t('Local AI runtime updated'),
+                            formatLocalAiStatusDescription(result, t),
+                            result && result.status === 'ok'
+                              ? 'success'
+                              : 'warning'
+                          )
+                        } catch (error) {
+                          notify(
+                            t('Unable to start Local AI'),
+                            formatErrorForToast(error),
+                            'error'
+                          )
+                        } finally {
+                          setIsStartingLocalAi(false)
+                        }
+                      }}
+                    >
+                      {t('Start local runtime')}
+                    </SecondaryButton>
+                    <SecondaryButton
+                      isDisabled={!localAi.enabled || isStoppingLocalAi}
+                      onClick={async () => {
+                        setIsStoppingLocalAi(true)
+
+                        try {
+                          await ensureLocalAiBridge().stop()
+                          setLocalAiStatusResult(
+                            normalizeLocalAiStatusResult(
+                              {
+                                enabled: true,
+                                status: 'error',
+                                runtime:
+                                  localAi.runtimeBackend ||
+                                  DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
+                                baseUrl: localAiRuntimeUrl,
+                                error: t('Local AI runtime is idle.'),
+                                lastError: t('Local AI runtime is idle.'),
+                              },
+                              localAiRuntimeUrl
+                            )
+                          )
+
+                          notify(
+                            t('Local AI runtime stopped'),
+                            t(
+                              'The optional Local AI bridge is now idle. Existing cloud providers were not changed.'
+                            ),
+                            'info'
+                          )
+                        } catch (error) {
+                          notify(
+                            t('Unable to stop Local AI'),
+                            formatErrorForToast(error),
+                            'error'
+                          )
+                        } finally {
+                          setIsStoppingLocalAi(false)
+                        }
+                      }}
+                    >
+                      {t('Stop local runtime')}
+                    </SecondaryButton>
+                    <SecondaryButton
+                      isDisabled={!localAi.enabled || isCheckingLocalAi}
+                      onClick={async () => {
+                        try {
+                          const result = await requestLocalAiStatus()
+
+                          notify(
+                            result && result.status === 'ok'
+                              ? t('Local AI runtime reachable')
+                              : t('Local AI runtime unavailable'),
+                            formatLocalAiStatusDescription(result, t),
+                            result && result.status === 'ok'
+                              ? 'success'
+                              : 'warning'
+                          )
+                        } catch (error) {
+                          notify(
+                            t('Unable to check Local AI status'),
+                            formatErrorForToast(error),
+                            'error'
+                          )
+                        }
+                      }}
+                    >
+                      {t('Check status')}
+                    </SecondaryButton>
+                  </Stack>
+                  <Text color="muted" fontSize="sm">
+                    {t(
+                      'Choose Local AI as the main provider above to route the solver through this runtime. OpenAI-compatible (custom) remains available for third-party compatible endpoints.'
+                    )}
+                  </Text>
+                </Stack>
+              </Box>
+
+              {localAi.enabled ? (
+                <Box
+                  borderWidth="1px"
+                  borderColor="orange.100"
+                  borderRadius="md"
+                  p={3}
+                  bg="orange.012"
+                >
+                  <Stack spacing={3}>
+                    <Text fontWeight={500}>{t('Local AI Debug')}</Text>
+                    <Text color="muted" fontSize="sm">
+                      {t('Developer test tools. No cloud fallback.')}
+                    </Text>
+
+                    <Box bg="white" borderRadius="md" p={3}>
+                      <Stack spacing={2}>
+                        <Flex align="center" justify="space-between">
+                          <Box>
+                            <Text fontWeight={500}>{t('Runtime status')}</Text>
+                            <Text color="muted" fontSize="sm">
+                              {localAiRuntimeStatus.description}
+                            </Text>
+                          </Box>
+                          <Text
+                            color={localAiRuntimeStatus.tone}
+                            fontWeight={600}
+                          >
+                            {localAiRuntimeStatus.title}
                           </Text>
-                        </Box>
-                        <Text
-                          color={localAiRuntimeStatus.tone}
-                          fontWeight={600}
-                        >
-                          {localAiRuntimeStatus.title}
+                        </Flex>
+                        <Stack isInline spacing={2}>
+                          <SecondaryButton
+                            isLoading={isCheckingLocalAi}
+                            onClick={async () => {
+                              try {
+                                await requestLocalAiStatus()
+                              } catch (error) {
+                                notify(
+                                  t('Unable to check Local AI status'),
+                                  formatErrorForToast(error),
+                                  'error'
+                                )
+                              }
+                            }}
+                          >
+                            {t('Check Local AI')}
+                          </SecondaryButton>
+                        </Stack>
+                        <LocalAiDebugResult
+                          label={t('Status result')}
+                          result={localAiStatusResult}
+                        />
+                      </Stack>
+                    </Box>
+
+                    <Box bg="white" borderRadius="md" p={3}>
+                      <Stack spacing={3}>
+                        <Text fontWeight={500}>{t('Chat test')}</Text>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>{t('Prompt')}</SettingsFormLabel>
+                          <Textarea
+                            value={localAiDebugChatPrompt}
+                            onChange={(e) =>
+                              setLocalAiDebugChatPrompt(e.target.value)
+                            }
+                            minH="90px"
+                          />
+                        </SettingsFormControl>
+                        <Stack isInline spacing={2}>
+                          <SecondaryButton
+                            isLoading={isRunningLocalAiChat}
+                            onClick={runLocalAiChatTest}
+                          >
+                            {t('Run Local Chat')}
+                          </SecondaryButton>
+                        </Stack>
+                        <LocalAiDebugResult
+                          label={t('Chat result')}
+                          result={localAiChatResult}
+                        />
+                      </Stack>
+                    </Box>
+
+                    <Box bg="white" borderRadius="md" p={3}>
+                      <Stack spacing={3}>
+                        <Text fontWeight={500}>
+                          {t('flipToText / checker test')}
                         </Text>
-                      </Flex>
-                      <Stack isInline spacing={2}>
-                        <SecondaryButton
-                          isLoading={isCheckingLocalAi}
-                          onClick={async () => {
-                            try {
-                              await requestLocalAiStatus()
-                            } catch (error) {
-                              notify(
-                                t('Unable to check Local AI status'),
-                                formatErrorForToast(error),
-                                'error'
+                        <Text color="muted" fontSize="sm">
+                          {t(
+                            'Provide JSON with local image paths, for example {"images":["/absolute/path/panel-1.png","/absolute/path/panel-2.png"]}.'
+                          )}
+                        </Text>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Input JSON')}
+                          </SettingsFormLabel>
+                          <Textarea
+                            value={localAiDebugFlipInput}
+                            onChange={(e) =>
+                              setLocalAiDebugFlipInput(e.target.value)
+                            }
+                            minH="140px"
+                          />
+                        </SettingsFormControl>
+                        <Stack isInline spacing={2}>
+                          <SecondaryButton
+                            isLoading={isRunningLocalAiFlipToText}
+                            onClick={() => runLocalAiFlipTest('flipToText')}
+                          >
+                            {t('Run flipToText')}
+                          </SecondaryButton>
+                          <SecondaryButton
+                            isLoading={isRunningLocalAiFlipChecker}
+                            onClick={() =>
+                              runLocalAiFlipTest('checkFlipSequence')
+                            }
+                          >
+                            {t('Run Flip Checker')}
+                          </SecondaryButton>
+                        </Stack>
+                        <LocalAiDebugResult
+                          label={t('flipToText result')}
+                          result={localAiFlipToTextResult}
+                        />
+                        <LocalAiDebugResult
+                          label={t('Flip checker result')}
+                          result={localAiFlipCheckerResult}
+                        />
+                      </Stack>
+                    </Box>
+
+                    <Box bg="white" borderRadius="md" p={3}>
+                      <Stack spacing={3}>
+                        <Text fontWeight={500}>
+                          {t('Human Teacher Annotator')}
+                        </Text>
+                        <Text color="muted" fontSize="sm">
+                          {t(
+                            'Open the post-session annotation tool, or load an offline demo batch from bundled sample flips to test the annotator without waiting for consensus.'
+                          )}
+                        </Text>
+                        <Stack isInline spacing={2} flexWrap="wrap">
+                          <SecondaryButton
+                            onClick={() =>
+                              router.push('/settings/ai-human-teacher')
+                            }
+                          >
+                            {t('Open Human Teacher Lab')}
+                          </SecondaryButton>
+                          <SecondaryButton
+                            onClick={() =>
+                              router.push(
+                                '/settings/ai-human-teacher?action=demo&sample=flip-challenge-test-5-decoded-labeled'
                               )
                             }
-                          }}
-                        >
-                          {t('Check Local AI')}
-                        </SecondaryButton>
-                      </Stack>
-                      <LocalAiDebugResult
-                        label={t('Status result')}
-                        result={localAiStatusResult}
-                      />
-                    </Stack>
-                  </Box>
-
-                  <Box bg="white" borderRadius="md" p={3}>
-                    <Stack spacing={3}>
-                      <Text fontWeight={500}>{t('Chat test')}</Text>
-                      <SettingsFormControl>
-                        <SettingsFormLabel>{t('Prompt')}</SettingsFormLabel>
-                        <Textarea
-                          value={localAiDebugChatPrompt}
-                          onChange={(e) =>
-                            setLocalAiDebugChatPrompt(e.target.value)
-                          }
-                          minH="90px"
-                        />
-                      </SettingsFormControl>
-                      <Stack isInline spacing={2}>
-                        <SecondaryButton
-                          isLoading={isRunningLocalAiChat}
-                          onClick={runLocalAiChatTest}
-                        >
-                          {t('Run Local Chat')}
-                        </SecondaryButton>
-                      </Stack>
-                      <LocalAiDebugResult
-                        label={t('Chat result')}
-                        result={localAiChatResult}
-                      />
-                    </Stack>
-                  </Box>
-
-                  <Box bg="white" borderRadius="md" p={3}>
-                    <Stack spacing={3}>
-                      <Text fontWeight={500}>
-                        {t('flipToText / checker test')}
-                      </Text>
-                      <Text color="muted" fontSize="sm">
-                        {t(
-                          'Provide JSON with local image paths, for example {"images":["/absolute/path/panel-1.png","/absolute/path/panel-2.png"]}.'
-                        )}
-                      </Text>
-                      <SettingsFormControl>
-                        <SettingsFormLabel>{t('Input JSON')}</SettingsFormLabel>
-                        <Textarea
-                          value={localAiDebugFlipInput}
-                          onChange={(e) =>
-                            setLocalAiDebugFlipInput(e.target.value)
-                          }
-                          minH="140px"
-                        />
-                      </SettingsFormControl>
-                      <Stack isInline spacing={2}>
-                        <SecondaryButton
-                          isLoading={isRunningLocalAiFlipToText}
-                          onClick={() => runLocalAiFlipTest('flipToText')}
-                        >
-                          {t('Run flipToText')}
-                        </SecondaryButton>
-                        <SecondaryButton
-                          isLoading={isRunningLocalAiFlipChecker}
-                          onClick={() =>
-                            runLocalAiFlipTest('checkFlipSequence')
-                          }
-                        >
-                          {t('Run Flip Checker')}
-                        </SecondaryButton>
-                      </Stack>
-                      <LocalAiDebugResult
-                        label={t('flipToText result')}
-                        result={localAiFlipToTextResult}
-                      />
-                      <LocalAiDebugResult
-                        label={t('Flip checker result')}
-                        result={localAiFlipCheckerResult}
-                      />
-                    </Stack>
-                  </Box>
-
-                  <Box bg="white" borderRadius="md" p={3}>
-                    <Stack spacing={3}>
-                      <Text fontWeight={500}>
-                        {t('Human Teacher Annotator')}
-                      </Text>
-                      <Text color="muted" fontSize="sm">
-                        {t(
-                          'Open the post-session annotation tool, or load an offline demo batch from bundled sample flips to test the annotator without waiting for consensus.'
-                        )}
-                      </Text>
-                      <Stack isInline spacing={2} flexWrap="wrap">
-                        <SecondaryButton
-                          onClick={() =>
-                            router.push('/settings/ai-human-teacher')
-                          }
-                        >
-                          {t('Open Human Teacher Lab')}
-                        </SecondaryButton>
-                        <SecondaryButton
-                          onClick={() =>
-                            router.push(
-                              '/settings/ai-human-teacher?action=demo&sample=flip-challenge-test-5-decoded-labeled'
-                            )
-                          }
-                        >
-                          {t('Start Offline Demo')}
-                        </SecondaryButton>
-                      </Stack>
-                    </Stack>
-                  </Box>
-
-                  <Box bg="white" borderRadius="md" p={3}>
-                    <Stack spacing={3}>
-                      <Text fontWeight={500}>
-                        {t('Local AI Training Package Review')}
-                      </Text>
-                      <Text color="muted" fontSize="sm">
-                        {t(
-                          'Developer/admin review only. This generates a local post-consensus package preview and export path. No training or sharing is triggered.'
-                        )}
-                      </Text>
-                      <SettingsFormControl>
-                        <SettingsFormLabel>{t('Epoch')}</SettingsFormLabel>
-                        <Input
-                          value={localAiPackageEpoch}
-                          onChange={(e) =>
-                            setLocalAiPackageEpoch(e.target.value)
-                          }
-                          placeholder="12"
-                          w="xs"
-                        />
-                      </SettingsFormControl>
-                      <Stack isInline spacing={2}>
-                        <SecondaryButton
-                          isLoading={isLoadingLocalAiPackage}
-                          onClick={() => runLocalAiTrainingPackageAction(true)}
-                        >
-                          {t('Generate Package Preview')}
-                        </SecondaryButton>
-                        <SecondaryButton
-                          isLoading={isExportingLocalAiPackage}
-                          onClick={() => runLocalAiTrainingPackageAction(false)}
-                        >
-                          {t('Export Package')}
-                        </SecondaryButton>
-                      </Stack>
-                      {localAiPackageError ? (
-                        <Text color="orange.500" fontSize="sm">
-                          {localAiPackageError}
-                        </Text>
-                      ) : null}
-                      {localAiPackageExportPath ? (
-                        <Box
-                          borderWidth="1px"
-                          borderColor="gray.100"
-                          borderRadius="md"
-                          p={3}
-                        >
-                          <Stack spacing={1}>
-                            <Text fontWeight={500}>{t('Export complete')}</Text>
-                            <Text color="muted" fontSize="sm">
-                              {localAiPackageExportPath}
-                            </Text>
-                          </Stack>
-                        </Box>
-                      ) : null}
-                      <Box
-                        borderWidth="1px"
-                        borderColor="gray.100"
-                        borderRadius="md"
-                        p={3}
-                      >
-                        <Stack spacing={3}>
-                          <Stack spacing={1}>
-                            <Text fontWeight={500}>
-                              {t('Adapter artifact registration')}
-                            </Text>
-                            <Text color="muted" fontSize="sm">
-                              {t(
-                                'Register one local adapter file for this epoch to promote federated exports from pending metadata to a concrete adapter contract.'
-                              )}
-                            </Text>
-                          </Stack>
-                          <SettingsFormControl>
-                            <SettingsFormLabel>
-                              {t('Local adapter file path')}
-                            </SettingsFormLabel>
-                            <Input
-                              value={localAiAdapterSourcePath}
-                              onChange={(e) =>
-                                setLocalAiAdapterSourcePath(e.target.value)
-                              }
-                              placeholder="/absolute/path/to/epoch-12-lora.safetensors"
-                            />
-                          </SettingsFormControl>
-                          <Stack isInline spacing={2}>
-                            <SecondaryButton
-                              isLoading={isRegisteringLocalAiAdapter}
-                              onClick={runLocalAiRegisterAdapterArtifact}
-                            >
-                              {t('Register Adapter')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isLoading={isLoadingLocalAiAdapter}
-                              onClick={runLocalAiLoadAdapterArtifact}
-                            >
-                              {t('Load Registered Adapter')}
-                            </SecondaryButton>
-                          </Stack>
-                          {localAiAdapterError ? (
-                            <Text color="orange.500" fontSize="sm">
-                              {localAiAdapterError}
-                            </Text>
-                          ) : null}
-                          {localAiAdapterManifest ? (
-                            <Box
-                              borderWidth="1px"
-                              borderColor="gray.50"
-                              borderRadius="md"
-                              p={3}
-                            >
-                              <Stack spacing={1}>
-                                <Text
-                                  color={localAiAdapterContractUi.color}
-                                  fontSize="sm"
-                                  fontWeight={600}
-                                >
-                                  {t('Stored contract')}:{' '}
-                                  {localAiAdapterContractUi.label}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Registered at')}:{' '}
-                                  {formatLocalAiTrainingPackageTimestamp(
-                                    localAiAdapterManifest.registeredAt
-                                  )}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Adapter manifest path')}:{' '}
-                                  {localAiAdapterManifest.adapterManifestPath}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Public model')}:{' '}
-                                  {localAiAdapterManifest.publicModelId || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Base model')}:{' '}
-                                  {localAiAdapterManifest.baseModelId || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Adapter format')}:{' '}
-                                  {localAiAdapterManifest.adapterFormat || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Adapter SHA-256')}:{' '}
-                                  {localAiAdapterManifest.adapterSha256 || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Training config hash')}:{' '}
-                                  {localAiAdapterManifest.trainingConfigHash ||
-                                    '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Artifact file')}:{' '}
-                                  {(localAiAdapterManifest.adapterArtifact &&
-                                    localAiAdapterManifest.adapterArtifact
-                                      .file) ||
-                                    '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Artifact size')}:{' '}
-                                  {formatLocalAiArtifactSize(
-                                    localAiAdapterManifest.adapterArtifact &&
-                                      localAiAdapterManifest.adapterArtifact
-                                        .sizeBytes
-                                  )}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Source path')}:{' '}
-                                  {(localAiAdapterManifest.adapterArtifact &&
-                                    localAiAdapterManifest.adapterArtifact
-                                      .sourcePath) ||
-                                    '-'}
-                                </Text>
-                              </Stack>
-                            </Box>
-                          ) : null}
-                          {localAiPackageNeedsRefreshAfterAdapterRegistration ? (
-                            <Text color="blue.500" fontSize="xs">
-                              {t(
-                                'A package preview for this epoch still shows a pending adapter contract. Regenerate the package preview to refresh it to the stored adapter registration.'
-                              )}
-                            </Text>
-                          ) : null}
-                        </Stack>
-                      </Box>
-                      <Box
-                        borderWidth="1px"
-                        borderColor="gray.100"
-                        borderRadius="md"
-                        p={3}
-                      >
-                        <Stack spacing={3}>
-                          <Stack spacing={1}>
-                            <Text fontWeight={500}>
-                              {t('Federated bundle operations')}
-                            </Text>
-                            <Text color="muted" fontSize="sm">
-                              {t(
-                                'Building a local federated bundle now requires an approved training package and a concrete registered adapter artifact for the same epoch.'
-                              )}
-                            </Text>
-                          </Stack>
-                          <Stack isInline spacing={2}>
-                            <SecondaryButton
-                              isLoading={isBuildingLocalAiBundle}
-                              onClick={runLocalAiBuildBundle}
-                            >
-                              {t('Build Federated Bundle')}
-                            </SecondaryButton>
-                            <SecondaryButton
-                              isLoading={isAggregatingLocalAiBundles}
-                              onClick={runLocalAiAggregateBundles}
-                            >
-                              {t('Aggregate Received Bundles')}
-                            </SecondaryButton>
-                          </Stack>
-                          <SettingsFormControl>
-                            <SettingsFormLabel>
-                              {t('Incoming bundle path')}
-                            </SettingsFormLabel>
-                            <Input
-                              value={localAiBundleImportPath}
-                              onChange={(e) =>
-                                setLocalAiBundleImportPath(e.target.value)
-                              }
-                              placeholder="/absolute/path/to/incoming/update-epoch.json"
-                            />
-                          </SettingsFormControl>
-                          <SecondaryButton
-                            isLoading={isImportingLocalAiBundle}
-                            onClick={runLocalAiImportBundle}
                           >
-                            {t('Import Bundle')}
+                            {t('Start Offline Demo')}
                           </SecondaryButton>
-                          {localAiFederatedError ? (
-                            <Text color="orange.500" fontSize="sm">
-                              {localAiFederatedError}
-                            </Text>
-                          ) : null}
-                          {localAiBuildBundleResult ? (
-                            <Box
-                              borderWidth="1px"
-                              borderColor="gray.50"
-                              borderRadius="md"
-                              p={3}
-                            >
-                              <Stack spacing={1}>
-                                <Text fontWeight={500}>
-                                  {t('Latest built bundle')}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Delta type')}:{' '}
-                                  {localAiBuildBundleResult.deltaType || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Signed')}:{' '}
-                                  {localAiBuildBundleResult.signed
-                                    ? t('Yes')
-                                    : t('No')}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Eligible')}:{' '}
-                                  {Number(
-                                    localAiBuildBundleResult.eligibleCount
-                                  ) || 0}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Bundle path')}:{' '}
-                                  {localAiBuildBundleResult.bundlePath || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Artifact path')}:{' '}
-                                  {localAiBuildBundleResult.artifactPath || '-'}
-                                </Text>
-                              </Stack>
-                            </Box>
-                          ) : null}
-                          {localAiImportBundleResult ? (
-                            <Box
-                              borderWidth="1px"
-                              borderColor="gray.50"
-                              borderRadius="md"
-                              p={3}
-                            >
-                              <Stack spacing={1}>
-                                <Text fontWeight={500}>
-                                  {t('Latest import result')}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Accepted')}:{' '}
-                                  {localAiImportBundleResult.accepted
-                                    ? t('Yes')
-                                    : t('No')}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Reason')}:{' '}
-                                  {formatLocalAiFederatedReason(
-                                    localAiImportBundleResult.reason
-                                  )}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Bundle path')}:{' '}
-                                  {localAiImportBundleResult.bundlePath || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Stored path')}:{' '}
-                                  {localAiImportBundleResult.storedPath || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Artifact path')}:{' '}
-                                  {localAiImportBundleResult.artifactPath ||
-                                    '-'}
-                                </Text>
-                              </Stack>
-                            </Box>
-                          ) : null}
-                          {localAiAggregateResult ? (
-                            <Box
-                              borderWidth="1px"
-                              borderColor="gray.50"
-                              borderRadius="md"
-                              p={3}
-                            >
-                              <Stack spacing={1}>
-                                <Text fontWeight={500}>
-                                  {t('Latest aggregation result')}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Mode')}:{' '}
-                                  {localAiAggregateResult.mode || '-'}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Compatible bundles')}:{' '}
-                                  {Number(
-                                    localAiAggregateResult.compatibleCount
-                                  ) || 0}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Skipped bundles')}:{' '}
-                                  {Number(
-                                    localAiAggregateResult.skippedCount
-                                  ) || 0}
-                                </Text>
-                                <Text color="muted" fontSize="sm">
-                                  {t('Output path')}:{' '}
-                                  {localAiAggregateResult.outputPath || '-'}
-                                </Text>
-                              </Stack>
-                            </Box>
-                          ) : null}
                         </Stack>
-                      </Box>
-                      {localAiPackagePreview &&
-                      localAiPackagePreview.package ? (
+                      </Stack>
+                    </Box>
+
+                    <Box bg="white" borderRadius="md" p={3}>
+                      <Stack spacing={3}>
+                        <Text fontWeight={500}>
+                          {t('Local AI Training Package Review')}
+                        </Text>
+                        <Text color="muted" fontSize="sm">
+                          {t(
+                            'Developer/admin review only. This generates a local post-consensus package preview and export path. No training or sharing is triggered.'
+                          )}
+                        </Text>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>{t('Epoch')}</SettingsFormLabel>
+                          <Input
+                            value={localAiPackageEpoch}
+                            onChange={(e) =>
+                              setLocalAiPackageEpoch(e.target.value)
+                            }
+                            placeholder="12"
+                            w="xs"
+                          />
+                        </SettingsFormControl>
+                        <Stack isInline spacing={2}>
+                          <SecondaryButton
+                            isLoading={isLoadingLocalAiPackage}
+                            onClick={() =>
+                              runLocalAiTrainingPackageAction(true)
+                            }
+                          >
+                            {t('Generate Package Preview')}
+                          </SecondaryButton>
+                          <SecondaryButton
+                            isLoading={isExportingLocalAiPackage}
+                            onClick={() =>
+                              runLocalAiTrainingPackageAction(false)
+                            }
+                          >
+                            {t('Export Package')}
+                          </SecondaryButton>
+                        </Stack>
+                        {localAiPackageError ? (
+                          <Text color="orange.500" fontSize="sm">
+                            {localAiPackageError}
+                          </Text>
+                        ) : null}
+                        {localAiPackageExportPath ? (
+                          <Box
+                            borderWidth="1px"
+                            borderColor="gray.100"
+                            borderRadius="md"
+                            p={3}
+                          >
+                            <Stack spacing={1}>
+                              <Text fontWeight={500}>
+                                {t('Export complete')}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {localAiPackageExportPath}
+                              </Text>
+                            </Stack>
+                          </Box>
+                        ) : null}
                         <Box
                           borderWidth="1px"
                           borderColor="gray.100"
@@ -3837,424 +3712,733 @@ export default function AiSettingsPage() {
                           <Stack spacing={3}>
                             <Stack spacing={1}>
                               <Text fontWeight={500}>
-                                {t('Package metadata')}
-                              </Text>
-                              <Text
-                                color={localAiPackageReviewStatusUi.color}
-                                fontSize="sm"
-                                fontWeight={600}
-                              >
-                                {t('Review status')}:{' '}
-                                {localAiPackageReviewStatusUi.label}
+                                {t('Adapter artifact registration')}
                               </Text>
                               <Text color="muted" fontSize="sm">
-                                {t('Reviewed at')}:{' '}
-                                {formatLocalAiTrainingPackageTimestamp(
-                                  localAiPackagePreview.package.reviewedAt
-                                )}
-                              </Text>
-                              <Text
-                                color={localAiPackageFederatedReadyUi.color}
-                                fontSize="sm"
-                                fontWeight={500}
-                              >
-                                {t('Federated-ready')}:{' '}
-                                {localAiPackageFederatedReadyUi.label}
-                              </Text>
-                              <Text
-                                color={localAiPackageContractUi.color}
-                                fontSize="sm"
-                                fontWeight={500}
-                              >
-                                {t('Contract state')}:{' '}
-                                {localAiPackageContractUi.label}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Schema version')}:{' '}
-                                {localAiPackagePreview.package.schemaVersion}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Created')}:{' '}
-                                {formatLocalAiTrainingPackageTimestamp(
-                                  localAiPackagePreview.package.createdAt
-                                )}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Eligible')}:{' '}
-                                {Number(
-                                  localAiPackagePreview.package.eligibleCount
-                                ) || 0}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Excluded')}:{' '}
-                                {Number(
-                                  localAiPackagePreview.package.excludedCount
-                                ) || 0}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Package path')}:{' '}
-                                {localAiPackagePreview.packagePath}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Adapter format')}:{' '}
-                                {localAiPackagePreview.package.adapterFormat ||
-                                  '-'}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Adapter SHA-256')}:{' '}
-                                {localAiPackagePreview.package.adapterSha256 ||
-                                  '-'}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Training config hash')}:{' '}
-                                {localAiPackagePreview.package
-                                  .trainingConfigHash || '-'}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Artifact file')}:{' '}
-                                {(localAiPackagePreview.package
-                                  .adapterArtifact &&
-                                  localAiPackagePreview.package.adapterArtifact
-                                    .file) ||
-                                  '-'}
-                              </Text>
-                              <Text color="muted" fontSize="sm">
-                                {t('Artifact size')}:{' '}
-                                {formatLocalAiArtifactSize(
-                                  localAiPackagePreview.package
-                                    .adapterArtifact &&
-                                    localAiPackagePreview.package
-                                      .adapterArtifact.sizeBytes
-                                )}
-                              </Text>
-                              <Text color="muted" fontSize="xs">
                                 {t(
-                                  'Only approved packages should be used for future federated workflows.'
-                                )}
-                              </Text>
-                              <Text color="muted" fontSize="xs">
-                                {t(
-                                  'Federated-ready is a local preparation marker only. No sharing happens here.'
+                                  'Register one local adapter file for this epoch to promote federated exports from pending metadata to a concrete adapter contract.'
                                 )}
                               </Text>
                             </Stack>
-
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Local adapter file path')}
+                              </SettingsFormLabel>
+                              <Input
+                                value={localAiAdapterSourcePath}
+                                onChange={(e) =>
+                                  setLocalAiAdapterSourcePath(e.target.value)
+                                }
+                                placeholder="/absolute/path/to/epoch-12-lora.safetensors"
+                              />
+                            </SettingsFormControl>
                             <Stack isInline spacing={2}>
                               <SecondaryButton
-                                isDisabled={isUpdatingLocalAiPackageReview}
-                                isLoading={
-                                  isUpdatingLocalAiPackageReview &&
-                                  normalizeLocalAiTrainingPackageReviewStatus(
-                                    localAiPackagePreview.package.reviewStatus
-                                  ) === 'draft'
-                                }
-                                onClick={() =>
-                                  updateLocalAiTrainingPackageReviewStatus(
-                                    'draft'
-                                  )
-                                }
+                                isLoading={isRegisteringLocalAiAdapter}
+                                onClick={runLocalAiRegisterAdapterArtifact}
                               >
-                                {t('Mark Draft')}
+                                {t('Register Adapter')}
                               </SecondaryButton>
                               <SecondaryButton
-                                isDisabled={isUpdatingLocalAiPackageReview}
-                                onClick={() =>
-                                  updateLocalAiTrainingPackageReviewStatus(
-                                    'reviewed'
-                                  )
-                                }
+                                isLoading={isLoadingLocalAiAdapter}
+                                onClick={runLocalAiLoadAdapterArtifact}
                               >
-                                {t('Mark Reviewed')}
-                              </SecondaryButton>
-                              <SecondaryButton
-                                isDisabled={isUpdatingLocalAiPackageReview}
-                                onClick={() =>
-                                  updateLocalAiTrainingPackageReviewStatus(
-                                    'approved'
-                                  )
-                                }
-                              >
-                                {t('Approve')}
-                              </SecondaryButton>
-                              <SecondaryButton
-                                isDisabled={isUpdatingLocalAiPackageReview}
-                                onClick={() =>
-                                  updateLocalAiTrainingPackageReviewStatus(
-                                    'rejected'
-                                  )
-                                }
-                              >
-                                {t('Reject')}
+                                {t('Load Registered Adapter')}
                               </SecondaryButton>
                             </Stack>
-
-                            <Stack spacing={2}>
-                              <Text fontWeight={500}>
-                                {t('Included items')}
+                            {localAiAdapterError ? (
+                              <Text color="orange.500" fontSize="sm">
+                                {localAiAdapterError}
                               </Text>
-                              {(Array.isArray(
-                                localAiPackagePreview.package.items
-                              )
-                                ? localAiPackagePreview.package.items.slice(
-                                    0,
-                                    5
-                                  )
-                                : []
-                              ).map((item) => (
-                                <Box
-                                  key={`${item.flipHash || 'unknown'}-${
-                                    item.capturedAt || 'na'
-                                  }`}
-                                  borderWidth="1px"
-                                  borderColor="gray.50"
-                                  borderRadius="md"
-                                  p={2}
-                                >
-                                  <Stack spacing={1}>
-                                    <Text fontSize="sm" fontWeight={500}>
-                                      {item.flipHash || t('Unknown item')}
-                                    </Text>
-                                    <Text color="muted" fontSize="xs">
-                                      {t('Answer')}: {item.finalAnswer || '-'} •{' '}
-                                      {t('Session')}: {item.sessionType || '-'}{' '}
-                                      • {t('Panels')}:{' '}
-                                      {Number(item.panelCount) || 0}
-                                    </Text>
-                                    <Text color="muted" fontSize="xs">
-                                      {t('Captured')}:{' '}
-                                      {formatLocalAiTrainingPackageTimestamp(
-                                        item.capturedAt
-                                      )}
-                                    </Text>
-                                  </Stack>
-                                </Box>
-                              ))}
-                              {Array.isArray(
-                                localAiPackagePreview.package.items
-                              ) &&
-                              localAiPackagePreview.package.items.length > 5 ? (
-                                <Text color="muted" fontSize="xs">
-                                  {t(
-                                    'Showing the first {{count}} items only.',
-                                    {
-                                      count: 5,
-                                    }
-                                  )}
-                                </Text>
-                              ) : null}
-                            </Stack>
+                            ) : null}
+                            {localAiAdapterManifest ? (
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.50"
+                                borderRadius="md"
+                                p={3}
+                              >
+                                <Stack spacing={1}>
+                                  <Text
+                                    color={localAiAdapterContractUi.color}
+                                    fontSize="sm"
+                                    fontWeight={600}
+                                  >
+                                    {t('Stored contract')}:{' '}
+                                    {localAiAdapterContractUi.label}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Registered at')}:{' '}
+                                    {formatLocalAiTrainingPackageTimestamp(
+                                      localAiAdapterManifest.registeredAt
+                                    )}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Adapter manifest path')}:{' '}
+                                    {localAiAdapterManifest.adapterManifestPath}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Public model')}:{' '}
+                                    {localAiAdapterManifest.publicModelId ||
+                                      '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Base model')}:{' '}
+                                    {localAiAdapterManifest.baseModelId || '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Adapter format')}:{' '}
+                                    {localAiAdapterManifest.adapterFormat ||
+                                      '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Adapter SHA-256')}:{' '}
+                                    {localAiAdapterManifest.adapterSha256 ||
+                                      '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Training config hash')}:{' '}
+                                    {localAiAdapterManifest.trainingConfigHash ||
+                                      '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Artifact file')}:{' '}
+                                    {(localAiAdapterManifest.adapterArtifact &&
+                                      localAiAdapterManifest.adapterArtifact
+                                        .file) ||
+                                      '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Artifact size')}:{' '}
+                                    {formatLocalAiArtifactSize(
+                                      localAiAdapterManifest.adapterArtifact &&
+                                        localAiAdapterManifest.adapterArtifact
+                                          .sizeBytes
+                                    )}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Source path')}:{' '}
+                                    {(localAiAdapterManifest.adapterArtifact &&
+                                      localAiAdapterManifest.adapterArtifact
+                                        .sourcePath) ||
+                                      '-'}
+                                  </Text>
+                                </Stack>
+                              </Box>
+                            ) : null}
+                            {localAiPackageNeedsRefreshAfterAdapterRegistration ? (
+                              <Text color="blue.500" fontSize="xs">
+                                {t(
+                                  'A package preview for this epoch still shows a pending adapter contract. Regenerate the package preview to refresh it to the stored adapter registration.'
+                                )}
+                              </Text>
+                            ) : null}
                           </Stack>
                         </Box>
-                      ) : null}
-                    </Stack>
-                  </Box>
-                </Stack>
-              </Box>
-            ) : null}
-          </Stack>
-        </SettingsSection>
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.100"
+                          borderRadius="md"
+                          p={3}
+                        >
+                          <Stack spacing={3}>
+                            <Stack spacing={1}>
+                              <Text fontWeight={500}>
+                                {t('Federated bundle operations')}
+                              </Text>
+                              <Text color="muted" fontSize="sm">
+                                {t(
+                                  'Building a local federated bundle now requires an approved training package and a concrete registered adapter artifact for the same epoch.'
+                                )}
+                              </Text>
+                            </Stack>
+                            <Stack isInline spacing={2}>
+                              <SecondaryButton
+                                isLoading={isBuildingLocalAiBundle}
+                                onClick={runLocalAiBuildBundle}
+                              >
+                                {t('Build Federated Bundle')}
+                              </SecondaryButton>
+                              <SecondaryButton
+                                isLoading={isAggregatingLocalAiBundles}
+                                onClick={runLocalAiAggregateBundles}
+                              >
+                                {t('Aggregate Received Bundles')}
+                              </SecondaryButton>
+                            </Stack>
+                            <SettingsFormControl>
+                              <SettingsFormLabel>
+                                {t('Incoming bundle path')}
+                              </SettingsFormLabel>
+                              <Input
+                                value={localAiBundleImportPath}
+                                onChange={(e) =>
+                                  setLocalAiBundleImportPath(e.target.value)
+                                }
+                                placeholder="/absolute/path/to/incoming/update-epoch.json"
+                              />
+                            </SettingsFormControl>
+                            <SecondaryButton
+                              isLoading={isImportingLocalAiBundle}
+                              onClick={runLocalAiImportBundle}
+                            >
+                              {t('Import Bundle')}
+                            </SecondaryButton>
+                            {localAiFederatedError ? (
+                              <Text color="orange.500" fontSize="sm">
+                                {localAiFederatedError}
+                              </Text>
+                            ) : null}
+                            {localAiBuildBundleResult ? (
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.50"
+                                borderRadius="md"
+                                p={3}
+                              >
+                                <Stack spacing={1}>
+                                  <Text fontWeight={500}>
+                                    {t('Latest built bundle')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Delta type')}:{' '}
+                                    {localAiBuildBundleResult.deltaType || '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Signed')}:{' '}
+                                    {localAiBuildBundleResult.signed
+                                      ? t('Yes')
+                                      : t('No')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Eligible')}:{' '}
+                                    {Number(
+                                      localAiBuildBundleResult.eligibleCount
+                                    ) || 0}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Bundle path')}:{' '}
+                                    {localAiBuildBundleResult.bundlePath || '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Artifact path')}:{' '}
+                                    {localAiBuildBundleResult.artifactPath ||
+                                      '-'}
+                                  </Text>
+                                </Stack>
+                              </Box>
+                            ) : null}
+                            {localAiImportBundleResult ? (
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.50"
+                                borderRadius="md"
+                                p={3}
+                              >
+                                <Stack spacing={1}>
+                                  <Text fontWeight={500}>
+                                    {t('Latest import result')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Accepted')}:{' '}
+                                    {localAiImportBundleResult.accepted
+                                      ? t('Yes')
+                                      : t('No')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Reason')}:{' '}
+                                    {formatLocalAiFederatedReason(
+                                      localAiImportBundleResult.reason
+                                    )}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Bundle path')}:{' '}
+                                    {localAiImportBundleResult.bundlePath ||
+                                      '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Stored path')}:{' '}
+                                    {localAiImportBundleResult.storedPath ||
+                                      '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Artifact path')}:{' '}
+                                    {localAiImportBundleResult.artifactPath ||
+                                      '-'}
+                                  </Text>
+                                </Stack>
+                              </Box>
+                            ) : null}
+                            {localAiAggregateResult ? (
+                              <Box
+                                borderWidth="1px"
+                                borderColor="gray.50"
+                                borderRadius="md"
+                                p={3}
+                              >
+                                <Stack spacing={1}>
+                                  <Text fontWeight={500}>
+                                    {t('Latest aggregation result')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Mode')}:{' '}
+                                    {localAiAggregateResult.mode || '-'}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Compatible bundles')}:{' '}
+                                    {Number(
+                                      localAiAggregateResult.compatibleCount
+                                    ) || 0}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Skipped bundles')}:{' '}
+                                    {Number(
+                                      localAiAggregateResult.skippedCount
+                                    ) || 0}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Output path')}:{' '}
+                                    {localAiAggregateResult.outputPath || '-'}
+                                  </Text>
+                                </Stack>
+                              </Box>
+                            ) : null}
+                          </Stack>
+                        </Box>
+                        {localAiPackagePreview &&
+                        localAiPackagePreview.package ? (
+                          <Box
+                            borderWidth="1px"
+                            borderColor="gray.100"
+                            borderRadius="md"
+                            p={3}
+                          >
+                            <Stack spacing={3}>
+                              <Stack spacing={1}>
+                                <Text fontWeight={500}>
+                                  {t('Package metadata')}
+                                </Text>
+                                <Text
+                                  color={localAiPackageReviewStatusUi.color}
+                                  fontSize="sm"
+                                  fontWeight={600}
+                                >
+                                  {t('Review status')}:{' '}
+                                  {localAiPackageReviewStatusUi.label}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Reviewed at')}:{' '}
+                                  {formatLocalAiTrainingPackageTimestamp(
+                                    localAiPackagePreview.package.reviewedAt
+                                  )}
+                                </Text>
+                                <Text
+                                  color={localAiPackageFederatedReadyUi.color}
+                                  fontSize="sm"
+                                  fontWeight={500}
+                                >
+                                  {t('Federated-ready')}:{' '}
+                                  {localAiPackageFederatedReadyUi.label}
+                                </Text>
+                                <Text
+                                  color={localAiPackageContractUi.color}
+                                  fontSize="sm"
+                                  fontWeight={500}
+                                >
+                                  {t('Contract state')}:{' '}
+                                  {localAiPackageContractUi.label}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Schema version')}:{' '}
+                                  {localAiPackagePreview.package.schemaVersion}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Created')}:{' '}
+                                  {formatLocalAiTrainingPackageTimestamp(
+                                    localAiPackagePreview.package.createdAt
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Eligible')}:{' '}
+                                  {Number(
+                                    localAiPackagePreview.package.eligibleCount
+                                  ) || 0}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Excluded')}:{' '}
+                                  {Number(
+                                    localAiPackagePreview.package.excludedCount
+                                  ) || 0}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Package path')}:{' '}
+                                  {localAiPackagePreview.packagePath}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Adapter format')}:{' '}
+                                  {localAiPackagePreview.package
+                                    .adapterFormat || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Adapter SHA-256')}:{' '}
+                                  {localAiPackagePreview.package
+                                    .adapterSha256 || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Training config hash')}:{' '}
+                                  {localAiPackagePreview.package
+                                    .trainingConfigHash || '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact file')}:{' '}
+                                  {(localAiPackagePreview.package
+                                    .adapterArtifact &&
+                                    localAiPackagePreview.package
+                                      .adapterArtifact.file) ||
+                                    '-'}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Artifact size')}:{' '}
+                                  {formatLocalAiArtifactSize(
+                                    localAiPackagePreview.package
+                                      .adapterArtifact &&
+                                      localAiPackagePreview.package
+                                        .adapterArtifact.sizeBytes
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="xs">
+                                  {t(
+                                    'Only approved packages should be used for future federated workflows.'
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="xs">
+                                  {t(
+                                    'Federated-ready is a local preparation marker only. No sharing happens here.'
+                                  )}
+                                </Text>
+                              </Stack>
 
-        <SettingsSection
-          title={
-            isLocalAiPrimaryProvider
-              ? t('Local AI runtime')
-              : t('Provider key (session only)')
-          }
-        >
-          <Stack spacing={3}>
-            <Text color="muted" fontSize="sm">
-              {isLocalAiPrimaryProvider
-                ? t(
-                    'Local AI uses the runtime configured in the Local AI section below. No session API key is required for the main provider.'
-                  )
-                : t(
-                    'The API key is kept in memory only for this desktop run and is not persisted to settings by default.'
-                  )}
-            </Text>
-            <Text color="muted" fontSize="sm">
-              {isLocalAiPrimaryProvider
-                ? t(
-                    'If setup still shows Missing, enable Local AI and make sure the configured runtime endpoint responds before testing again.'
-                  )
-                : t(
-                    'Keys are stored separately per provider. Setting an OpenAI key does not automatically enable Gemini, Anthropic, xAI, Groq, OpenRouter, or other providers.'
-                  )}
-            </Text>
-            <Box
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="md"
-              p={3}
-            >
-              <Stack spacing={1}>
-                <Text color="muted" fontSize="xs">
-                  {isLocalAiPrimaryProvider
-                    ? t('Current runtime status')
-                    : t('Current key status')}
-                </Text>
-                <Text
-                  fontSize="sm"
-                  fontWeight={500}
-                  color={providerKeyStatusUi.color}
-                >
-                  {providerKeyStatusUi.label}
-                </Text>
-                {providerKeyStatusUi.detail ? (
-                  <Text color="muted" fontSize="xs">
-                    {providerKeyStatusUi.detail}
-                  </Text>
-                ) : null}
-              </Stack>
-            </Box>
+                              <Stack isInline spacing={2}>
+                                <SecondaryButton
+                                  isDisabled={isUpdatingLocalAiPackageReview}
+                                  isLoading={
+                                    isUpdatingLocalAiPackageReview &&
+                                    normalizeLocalAiTrainingPackageReviewStatus(
+                                      localAiPackagePreview.package.reviewStatus
+                                    ) === 'draft'
+                                  }
+                                  onClick={() =>
+                                    updateLocalAiTrainingPackageReviewStatus(
+                                      'draft'
+                                    )
+                                  }
+                                >
+                                  {t('Mark Draft')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  isDisabled={isUpdatingLocalAiPackageReview}
+                                  onClick={() =>
+                                    updateLocalAiTrainingPackageReviewStatus(
+                                      'reviewed'
+                                    )
+                                  }
+                                >
+                                  {t('Mark Reviewed')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  isDisabled={isUpdatingLocalAiPackageReview}
+                                  onClick={() =>
+                                    updateLocalAiTrainingPackageReviewStatus(
+                                      'approved'
+                                    )
+                                  }
+                                >
+                                  {t('Approve')}
+                                </SecondaryButton>
+                                <SecondaryButton
+                                  isDisabled={isUpdatingLocalAiPackageReview}
+                                  onClick={() =>
+                                    updateLocalAiTrainingPackageReviewStatus(
+                                      'rejected'
+                                    )
+                                  }
+                                >
+                                  {t('Reject')}
+                                </SecondaryButton>
+                              </Stack>
 
-            {!isLocalAiPrimaryProvider ? (
-              <SettingsFormControl>
-                <SettingsFormLabel>{t('API key')}</SettingsFormLabel>
-                <InputGroup w="full" maxW="xl">
-                  <Input
-                    value={apiKey}
-                    type={isApiKeyVisible ? 'text' : 'password'}
-                    placeholder={t('Paste provider API key')}
-                    onChange={(e) => setApiKey(e.target.value)}
-                  />
-                  <InputRightElement w="6" h="6" m="1">
-                    <IconButton
-                      size="xs"
-                      icon={isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />}
-                      bg={isApiKeyVisible ? 'gray.300' : 'white'}
-                      fontSize={20}
-                      _hover={{
-                        bg: isApiKeyVisible ? 'gray.300' : 'white',
-                      }}
-                      onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
-                    />
-                  </InputRightElement>
-                </InputGroup>
-              </SettingsFormControl>
-            ) : (
+                              <Stack spacing={2}>
+                                <Text fontWeight={500}>
+                                  {t('Included items')}
+                                </Text>
+                                {(Array.isArray(
+                                  localAiPackagePreview.package.items
+                                )
+                                  ? localAiPackagePreview.package.items.slice(
+                                      0,
+                                      5
+                                    )
+                                  : []
+                                ).map((item) => (
+                                  <Box
+                                    key={`${item.flipHash || 'unknown'}-${
+                                      item.capturedAt || 'na'
+                                    }`}
+                                    borderWidth="1px"
+                                    borderColor="gray.50"
+                                    borderRadius="md"
+                                    p={2}
+                                  >
+                                    <Stack spacing={1}>
+                                      <Text fontSize="sm" fontWeight={500}>
+                                        {item.flipHash || t('Unknown item')}
+                                      </Text>
+                                      <Text color="muted" fontSize="xs">
+                                        {t('Answer')}: {item.finalAnswer || '-'}{' '}
+                                        • {t('Session')}:{' '}
+                                        {item.sessionType || '-'} •{' '}
+                                        {t('Panels')}:{' '}
+                                        {Number(item.panelCount) || 0}
+                                      </Text>
+                                      <Text color="muted" fontSize="xs">
+                                        {t('Captured')}:{' '}
+                                        {formatLocalAiTrainingPackageTimestamp(
+                                          item.capturedAt
+                                        )}
+                                      </Text>
+                                    </Stack>
+                                  </Box>
+                                ))}
+                                {Array.isArray(
+                                  localAiPackagePreview.package.items
+                                ) &&
+                                localAiPackagePreview.package.items.length >
+                                  5 ? (
+                                  <Text color="muted" fontSize="xs">
+                                    {t(
+                                      'Showing the first {{count}} items only.',
+                                      {
+                                        count: 5,
+                                      }
+                                    )}
+                                  </Text>
+                                ) : null}
+                              </Stack>
+                            </Stack>
+                          </Box>
+                        ) : null}
+                      </Stack>
+                    </Box>
+                  </Stack>
+                </Box>
+              ) : null}
+            </Stack>
+          </SettingsSection>
+        ) : null}
+
+        {showProviderSetup ? (
+          <SettingsSection
+            title={
+              isLocalAiPrimaryProvider
+                ? t('Local AI runtime')
+                : t('Provider key (session only)')
+            }
+          >
+            <Stack spacing={3}>
+              <Text color="muted" fontSize="sm">
+                {isLocalAiPrimaryProvider
+                  ? t(
+                      'Local AI uses the runtime configured in the Local AI section below. No session API key is required for the main provider.'
+                    )
+                  : t(
+                      'The API key is kept in memory only for this desktop run and is not persisted to settings by default.'
+                    )}
+              </Text>
+              <Text color="muted" fontSize="sm">
+                {isLocalAiPrimaryProvider
+                  ? t(
+                      'If setup still shows Missing, enable Local AI and make sure the configured runtime endpoint responds before testing again.'
+                    )
+                  : t(
+                      'Keys are stored separately per provider. Setting an OpenAI key does not automatically enable Gemini, Anthropic, xAI, Groq, OpenRouter, or other providers.'
+                    )}
+              </Text>
               <Box
                 borderWidth="1px"
-                borderColor="blue.050"
+                borderColor="gray.100"
                 borderRadius="md"
                 p={3}
               >
-                <Text color="muted" fontSize="sm">
-                  {t(
-                    'Model selection, runtime URL, and runtime health checks live in the Local AI section above. Use Test connection here to verify the current Local AI provider setup.'
-                  )}
-                </Text>
+                <Stack spacing={1}>
+                  <Text color="muted" fontSize="xs">
+                    {isLocalAiPrimaryProvider
+                      ? t('Current runtime status')
+                      : t('Current key status')}
+                  </Text>
+                  <Text
+                    fontSize="sm"
+                    fontWeight={500}
+                    color={providerKeyStatusUi.color}
+                  >
+                    {providerKeyStatusUi.label}
+                  </Text>
+                  {providerKeyStatusUi.detail ? (
+                    <Text color="muted" fontSize="xs">
+                      {providerKeyStatusUi.detail}
+                    </Text>
+                  ) : null}
+                </Stack>
               </Box>
-            )}
 
-            <Stack isInline justify="flex-end" spacing={2}>
               {!isLocalAiPrimaryProvider ? (
-                <>
-                  <SecondaryButton
-                    isLoading={isUpdatingKey}
-                    onClick={async () => {
-                      setIsUpdatingKey(true)
-                      try {
-                        const bridge = ensureBridge()
-                        await bridge.clearProviderKey({
-                          provider: activeProvider,
-                        })
-                        setApiKey('')
-                        await refreshProviderKeyStatus()
-                        notify(
-                          t('Provider key cleared'),
-                          t('The session key has been removed from memory.')
-                        )
-                      } catch (error) {
-                        notify(
-                          t('Unable to clear key'),
-                          formatErrorForToast(error),
-                          'error'
-                        )
-                      } finally {
-                        setIsUpdatingKey(false)
-                      }
-                    }}
-                  >
-                    {t('Clear key')}
-                  </SecondaryButton>
+                <SettingsFormControl>
+                  <SettingsFormLabel>{t('API key')}</SettingsFormLabel>
+                  <InputGroup w="full" maxW="xl">
+                    <Input
+                      value={apiKey}
+                      type={isApiKeyVisible ? 'text' : 'password'}
+                      placeholder={t('Paste provider API key')}
+                      onChange={(e) => setApiKey(e.target.value)}
+                    />
+                    <InputRightElement w="6" h="6" m="1">
+                      <IconButton
+                        size="xs"
+                        icon={isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />}
+                        bg={isApiKeyVisible ? 'gray.300' : 'white'}
+                        fontSize={20}
+                        _hover={{
+                          bg: isApiKeyVisible ? 'gray.300' : 'white',
+                        }}
+                        onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
+                      />
+                    </InputRightElement>
+                  </InputGroup>
+                </SettingsFormControl>
+              ) : (
+                <Box
+                  borderWidth="1px"
+                  borderColor="blue.050"
+                  borderRadius="md"
+                  p={3}
+                >
+                  <Text color="muted" fontSize="sm">
+                    {t(
+                      'Model selection, runtime URL, and runtime health checks live in the Local AI section above. Use Test connection here to verify the current Local AI provider setup.'
+                    )}
+                  </Text>
+                </Box>
+              )}
 
-                  <SecondaryButton
-                    isDisabled={!trimmedApiKey}
-                    isLoading={isUpdatingKey}
-                    onClick={async () => {
-                      setIsUpdatingKey(true)
-                      try {
-                        const bridge = ensureBridge()
-                        await bridge.setProviderKey({
-                          provider: activeProvider,
-                          apiKey: trimmedApiKey,
-                        })
-                        setApiKey('')
-                        setIsApiKeyVisible(false)
-                        await refreshProviderKeyStatus()
-                        notify(
-                          t('Provider key set'),
-                          t(
-                            'The session key was loaded and is ready for requests.'
+              <Stack isInline justify="flex-end" spacing={2}>
+                {!isLocalAiPrimaryProvider ? (
+                  <>
+                    <SecondaryButton
+                      isLoading={isUpdatingKey}
+                      onClick={async () => {
+                        setIsUpdatingKey(true)
+                        try {
+                          const bridge = ensureBridge()
+                          await bridge.clearProviderKey({
+                            provider: activeProvider,
+                          })
+                          setApiKey('')
+                          await refreshProviderKeyStatus()
+                          notify(
+                            t('Provider key cleared'),
+                            t('The session key has been removed from memory.')
                           )
-                        )
-                      } catch (error) {
-                        notify(
-                          t('Unable to set key'),
-                          formatErrorForToast(error),
-                          'error'
-                        )
-                      } finally {
-                        setIsUpdatingKey(false)
-                      }
-                    }}
-                  >
-                    {t('Set key')}
-                  </SecondaryButton>
-                </>
-              ) : null}
+                        } catch (error) {
+                          notify(
+                            t('Unable to clear key'),
+                            formatErrorForToast(error),
+                            'error'
+                          )
+                        } finally {
+                          setIsUpdatingKey(false)
+                        }
+                      }}
+                    >
+                      {t('Clear key')}
+                    </SecondaryButton>
 
-              <PrimaryButton
-                isDisabled={
-                  !isLocalAiPrimaryProvider && !providerKeyStatus.primaryReady
-                }
-                isLoading={isTesting}
-                onClick={async () => {
-                  setIsTesting(true)
-                  try {
-                    const bridge = ensureBridge()
-                    const result = await bridge.testProvider({
-                      provider: activeProvider,
-                      model: activeModel,
-                      providerConfig,
-                    })
-                    notify(
-                      t('Provider is reachable'),
-                      t('{{provider}} {{model}} in {{latency}} ms', {
-                        provider: formatAiProviderLabel(result.provider),
-                        model:
-                          String(result.model || '').trim() ||
-                          t('default model'),
-                        latency: result.latencyMs,
-                      })
-                    )
-                    await refreshProviderKeyStatus()
-                  } catch (error) {
-                    notify(
-                      t('Provider test failed'),
-                      formatErrorForToast(error),
-                      'error'
-                    )
-                  } finally {
-                    setIsTesting(false)
+                    <SecondaryButton
+                      isDisabled={!trimmedApiKey}
+                      isLoading={isUpdatingKey}
+                      onClick={async () => {
+                        setIsUpdatingKey(true)
+                        try {
+                          const bridge = ensureBridge()
+                          await bridge.setProviderKey({
+                            provider: activeProvider,
+                            apiKey: trimmedApiKey,
+                          })
+                          setApiKey('')
+                          setIsApiKeyVisible(false)
+                          await refreshProviderKeyStatus()
+                          notify(
+                            t('Provider key set'),
+                            t(
+                              'The session key was loaded and is ready for requests.'
+                            )
+                          )
+                        } catch (error) {
+                          notify(
+                            t('Unable to set key'),
+                            formatErrorForToast(error),
+                            'error'
+                          )
+                        } finally {
+                          setIsUpdatingKey(false)
+                        }
+                      }}
+                    >
+                      {t('Set key')}
+                    </SecondaryButton>
+                  </>
+                ) : null}
+
+                <PrimaryButton
+                  isDisabled={
+                    !isLocalAiPrimaryProvider && !providerKeyStatus.primaryReady
                   }
-                }}
-              >
-                {t('Test connection')}
-              </PrimaryButton>
+                  isLoading={isTesting}
+                  onClick={async () => {
+                    setIsTesting(true)
+                    try {
+                      const bridge = ensureBridge()
+                      const result = await bridge.testProvider({
+                        provider: activeProvider,
+                        model: activeModel,
+                        providerConfig,
+                      })
+                      notify(
+                        t('Provider is reachable'),
+                        t('{{provider}} {{model}} in {{latency}} ms', {
+                          provider: formatAiProviderLabel(result.provider),
+                          model:
+                            String(result.model || '').trim() ||
+                            t('default model'),
+                          latency: result.latencyMs,
+                        })
+                      )
+                      await refreshProviderKeyStatus()
+                    } catch (error) {
+                      notify(
+                        t('Provider test failed'),
+                        formatErrorForToast(error),
+                        'error'
+                      )
+                    } finally {
+                      setIsTesting(false)
+                    }
+                  }}
+                >
+                  {t('Test connection')}
+                </PrimaryButton>
+              </Stack>
             </Stack>
-          </Stack>
-        </SettingsSection>
+          </SettingsSection>
+        ) : null}
       </Stack>
       <AiEnableDialog
         isOpen={isEnableDialogOpen}

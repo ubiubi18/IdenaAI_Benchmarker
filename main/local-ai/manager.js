@@ -8,8 +8,11 @@ const {createLocalAiSidecar} = require('./sidecar')
 const {
   DEFAULT_DEMO_SAMPLE_NAME,
   buildHumanTeacherDemoWorkspace,
+  listDeveloperHumanTeacherSamples,
   listHumanTeacherDemoSamples,
+  loadDeveloperHumanTeacherSample,
   loadHumanTeacherDemoSample,
+  normalizeDeveloperHumanTeacherSampleName,
   normalizeDemoSampleName,
 } = require('./human-teacher-demo')
 const {exportHumanTeacherTasks} = require('./human-teacher-export')
@@ -39,6 +42,14 @@ const DEFAULT_RUNTIME_START_TIMEOUT_MS = 10 * 1000
 const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
 const ACTIVE_VALIDATION_PERIODS = new Set(['ShortSession', 'LongSession'])
 const MAX_DEVELOPER_COMPARISON_HISTORY = 30
+const EXTERNAL_DEVELOPER_TRAINING_BUNDLE_VERSION = 1
+const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL =
+  'mlx-community/Qwen3.5-9B-MLX-4bit'
+const EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL =
+  'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
+const EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL =
+  'mlx-community/Qwen2-VL-2B-Instruct-4bit'
+const EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE = 200
 const OLLAMA_COMMAND_CANDIDATES = [
   '/opt/homebrew/bin/ollama',
   '/usr/local/bin/ollama',
@@ -561,7 +572,7 @@ function developerHumanTeacherDir(
 ) {
   return storage.resolveLocalAiPath(
     'human-teacher-developer',
-    normalizeDemoSampleName(sampleName)
+    normalizeDeveloperHumanTeacherSampleName(sampleName)
   )
 }
 
@@ -623,6 +634,23 @@ function developerHumanTeacherComparisonPath(
     developerHumanTeacherDir(storage, sampleName),
     'comparison-100flips.json'
   )
+}
+
+function developerHumanTeacherExternalBundleDir(
+  storage,
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+  bundleId = ''
+) {
+  const baseDir = path.join(
+    developerHumanTeacherDir(storage, sampleName),
+    'external-training-bundles'
+  )
+
+  if (!bundleId) {
+    return baseDir
+  }
+
+  return path.join(baseDir, String(bundleId || '').trim())
 }
 
 function humanTeacherNormalizedAnnotationsPath(storage, epoch) {
@@ -1110,10 +1138,15 @@ function normalizeDemoHumanTeacherState(
   })
   const source =
     state && typeof state === 'object' && !Array.isArray(state) ? state : {}
-  const total = Math.max(
+  const persistedTotal = Math.max(
     0,
-    Number.parseInt(source.totalAvailableTasks ?? totalAvailableTasks, 10) || 0
+    Number.parseInt(source.totalAvailableTasks, 10) || 0
   )
+  const discoveredTotal = Math.max(
+    0,
+    Number.parseInt(totalAvailableTasks, 10) || 0
+  )
+  const total = Math.max(persistedTotal, discoveredTotal)
 
   return {
     ...fallback,
@@ -1221,7 +1254,7 @@ function createDefaultDeveloperHumanTeacherState({
   return {
     schemaVersion: DEVELOPER_HUMAN_TEACHER_STATE_VERSION,
     mode: 'developer-human-teacher',
-    sampleName: normalizeDemoSampleName(sampleName),
+    sampleName: normalizeDeveloperHumanTeacherSampleName(sampleName),
     chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
     totalAvailableTasks: Math.max(
       0,
@@ -1251,15 +1284,22 @@ function normalizeDeveloperHumanTeacherState(
   })
   const source =
     state && typeof state === 'object' && !Array.isArray(state) ? state : {}
-  const total = Math.max(
+  const persistedTotal = Math.max(
     0,
-    Number.parseInt(source.totalAvailableTasks ?? totalAvailableTasks, 10) || 0
+    Number.parseInt(source.totalAvailableTasks, 10) || 0
   )
+  const discoveredTotal = Math.max(
+    0,
+    Number.parseInt(totalAvailableTasks, 10) || 0
+  )
+  const total = Math.max(persistedTotal, discoveredTotal)
 
   return {
     ...fallback,
     ...source,
-    sampleName: normalizeDemoSampleName(source.sampleName || sampleName),
+    sampleName: normalizeDeveloperHumanTeacherSampleName(
+      source.sampleName || sampleName
+    ),
     chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
     totalAvailableTasks: total,
     currentOffset: clampDeveloperHumanTeacherOffset(
@@ -1551,6 +1591,8 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
     frame_captions: ['', '', '', ''],
     option_a_summary: '',
     option_b_summary: '',
+    ai_annotation: null,
+    ai_annotation_feedback: '',
     panel_references: ['A', 'B', 'C'].map((code) => ({
       code,
       description: '',
@@ -1566,6 +1608,34 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
     why_answer: '',
     confidence: null,
   }
+}
+
+function buildDefaultHumanTeacherAiAnnotation() {
+  return {
+    generated_at: '',
+    runtime_backend: '',
+    runtime_type: '',
+    model: '',
+    vision_model: '',
+    final_answer: '',
+    why_answer: '',
+    confidence: null,
+    text_required: null,
+    sequence_markers_present: null,
+    report_required: null,
+    report_reason: '',
+    option_a_summary: '',
+    option_b_summary: '',
+    rating: '',
+  }
+}
+
+function normalizeHumanTeacherAiAnnotationRating(value) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return ['good', 'bad', 'wrong'].includes(next) ? next : ''
 }
 
 function normalizeHumanTeacherDraftText(value, maxLength = 2000) {
@@ -1702,13 +1772,102 @@ function normalizeHumanTeacherDraftPanelReferences(value) {
   })
 }
 
+function hasHumanTeacherAiAnnotation(annotation = null) {
+  if (
+    !annotation ||
+    typeof annotation !== 'object' ||
+    Array.isArray(annotation)
+  ) {
+    return false
+  }
+
+  return Boolean(
+    annotation.generated_at ||
+      annotation.runtime_backend ||
+      annotation.runtime_type ||
+      annotation.model ||
+      annotation.vision_model ||
+      annotation.final_answer ||
+      annotation.why_answer ||
+      annotation.option_a_summary ||
+      annotation.option_b_summary ||
+      annotation.rating ||
+      annotation.report_reason ||
+      annotation.text_required !== null ||
+      annotation.sequence_markers_present !== null ||
+      annotation.report_required !== null ||
+      annotation.confidence !== null
+  )
+}
+
+function normalizeHumanTeacherAiAnnotation(value = null) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const finalAnswer = normalizeHumanTeacherDraftText(
+    source.final_answer ?? source.finalAnswer,
+    16
+  ).toLowerCase()
+  const next = {
+    ...buildDefaultHumanTeacherAiAnnotation(),
+    generated_at: normalizeHumanTeacherDraftText(
+      source.generated_at ?? source.generatedAt,
+      64
+    ),
+    runtime_backend: normalizeHumanTeacherDraftText(
+      source.runtime_backend ?? source.runtimeBackend,
+      64
+    ),
+    runtime_type: normalizeHumanTeacherDraftText(
+      source.runtime_type ?? source.runtimeType,
+      64
+    ),
+    model: normalizeHumanTeacherDraftText(source.model, 256),
+    vision_model: normalizeHumanTeacherDraftText(
+      source.vision_model || source.visionModel,
+      256
+    ),
+    final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
+      ? finalAnswer
+      : '',
+    why_answer: normalizeHumanTeacherDraftText(
+      source.why_answer || source.whyAnswer,
+      900
+    ),
+    confidence: normalizeHumanTeacherDraftConfidence(source.confidence),
+    text_required: normalizeHumanTeacherDraftBool(
+      source.text_required ?? source.textRequired
+    ),
+    sequence_markers_present: normalizeHumanTeacherDraftBool(
+      source.sequence_markers_present ?? source.sequenceMarkersPresent
+    ),
+    report_required: normalizeHumanTeacherDraftBool(
+      source.report_required ?? source.reportRequired
+    ),
+    report_reason: normalizeHumanTeacherDraftText(
+      source.report_reason ?? source.reportReason,
+      400
+    ),
+    option_a_summary: normalizeHumanTeacherDraftText(
+      source.option_a_summary ?? source.optionASummary,
+      400
+    ),
+    option_b_summary: normalizeHumanTeacherDraftText(
+      source.option_b_summary ?? source.optionBSummary,
+      400
+    ),
+    rating: normalizeHumanTeacherAiAnnotationRating(source.rating),
+  }
+
+  return hasHumanTeacherAiAnnotation(next) ? next : null
+}
+
 function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
   const source =
     annotation && typeof annotation === 'object' && !Array.isArray(annotation)
       ? annotation
       : {}
   const finalAnswer = normalizeHumanTeacherDraftText(
-    source.final_answer || source.finalAnswer,
+    source.final_answer ?? source.finalAnswer,
     16
   ).toLowerCase()
 
@@ -1716,34 +1875,41 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
     ...buildDefaultHumanTeacherAnnotationRow(task),
     annotator: normalizeHumanTeacherDraftText(source.annotator, 256),
     frame_captions: normalizeHumanTeacherDraftCaptions(
-      source.frame_captions || source.frameCaptions
+      source.frame_captions ?? source.frameCaptions
     ),
     option_a_summary: normalizeHumanTeacherDraftText(
-      source.option_a_summary || source.optionASummary
+      source.option_a_summary ?? source.optionASummary
     ),
     option_b_summary: normalizeHumanTeacherDraftText(
-      source.option_b_summary || source.optionBSummary
+      source.option_b_summary ?? source.optionBSummary
+    ),
+    ai_annotation: normalizeHumanTeacherAiAnnotation(
+      source.ai_annotation ?? source.aiAnnotation
+    ),
+    ai_annotation_feedback: normalizeHumanTeacherDraftText(
+      source.ai_annotation_feedback ?? source.aiAnnotationFeedback,
+      600
     ),
     panel_references: normalizeHumanTeacherDraftPanelReferences(
-      source.panel_references || source.panelReferences
+      source.panel_references ?? source.panelReferences
     ),
     text_required: normalizeHumanTeacherDraftBool(
-      source.text_required || source.textRequired
+      source.text_required ?? source.textRequired
     ),
     sequence_markers_present: normalizeHumanTeacherDraftBool(
-      source.sequence_markers_present || source.sequenceMarkersPresent
+      source.sequence_markers_present ?? source.sequenceMarkersPresent
     ),
     report_required: normalizeHumanTeacherDraftBool(
-      source.report_required || source.reportRequired
+      source.report_required ?? source.reportRequired
     ),
     report_reason: normalizeHumanTeacherDraftText(
-      source.report_reason || source.reportReason
+      source.report_reason ?? source.reportReason
     ),
     final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
       ? finalAnswer
       : '',
     why_answer: normalizeHumanTeacherDraftText(
-      source.why_answer || source.whyAnswer
+      source.why_answer ?? source.whyAnswer
     ),
     confidence: normalizeHumanTeacherDraftConfidence(source.confidence),
   }
@@ -1757,6 +1923,8 @@ function hasHumanTeacherAnnotationDraft(annotation = {}) {
       next.frame_captions.some(Boolean) ||
       next.option_a_summary ||
       next.option_b_summary ||
+      hasHumanTeacherAiAnnotation(next.ai_annotation) ||
+      next.ai_annotation_feedback ||
       next.panel_references.some(
         (reference) => reference.description || reference.panel_index !== null
       ) ||
@@ -1830,9 +1998,11 @@ async function ensureHumanTeacherDemoChunkWorkspace(
     outputDir,
     batchSize = DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
     offset = 0,
+    loadSample = loadHumanTeacherDemoSample,
+    normalizeSampleName = normalizeDemoSampleName,
   } = {}
 ) {
-  const nextSampleName = normalizeDemoSampleName(sampleName)
+  const nextSampleName = normalizeSampleName(sampleName)
   const nextOutputDir = String(outputDir || '').trim()
 
   if (!nextOutputDir) {
@@ -1856,6 +2026,7 @@ async function ensureHumanTeacherDemoChunkWorkspace(
         sampleName: nextSampleName,
         take: batchSize,
         offset,
+        loadSample,
       })
 
   return {
@@ -2140,7 +2311,7 @@ function createLocalAiManager({
     sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
     totalAvailableTasks = 0
   ) {
-    const nextSampleName = normalizeDemoSampleName(sampleName)
+    const nextSampleName = normalizeDeveloperHumanTeacherSampleName(sampleName)
     const statePath = developerHumanTeacherStatePath(
       localAiStorage,
       nextSampleName
@@ -2257,7 +2428,7 @@ function createLocalAiManager({
   }
 
   async function writeDeveloperHumanTeacherState(sampleName, nextState) {
-    const nextSampleName = normalizeDemoSampleName(sampleName)
+    const nextSampleName = normalizeDeveloperHumanTeacherSampleName(sampleName)
     const statePath = developerHumanTeacherStatePath(
       localAiStorage,
       nextSampleName
@@ -2280,9 +2451,15 @@ function createLocalAiManager({
       sampleName: nextState?.sampleName,
       totalAvailableTasks: nextState?.totalAvailableTasks,
     })
+    const supportsLocalTraining = Boolean(
+      localAiDeveloperTrainingRunner &&
+        typeof localAiDeveloperTrainingRunner.runEpoch === 'function'
+    )
 
     return {
       ...normalizedState,
+      supportsLocalTraining,
+      localTrainingMode: supportsLocalTraining ? 'mlx-fallback' : 'unavailable',
       pendingTrainingCount: normalizedState.pendingTrainingTaskIds.length,
       annotatedCount: normalizedState.annotatedTaskIds.length,
       trainedCount: normalizedState.trainedTaskIds.length,
@@ -2295,12 +2472,78 @@ function createLocalAiManager({
     }
   }
 
+  function buildDeveloperExternalBundleId(
+    createdAt = new Date().toISOString()
+  ) {
+    return `bundle-${String(createdAt)
+      .trim()
+      .replace(/[:.]/g, '-')
+      .replace(/[^a-zA-Z0-9_-]+/g, '-')}`
+  }
+
+  function buildDeveloperExternalTrainingBundleReadme({
+    bundleId,
+    createdAt,
+    sampleName,
+    annotatedCount,
+    pendingCount,
+    trainedCount,
+    runtimeBackend,
+    runtimeModel,
+    runtimeVisionModel,
+    developerPromptActive,
+  }) {
+    return [
+      '# IdenaAI external training bundle',
+      '',
+      'This folder is the provider-neutral export for external GPU training.',
+      'Upload only this folder to the machine or provider you want to use.',
+      '',
+      `Bundle id: ${bundleId}`,
+      `Created at: ${createdAt}`,
+      `Developer sample: ${sampleName}`,
+      '',
+      'What is inside:',
+      '- annotations.normalized.jsonl: all annotated developer human-teacher rows currently saved on this desktop profile',
+      '- annotations.pending.jsonl: rows that are annotated but not yet inside the active local model',
+      '- annotations.trained.jsonl: rows that were already used by the local training path',
+      '- training-bundle-manifest.json: machine-readable metadata for reproducible training and evaluation',
+      '- README.md: this short guide',
+      '',
+      'Simple path for normal users:',
+      '1. Rent one GPU computer from any managed jobs provider, GPU pod provider, or cloud VM.',
+      '2. Upload this whole folder to that machine.',
+      '3. Start with a benchmark-only smoke run before doing a longer training run.',
+      `4. For serious training, use the recommended MLX base ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}.`,
+      `5. If that is too heavy, fall back to ${EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL} or ${EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL}.`,
+      `6. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
+      '7. Import only the result files you intend to trust back into IdenaAI later.',
+      '',
+      'Safety notes:',
+      '- this bundle should contain training data only, not wallet secrets or your whole desktop profile',
+      '- do not upload unrelated local folders',
+      '- benchmark candidates on unseen flips and publish predictions, not only a final score',
+      '',
+      'Current local context:',
+      `- runtime backend: ${runtimeBackend || 'unknown'}`,
+      `- runtime text model: ${runtimeModel || 'unknown'}`,
+      `- runtime vision model: ${runtimeVisionModel || 'unknown'}`,
+      `- annotated rows exported: ${annotatedCount}`,
+      `- pending rows exported: ${pendingCount}`,
+      `- already trained rows exported: ${trainedCount}`,
+      `- custom developer prompt active: ${
+        developerPromptActive ? 'yes' : 'no'
+      }`,
+      '',
+    ].join('\n')
+  }
+
   async function loadDeveloperHumanTeacherChunkWorkspace({
     sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
     offset = 0,
   } = {}) {
-    const nextSampleName = normalizeDemoSampleName(sampleName)
-    const sample = await loadHumanTeacherDemoSample(nextSampleName)
+    const nextSampleName = normalizeDeveloperHumanTeacherSampleName(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(nextSampleName)
     const effectiveOffset = clampDeveloperHumanTeacherOffset(
       offset,
       sample.totalFlips
@@ -2316,6 +2559,8 @@ function createLocalAiManager({
       outputDir,
       batchSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
       offset: effectiveOffset,
+      loadSample: loadDeveloperHumanTeacherSample,
+      normalizeSampleName: normalizeDeveloperHumanTeacherSampleName,
     })
     const nextWorkspace = await buildWorkspaceFromOutputDir(outputDir, null)
     const {statePath, state: developerState} =
@@ -2361,6 +2606,8 @@ function createLocalAiManager({
       outputDir,
       batchSize: DEMO_HUMAN_TEACHER_BATCH_SIZE,
       offset: effectiveOffset,
+      loadSample: loadHumanTeacherDemoSample,
+      normalizeSampleName: normalizeDemoSampleName,
     })
     const nextWorkspace = await buildWorkspaceFromOutputDir(outputDir, null)
     const {statePath, state: demoState} = await loadDemoHumanTeacherState(
@@ -4058,7 +4305,9 @@ function createLocalAiManager({
     const sampleName = normalizeDemoSampleName(
       next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
     )
-    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const normalizedSampleName =
+      normalizeDeveloperHumanTeacherSampleName(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(normalizedSampleName)
     const {statePath, state: developerState} =
       await loadDeveloperHumanTeacherState(sample.sampleName, sample.totalFlips)
     const effectiveOffset = clampDeveloperHumanTeacherOffset(
@@ -4076,7 +4325,7 @@ function createLocalAiManager({
       demo: true,
       developer: true,
       sampleName: sample.sampleName,
-      samples: listHumanTeacherDemoSamples(),
+      samples: listDeveloperHumanTeacherSamples(),
       chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
       offset: effectiveOffset,
       outputDir: session.outputDir,
@@ -4105,6 +4354,164 @@ function createLocalAiManager({
           sample.sampleName
         ),
       },
+    }
+  }
+
+  async function exportHumanTeacherDeveloperBundle(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const sampleName = normalizeDeveloperHumanTeacherSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const sample = await loadDeveloperHumanTeacherSample(sampleName)
+    const {state: developerState} = await loadDeveloperHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const annotatedSourcePath = developerHumanTeacherAnnotatedPath(
+      localAiStorage,
+      sample.sampleName
+    )
+    const pendingSourcePath = developerHumanTeacherPendingPath(
+      localAiStorage,
+      sample.sampleName
+    )
+    const trainedSourcePath = developerHumanTeacherTrainedPath(
+      localAiStorage,
+      sample.sampleName
+    )
+    const annotatedRows = await readJsonlRows(annotatedSourcePath, [])
+    const pendingRows = await readJsonlRows(pendingSourcePath, [])
+    const trainedRows = await readJsonlRows(trainedSourcePath, [])
+
+    if (!annotatedRows.length) {
+      throw new Error(
+        'Annotate at least one completed developer flip before exporting an external training bundle'
+      )
+    }
+
+    const createdAt = new Date().toISOString()
+    const bundleId = buildDeveloperExternalBundleId(createdAt)
+    const outputDir = developerHumanTeacherExternalBundleDir(
+      localAiStorage,
+      sample.sampleName,
+      bundleId
+    )
+    const annotationsPath = path.join(outputDir, 'annotations.normalized.jsonl')
+    const pendingPath = path.join(outputDir, 'annotations.pending.jsonl')
+    const trainedPath = path.join(outputDir, 'annotations.trained.jsonl')
+    const bundleManifestPath = path.join(
+      outputDir,
+      'training-bundle-manifest.json'
+    )
+    const readmePath = path.join(outputDir, 'README.md')
+    const developerPrompt = String(
+      next.developerHumanTeacherSystemPrompt || ''
+    ).trim()
+
+    await localAiStorage.ensureDir(outputDir)
+    await writeJsonlRows(annotationsPath, annotatedRows)
+    await writeJsonlRows(pendingPath, pendingRows)
+    await writeJsonlRows(trainedPath, trainedRows)
+
+    const annotationSha256 = await localAiStorage.sha256File(annotationsPath)
+    const pendingSha256 = await localAiStorage.sha256File(pendingPath)
+    const trainedSha256 = await localAiStorage.sha256File(trainedPath)
+    const manifest = {
+      version: EXTERNAL_DEVELOPER_TRAINING_BUNDLE_VERSION,
+      bundleType: 'idenaai-human-teacher-external-training',
+      bundleId,
+      createdAt,
+      developerSession: {
+        sampleName: sample.sampleName,
+        sampleLabel: sample.label,
+        totalAvailableTasks: sample.totalFlips,
+        chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+        annotatedTaskIds: developerState.annotatedTaskIds,
+        pendingTrainingTaskIds: developerState.pendingTrainingTaskIds,
+        trainedTaskIds: developerState.trainedTaskIds,
+      },
+      runtime: {
+        runtimeBackend: String(next.runtimeBackend || '').trim() || null,
+        runtimeType: String(next.runtimeType || '').trim() || null,
+        baseUrl: String(next.baseUrl || '').trim() || null,
+        model: String(next.model || '').trim() || null,
+        visionModel: String(next.visionModel || '').trim() || null,
+      },
+      training: {
+        recommendedModel: EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
+        strongerFallbackModel:
+          EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
+        safeFallbackModel: EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
+        humanTeacherSystemPrompt: developerPrompt || null,
+      },
+      benchmark: {
+        recommendedHoldoutFlips: EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE,
+        policy:
+          'benchmark on unseen flips and publish per-flip predictions, not only a final score',
+      },
+      files: {
+        annotations: {
+          path: annotationsPath,
+          rowCount: annotatedRows.length,
+          sha256: annotationSha256,
+        },
+        pending: {
+          path: pendingPath,
+          rowCount: pendingRows.length,
+          sha256: pendingSha256,
+        },
+        trained: {
+          path: trainedPath,
+          rowCount: trainedRows.length,
+          sha256: trainedSha256,
+        },
+      },
+    }
+
+    await localAiStorage.writeJsonAtomic(bundleManifestPath, manifest)
+    await localAiStorage.writeBuffer(
+      readmePath,
+      Buffer.from(
+        buildDeveloperExternalTrainingBundleReadme({
+          bundleId,
+          createdAt,
+          sampleName: sample.sampleName,
+          annotatedCount: annotatedRows.length,
+          pendingCount: pendingRows.length,
+          trainedCount: trainedRows.length,
+          runtimeBackend: manifest.runtime.runtimeBackend,
+          runtimeModel: manifest.runtime.model,
+          runtimeVisionModel: manifest.runtime.visionModel,
+          developerPromptActive: Boolean(developerPrompt),
+        }),
+        'utf8'
+      )
+    )
+
+    return {
+      developer: true,
+      bundleId,
+      outputDir,
+      manifestPath: bundleManifestPath,
+      readmePath,
+      annotationsPath,
+      pendingPath,
+      trainedPath,
+      sampleName: sample.sampleName,
+      annotatedCount: annotatedRows.length,
+      pendingCount: pendingRows.length,
+      trainedCount: trainedRows.length,
+      recommendedTrainingModel: EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
+      strongerFallbackTrainingModel:
+        EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
+      safeFallbackTrainingModel:
+        EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
+      recommendedBenchmarkFlips: EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE,
+      supportsLocalTraining:
+        summarizeDeveloperHumanTeacherState(developerState)
+          .supportsLocalTraining,
     }
   }
 
@@ -4308,10 +4715,10 @@ function createLocalAiManager({
 
     const next = normalizeRuntimePayload(payload)
     assertDeveloperHumanTeacherSessionAllowed(next.currentPeriod, 'task open')
-    const sampleName = normalizeDemoSampleName(
+    const sampleName = normalizeDeveloperHumanTeacherSampleName(
       next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
     )
-    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(sampleName)
     const {state: developerState} = await loadDeveloperHumanTeacherState(
       sample.sampleName,
       sample.totalFlips
@@ -4610,10 +5017,10 @@ function createLocalAiManager({
     await hydrate()
 
     const next = normalizeRuntimePayload(payload)
-    const sampleName = normalizeDemoSampleName(
+    const sampleName = normalizeDeveloperHumanTeacherSampleName(
       next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
     )
-    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(sampleName)
     const {state: developerState} = await loadDeveloperHumanTeacherState(
       sample.sampleName,
       sample.totalFlips
@@ -4641,10 +5048,10 @@ function createLocalAiManager({
       next.currentPeriod,
       'training commit'
     )
-    const sampleName = normalizeDemoSampleName(
+    const sampleName = normalizeDeveloperHumanTeacherSampleName(
       next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
     )
-    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(sampleName)
     const {state: developerState} = await loadDeveloperHumanTeacherState(
       sample.sampleName,
       sample.totalFlips
@@ -4672,10 +5079,10 @@ function createLocalAiManager({
       next.currentPeriod,
       'comparison run'
     )
-    const sampleName = normalizeDemoSampleName(
+    const sampleName = normalizeDeveloperHumanTeacherSampleName(
       next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
     )
-    const sample = await loadHumanTeacherDemoSample(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(sampleName)
     const {statePath, state: existingState} =
       await loadDeveloperHumanTeacherState(sample.sampleName, sample.totalFlips)
 
@@ -4952,6 +5359,7 @@ function createLocalAiManager({
     loadHumanTeacherDemoTask,
     loadHumanTeacherDeveloperSession,
     loadHumanTeacherDeveloperTask,
+    exportHumanTeacherDeveloperBundle,
     updateTrainingCandidatePackageReview,
     updateHumanTeacherPackageReview,
     exportHumanTeacherTasks: exportHumanTeacherTasksWorkspace,

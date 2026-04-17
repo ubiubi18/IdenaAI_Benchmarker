@@ -7,6 +7,7 @@ const {
   RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
+  DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   buildLocalAiSettings,
@@ -32,6 +33,8 @@ describe('local-ai settings schema', () => {
     expect(settings.model).toBe(DEFAULT_LOCAL_AI_OLLAMA_MODEL)
     expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
     expect(settings.runtimeType).toBe('ollama')
+    expect(settings.developerHumanTeacherSystemPrompt).toBe('')
+    expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(false)
   })
 
   it('migrates legacy phi contract defaults into the Ollama setup', () => {
@@ -158,6 +161,27 @@ describe('local-ai settings schema', () => {
     expect(FALLBACK_LOCAL_AI_TRAINING_MODEL).toBe(
       'mlx-community/Qwen2-VL-2B-Instruct-4bit'
     )
+    expect(DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT).toMatch(
+      /left-only or right-only bias/i
+    )
+  })
+
+  it('keeps a persisted custom developer human-teacher system prompt', () => {
+    const settings = buildLocalAiSettings({
+      developerHumanTeacherSystemPrompt: 'Prefer chronology over slot bias.',
+    })
+
+    expect(settings.developerHumanTeacherSystemPrompt).toBe(
+      'Prefer chronology over slot bias.'
+    )
+  })
+
+  it('keeps a persisted developer annotation-sharing consent', () => {
+    const settings = buildLocalAiSettings({
+      shareHumanTeacherAnnotationsWithNetwork: true,
+    })
+
+    expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(true)
   })
 
   it('accepts loopback-only Local AI endpoints', () => {

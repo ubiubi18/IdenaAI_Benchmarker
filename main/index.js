@@ -700,6 +700,13 @@ function getMainLocalAiSettings(payload = {}) {
       [nextPayload.trainingPolicy, localAi.trainingPolicy],
       LOCAL_AI_TRAINING_POLICY
     ),
+    developerHumanTeacherSystemPrompt: pickTrimmedString(
+      [
+        nextPayload.developerHumanTeacherSystemPrompt,
+        localAi.developerHumanTeacherSystemPrompt,
+      ],
+      ''
+    ),
     rankingPolicy: normalizeLocalAiRankingPolicy({
       ...(localAi.rankingPolicy || {}),
       ...(nextPayload.rankingPolicy || {}),
@@ -1033,6 +1040,8 @@ function buildLocalAiInfoPayload(payload = {}) {
     runtimeFamily: localAi.runtimeFamily,
     adapterStrategy: localAi.adapterStrategy,
     trainingPolicy: localAi.trainingPolicy,
+    developerHumanTeacherSystemPrompt:
+      localAi.developerHumanTeacherSystemPrompt,
     rankingPolicy: localAi.rankingPolicy,
   }
 }
@@ -2296,6 +2305,17 @@ handleTrusted(
     'loadHumanTeacherDeveloperSession',
     async (_event, payload) =>
       localAiManager.loadHumanTeacherDeveloperSession(
+        buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
+  'localAi.exportHumanTeacherDeveloperBundle',
+  withLocalAiEnabled(
+    'exportHumanTeacherDeveloperBundle',
+    async (_event, payload) =>
+      localAiManager.exportHumanTeacherDeveloperBundle(
         buildLocalAiEpochPayload(payload)
       )
   )
