@@ -795,6 +795,8 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
     frame_captions: ['', '', '', ''],
     option_a_summary: '',
     option_b_summary: '',
+    ai_annotation: null,
+    ai_annotation_feedback: '',
     text_required: null,
     sequence_markers_present: null,
     report_required: null,
@@ -803,6 +805,34 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
     why_answer: '',
     confidence: null,
   }
+}
+
+function buildDefaultHumanTeacherAiAnnotation() {
+  return {
+    generated_at: '',
+    runtime_backend: '',
+    runtime_type: '',
+    model: '',
+    vision_model: '',
+    final_answer: '',
+    why_answer: '',
+    confidence: null,
+    text_required: null,
+    sequence_markers_present: null,
+    report_required: null,
+    report_reason: '',
+    option_a_summary: '',
+    option_b_summary: '',
+    rating: '',
+  }
+}
+
+function normalizeHumanTeacherAiAnnotationRating(value) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return ['good', 'bad', 'wrong'].includes(next) ? next : ''
 }
 
 function normalizeHumanTeacherDraftText(value, maxLength = 2000) {
@@ -840,11 +870,19 @@ function normalizeHumanTeacherDraftConfidence(value) {
 
   const parsed = Number.parseFloat(value)
 
-  if (!Number.isFinite(parsed)) {
+  if (!Number.isFinite(parsed) || parsed < 0) {
     return null
   }
 
-  return Math.min(Math.max(parsed, 0), 1)
+  if (parsed <= 1) {
+    return Math.min(5, Math.max(1, Math.round(parsed * 4 + 1)))
+  }
+
+  if (parsed > 5) {
+    return null
+  }
+
+  return Math.round(parsed)
 }
 
 function normalizeHumanTeacherDraftCaptions(value) {
@@ -855,6 +893,95 @@ function normalizeHumanTeacherDraftCaptions(value) {
   }
 
   return next.map((item) => normalizeHumanTeacherDraftText(item, 400))
+}
+
+function hasHumanTeacherAiAnnotation(annotation = null) {
+  if (
+    !annotation ||
+    typeof annotation !== 'object' ||
+    Array.isArray(annotation)
+  ) {
+    return false
+  }
+
+  return Boolean(
+    annotation.generated_at ||
+      annotation.runtime_backend ||
+      annotation.runtime_type ||
+      annotation.model ||
+      annotation.vision_model ||
+      annotation.final_answer ||
+      annotation.why_answer ||
+      annotation.option_a_summary ||
+      annotation.option_b_summary ||
+      annotation.rating ||
+      annotation.report_reason ||
+      annotation.text_required !== null ||
+      annotation.sequence_markers_present !== null ||
+      annotation.report_required !== null ||
+      annotation.confidence !== null
+  )
+}
+
+function normalizeHumanTeacherAiAnnotation(value = null) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const finalAnswer = normalizeHumanTeacherDraftText(
+    source.final_answer ?? source.finalAnswer,
+    16
+  ).toLowerCase()
+  const next = {
+    ...buildDefaultHumanTeacherAiAnnotation(),
+    generated_at: normalizeHumanTeacherDraftText(
+      source.generated_at ?? source.generatedAt,
+      64
+    ),
+    runtime_backend: normalizeHumanTeacherDraftText(
+      source.runtime_backend ?? source.runtimeBackend,
+      64
+    ),
+    runtime_type: normalizeHumanTeacherDraftText(
+      source.runtime_type ?? source.runtimeType,
+      64
+    ),
+    model: normalizeHumanTeacherDraftText(source.model, 256),
+    vision_model: normalizeHumanTeacherDraftText(
+      source.vision_model || source.visionModel,
+      256
+    ),
+    final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
+      ? finalAnswer
+      : '',
+    why_answer: normalizeHumanTeacherDraftText(
+      source.why_answer || source.whyAnswer,
+      900
+    ),
+    confidence: normalizeHumanTeacherDraftConfidence(source.confidence),
+    text_required: normalizeHumanTeacherDraftBool(
+      source.text_required ?? source.textRequired
+    ),
+    sequence_markers_present: normalizeHumanTeacherDraftBool(
+      source.sequence_markers_present ?? source.sequenceMarkersPresent
+    ),
+    report_required: normalizeHumanTeacherDraftBool(
+      source.report_required ?? source.reportRequired
+    ),
+    report_reason: normalizeHumanTeacherDraftText(
+      source.report_reason ?? source.reportReason,
+      400
+    ),
+    option_a_summary: normalizeHumanTeacherDraftText(
+      source.option_a_summary ?? source.optionASummary,
+      400
+    ),
+    option_b_summary: normalizeHumanTeacherDraftText(
+      source.option_b_summary ?? source.optionBSummary,
+      400
+    ),
+    rating: normalizeHumanTeacherAiAnnotationRating(source.rating),
+  }
+
+  return hasHumanTeacherAiAnnotation(next) ? next : null
 }
 
 function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
@@ -878,6 +1005,13 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
     ),
     option_b_summary: normalizeHumanTeacherDraftText(
       source.option_b_summary || source.optionBSummary
+    ),
+    ai_annotation: normalizeHumanTeacherAiAnnotation(
+      source.ai_annotation ?? source.aiAnnotation
+    ),
+    ai_annotation_feedback: normalizeHumanTeacherDraftText(
+      source.ai_annotation_feedback ?? source.aiAnnotationFeedback,
+      600
     ),
     text_required: normalizeHumanTeacherDraftBool(
       source.text_required || source.textRequired
@@ -909,6 +1043,8 @@ function hasHumanTeacherAnnotationDraft(annotation = {}) {
       next.frame_captions.some(Boolean) ||
       next.option_a_summary ||
       next.option_b_summary ||
+      hasHumanTeacherAiAnnotation(next.ai_annotation) ||
+      next.ai_annotation_feedback ||
       next.report_reason ||
       next.final_answer ||
       next.why_answer ||

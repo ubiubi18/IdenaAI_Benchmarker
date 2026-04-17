@@ -8,6 +8,7 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  useToast,
 } from '@chakra-ui/react'
 import {useRouter} from 'next/router'
 import {useTranslation} from 'react-i18next'
@@ -20,8 +21,14 @@ import {
   Input,
   Select,
   Textarea,
+  Toast,
 } from '../../shared/components/components'
 import {useEpochState} from '../../shared/providers/epoch-context'
+import {useSettingsState} from '../../shared/providers/settings-context'
+
+const DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT =
+  'Use human-teacher guidance without collapsing into a left-only or right-only bias. Prefer left or right only when the visual chronology, readable text, reportability cues, or explicit human annotation meaningfully support that side. If the evidence is weak or conflicting, stay cautious and do not default to one side.'
+const AI_ANNOTATION_RATINGS = ['good', 'bad', 'wrong']
 
 function formatErrorMessage(error) {
   const raw = String((error && error.message) || error || '').trim()
@@ -29,7 +36,7 @@ function formatErrorMessage(error) {
   const message = raw.replace(prefix, '').trim()
 
   if (
-    /No handler registered for 'localAi\.(?:loadHumanTeacherDemoWorkspace|loadHumanTeacherDemoTask|saveHumanTeacherDemoDraft|loadHumanTeacherAnnotationWorkspace|loadHumanTeacherAnnotationTask|saveHumanTeacherAnnotationDraft|importHumanTeacherAnnotations|exportHumanTeacherTasks)'/i.test(
+    /No handler registered for 'localAi\.(?:loadHumanTeacherDemoWorkspace|loadHumanTeacherDemoTask|saveHumanTeacherDemoDraft|loadHumanTeacherAnnotationWorkspace|loadHumanTeacherAnnotationTask|saveHumanTeacherAnnotationDraft|importHumanTeacherAnnotations|exportHumanTeacherTasks|chat)'/i.test(
       message
     )
   ) {
@@ -136,6 +143,8 @@ function createEmptyAnnotationDraft() {
     frame_captions: ['', '', '', ''],
     option_a_summary: '',
     option_b_summary: '',
+    ai_annotation: null,
+    ai_annotation_feedback: '',
     text_required: null,
     sequence_markers_present: null,
     report_required: null,
@@ -144,6 +153,127 @@ function createEmptyAnnotationDraft() {
     why_answer: '',
     confidence: '',
   }
+}
+
+function createEmptyAiAnnotationDraft() {
+  return {
+    generated_at: '',
+    runtime_backend: '',
+    runtime_type: '',
+    model: '',
+    vision_model: '',
+    final_answer: '',
+    why_answer: '',
+    confidence: '',
+    text_required: null,
+    sequence_markers_present: null,
+    report_required: null,
+    report_reason: '',
+    option_a_summary: '',
+    option_b_summary: '',
+    rating: '',
+  }
+}
+
+function normalizeAiAnnotationRating(value) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return AI_ANNOTATION_RATINGS.includes(next) ? next : ''
+}
+
+function normalizeAiAnnotationDraft(annotation = {}) {
+  const next =
+    annotation && typeof annotation === 'object' && !Array.isArray(annotation)
+      ? {
+          ...createEmptyAiAnnotationDraft(),
+          ...annotation,
+        }
+      : createEmptyAiAnnotationDraft()
+  const finalAnswer = String(next.final_answer ?? next.finalAnswer ?? '')
+    .trim()
+    .toLowerCase()
+  const normalized = {
+    ...createEmptyAiAnnotationDraft(),
+    generated_at: String(next.generated_at ?? next.generatedAt ?? '')
+      .trim()
+      .slice(0, 64),
+    runtime_backend: String(next.runtime_backend ?? next.runtimeBackend ?? '')
+      .trim()
+      .slice(0, 64),
+    runtime_type: String(next.runtime_type ?? next.runtimeType ?? '')
+      .trim()
+      .slice(0, 64),
+    model: String(next.model || '')
+      .trim()
+      .slice(0, 256),
+    vision_model: String(next.vision_model || next.visionModel || '')
+      .trim()
+      .slice(0, 256),
+    final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
+      ? finalAnswer
+      : '',
+    why_answer: String(next.why_answer ?? next.whyAnswer ?? '')
+      .trim()
+      .slice(0, 900),
+    confidence:
+      next.confidence === null || typeof next.confidence === 'undefined'
+        ? ''
+        : String(next.confidence).trim(),
+    text_required:
+      Object.prototype.hasOwnProperty.call(next, 'text_required') ||
+      Object.prototype.hasOwnProperty.call(next, 'textRequired')
+        ? next.text_required ?? next.textRequired
+        : null,
+    sequence_markers_present:
+      Object.prototype.hasOwnProperty.call(next, 'sequence_markers_present') ||
+      Object.prototype.hasOwnProperty.call(next, 'sequenceMarkersPresent')
+        ? next.sequence_markers_present ?? next.sequenceMarkersPresent
+        : null,
+    report_required:
+      Object.prototype.hasOwnProperty.call(next, 'report_required') ||
+      Object.prototype.hasOwnProperty.call(next, 'reportRequired')
+        ? next.report_required ?? next.reportRequired
+        : null,
+    report_reason: String(next.report_reason ?? next.reportReason ?? '')
+      .trim()
+      .slice(0, 400),
+    option_a_summary: String(next.option_a_summary ?? next.optionASummary ?? '')
+      .trim()
+      .slice(0, 400),
+    option_b_summary: String(next.option_b_summary ?? next.optionBSummary ?? '')
+      .trim()
+      .slice(0, 400),
+    rating: normalizeAiAnnotationRating(next.rating),
+  }
+
+  return hasAiAnnotationContent(normalized) ? normalized : null
+}
+
+function hasAiAnnotationContent(annotation = {}) {
+  const next =
+    annotation && typeof annotation === 'object' && !Array.isArray(annotation)
+      ? annotation
+      : {}
+
+  return Boolean(
+    next.generated_at ||
+      next.runtime_backend ||
+      next.runtime_type ||
+      next.model ||
+      next.vision_model ||
+      next.final_answer ||
+      next.why_answer ||
+      next.option_a_summary ||
+      next.option_b_summary ||
+      next.rating ||
+      next.report_reason ||
+      next.text_required !== null ||
+      next.sequence_markers_present !== null ||
+      next.report_required !== null ||
+      next.confidence !== ''
+  )
 }
 
 function normalizeAnnotationDraft(annotation = {}) {
@@ -165,6 +295,14 @@ function normalizeAnnotationDraft(annotation = {}) {
     annotator: String(next.annotator || ''),
     option_a_summary: String(next.option_a_summary || ''),
     option_b_summary: String(next.option_b_summary || ''),
+    ai_annotation: normalizeAiAnnotationDraft(
+      next.ai_annotation ?? next.aiAnnotation
+    ),
+    ai_annotation_feedback: String(
+      next.ai_annotation_feedback ?? next.aiAnnotationFeedback ?? ''
+    )
+      .trim()
+      .slice(0, 600),
     report_reason: String(next.report_reason || ''),
     final_answer: String(next.final_answer || ''),
     why_answer: String(next.why_answer || ''),
@@ -182,6 +320,8 @@ function hasDraftContent(annotation = {}) {
       next.frame_captions.some((item) => String(item || '').trim()) ||
       next.option_a_summary.trim() ||
       next.option_b_summary.trim() ||
+      hasAiAnnotationContent(next.ai_annotation) ||
+      next.ai_annotation_feedback.trim() ||
       next.report_reason.trim() ||
       next.final_answer.trim() ||
       next.why_answer.trim() ||
@@ -211,6 +351,114 @@ function getOrderedPanels(task = {}, order = []) {
   )
 
   return order.map((index) => panelsByIndex.get(Number(index))).filter(Boolean)
+}
+
+function parseAiAnnotationResponse(text = '') {
+  const raw = String(text || '').trim()
+
+  if (!raw) {
+    throw new Error('Local AI returned an empty draft response.')
+  }
+
+  const direct = () => JSON.parse(raw)
+  const fromFence = () => {
+    const match = raw.match(/```(?:json)?\s*([\s\S]+?)\s*```/iu)
+    if (!match) {
+      throw new Error('No JSON object found in the Local AI draft response.')
+    }
+    return JSON.parse(String(match[1] || '').trim())
+  }
+
+  try {
+    return direct()
+  } catch {
+    return fromFence()
+  }
+}
+
+function buildAiAnnotationSystemPrompt(basePrompt = '') {
+  const prefix = String(basePrompt || '').trim()
+
+  return [
+    prefix || DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
+    'You are generating a human-teacher draft annotation for human review.',
+    'Do not collapse into a left-only or right-only habit.',
+    'Return JSON only.',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function buildAiAnnotationUserPrompt() {
+  return [
+    'Draft a human-teacher annotation for this Idena FLIP.',
+    'Images 1-4 show the LEFT candidate in temporal order.',
+    'Images 5-8 show the RIGHT candidate in temporal order.',
+    'Use skip if the flip is ambiguous, report-worthy, or lacks a clear better story.',
+    'Keep the reason short and concrete.',
+    'Return JSON only with this exact schema:',
+    '{"final_answer":"left|right|skip","why_answer":"...","confidence":1|2|3|4|5,"text_required":true|false,"sequence_markers_present":true|false,"report_required":true|false,"report_reason":"...","option_a_summary":"short LEFT story summary","option_b_summary":"short RIGHT story summary"}',
+    'If report_required is false, report_reason must be an empty string.',
+  ].join(' ')
+}
+
+function buildStoredAiAnnotation(aiAnnotation, result = {}) {
+  const normalized = normalizeAiAnnotationDraft({
+    ...aiAnnotation,
+    generated_at: new Date().toISOString(),
+    runtime_backend: result.runtimeBackend || result.runtime_backend || '',
+    runtime_type: result.runtimeType || result.runtime_type || '',
+    model: result.model || '',
+    vision_model: result.visionModel || result.vision_model || '',
+  })
+
+  if (!normalized) {
+    throw new Error('Local AI returned an empty draft annotation.')
+  }
+
+  return normalized
+}
+
+function applyAiAnnotationToDraft(currentDraft, aiAnnotation) {
+  return normalizeAnnotationDraft({
+    ...currentDraft,
+    ai_annotation: aiAnnotation,
+    final_answer: aiAnnotation.final_answer || '',
+    why_answer: aiAnnotation.why_answer || '',
+    confidence: aiAnnotation.confidence || '',
+    text_required: aiAnnotation.text_required,
+    sequence_markers_present: aiAnnotation.sequence_markers_present,
+    report_required: aiAnnotation.report_required,
+    report_reason: aiAnnotation.report_reason || '',
+    option_a_summary: aiAnnotation.option_a_summary || '',
+    option_b_summary: aiAnnotation.option_b_summary || '',
+  })
+}
+
+function formatDecisionLabel(value, t) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+  if (next === 'left') {
+    return t('LEFT')
+  }
+  if (next === 'right') {
+    return t('RIGHT')
+  }
+  if (next === 'skip') {
+    return t('SKIP')
+  }
+  return t('Unknown')
+}
+
+function formatAiAnnotationRatingLabel(value, t) {
+  if (value === 'good') {
+    return t('Good')
+  }
+  if (value === 'bad') {
+    return t('Bad')
+  }
+  return t('Wrong')
 }
 
 function getDraftStatusLabel(annotation, t) {
@@ -303,6 +551,9 @@ export default function AiHumanTeacherPage() {
   const {t} = useTranslation()
   const router = useRouter()
   const epochState = useEpochState()
+  const settings = useSettingsState()
+  const toast = useToast()
+  const localAi = settings?.localAi || {}
   const queryEpoch = String(router.query?.epoch || '').trim()
   const fallbackEpoch = React.useMemo(() => {
     const nextEpochNumber = Number(epochState?.epoch)
@@ -343,6 +594,7 @@ export default function AiHumanTeacherPage() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = React.useState(false)
   const [isTaskLoading, setIsTaskLoading] = React.useState(false)
   const [isSavingTask, setIsSavingTask] = React.useState(false)
+  const [isGeneratingAiDraft, setIsGeneratingAiDraft] = React.useState(false)
   const [showAdvancedFields, setShowAdvancedFields] = React.useState(false)
 
   React.useEffect(() => {
@@ -717,8 +969,150 @@ export default function AiHumanTeacherPage() {
     () => getOrderedPanels(taskDetail, taskDetail?.rightOrder || []),
     [taskDetail]
   )
+  const currentAiAnnotation = React.useMemo(
+    () => normalizeAiAnnotationDraft(annotationDraft.ai_annotation),
+    [annotationDraft.ai_annotation]
+  )
   const hasDecision = Boolean(annotationDraft.final_answer)
   const hasReason = Boolean(String(annotationDraft.why_answer || '').trim())
+
+  const requestAiAnnotationDraft = React.useCallback(async () => {
+    if (localAi?.enabled !== true) {
+      toast({
+        render: () => (
+          <Toast
+            title={t('Enable local AI first')}
+            description={t(
+              'The AI draft button uses the local runtime. Turn on Local AI in AI settings, then try again.'
+            )}
+            status="warning"
+          />
+        ),
+      })
+      return
+    }
+
+    if (!global.localAi || typeof global.localAi.chat !== 'function') {
+      toast({
+        render: () => (
+          <Toast
+            title={t('AI draft unavailable')}
+            description={t(
+              'This build does not expose the Local AI chat bridge yet. Fully restart IdenaAI and try again.'
+            )}
+            status="error"
+          />
+        ),
+      })
+      return
+    }
+
+    const orderedImages = [...leftPanels, ...rightPanels]
+      .map((panel) => panel?.dataUrl)
+      .filter(Boolean)
+
+    if (orderedImages.length !== 8) {
+      toast({
+        render: () => (
+          <Toast
+            title={t('AI draft unavailable')}
+            description={t(
+              'The current flip is missing ordered panel images, so the local AI draft could not start.'
+            )}
+            status="error"
+          />
+        ),
+      })
+      return
+    }
+
+    setIsGeneratingAiDraft(true)
+    setError('')
+
+    try {
+      const aiDraftResult = await global.localAi.chat({
+        baseUrl: localAi?.baseUrl,
+        runtimeBackend: localAi?.runtimeBackend,
+        runtimeType: localAi?.runtimeType,
+        model: localAi?.model,
+        visionModel: localAi?.visionModel,
+        timeoutMs: 45000,
+        responseFormat: 'json',
+        generationOptions: {
+          temperature: 0,
+          numPredict: 256,
+        },
+        messages: [
+          {
+            role: 'system',
+            content: buildAiAnnotationSystemPrompt(),
+          },
+          {
+            role: 'user',
+            content: buildAiAnnotationUserPrompt(),
+            images: orderedImages,
+          },
+        ],
+      })
+
+      const aiText = String(
+        aiDraftResult?.text || aiDraftResult?.content || ''
+      ).trim()
+
+      if (!aiDraftResult?.ok || !aiText) {
+        throw new Error(
+          String(aiDraftResult?.lastError || '').trim() ||
+            t('The local AI runtime did not return a usable annotation draft.')
+        )
+      }
+
+      const aiAnnotation = buildStoredAiAnnotation(
+        parseAiAnnotationResponse(aiText),
+        aiDraftResult
+      )
+
+      setAnnotationDraft((current) =>
+        applyAiAnnotationToDraft(current, aiAnnotation)
+      )
+      setShowAdvancedFields(
+        Boolean(aiAnnotation.option_a_summary || aiAnnotation.option_b_summary)
+      )
+      toast({
+        render: () => (
+          <Toast
+            title={t('AI draft applied')}
+            description={t(
+              'The local AI filled a draft for this flip. Review it and correct it before saving.'
+            )}
+            status="success"
+          />
+        ),
+      })
+    } catch (draftError) {
+      toast({
+        render: () => (
+          <Toast
+            title={t('AI draft failed')}
+            description={formatErrorMessage(draftError)}
+            status="error"
+          />
+        ),
+      })
+    } finally {
+      setIsGeneratingAiDraft(false)
+    }
+  }, [
+    leftPanels,
+    localAi?.baseUrl,
+    localAi?.enabled,
+    localAi?.model,
+    localAi?.runtimeBackend,
+    localAi?.runtimeType,
+    localAi?.visionModel,
+    rightPanels,
+    t,
+    toast,
+  ])
 
   const saveTaskDraft = React.useCallback(
     async (options = {}) => {
@@ -1339,6 +1733,167 @@ export default function AiHumanTeacherPage() {
                           </SimpleGrid>
 
                           <Stack spacing={3}>
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.100"
+                              borderRadius="lg"
+                              p={3}
+                              bg="white"
+                            >
+                              <Flex
+                                justify="space-between"
+                                align={['flex-start', 'center']}
+                                gap={3}
+                                direction={['column', 'row']}
+                              >
+                                <Box>
+                                  <Text fontWeight={600}>
+                                    {t('Optional AI draft')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t(
+                                      'Ask the local AI to prefill this flip, then review and correct it like a normal human annotation.'
+                                    )}
+                                  </Text>
+                                  {localAi?.enabled !== true ? (
+                                    <Text color="muted" fontSize="xs" mt={1}>
+                                      {t(
+                                        'Enable Local AI in AI settings first if you want this helper.'
+                                      )}
+                                    </Text>
+                                  ) : null}
+                                </Box>
+                                <PrimaryButton
+                                  onClick={requestAiAnnotationDraft}
+                                  isLoading={isGeneratingAiDraft}
+                                  loadingText={t('Drafting')}
+                                  isDisabled={localAi?.enabled !== true}
+                                >
+                                  {currentAiAnnotation
+                                    ? t('Re-run AI draft')
+                                    : t('Ask AI to draft this flip')}
+                                </PrimaryButton>
+                              </Flex>
+
+                              {currentAiAnnotation ? (
+                                <Box
+                                  mt={3}
+                                  p={3}
+                                  borderRadius="lg"
+                                  bg="gray.50"
+                                  borderWidth="1px"
+                                  borderColor="gray.100"
+                                >
+                                  <Stack spacing={2}>
+                                    <Text fontSize="sm" fontWeight={600}>
+                                      {t('Current AI draft')}
+                                    </Text>
+                                    <Text fontSize="sm" color="muted">
+                                      {t(
+                                        'Answer: {{answer}} · Confidence: {{confidence}}/5',
+                                        {
+                                          answer: formatDecisionLabel(
+                                            currentAiAnnotation.final_answer,
+                                            t
+                                          ),
+                                          confidence:
+                                            currentAiAnnotation.confidence ||
+                                            '?',
+                                        }
+                                      )}
+                                    </Text>
+                                    {currentAiAnnotation.why_answer ? (
+                                      <Text fontSize="sm">
+                                        {currentAiAnnotation.why_answer}
+                                      </Text>
+                                    ) : null}
+                                    {currentAiAnnotation.option_a_summary ||
+                                    currentAiAnnotation.option_b_summary ? (
+                                      <Box fontSize="xs" color="muted">
+                                        {currentAiAnnotation.option_a_summary ? (
+                                          <Text>
+                                            {t('LEFT summary')}:&nbsp;
+                                            {
+                                              currentAiAnnotation.option_a_summary
+                                            }
+                                          </Text>
+                                        ) : null}
+                                        {currentAiAnnotation.option_b_summary ? (
+                                          <Text>
+                                            {t('RIGHT summary')}:&nbsp;
+                                            {
+                                              currentAiAnnotation.option_b_summary
+                                            }
+                                          </Text>
+                                        ) : null}
+                                      </Box>
+                                    ) : null}
+                                    <Box>
+                                      <Text fontSize="xs" color="muted" mb={2}>
+                                        {t('Rate this AI draft')}
+                                      </Text>
+                                      <Stack
+                                        direction={['column', 'row']}
+                                        spacing={2}
+                                        flexWrap="wrap"
+                                      >
+                                        {AI_ANNOTATION_RATINGS.map((rating) =>
+                                          currentAiAnnotation.rating ===
+                                          rating ? (
+                                            <PrimaryButton
+                                              key={rating}
+                                              onClick={() =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    ai_annotation: {
+                                                      ...(normalizeAiAnnotationDraft(
+                                                        current.ai_annotation
+                                                      ) ||
+                                                        createEmptyAiAnnotationDraft()),
+                                                      rating,
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                            >
+                                              {formatAiAnnotationRatingLabel(
+                                                rating,
+                                                t
+                                              )}
+                                            </PrimaryButton>
+                                          ) : (
+                                            <SecondaryButton
+                                              key={rating}
+                                              onClick={() =>
+                                                setAnnotationDraft(
+                                                  (current) => ({
+                                                    ...current,
+                                                    ai_annotation: {
+                                                      ...(normalizeAiAnnotationDraft(
+                                                        current.ai_annotation
+                                                      ) ||
+                                                        createEmptyAiAnnotationDraft()),
+                                                      rating,
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                            >
+                                              {formatAiAnnotationRatingLabel(
+                                                rating,
+                                                t
+                                              )}
+                                            </SecondaryButton>
+                                          )
+                                        )}
+                                      </Stack>
+                                    </Box>
+                                  </Stack>
+                                </Box>
+                              ) : null}
+                            </Box>
+
                             <InterviewPrompt
                               title={t(
                                 'Which side feels more correct to you as a human looking at this flip?'
@@ -1434,12 +1989,37 @@ export default function AiHumanTeacherPage() {
                                     'For example: the LEFT story has a clear sequence, while the RIGHT side mixes unrelated scenes.'
                                   )}
                                   value={annotationDraft.why_answer}
-                                  onChange={(e) =>
+                                  onChange={(e) => {
+                                    const nextValue = e?.target?.value || ''
+
                                     setAnnotationDraft((current) => ({
                                       ...current,
-                                      why_answer: e.target.value,
+                                      why_answer: nextValue,
                                     }))
-                                  }
+                                  }}
+                                />
+                              </InterviewPrompt>
+                            ) : null}
+
+                            {currentAiAnnotation ? (
+                              <InterviewPrompt
+                                title={t(
+                                  'What did the AI get wrong? Keep it to one or two short sentences.'
+                                )}
+                              >
+                                <Textarea
+                                  placeholder={t(
+                                    'For example: the AI assumed the order from the object positions, but the human sequence is only clear from the motion between steps.'
+                                  )}
+                                  value={annotationDraft.ai_annotation_feedback}
+                                  onChange={(e) => {
+                                    const nextValue = e?.target?.value || ''
+
+                                    setAnnotationDraft((current) => ({
+                                      ...current,
+                                      ai_annotation_feedback: nextValue,
+                                    }))
+                                  }}
                                 />
                               </InterviewPrompt>
                             ) : null}
@@ -1455,14 +2035,15 @@ export default function AiHumanTeacherPage() {
                                     isChecked={
                                       annotationDraft.text_required === true
                                     }
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                      const isChecked =
+                                        e?.target?.checked === true
+
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        text_required: e.target.checked
-                                          ? true
-                                          : null,
+                                        text_required: isChecked ? true : null,
                                       }))
-                                    }
+                                    }}
                                   >
                                     {t('Readable text was required')}
                                   </Checkbox>
@@ -1471,15 +2052,17 @@ export default function AiHumanTeacherPage() {
                                       annotationDraft.sequence_markers_present ===
                                       true
                                     }
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                      const isChecked =
+                                        e?.target?.checked === true
+
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        sequence_markers_present: e.target
-                                          .checked
+                                        sequence_markers_present: isChecked
                                           ? true
                                           : null,
                                       }))
-                                    }
+                                    }}
                                   >
                                     {t('Sequence markers were present')}
                                   </Checkbox>
@@ -1498,14 +2081,17 @@ export default function AiHumanTeacherPage() {
                                     isChecked={
                                       annotationDraft.report_required === true
                                     }
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                      const isChecked =
+                                        e?.target?.checked === true
+
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        report_required: e.target.checked
+                                        report_required: isChecked
                                           ? true
                                           : null,
                                       }))
-                                    }
+                                    }}
                                   >
                                     {t('Yes, this should be reported')}
                                   </Checkbox>
@@ -1516,12 +2102,14 @@ export default function AiHumanTeacherPage() {
                                         'Short reason for why this should be reported.'
                                       )}
                                       value={annotationDraft.report_reason}
-                                      onChange={(e) =>
+                                      onChange={(e) => {
+                                        const nextValue = e?.target?.value || ''
+
                                         setAnnotationDraft((current) => ({
                                           ...current,
-                                          report_reason: e.target.value,
+                                          report_reason: nextValue,
                                         }))
-                                      }
+                                      }}
                                     />
                                   ) : null}
                                 </Stack>
@@ -1536,12 +2124,14 @@ export default function AiHumanTeacherPage() {
                               >
                                 <Select
                                   value={annotationDraft.confidence}
-                                  onChange={(e) =>
+                                  onChange={(e) => {
+                                    const nextValue = e?.target?.value || ''
+
                                     setAnnotationDraft((current) => ({
                                       ...current,
-                                      confidence: e.target.value,
+                                      confidence: nextValue,
                                     }))
-                                  }
+                                  }}
                                 >
                                   <option value="">{t('Optional')}</option>
                                   <option value="1">{t('Low')}</option>
@@ -1601,7 +2191,10 @@ export default function AiHumanTeacherPage() {
                                             </FormLabel>
                                             <Input
                                               value={caption}
-                                              onChange={(e) =>
+                                              onChange={(e) => {
+                                                const nextValue =
+                                                  e?.target?.value || ''
+
                                                 setAnnotationDraft(
                                                   (current) => ({
                                                     ...current,
@@ -1609,12 +2202,12 @@ export default function AiHumanTeacherPage() {
                                                       current.frame_captions.map(
                                                         (item, itemIndex) =>
                                                           itemIndex === index
-                                                            ? e.target.value
+                                                            ? nextValue
                                                             : item
                                                       ),
                                                   })
                                                 )
-                                              }
+                                              }}
                                             />
                                           </Box>
                                         )
@@ -1636,12 +2229,15 @@ export default function AiHumanTeacherPage() {
                                           value={
                                             annotationDraft.option_a_summary
                                           }
-                                          onChange={(e) =>
+                                          onChange={(e) => {
+                                            const nextValue =
+                                              e?.target?.value || ''
+
                                             setAnnotationDraft((current) => ({
                                               ...current,
-                                              option_a_summary: e.target.value,
+                                              option_a_summary: nextValue,
                                             }))
-                                          }
+                                          }}
                                         />
                                       </Box>
 
@@ -1653,12 +2249,15 @@ export default function AiHumanTeacherPage() {
                                           value={
                                             annotationDraft.option_b_summary
                                           }
-                                          onChange={(e) =>
+                                          onChange={(e) => {
+                                            const nextValue =
+                                              e?.target?.value || ''
+
                                             setAnnotationDraft((current) => ({
                                               ...current,
-                                              option_b_summary: e.target.value,
+                                              option_b_summary: nextValue,
                                             }))
-                                          }
+                                          }}
                                         />
                                       </Box>
 
@@ -1666,12 +2265,15 @@ export default function AiHumanTeacherPage() {
                                         <FormLabel>{t('Annotator')}</FormLabel>
                                         <Input
                                           value={annotationDraft.annotator}
-                                          onChange={(e) =>
+                                          onChange={(e) => {
+                                            const nextValue =
+                                              e?.target?.value || ''
+
                                             setAnnotationDraft((current) => ({
                                               ...current,
-                                              annotator: e.target.value,
+                                              annotator: nextValue,
                                             }))
-                                          }
+                                          }}
                                         />
                                       </Box>
                                     </Stack>

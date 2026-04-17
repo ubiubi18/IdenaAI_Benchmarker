@@ -1173,6 +1173,14 @@ describe('local-ai manager', () => {
         frame_captions: ['a', 'b', 'c', 'd'],
         option_a_summary: 'left story',
         option_b_summary: 'right story',
+        ai_annotation: {
+          final_answer: 'right',
+          why_answer: 'the AI over-indexed on the wrong side',
+          confidence: 4,
+          rating: 'bad',
+        },
+        ai_annotation_feedback:
+          'The AI ignored the stronger left-side chronology.',
         final_answer: 'left',
         why_answer: 'left is coherent',
       },
@@ -1201,6 +1209,13 @@ describe('local-ai manager', () => {
       epoch: 12,
       task: expect.objectContaining({
         taskId: 'flip-a::human-teacher',
+        annotation: expect.objectContaining({
+          ai_annotation: expect.objectContaining({
+            final_answer: 'right',
+            rating: 'bad',
+          }),
+          ai_annotation_feedback: expect.stringContaining('left-side'),
+        }),
         annotationStatus: 'complete',
       }),
       workspace: expect.objectContaining({
@@ -1308,6 +1323,13 @@ describe('local-ai manager', () => {
         frame_captions: ['one', 'two', 'three', 'four'],
         option_a_summary: 'option a summary',
         option_b_summary: 'option b summary',
+        ai_annotation: {
+          final_answer: 'left',
+          why_answer: 'AI draft summary',
+          confidence: 5,
+          rating: 'good',
+        },
+        ai_annotation_feedback: 'Mostly right, but it missed one clue.',
         final_answer: 'right',
         why_answer: 'testing the offline annotator path',
       },
@@ -1340,6 +1362,13 @@ describe('local-ai manager', () => {
       demo: true,
       task: expect.objectContaining({
         taskId: firstTaskId,
+        annotation: expect.objectContaining({
+          ai_annotation: expect.objectContaining({
+            final_answer: 'left',
+            rating: 'good',
+          }),
+          ai_annotation_feedback: expect.stringContaining('missed one clue'),
+        }),
         annotationStatus: 'complete',
       }),
     })
