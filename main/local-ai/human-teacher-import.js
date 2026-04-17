@@ -164,6 +164,28 @@ function normalizeAiAnnotation(value) {
     return null
   }
 
+  const normalizeList = (input, maxItems, maxLength) => {
+    let items = []
+
+    if (Array.isArray(input)) {
+      items = input
+    } else if (input && typeof input === 'object') {
+      items = Object.entries(input)
+        .sort(([left], [right]) => Number(left) - Number(right))
+        .map(([_key, item]) => item)
+    }
+
+    const nextList = items
+      .slice(0, maxItems)
+      .map((item) => trimText(item, maxLength))
+
+    while (nextList.length < maxItems) {
+      nextList.push('')
+    }
+
+    return nextList
+  }
+
   const rating = String(value.rating || '')
     .trim()
     .toLowerCase()
@@ -181,6 +203,26 @@ function normalizeAiAnnotation(value) {
     model: trimText(value.model, 256) || null,
     vision_model:
       trimText(value.vision_model || value.visionModel, 256) || null,
+    ordered_panel_descriptions: normalizeList(
+      value.ordered_panel_descriptions || value.orderedPanelDescriptions,
+      8,
+      280
+    ),
+    ordered_panel_text: normalizeList(
+      value.ordered_panel_text || value.orderedPanelText,
+      8,
+      200
+    ),
+    option_a_story_analysis:
+      trimText(
+        value.option_a_story_analysis || value.optionAStoryAnalysis,
+        500
+      ) || '',
+    option_b_story_analysis:
+      trimText(
+        value.option_b_story_analysis || value.optionBStoryAnalysis,
+        500
+      ) || '',
     final_answer: finalAnswer,
     why_answer: trimText(value.why_answer || value.whyAnswer, 900),
     confidence: normalizeConfidence(value.confidence),
@@ -203,7 +245,11 @@ function normalizeAiAnnotation(value) {
     rating: ['good', 'bad', 'wrong'].includes(rating) ? rating : '',
   }
 
-  return Object.values(next).some((item) => item !== null && item !== '')
+  return Object.values(next).some((item) =>
+    Array.isArray(item)
+      ? item.some((entry) => entry !== null && entry !== '')
+      : item !== null && item !== ''
+  )
     ? next
     : null
 }

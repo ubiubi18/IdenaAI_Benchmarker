@@ -3,10 +3,13 @@ const {
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
   RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
@@ -15,6 +18,12 @@ const {
   buildLocalAiRuntimePreset,
   getLocalAiEndpointSafety,
   mergeLocalAiSettings,
+  normalizeDeveloperLocalTrainingProfile,
+  resolveDeveloperLocalTrainingProfileModelPath,
+  resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
+  resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
+  resolveDeveloperLocalTrainingProfileRuntimeModel,
+  resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
   resolveLocalAiWireRuntimeType,
 } = require('./local-ai-settings')
 
@@ -34,6 +43,9 @@ describe('local-ai settings schema', () => {
     expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
     expect(settings.runtimeType).toBe('ollama')
     expect(settings.developerHumanTeacherSystemPrompt).toBe('')
+    expect(settings.developerLocalTrainingProfile).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+    )
     expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(false)
   })
 
@@ -142,13 +154,13 @@ describe('local-ai settings schema', () => {
     })
   })
 
-  it('builds a recommended Mac Ollama preset with qwen2.5vl:7b while keeping stronger and safe MLX fallbacks documented', () => {
+  it('builds a recommended Mac Ollama preset with qwen3.5:9b while keeping stronger and safe MLX fallbacks documented', () => {
     expect(buildRecommendedLocalAiMacPreset()).toMatchObject({
       runtimeBackend: 'ollama-direct',
       baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       runtimeType: 'ollama',
-      model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
+      model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
       visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
     })
 
@@ -174,6 +186,54 @@ describe('local-ai settings schema', () => {
     expect(settings.developerHumanTeacherSystemPrompt).toBe(
       'Prefer chronology over slot bias.'
     )
+  })
+
+  it('keeps a persisted developer local training profile', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalTrainingProfile: 'balanced',
+    })
+
+    expect(settings.developerLocalTrainingProfile).toBe('strong')
+    expect(normalizeDeveloperLocalTrainingProfile('unknown')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+    )
+    expect(normalizeDeveloperLocalTrainingProfile('safe')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+    )
+    expect(resolveDeveloperLocalTrainingProfileRuntimeModel('safe')).toBe(
+      RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+    )
+    expect(resolveDeveloperLocalTrainingProfileRuntimeVisionModel('safe')).toBe(
+      RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
+    )
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeFallbackModel('safe')
+    ).toBe('')
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel('safe')
+    ).toBe('')
+    expect(resolveDeveloperLocalTrainingProfileModelPath('safe')).toBe(
+      RECOMMENDED_LOCAL_AI_TRAINING_MODEL
+    )
+    expect(resolveDeveloperLocalTrainingProfileRuntimeModel('strong')).toBe(
+      RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+    )
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeVisionModel('strong')
+    ).toBe(RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL)
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeFallbackModel('strong')
+    ).toBe('')
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel('strong')
+    ).toBe('')
+    expect(resolveDeveloperLocalTrainingProfileModelPath('strong')).toBe(
+      RECOMMENDED_LOCAL_AI_TRAINING_MODEL
+    )
+    expect(DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG.strong).toMatchObject({
+      modelPath: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+      runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+    })
   })
 
   it('keeps a persisted developer annotation-sharing consent', () => {

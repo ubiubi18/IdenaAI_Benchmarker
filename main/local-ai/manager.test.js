@@ -1260,8 +1260,23 @@ describe('local-ai manager', () => {
           generated_at: '2026-04-17T12:00:00.000Z',
           runtime_backend: 'ollama-direct',
           runtime_type: 'ollama',
-          model: 'llama3.1:8b',
-          vision_model: 'qwen2.5vl:7b',
+          model: 'qwen3.5:9b',
+          vision_model: 'qwen3.5:9b',
+          ordered_panel_descriptions: [
+            'man looks at car',
+            'man opens door',
+            'man sits down',
+            'car drives away',
+            'man trips',
+            'man falls',
+            '',
+            '',
+          ],
+          ordered_panel_text: ['', 'SALE', '', '', '', '', '', ''],
+          option_a_story_analysis:
+            'LEFT keeps the same actor and object through a stable sequence.',
+          option_b_story_analysis:
+            'RIGHT breaks chronology because the fall appears before the setup.',
           final_answer: 'right',
           why_answer: 'the AI overvalued the mirrored motion',
           confidence: 2,
@@ -1313,11 +1328,20 @@ describe('local-ai manager', () => {
         annotationStatus: 'complete',
         annotation: expect.objectContaining({
           ai_annotation: expect.objectContaining({
+            model: 'qwen3.5:9b',
             final_answer: 'right',
             rating: 'wrong',
             text_required: false,
             sequence_markers_present: false,
             report_required: false,
+            ordered_panel_descriptions: expect.arrayContaining([
+              'man looks at car',
+              'man opens door',
+            ]),
+            ordered_panel_text: expect.arrayContaining(['SALE']),
+            option_a_story_analysis: expect.stringContaining(
+              'same actor and object'
+            ),
           }),
           ai_annotation_feedback: expect.stringContaining(
             'ignored that the fall happens only after the crash'
@@ -1766,6 +1790,8 @@ describe('local-ai manager', () => {
       offset: 0,
       trainNow: true,
       advance: true,
+      trainingModelPath: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
+      localTrainingProfile: 'balanced',
     })
 
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
@@ -1774,6 +1800,8 @@ describe('local-ai manager', () => {
         input: expect.objectContaining({
           developerHumanTeacher: true,
           sampleName: 'flip-challenge-test-20-decoded-labeled',
+          trainingModelPath: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
+          localTrainingProfile: 'balanced',
           offset: 0,
           chunkSize: 5,
           normalizedAnnotationsPath: expect.stringContaining(
@@ -1900,6 +1928,8 @@ describe('local-ai manager', () => {
       offset: 0,
       trainNow: true,
       advance: true,
+      trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+      localTrainingProfile: 'strong',
     })
 
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
@@ -1909,6 +1939,8 @@ describe('local-ai manager', () => {
         input: expect.objectContaining({
           developerHumanTeacher: true,
           sampleName: 'flip-challenge-test-20-decoded-labeled',
+          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+          localTrainingProfile: 'strong',
           offset: 0,
           chunkSize: 5,
         }),
@@ -2387,6 +2419,21 @@ describe('local-ai manager', () => {
           confidence: 2,
           rating: 'bad',
           text_required: false,
+          ordered_panel_descriptions: [
+            'person enters room',
+            'person picks up object',
+            'person uses object',
+            'person leaves room',
+            'object appears first',
+            'person notices object later',
+            '',
+            '',
+          ],
+          ordered_panel_text: ['', '', 'GO', '', '', '', '', ''],
+          option_a_story_analysis:
+            'LEFT has a stable setup then action then exit.',
+          option_b_story_analysis:
+            'RIGHT starts with an unexplained object state.',
         },
         ai_annotation_feedback:
           'The AI missed that the left path preserves the same actor and object across all four panels.',
@@ -2426,6 +2473,14 @@ describe('local-ai manager', () => {
             final_answer: 'right',
             rating: 'bad',
             text_required: false,
+            ordered_panel_descriptions: expect.arrayContaining([
+              'person enters room',
+              'person picks up object',
+            ]),
+            ordered_panel_text: expect.arrayContaining(['GO']),
+            option_b_story_analysis: expect.stringContaining(
+              'unexplained object state'
+            ),
           }),
           ai_annotation_feedback: expect.stringContaining(
             'left path preserves the same actor'

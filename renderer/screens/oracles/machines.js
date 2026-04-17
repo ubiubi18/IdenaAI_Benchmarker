@@ -30,6 +30,96 @@ import {epochDb, requestDb} from '../../shared/utils/db'
 import {ContractRpcMode, VotingListFilter} from './types'
 import {fetchNetworkSize} from '../../shared/api/dna'
 
+const TX_POLL_INTERVAL_MS = 10 * 1000
+const TX_RECEIPT_RETRY_DELAY_MS = 3 * 1000
+const TX_RECEIPT_RETRY_LIMIT = 6
+
+function formatTxPollingError(error) {
+  const message = String(error?.message || error || '').trim()
+
+  if (!message) {
+    return 'Transaction failed'
+  }
+
+  if (message === 'Failed to fetch') {
+    return 'Transaction receipt is not available yet'
+  }
+
+  return message
+}
+
+function createTxFailureEvent(error) {
+  const message = formatTxPollingError(error)
+  return {
+    type: 'FAILED',
+    error: message,
+    data: {message},
+  }
+}
+
+function createVerifiedTxPoller(
+  txHash,
+  buildMinedEvent = () => ({type: 'MINED'})
+) {
+  return (cb) => {
+    let timeoutId
+    let receiptRetryCount = 0
+
+    function scheduleNextCheck(delay = TX_POLL_INTERVAL_MS) {
+      timeoutId = setTimeout(fetchStatus, delay)
+    }
+
+    const fetchReceipt = async () => {
+      try {
+        const receipt = await callRpc('bcn_txReceipt', txHash)
+
+        if (!receipt || typeof receipt.success !== 'boolean') {
+          throw new Error('Transaction receipt is not available yet')
+        }
+
+        if (receipt.success) {
+          cb(buildMinedEvent())
+          return
+        }
+
+        cb(createTxFailureEvent(receipt.error || 'Transaction failed'))
+      } catch (error) {
+        if (receiptRetryCount < TX_RECEIPT_RETRY_LIMIT) {
+          receiptRetryCount += 1
+          scheduleNextCheck(TX_RECEIPT_RETRY_DELAY_MS)
+          return
+        }
+
+        cb(createTxFailureEvent(error))
+      }
+    }
+
+    async function fetchStatus() {
+      try {
+        const result = await callRpc('bcn_transaction', txHash)
+
+        if (result?.blockHash !== HASH_IN_MEMPOOL) {
+          await fetchReceipt()
+        } else {
+          scheduleNextCheck()
+        }
+      } catch (error) {
+        cb({
+          type: 'TX_NULL',
+          error: error?.message,
+          data: {message: error?.message},
+        })
+      }
+    }
+
+    scheduleNextCheck()
+
+    return () => {
+      clearTimeout(timeoutId)
+    }
+  }
+}
+
 export const votingListMachine = createMachine(
   {
     predictableActionArguments: true,
@@ -432,7 +522,8 @@ export const votingMachine = createMachine(
         txHash: (_, {data}) => data,
       }),
       handleError: assign({
-        errorMessage: (_, {error}) => error,
+        errorMessage: (_, {error, data}) =>
+          error || data?.message || 'Transaction failed',
       }),
       onError: sendParent((_, {data}) => ({type: 'ERROR', data})),
       clearMiningStatus: assign({
@@ -449,30 +540,7 @@ export const votingMachine = createMachine(
     services: {
       ...votingServices(),
       loadOwnerDeposit,
-      pollStatus:
-        ({txHash}) =>
-        (cb) => {
-          let timeoutId
-
-          const fetchStatus = async () => {
-            try {
-              const result = await callRpc('bcn_transaction', txHash)
-              if (result.blockHash !== HASH_IN_MEMPOOL) {
-                cb('MINED')
-              } else {
-                timeoutId = setTimeout(fetchStatus, 10 * 1000)
-              }
-            } catch (error) {
-              cb('TX_NULL', {error})
-            }
-          }
-
-          timeoutId = setTimeout(fetchStatus, 10 * 1000)
-
-          return () => {
-            clearTimeout(timeoutId)
-          }
-        },
+      pollStatus: ({txHash}) => createVerifiedTxPoller(txHash),
     },
     guards: {
       ...votingStatusGuards(),
@@ -737,6 +805,9 @@ export const createNewVotingMachine = (epoch, address) =>
                             actions: ['setPending', log()],
                           },
                         ],
+                        FAILED: {
+                          actions: ['onError', send('PUBLISH_FAILED'), log()],
+                        },
                       },
                     },
                     persist: {
@@ -786,6 +857,9 @@ export const createNewVotingMachine = (epoch, address) =>
                     MINED: {
                       target: 'persist',
                       actions: ['setRunning', log()],
+                    },
+                    FAILED: {
+                      actions: ['onError', send('PUBLISH_FAILED'), log()],
                     },
                   },
                 },
@@ -912,30 +986,12 @@ export const createNewVotingMachine = (epoch, address) =>
 
           return {txHash, voting: nextVoting, from, balance}
         },
-        pollStatus:
-          ({txHash}, {data: {from, balance}}) =>
-          (cb) => {
-            let timeoutId
-
-            const fetchStatus = async () => {
-              try {
-                const result = await callRpc('bcn_transaction', txHash)
-                if (result.blockHash !== HASH_IN_MEMPOOL) {
-                  cb({type: 'MINED', from, balance})
-                } else {
-                  timeoutId = setTimeout(fetchStatus, 10 * 1000)
-                }
-              } catch (error) {
-                cb('TX_NULL', {error: error?.message})
-              }
-            }
-
-            timeoutId = setTimeout(fetchStatus, 10 * 1000)
-
-            return () => {
-              clearTimeout(timeoutId)
-            }
-          },
+        pollStatus: ({txHash}, {data: {from, balance}}) =>
+          createVerifiedTxPoller(txHash, () => ({
+            type: 'MINED',
+            from,
+            balance,
+          })),
         persist: (context) => epochDb('votings').put(context),
       },
       guards: {
@@ -1192,7 +1248,8 @@ export const createViewVotingMachine = (id, epoch, address) =>
         }),
         setInvalid: assign({
           status: VotingStatus.Invalid,
-          errorMessage: (_, {error}) => error?.message,
+          errorMessage: (_, {error, data}) =>
+            error?.message || error || data?.message || 'Transaction failed',
         }),
         restorePrevStatus: assign({
           status: ({prevStatus}) => prevStatus,
@@ -1201,7 +1258,8 @@ export const createViewVotingMachine = (id, epoch, address) =>
           txHash: (_, {data}) => data,
         }),
         handleError: assign({
-          errorMessage: (_, {error}) => error,
+          errorMessage: (_, {error, data}) =>
+            error || data?.message || 'Transaction failed',
         }),
         clearMiningStatus: assign({
           miningStatus: null,
@@ -1380,30 +1438,7 @@ export const createViewVotingMachine = (id, epoch, address) =>
             maxFee: contractMaxFee(gasCost, txFee),
           })
         },
-        pollStatus:
-          ({txHash}) =>
-          (cb) => {
-            let timeoutId
-
-            const fetchStatus = async () => {
-              try {
-                const result = await callRpc('bcn_transaction', txHash)
-                if (result.blockHash !== HASH_IN_MEMPOOL) {
-                  cb('MINED')
-                } else {
-                  timeoutId = setTimeout(fetchStatus, 10 * 1000)
-                }
-              } catch (error) {
-                cb('TX_NULL', {error: error?.message})
-              }
-            }
-
-            timeoutId = setTimeout(fetchStatus, 10 * 1000)
-
-            return () => {
-              clearTimeout(timeoutId)
-            }
-          },
+        pollStatus: ({txHash}) => createVerifiedTxPoller(txHash),
       },
       guards: {
         // eslint-disable-next-line no-use-before-define
@@ -1450,6 +1485,16 @@ function votingMiningStates(machineId) {
           MINED: {
             target: `#${machineId}.idle.${VotingStatus.Pending}`,
             actions: ['setPending', 'clearMiningStatus', 'persist', log()],
+          },
+          FAILED: {
+            target: `#${machineId}.invalid`,
+            actions: [
+              'setInvalid',
+              'clearMiningStatus',
+              'persist',
+              'onError',
+              log(),
+            ],
           },
         },
       },
@@ -1501,6 +1546,17 @@ function votingMiningStates(machineId) {
               MINED: {
                 target: `#${machineId}.idle.hist`,
                 actions: [
+                  'restorePrevStatus',
+                  'clearMiningStatus',
+                  'persist',
+                  log(),
+                ],
+              },
+              FAILED: {
+                target: `#${machineId}.idle.hist`,
+                actions: [
+                  'handleError',
+                  'onError',
                   'restorePrevStatus',
                   'clearMiningStatus',
                   'persist',
@@ -1560,6 +1616,17 @@ function votingMiningStates(machineId) {
                 target: `#${machineId}.idle.${VotingStatus.Open}`,
                 actions: ['setRunning', 'clearMiningStatus', 'persist', log()],
               },
+              FAILED: {
+                target: `#${machineId}.idle.hist`,
+                actions: [
+                  'handleError',
+                  'onError',
+                  'restorePrevStatus',
+                  'clearMiningStatus',
+                  'persist',
+                  log(),
+                ],
+              },
             },
           },
         },
@@ -1612,6 +1679,17 @@ function votingMiningStates(machineId) {
               MINED: {
                 target: `#${machineId}.idle.${VotingStatus.Voted}`,
                 actions: ['setVoted', 'clearMiningStatus', 'persist', log()],
+              },
+              FAILED: {
+                target: `#${machineId}.idle.hist`,
+                actions: [
+                  'handleError',
+                  'onError',
+                  'restorePrevStatus',
+                  'clearMiningStatus',
+                  'persist',
+                  log(),
+                ],
               },
             },
           },
@@ -1666,6 +1744,17 @@ function votingMiningStates(machineId) {
                 target: `#${machineId}.idle.${VotingStatus.Open}`,
                 actions: ['setRunning', 'clearMiningStatus', 'persist', log()],
               },
+              FAILED: {
+                target: `#${machineId}.idle.hist`,
+                actions: [
+                  'handleError',
+                  'onError',
+                  'restorePrevStatus',
+                  'clearMiningStatus',
+                  'persist',
+                  log(),
+                ],
+              },
             },
           },
         },
@@ -1718,6 +1807,17 @@ function votingMiningStates(machineId) {
               MINED: {
                 target: `#${machineId}.idle.${VotingStatus.Archived}`,
                 actions: ['setArchived', 'clearMiningStatus', 'persist', log()],
+              },
+              FAILED: {
+                target: `#${machineId}.idle.hist`,
+                actions: [
+                  'handleError',
+                  'onError',
+                  'restorePrevStatus',
+                  'clearMiningStatus',
+                  'persist',
+                  log(),
+                ],
               },
             },
           },
@@ -1772,6 +1872,17 @@ function votingMiningStates(machineId) {
                 target: `#${machineId}.idle.${VotingStatus.Terminated}`,
                 actions: [
                   'setTerminated',
+                  'clearMiningStatus',
+                  'persist',
+                  log(),
+                ],
+              },
+              FAILED: {
+                target: `#${machineId}.idle.hist`,
+                actions: [
+                  'handleError',
+                  'onError',
+                  'restorePrevStatus',
                   'clearMiningStatus',
                   'persist',
                   log(),

@@ -27,7 +27,14 @@ import {
   useSettingsDispatch,
   useSettingsState,
 } from '../../shared/providers/settings-context'
-import {DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT} from '../../shared/utils/local-ai-settings'
+import {
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
+  normalizeDeveloperLocalTrainingProfile,
+  resolveDeveloperLocalTrainingProfileModelPath,
+  resolveDeveloperLocalTrainingProfileRuntimeModel,
+  resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
+} from '../../shared/utils/local-ai-settings'
 import {
   Checkbox,
   FormLabel,
@@ -42,6 +49,65 @@ const HUMAN_TEACHER_SET_LIMIT = 30
 const AUTO_SAVE_DELAY_MS = 2500
 const PANEL_REFERENCE_CODES = ['A', 'B', 'C']
 const AI_ANNOTATION_RATINGS = ['good', 'bad', 'wrong']
+const AI_DRAFT_PANEL_COUNT = 8
+
+function describeDeveloperLocalTrainingProfile(profile, t) {
+  return {
+    label: t('Fixed local Qwen lane'),
+    detail: t(
+      'IdenaAI now uses one local lane here only: qwen3.5:9b at runtime and mlx-community/Qwen3.5-9B-MLX-4bit for local training.'
+    ),
+  }
+}
+
+function createAiDraftRuntimeResolution(overrides = {}) {
+  return {
+    status: 'idle',
+    requestedModel: '',
+    activeModel: '',
+    fallbackModel: '',
+    fallbackUsed: false,
+    fallbackReason: '',
+    installHint: '',
+    availableModels: [],
+    lastError: '',
+    ...overrides,
+  }
+}
+
+function resolveAiDraftRuntimeResolution({
+  requestedModel = '',
+  fallbackModel: _fallbackModel = '',
+  availableModels = [],
+} = {}) {
+  const requested = String(requestedModel || '').trim()
+  const models = Array.isArray(availableModels)
+    ? availableModels.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
+
+  if (requested && models.includes(requested)) {
+    return createAiDraftRuntimeResolution({
+      status: 'ready',
+      requestedModel: requested,
+      activeModel: requested,
+      fallbackModel: '',
+      availableModels: models,
+      installHint: `ollama pull ${requested}`,
+    })
+  }
+
+  return createAiDraftRuntimeResolution({
+    status: requested ? 'missing' : 'idle',
+    requestedModel: requested,
+    activeModel: '',
+    fallbackModel: '',
+    fallbackReason: requested
+      ? `${requested} is not installed in Ollama on this machine yet.`
+      : '',
+    installHint: requested ? `ollama pull ${requested}` : '',
+    availableModels: models,
+  })
+}
 
 function createEmptyPanelReference(code) {
   return {
@@ -130,6 +196,13 @@ function createEmptyAiAnnotationDraft() {
     runtime_type: '',
     model: '',
     vision_model: '',
+    ordered_panel_descriptions: Array.from(
+      {length: AI_DRAFT_PANEL_COUNT},
+      () => ''
+    ),
+    ordered_panel_text: Array.from({length: AI_DRAFT_PANEL_COUNT}, () => ''),
+    option_a_story_analysis: '',
+    option_b_story_analysis: '',
     final_answer: '',
     why_answer: '',
     confidence: '',
@@ -149,6 +222,59 @@ function normalizeAiAnnotationRating(value) {
     .toLowerCase()
 
   return AI_ANNOTATION_RATINGS.includes(next) ? next : ''
+}
+
+function normalizeAiAnnotationConfidence(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return ''
+  }
+
+  const parsed = Number.parseFloat(value)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return ''
+  }
+
+  if (parsed <= 1) {
+    return String(Math.min(5, Math.max(1, Math.round(parsed * 4 + 1))))
+  }
+
+  if (parsed > 5) {
+    return ''
+  }
+
+  return String(Math.round(parsed))
+}
+
+function normalizeAiAnnotationDraftList(
+  value,
+  {maxItems = AI_DRAFT_PANEL_COUNT, maxLength = 280} = {}
+) {
+  let items = []
+
+  if (Array.isArray(value)) {
+    items = value
+  } else if (value && typeof value === 'object') {
+    items = Object.entries(value)
+      .sort(([left], [right]) => Number(left) - Number(right))
+      .map(([_key, item]) => item)
+  }
+
+  const next = items.slice(0, maxItems).map((item) =>
+    String(item || '')
+      .trim()
+      .slice(0, maxLength)
+  )
+
+  while (next.length < maxItems) {
+    next.push('')
+  }
+
+  return next
+}
+
+function hasAiAnnotationListContent(value = []) {
+  return Array.isArray(value) && value.some((item) => String(item || '').trim())
 }
 
 function normalizeAiAnnotationDraft(annotation = {}) {
@@ -179,16 +305,37 @@ function normalizeAiAnnotationDraft(annotation = {}) {
     vision_model: String(next.vision_model || next.visionModel || '')
       .trim()
       .slice(0, 256),
+    ordered_panel_descriptions: normalizeAiAnnotationDraftList(
+      next.ordered_panel_descriptions ?? next.orderedPanelDescriptions,
+      {
+        maxItems: AI_DRAFT_PANEL_COUNT,
+        maxLength: 280,
+      }
+    ),
+    ordered_panel_text: normalizeAiAnnotationDraftList(
+      next.ordered_panel_text ?? next.orderedPanelText,
+      {
+        maxItems: AI_DRAFT_PANEL_COUNT,
+        maxLength: 200,
+      }
+    ),
+    option_a_story_analysis: String(
+      next.option_a_story_analysis ?? next.optionAStoryAnalysis ?? ''
+    )
+      .trim()
+      .slice(0, 500),
+    option_b_story_analysis: String(
+      next.option_b_story_analysis ?? next.optionBStoryAnalysis ?? ''
+    )
+      .trim()
+      .slice(0, 500),
     final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
       ? finalAnswer
       : '',
     why_answer: String(next.why_answer ?? next.whyAnswer ?? '')
       .trim()
       .slice(0, 900),
-    confidence:
-      next.confidence === null || typeof next.confidence === 'undefined'
-        ? ''
-        : String(next.confidence).trim(),
+    confidence: normalizeAiAnnotationConfidence(next.confidence),
     text_required:
       Object.prototype.hasOwnProperty.call(next, 'text_required') ||
       Object.prototype.hasOwnProperty.call(next, 'textRequired')
@@ -235,6 +382,10 @@ function hasAiAnnotationContent(annotation = {}) {
       next.runtime_type ||
       next.model ||
       next.vision_model ||
+      hasAiAnnotationListContent(next.ordered_panel_descriptions) ||
+      hasAiAnnotationListContent(next.ordered_panel_text) ||
+      next.option_a_story_analysis ||
+      next.option_b_story_analysis ||
       next.final_answer ||
       next.why_answer ||
       next.option_a_summary ||
@@ -516,16 +667,39 @@ function isCompleteDraft(annotation = {}) {
   )
 }
 
+function normalizePanelOrder(order = [], panelCount = 0) {
+  const normalizedOrder = Array.isArray(order)
+    ? order
+        .map((value) => Number.parseInt(value, 10))
+        .filter(
+          (value, index, values) =>
+            Number.isFinite(value) &&
+            value >= 0 &&
+            value < panelCount &&
+            values.indexOf(value) === index
+        )
+    : []
+
+  if (normalizedOrder.length === panelCount && panelCount > 0) {
+    return normalizedOrder
+  }
+
+  return Array.from({length: panelCount}, (_unused, index) => index)
+}
+
 function getOrderedPanels(task = {}, order = []) {
   const safeTask = task && typeof task === 'object' ? task : {}
   const panels = Array.isArray(safeTask.panels) ? safeTask.panels : []
+  const effectiveOrder = normalizePanelOrder(order, panels.length)
   const panelsByIndex = new Map(
     panels
       .map((panel) => [Number(panel.index), panel])
       .filter(([index]) => Number.isFinite(index))
   )
 
-  return order.map((index) => panelsByIndex.get(Number(index))).filter(Boolean)
+  return effectiveOrder
+    .map((index) => panelsByIndex.get(Number(index)))
+    .filter(Boolean)
 }
 
 function parseAiAnnotationResponse(text = '') {
@@ -557,6 +731,8 @@ function buildAiAnnotationSystemPrompt(basePrompt = '') {
   return [
     prefix || DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
     'You are generating a developer-only draft annotation for human review.',
+    'Use explicit structured observations instead of hidden reasoning.',
+    'Inspect every ordered panel before choosing a side.',
     'Do not collapse into a left-only or right-only habit.',
     'Return JSON only.',
   ]
@@ -569,10 +745,14 @@ function buildAiAnnotationUserPrompt() {
     'Draft a human-teacher annotation for this Idena FLIP.',
     'Images 1-4 show the LEFT candidate in temporal order.',
     'Images 5-8 show the RIGHT candidate in temporal order.',
+    'Describe each ordered panel concretely before you decide.',
+    'Extract only readable visible text. If no text is readable, use an empty string for that panel.',
+    'Then compare the LEFT and RIGHT stories and decide which side forms the better chronology.',
     'Use skip if the flip is ambiguous, report-worthy, or lacks a clear better story.',
-    'Keep the reason short and concrete.',
+    'Keep every field concrete and fairly short. Do not invent hidden details or unreadable text.',
     'Return JSON only with this exact schema:',
-    '{"final_answer":"left|right|skip","why_answer":"...","confidence":1|2|3|4|5,"text_required":true|false,"sequence_markers_present":true|false,"report_required":true|false,"report_reason":"...","option_a_summary":"short LEFT story summary","option_b_summary":"short RIGHT story summary"}',
+    '{"ordered_panel_descriptions":["panel 1","panel 2","panel 3","panel 4","panel 5","panel 6","panel 7","panel 8"],"ordered_panel_text":["text in panel 1 or empty","text in panel 2 or empty","text in panel 3 or empty","text in panel 4 or empty","text in panel 5 or empty","text in panel 6 or empty","text in panel 7 or empty","text in panel 8 or empty"],"option_a_story_analysis":"short LEFT story analysis","option_b_story_analysis":"short RIGHT story analysis","final_answer":"left|right|skip","why_answer":"...","confidence":1|2|3|4|5,"text_required":true|false,"sequence_markers_present":true|false,"report_required":true|false,"report_reason":"...","option_a_summary":"short LEFT story summary","option_b_summary":"short RIGHT story summary"}',
+    'ordered_panel_descriptions must contain exactly 8 entries and ordered_panel_text must contain exactly 8 entries.',
     'If report_required is false, report_reason must be an empty string.',
   ].join(' ')
 }
@@ -1162,6 +1342,8 @@ export default function AiHumanTeacherPage() {
     key: '',
     snapshot: '',
   })
+  const [aiDraftRuntimeResolution, setAiDraftRuntimeResolution] =
+    React.useState(() => createAiDraftRuntimeResolution())
   const [autosaveMeta, setAutosaveMeta] = React.useState({
     status: 'idle',
     savedAt: null,
@@ -1216,9 +1398,213 @@ export default function AiHumanTeacherPage() {
     [savedDeveloperPromptOverride]
   )
   const hasCustomDeveloperPrompt = Boolean(savedDeveloperPromptOverride)
+  const developerLocalTrainingProfile = normalizeDeveloperLocalTrainingProfile(
+    localAi?.developerLocalTrainingProfile ||
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+  )
+  const developerLocalTrainingModelPath =
+    resolveDeveloperLocalTrainingProfileModelPath(developerLocalTrainingProfile)
+  const developerRequestedRuntimeModel =
+    resolveDeveloperLocalTrainingProfileRuntimeModel(
+      developerLocalTrainingProfile
+    )
+  const developerRequestedRuntimeVisionModel =
+    resolveDeveloperLocalTrainingProfileRuntimeVisionModel(
+      developerLocalTrainingProfile
+    )
+  const developerLocalTrainingProfileSummary = React.useMemo(
+    () =>
+      describeDeveloperLocalTrainingProfile(developerLocalTrainingProfile, t),
+    [developerLocalTrainingProfile, t]
+  )
+  const localDraftRequestedRuntimeModelLabel = React.useMemo(
+    () =>
+      developerRequestedRuntimeVisionModel ||
+      developerRequestedRuntimeModel ||
+      t('current local runtime model'),
+    [developerRequestedRuntimeModel, developerRequestedRuntimeVisionModel, t]
+  )
+  const localDraftActiveRuntimeModelLabel = React.useMemo(
+    () =>
+      aiDraftRuntimeResolution.activeModel ||
+      localDraftRequestedRuntimeModelLabel ||
+      t('current local runtime model'),
+    [
+      aiDraftRuntimeResolution.activeModel,
+      localDraftRequestedRuntimeModelLabel,
+      t,
+    ]
+  )
+  const showDraftRuntimeInstallHint = Boolean(
+    aiDraftRuntimeResolution.installHint
+  )
+  let localDraftRuntimeStatusHint = null
+
+  if (showDraftRuntimeInstallHint) {
+    localDraftRuntimeStatusHint = (
+      <Text color="muted" fontSize="xs" wordBreak="break-all">
+        {t('Install hint')}: {aiDraftRuntimeResolution.installHint}
+      </Text>
+    )
+  }
   const shareHumanTeacherAnnotationsWithNetwork = Boolean(
     localAi?.shareHumanTeacherAnnotationsWithNetwork
   )
+
+  React.useEffect(() => {
+    const runtimeBackend = String(localAi?.runtimeBackend || '').trim()
+
+    if (
+      !isDeveloperMode ||
+      localAi?.enabled !== true ||
+      runtimeBackend !== 'ollama-direct'
+    ) {
+      return
+    }
+
+    const currentModel = String(localAi?.model || '').trim()
+    const currentVisionModel = String(localAi?.visionModel || '').trim()
+
+    if (
+      currentModel === developerRequestedRuntimeModel &&
+      currentVisionModel === developerRequestedRuntimeVisionModel
+    ) {
+      return
+    }
+
+    updateLocalAiSettings({
+      model: developerRequestedRuntimeModel,
+      visionModel: developerRequestedRuntimeVisionModel,
+    })
+  }, [
+    developerRequestedRuntimeModel,
+    developerRequestedRuntimeVisionModel,
+    isDeveloperMode,
+    localAi?.enabled,
+    localAi?.model,
+    localAi?.runtimeBackend,
+    localAi?.visionModel,
+    updateLocalAiSettings,
+  ])
+
+  React.useEffect(() => {
+    let isCancelled = false
+
+    const requestedModel =
+      developerRequestedRuntimeVisionModel || developerRequestedRuntimeModel
+
+    if (!isDeveloperMode) {
+      setAiDraftRuntimeResolution(createAiDraftRuntimeResolution())
+      return undefined
+    }
+
+    if (localAi?.enabled !== true) {
+      setAiDraftRuntimeResolution(
+        createAiDraftRuntimeResolution({
+          status: 'disabled',
+          requestedModel,
+          fallbackModel: '',
+          fallbackReason: '',
+          installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
+        })
+      )
+      return undefined
+    }
+
+    if (String(localAi?.runtimeBackend || '').trim() !== 'ollama-direct') {
+      setAiDraftRuntimeResolution(
+        createAiDraftRuntimeResolution({
+          status: 'unsupported_backend',
+          requestedModel,
+          fallbackModel: '',
+          lastError: t(
+            'The current Local AI runtime backend is not Ollama, so the requested Qwen runtime family cannot be verified here.'
+          ),
+          installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
+        })
+      )
+      return undefined
+    }
+
+    setAiDraftRuntimeResolution((current) =>
+      createAiDraftRuntimeResolution({
+        ...current,
+        status: 'loading',
+        requestedModel,
+        fallbackModel: '',
+        installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
+      })
+    )
+    ;(async () => {
+      try {
+        const bridge = ensureBridge()
+        const modelListResult = await bridge.listModels({
+          baseUrl: localAi?.baseUrl,
+          runtimeBackend: localAi?.runtimeBackend,
+          runtimeType: localAi?.runtimeType,
+          timeoutMs: 10000,
+        })
+
+        if (isCancelled) {
+          return
+        }
+
+        if (!modelListResult?.ok) {
+          setAiDraftRuntimeResolution(
+            createAiDraftRuntimeResolution({
+              status: 'unavailable',
+              requestedModel,
+              fallbackModel: '',
+              lastError: String(
+                modelListResult?.lastError || modelListResult?.error || ''
+              ).trim(),
+              installHint: requestedModel
+                ? `ollama pull ${requestedModel}`
+                : '',
+            })
+          )
+          return
+        }
+
+        setAiDraftRuntimeResolution(
+          resolveAiDraftRuntimeResolution({
+            requestedModel,
+            availableModels: modelListResult.models,
+          })
+        )
+      } catch (runtimeError) {
+        if (isCancelled) {
+          return
+        }
+
+        setAiDraftRuntimeResolution(
+          createAiDraftRuntimeResolution({
+            status: 'error',
+            requestedModel,
+            fallbackModel: '',
+            lastError: String(
+              (runtimeError && runtimeError.message) || runtimeError || ''
+            ).trim(),
+            installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
+          })
+        )
+      }
+    })()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [
+    developerRequestedRuntimeModel,
+    developerRequestedRuntimeVisionModel,
+    ensureBridge,
+    isDeveloperMode,
+    localAi?.baseUrl,
+    localAi?.enabled,
+    localAi?.runtimeBackend,
+    localAi?.runtimeType,
+    t,
+  ])
 
   React.useEffect(() => {
     if (!isPromptEditingUnlocked) {
@@ -2011,6 +2397,20 @@ export default function AiHumanTeacherPage() {
     () => normalizeAiAnnotationDraft(annotationDraft.ai_annotation),
     [annotationDraft.ai_annotation]
   )
+  const currentAiPanelDescriptions = React.useMemo(
+    () =>
+      Array.isArray(currentAiAnnotation?.ordered_panel_descriptions)
+        ? currentAiAnnotation.ordered_panel_descriptions
+        : [],
+    [currentAiAnnotation]
+  )
+  const currentAiPanelText = React.useMemo(
+    () =>
+      Array.isArray(currentAiAnnotation?.ordered_panel_text)
+        ? currentAiAnnotation.ordered_panel_text
+        : [],
+    [currentAiAnnotation]
+  )
   const requestAiAnnotationDraft = React.useCallback(async () => {
     if (annotationSourceMode !== 'developer') {
       return
@@ -2032,10 +2432,57 @@ export default function AiHumanTeacherPage() {
     if (!global.localAi || typeof global.localAi.chat !== 'function') {
       toast({
         render: () => (
-          <Toast title={t('AI draft unavailable')}>
+          <Toast title={t('Local AI chat bridge missing')}>
             {t(
               'This build does not expose the Local AI chat bridge yet. Fully restart IdenaAI and try again.'
             )}
+          </Toast>
+        ),
+      })
+      return
+    }
+
+    if (aiDraftRuntimeResolution.status === 'unsupported_backend') {
+      toast({
+        render: () => (
+          <Toast title={t('Unsupported local runtime backend')}>
+            {aiDraftRuntimeResolution.lastError ||
+              t(
+                'The current Local AI backend is not Ollama, so the requested Qwen runtime family cannot be used for AI drafting here.'
+              )}
+          </Toast>
+        ),
+      })
+      return
+    }
+
+    const requestedRuntimeModel =
+      developerRequestedRuntimeVisionModel || developerRequestedRuntimeModel
+    if (!requestedRuntimeModel) {
+      toast({
+        render: () => (
+          <Toast title={t('No runtime model selected')}>
+            {t(
+              'The fixed local Qwen training lane is not configured yet on this desktop profile.'
+            )}
+          </Toast>
+        ),
+      })
+      return
+    }
+
+    if (
+      !aiDraftRuntimeResolution.activeModel &&
+      aiDraftRuntimeResolution.status !== 'loading'
+    ) {
+      toast({
+        render: () => (
+          <Toast title={t('Requested runtime model is unavailable')}>
+            {aiDraftRuntimeResolution.fallbackReason ||
+              t(
+                'The requested runtime model is not installed yet. Install it locally, then try again.'
+              )}{' '}
+            {aiDraftRuntimeResolution.installHint || ''}
           </Toast>
         ),
       })
@@ -2049,9 +2496,12 @@ export default function AiHumanTeacherPage() {
     if (orderedImages.length !== 8) {
       toast({
         render: () => (
-          <Toast title={t('AI draft unavailable')}>
+          <Toast title={t('Current flip is missing panel images')}>
             {t(
-              'The current flip is missing ordered panel images, so the local AI draft could not start.'
+              'The current flip only exposed {{count}} of 8 ordered panel images, so the local AI draft could not start.',
+              {
+                count: orderedImages.length,
+              }
             )}
           </Toast>
         ),
@@ -2068,13 +2518,13 @@ export default function AiHumanTeacherPage() {
         baseUrl: localAi?.baseUrl,
         runtimeBackend: localAi?.runtimeBackend,
         runtimeType: localAi?.runtimeType,
-        model: localAi?.model,
-        visionModel: localAi?.visionModel,
+        model: requestedRuntimeModel,
+        visionModel: requestedRuntimeModel,
         timeoutMs: 45000,
         responseFormat: 'json',
         generationOptions: {
           temperature: 0,
-          numPredict: 256,
+          numPredict: 768,
         },
         messages: [
           {
@@ -2105,6 +2555,27 @@ export default function AiHumanTeacherPage() {
         aiDraftResult
       )
 
+      setAiDraftRuntimeResolution((current) =>
+        createAiDraftRuntimeResolution({
+          ...current,
+          status: 'ready',
+          requestedModel: String(
+            aiDraftResult?.requestedModel || requestedRuntimeModel
+          ).trim(),
+          activeModel: String(
+            aiDraftResult?.activeModel ||
+              aiDraftResult?.model ||
+              requestedRuntimeModel
+          ).trim(),
+          fallbackModel: '',
+          fallbackUsed: false,
+          fallbackReason: '',
+          availableModels: current.availableModels,
+          installHint: `ollama pull ${requestedRuntimeModel}`,
+          lastError: '',
+        })
+      )
+
       setAnnotationDraft((current) =>
         applyAiAnnotationToDraft(current, aiAnnotation)
       )
@@ -2115,7 +2586,13 @@ export default function AiHumanTeacherPage() {
         render: () => (
           <Toast title={t('AI draft applied')}>
             {t(
-              'The local AI filled a draft for this flip. Review it, edit it, and tell the AI what it got wrong if needed.'
+              'The local AI filled a draft for this flip with {{model}}. Review it, edit it, and tell the AI what it got wrong if needed.',
+              {
+                model:
+                  aiDraftResult?.activeModel ||
+                  aiDraftResult?.model ||
+                  requestedRuntimeModel,
+              }
             )}
           </Toast>
         ),
@@ -2141,13 +2618,18 @@ export default function AiHumanTeacherPage() {
     annotationSourceMode,
     effectiveDeveloperPrompt,
     ensureBridge,
+    aiDraftRuntimeResolution.fallbackReason,
+    aiDraftRuntimeResolution.installHint,
+    aiDraftRuntimeResolution.lastError,
+    aiDraftRuntimeResolution.activeModel,
+    aiDraftRuntimeResolution.status,
+    developerRequestedRuntimeModel,
+    developerRequestedRuntimeVisionModel,
     leftPanels,
     localAi?.baseUrl,
     localAi?.enabled,
-    localAi?.model,
     localAi?.runtimeBackend,
     localAi?.runtimeType,
-    localAi?.visionModel,
     rightPanels,
     t,
     toast,
@@ -2556,6 +3038,8 @@ export default function AiHumanTeacherPage() {
             currentPeriod,
             trainNow,
             advance,
+            trainingModelPath: developerLocalTrainingModelPath,
+            localTrainingProfile: developerLocalTrainingProfile,
           })
         setDeveloperActionResult(nextResult)
         setDeveloperSessionState(nextResult.state || null)
@@ -2648,7 +3132,9 @@ export default function AiHumanTeacherPage() {
     },
     [
       demoSampleName,
+      developerLocalTrainingModelPath,
       developerOffset,
+      developerLocalTrainingProfile,
       ensureBridge,
       currentPeriod,
       loadDeveloperSession,
@@ -2975,9 +3461,47 @@ export default function AiHumanTeacherPage() {
   const developerLastTraining = developerSessionState?.lastTraining || null
   const developerSupportsLocalTraining =
     developerSessionState?.supportsLocalTraining !== false
+  const developerActiveTrainingModelPath = String(
+    developerSessionState?.activeTrainingModelPath || ''
+  ).trim()
+  const developerActiveTrainingBackend = String(
+    developerSessionState?.activeTrainingBackend || ''
+  ).trim()
+  const developerActiveLocalTrainingProfile = String(
+    developerSessionState?.activeLocalTrainingProfile || ''
+  ).trim()
   const developerLastTrainingFailureReason =
     developerLastTraining?.failureReason ||
     extractTrainingFailureReason(developerLastTraining?.result)
+  const developerLastAttemptedTrainingModelPath = String(
+    developerLastTraining?.result?.modelPath || ''
+  ).trim()
+  const developerLastAttemptedTrainingBackend = String(
+    developerLastTraining?.result?.trainingBackend || ''
+  ).trim()
+  const developerLastAttemptedTrainingProfile = String(
+    developerLastTraining?.result?.localTrainingProfile || ''
+  ).trim()
+  const developerActiveTrainingProfileSummary = React.useMemo(
+    () =>
+      developerActiveLocalTrainingProfile
+        ? describeDeveloperLocalTrainingProfile(
+            developerActiveLocalTrainingProfile,
+            t
+          )
+        : null,
+    [developerActiveLocalTrainingProfile, t]
+  )
+  const developerLastAttemptedTrainingProfileSummary = React.useMemo(
+    () =>
+      developerLastAttemptedTrainingProfile
+        ? describeDeveloperLocalTrainingProfile(
+            developerLastAttemptedTrainingProfile,
+            t
+          )
+        : null,
+    [developerLastAttemptedTrainingProfile, t]
+  )
   const developerTrainingUnsupported =
     !developerSupportsLocalTraining &&
     isTrainingUnsupportedReason(developerLastTrainingFailureReason)
@@ -3120,6 +3644,23 @@ export default function AiHumanTeacherPage() {
     isDeveloperMode,
     t,
   ])
+  const developerActiveModelLabel = React.useMemo(() => {
+    if (developerActiveTrainingModelPath) {
+      return developerActiveTrainingModelPath
+    }
+
+    if (developerTrainedCount > 0) {
+      return t('Unknown older trained model')
+    }
+
+    return t('Baseline only')
+  }, [developerActiveTrainingModelPath, developerTrainedCount, t])
+  const developerLastFailedAttemptUsesDifferentModel = Boolean(
+    developerLastTraining?.status === 'failed' &&
+      developerLastAttemptedTrainingModelPath &&
+      developerLastAttemptedTrainingModelPath !==
+        developerActiveTrainingModelPath
+  )
   const developerComparisonHistory = Array.isArray(developerComparison?.history)
     ? developerComparison.history
     : []
@@ -3972,6 +4513,25 @@ export default function AiHumanTeacherPage() {
                               {developerLastTraining.status}
                             </Text>
                           ) : null}
+                          {developerLastFailedAttemptUsesDifferentModel ? (
+                            <Text color="muted" fontSize="xs">
+                              {t('Last failed attempt used')}:{' '}
+                              {developerLastAttemptedTrainingModelPath}
+                              {[
+                                developerLastAttemptedTrainingProfileSummary?.label ||
+                                  '',
+                                developerLastAttemptedTrainingBackend || '',
+                              ].filter(Boolean).length
+                                ? ` · ${[
+                                    developerLastAttemptedTrainingProfileSummary?.label ||
+                                      '',
+                                    developerLastAttemptedTrainingBackend || '',
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')}`
+                                : ''}
+                            </Text>
+                          ) : null}
                         </Stack>
                       </Box>
                     ) : null}
@@ -3994,6 +4554,74 @@ export default function AiHumanTeacherPage() {
                         </Stack>
                       </Box>
                     ) : null}
+                    <SimpleGrid columns={[1, 3]} spacing={3}>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Draft runtime model')}
+                        </Text>
+                        <Text fontWeight={700}>
+                          {localDraftActiveRuntimeModelLabel}
+                        </Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('Requested')}:{' '}
+                          {localDraftRequestedRuntimeModelLabel}
+                        </Text>
+                        <Text color="muted" fontSize="xs">
+                          {t(
+                            'This local draft path is locked to the requested Qwen3.5 runtime. If that model is missing, drafting should stop instead of silently switching to an older runtime.'
+                          )}
+                        </Text>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Active trained model')}
+                        </Text>
+                        <Text fontWeight={700}>
+                          {developerActiveModelLabel}
+                        </Text>
+                        {(developerActiveTrainingProfileSummary ||
+                          developerActiveTrainingBackend) && (
+                          <Text color="muted" fontSize="xs">
+                            {[
+                              developerActiveTrainingProfileSummary?.label ||
+                                '',
+                              developerActiveTrainingBackend || '',
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </Text>
+                        )}
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Next training model')}
+                        </Text>
+                        <Text fontWeight={700}>
+                          {developerLocalTrainingModelPath}
+                        </Text>
+                        <Text color="muted" fontSize="xs">
+                          {developerLocalTrainingProfileSummary.label}
+                        </Text>
+                      </Box>
+                    </SimpleGrid>
                     <SimpleGrid columns={[1, 3]} spacing={3}>
                       <Box
                         borderWidth="1px"
@@ -4080,6 +4708,11 @@ export default function AiHumanTeacherPage() {
                         t={t}
                       />
                     ) : null}
+                    <Text color="muted" fontSize="xs">
+                      {t('Current local pilot preset')}:{' '}
+                      {developerLocalTrainingProfileSummary.label} ·{' '}
+                      {developerLocalTrainingModelPath}
+                    </Text>
                     <Text color="muted" fontSize="xs">
                       {t('Chunk size')}: {DEVELOPER_TRAINING_CHUNK_SIZE} ·{' '}
                       {t('Benchmark size')}: 100 ·{' '}
@@ -4389,6 +5022,18 @@ export default function AiHumanTeacherPage() {
                           'This uses the selected epoch annotation set. The app keeps you on one current flip at a time and saves your notes flip by flip.'
                         )}
                   </Text>
+                  {isDeveloperMode ? (
+                    <Text color="muted" fontSize="sm">
+                      {t(
+                        'Requested draft runtime: {{draftModel}}. Active runtime: {{activeModel}}. Local training model: {{trainingModel}}.',
+                        {
+                          draftModel: localDraftRequestedRuntimeModelLabel,
+                          activeModel: localDraftActiveRuntimeModelLabel,
+                          trainingModel: developerLocalTrainingModelPath,
+                        }
+                      )}
+                    </Text>
+                  ) : null}
                   <Stack spacing={2}>
                     <Text color="muted" fontSize="sm">
                       {isDeveloperMode ? t('Chunk size') : t('Set size')}:{' '}
@@ -4810,6 +5455,17 @@ export default function AiHumanTeacherPage() {
                                         'Ask the local AI to prefill this flip, then review and correct it like a normal human-teacher annotation.'
                                       )}
                                     </Text>
+                                    <Text color="muted" fontSize="xs" mt={1}>
+                                      {t(
+                                        'This draft is locked to the same local Qwen lane as training. Runtime model: {{draftModel}}. Local training model: {{trainingModel}}.',
+                                        {
+                                          draftModel:
+                                            localDraftRequestedRuntimeModelLabel,
+                                          trainingModel:
+                                            developerLocalTrainingModelPath,
+                                        }
+                                      )}
+                                    </Text>
                                   </Box>
                                   <PrimaryButton
                                     onClick={requestAiAnnotationDraft}
@@ -4849,10 +5505,86 @@ export default function AiHumanTeacherPage() {
                                           }
                                         )}
                                       </Text>
+                                      <Text fontSize="xs" color="muted">
+                                        {t(
+                                          'Drafted with runtime model {{draftModel}}. The local training model is {{trainingModel}}.',
+                                          {
+                                            draftModel:
+                                              currentAiAnnotation.model ||
+                                              localDraftActiveRuntimeModelLabel,
+                                            trainingModel:
+                                              developerLocalTrainingModelPath,
+                                          }
+                                        )}
+                                      </Text>
                                       {currentAiAnnotation.why_answer ? (
                                         <Text fontSize="sm">
                                           {currentAiAnnotation.why_answer}
                                         </Text>
+                                      ) : null}
+                                      {hasAiAnnotationListContent(
+                                        currentAiPanelDescriptions
+                                      ) ? (
+                                        <Box fontSize="xs" color="muted">
+                                          <Text fontWeight={600} mb={1}>
+                                            {t('Ordered panel observations')}
+                                          </Text>
+                                          {currentAiPanelDescriptions.map(
+                                            (item, index) =>
+                                              item ? (
+                                                <Text key={`ai-panel-${index}`}>
+                                                  {t('Panel {{index}}', {
+                                                    index: index + 1,
+                                                  })}
+                                                  : {item}
+                                                </Text>
+                                              ) : null
+                                          )}
+                                        </Box>
+                                      ) : null}
+                                      {hasAiAnnotationListContent(
+                                        currentAiPanelText
+                                      ) ? (
+                                        <Box fontSize="xs" color="muted">
+                                          <Text fontWeight={600} mb={1}>
+                                            {t('Visible text by panel')}
+                                          </Text>
+                                          {currentAiPanelText.map(
+                                            (item, index) =>
+                                              item ? (
+                                                <Text key={`ai-text-${index}`}>
+                                                  {t('Panel {{index}}', {
+                                                    index: index + 1,
+                                                  })}
+                                                  : {item}
+                                                </Text>
+                                              ) : null
+                                          )}
+                                        </Box>
+                                      ) : null}
+                                      {currentAiAnnotation.option_a_story_analysis ||
+                                      currentAiAnnotation.option_b_story_analysis ? (
+                                        <Box fontSize="xs" color="muted">
+                                          <Text fontWeight={600} mb={1}>
+                                            {t('Story comparison')}
+                                          </Text>
+                                          {currentAiAnnotation.option_a_story_analysis ? (
+                                            <Text>
+                                              {t('LEFT analysis')}:&nbsp;
+                                              {
+                                                currentAiAnnotation.option_a_story_analysis
+                                              }
+                                            </Text>
+                                          ) : null}
+                                          {currentAiAnnotation.option_b_story_analysis ? (
+                                            <Text>
+                                              {t('RIGHT analysis')}:&nbsp;
+                                              {
+                                                currentAiAnnotation.option_b_story_analysis
+                                              }
+                                            </Text>
+                                          ) : null}
+                                        </Box>
                                       ) : null}
                                       {currentAiAnnotation.option_a_summary ||
                                       currentAiAnnotation.option_b_summary ? (
@@ -5920,6 +6652,37 @@ export default function AiHumanTeacherPage() {
                           </Text>
                         </Stack>
                       </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="md"
+                        px={4}
+                        py={3}
+                      >
+                        <Stack spacing={2}>
+                          <FormLabel>{t('Local training lane')}</FormLabel>
+                          <Text color="muted" fontSize="sm">
+                            {developerLocalTrainingProfileSummary.detail}
+                          </Text>
+                          <Text
+                            color="muted"
+                            fontSize="xs"
+                            wordBreak="break-all"
+                          >
+                            {t('Training model')}:{' '}
+                            {developerLocalTrainingModelPath}
+                          </Text>
+                          <Text
+                            color="muted"
+                            fontSize="xs"
+                            wordBreak="break-all"
+                          >
+                            {t('Locked runtime model')}:{' '}
+                            {localDraftRequestedRuntimeModelLabel}
+                          </Text>
+                          {localDraftRuntimeStatusHint}
+                        </Stack>
+                      </Box>
                       {!developerSupportsLocalTraining ? (
                         <Alert status="warning" borderRadius="md">
                           <Text fontSize="sm">
@@ -5971,7 +6734,10 @@ export default function AiHumanTeacherPage() {
 
                     {contributionDialogMode === 'local' ? (
                       <>
-                        <PrimaryButton onClick={continueWithLocalPilotTraining}>
+                        <PrimaryButton
+                          isDisabled={!developerSupportsLocalTraining}
+                          onClick={continueWithLocalPilotTraining}
+                        >
                           {t('Continue with local pilot training')}
                         </PrimaryButton>
                         <SecondaryButton onClick={closeContributionDialog}>

@@ -461,6 +461,12 @@ function normalizeTrainingRequest(input = {}) {
   return {
     developerHumanTeacher: source.developerHumanTeacher === true,
     sampleName: String(source.sampleName || '').trim(),
+    trainingModelPath:
+      String(source.trainingModelPath || source.modelPath || '').trim() || null,
+    localTrainingProfile:
+      String(source.localTrainingProfile || '')
+        .trim()
+        .toLowerCase() || null,
     annotatedAnnotationsPath:
       String(source.annotatedAnnotationsPath || '').trim() || null,
     pendingAnnotationsPath:
@@ -939,10 +945,12 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
           }flips.json`
         )
     )
+    const preferredModelPath =
+      String(request.trainingModelPath || '').trim() ||
+      resolveTrainingModelPath()
 
     try {
       const metadata = await loadTrainingMetadata(metadataPath)
-      const preferredModelPath = resolveTrainingModelPath()
 
       if (request.compareOnly) {
         const adapterPath = String(
@@ -969,6 +977,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
           ...metadata,
           latestAdapterPath: adapterPath,
           modelPath: String(metadata.modelPath || preferredModelPath).trim(),
+          localTrainingProfile:
+            request.localTrainingProfile ||
+            metadata.localTrainingProfile ||
+            null,
           latestComparisonPath: comparisonPath,
           latestHoldoutPath: comparisonRun.holdout.datasetPath,
           lastEvaluatedAt: comparisonRun.summary.evaluatedAt,
@@ -979,6 +991,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
           status: DEFAULT_COMPARISON_STATUS,
           trainingBackend: 'mlx_vlm_local',
           modelPath: String(metadata.modelPath || preferredModelPath).trim(),
+          localTrainingProfile:
+            request.localTrainingProfile ||
+            metadata.localTrainingProfile ||
+            null,
           adapterPath,
           comparisonPath,
           holdoutPath: comparisonRun.holdout.datasetPath,
@@ -1020,6 +1036,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
       await writeTrainingMetadata(metadataPath, {
         sampleName: request.sampleName,
         modelPath: preferredModelPath,
+        localTrainingProfile: request.localTrainingProfile || null,
         strongFallbackModelPath: resolveTrainingStrongFallbackModelPath(),
         fallbackModelPath: resolveTrainingFallbackModelPath(),
         latestPreparedDatasetPath: prepared.datasetPath,
@@ -1040,6 +1057,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         status: DEFAULT_TRAINING_STATUS,
         trainingBackend: 'mlx_vlm_local',
         modelPath: preferredModelPath,
+        localTrainingProfile: request.localTrainingProfile || null,
         adapterPath: training.adapterPath,
         preparedDatasetPath: prepared.datasetPath,
         preparedManifestPath: prepared.manifestPath,
@@ -1062,7 +1080,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
     } catch (error) {
       const failureReason = formatTrainingFailureReason(
         error,
-        resolveTrainingModelPath()
+        preferredModelPath
       )
 
       if (isDev && logger && typeof logger.error === 'function') {
@@ -1077,7 +1095,8 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         ok: false,
         status: 'failed',
         trainingBackend: 'mlx_vlm_local',
-        modelPath: resolveTrainingModelPath(),
+        modelPath: preferredModelPath,
+        localTrainingProfile: request.localTrainingProfile || null,
         failureReason,
         message: failureReason,
         error:

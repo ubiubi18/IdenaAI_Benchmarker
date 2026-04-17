@@ -6,14 +6,43 @@ const LEGACY_LOCAL_AI_CONTRACT_VERSION = 'phi-sidecar/v1'
 const LEGACY_LOCAL_AI_BASE_URL = 'http://127.0.0.1:5000'
 const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_LOCAL_AI_SIDECAR_BASE_URL = LEGACY_LOCAL_AI_BASE_URL
-const DEFAULT_LOCAL_AI_OLLAMA_MODEL = 'llama3.1:8b'
-const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen2.5vl:7b'
-const RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen2.5vl:7b'
+const DEFAULT_LOCAL_AI_OLLAMA_MODEL = 'qwen3.5:9b'
+const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen3.5:9b'
+const RECOMMENDED_LOCAL_AI_OLLAMA_MODEL = 'qwen3.5:9b'
+const RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen3.5:9b'
+const STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL = 'qwen2.5vl:7b'
+const STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen2.5vl:7b'
+const SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL = 'qwen2.5vl:3b'
+const SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen2.5vl:3b'
 const RECOMMENDED_LOCAL_AI_TRAINING_MODEL = 'mlx-community/Qwen3.5-9B-MLX-4bit'
 const STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL =
   'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
 const FALLBACK_LOCAL_AI_TRAINING_MODEL =
   'mlx-community/Qwen2-VL-2B-Instruct-4bit'
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE = 'strong'
+const DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG = {
+  safe: {
+    modelPath: FALLBACK_LOCAL_AI_TRAINING_MODEL,
+    runtimeModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+    runtimeVisionModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeFallbackModel: '',
+    runtimeFallbackVisionModel: '',
+  },
+  balanced: {
+    modelPath: STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
+    runtimeModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+    runtimeVisionModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeFallbackModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+    runtimeFallbackVisionModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+  },
+  strong: {
+    modelPath: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+    runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+    runtimeVisionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeFallbackModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+    runtimeFallbackVisionModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+  },
+}
 const DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT =
   'Use human-teacher guidance without collapsing into a left-only or right-only bias. Prefer left or right only when the visual chronology, readable text, reportability cues, or explicit human annotation meaningfully support that side. If the evidence is weak or conflicting, stay cautious and do not default to one side.'
 const LEGACY_LOCAL_AI_PUBLIC_MODEL_ID = 'idena-multimodal-v1'
@@ -38,6 +67,7 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   adapterStrategy: 'lora-first',
   trainingPolicy: 'approved-post-consensus-only',
   developerHumanTeacherSystemPrompt: '',
+  developerLocalTrainingProfile: DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
   shareHumanTeacherAnnotationsWithNetwork: false,
   contractVersion: 'idena-local/v1',
   captureEnabled: false,
@@ -275,6 +305,32 @@ function normalizeDeveloperHumanTeacherSystemPrompt(value) {
   return nextValue.slice(0, 8000)
 }
 
+function normalizeDeveloperLocalTrainingProfile(_value) {
+  return DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+}
+
+function resolveDeveloperLocalTrainingProfileModelPath(_value) {
+  return RECOMMENDED_LOCAL_AI_TRAINING_MODEL
+}
+
+function resolveDeveloperLocalTrainingProfileRuntimeModel(_value) {
+  return RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+}
+
+function resolveDeveloperLocalTrainingProfileRuntimeVisionModel(_value) {
+  return RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
+}
+
+function resolveDeveloperLocalTrainingProfileRuntimeFallbackModel(_value) {
+  return ''
+}
+
+function resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel(
+  _value
+) {
+  return ''
+}
+
 function resolveLocalAiWireRuntimeType(settings = {}) {
   const explicit = trimString(settings.runtimeType)
   if (explicit) {
@@ -321,6 +377,7 @@ function buildLocalAiRuntimePreset(runtimeBackend = 'ollama-direct') {
 function buildRecommendedLocalAiMacPreset() {
   return {
     ...buildLocalAiRuntimePreset('ollama-direct'),
+    model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
     visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   }
 }
@@ -407,6 +464,9 @@ function buildLocalAiSettings(settings = {}) {
       normalizeDeveloperHumanTeacherSystemPrompt(
         source.developerHumanTeacherSystemPrompt
       ),
+    developerLocalTrainingProfile: normalizeDeveloperLocalTrainingProfile(
+      source.developerLocalTrainingProfile
+    ),
     shareHumanTeacherAnnotationsWithNetwork:
       source.shareHumanTeacherAnnotationsWithNetwork === true,
     contractVersion: normalizeContractVersion(source.contractVersion),
@@ -456,10 +516,17 @@ module.exports = {
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
   RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+  STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+  STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+  SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+  SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
   RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
@@ -468,6 +535,12 @@ module.exports = {
   resolveLocalAiWireRuntimeType,
   buildLocalAiRuntimePreset,
   buildRecommendedLocalAiMacPreset,
+  normalizeDeveloperLocalTrainingProfile,
+  resolveDeveloperLocalTrainingProfileModelPath,
+  resolveDeveloperLocalTrainingProfileRuntimeModel,
+  resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
+  resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
+  resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
   buildLocalAiSettings,
   mergeLocalAiSettings,
 }

@@ -1267,6 +1267,9 @@ function createDefaultDeveloperHumanTeacherState({
     chunks: [],
     lastSavedAt: null,
     lastTraining: null,
+    activeTrainingModelPath: null,
+    activeTrainingBackend: null,
+    activeLocalTrainingProfile: null,
     comparison100: createDefaultDeveloperComparisonState(),
   }
 }
@@ -1309,6 +1312,12 @@ function normalizeDeveloperHumanTeacherState(
     annotatedTaskIds: uniqueStrings(source.annotatedTaskIds),
     pendingTrainingTaskIds: uniqueStrings(source.pendingTrainingTaskIds),
     trainedTaskIds: uniqueStrings(source.trainedTaskIds),
+    activeTrainingModelPath:
+      String(source.activeTrainingModelPath || '').trim() || null,
+    activeTrainingBackend:
+      String(source.activeTrainingBackend || '').trim() || null,
+    activeLocalTrainingProfile:
+      String(source.activeLocalTrainingProfile || '').trim() || null,
     lastTraining: normalizeDeveloperLastTrainingState(source.lastTraining),
     chunks: Array.isArray(source.chunks)
       ? source.chunks
@@ -1617,6 +1626,10 @@ function buildDefaultHumanTeacherAiAnnotation() {
     runtime_type: '',
     model: '',
     vision_model: '',
+    ordered_panel_descriptions: Array.from({length: 8}, () => ''),
+    ordered_panel_text: Array.from({length: 8}, () => ''),
+    option_a_story_analysis: '',
+    option_b_story_analysis: '',
     final_answer: '',
     why_answer: '',
     confidence: null,
@@ -1636,6 +1649,35 @@ function normalizeHumanTeacherAiAnnotationRating(value) {
     .toLowerCase()
 
   return ['good', 'bad', 'wrong'].includes(next) ? next : ''
+}
+
+function normalizeHumanTeacherDraftList(
+  value,
+  {maxItems = 8, maxLength = 280} = {}
+) {
+  let items = []
+
+  if (Array.isArray(value)) {
+    items = value
+  } else if (value && typeof value === 'object') {
+    items = Object.entries(value)
+      .sort(([left], [right]) => Number(left) - Number(right))
+      .map(([_key, item]) => item)
+  }
+
+  const next = items
+    .slice(0, maxItems)
+    .map((item) => normalizeHumanTeacherDraftText(item, maxLength))
+
+  while (next.length < maxItems) {
+    next.push('')
+  }
+
+  return next
+}
+
+function hasHumanTeacherDraftListContent(value = []) {
+  return Array.isArray(value) && value.some((item) => Boolean(item))
 }
 
 function normalizeHumanTeacherDraftText(value, maxLength = 2000) {
@@ -1787,6 +1829,10 @@ function hasHumanTeacherAiAnnotation(annotation = null) {
       annotation.runtime_type ||
       annotation.model ||
       annotation.vision_model ||
+      hasHumanTeacherDraftListContent(annotation.ordered_panel_descriptions) ||
+      hasHumanTeacherDraftListContent(annotation.ordered_panel_text) ||
+      annotation.option_a_story_analysis ||
+      annotation.option_b_story_analysis ||
       annotation.final_answer ||
       annotation.why_answer ||
       annotation.option_a_summary ||
@@ -1825,6 +1871,28 @@ function normalizeHumanTeacherAiAnnotation(value = null) {
     vision_model: normalizeHumanTeacherDraftText(
       source.vision_model || source.visionModel,
       256
+    ),
+    ordered_panel_descriptions: normalizeHumanTeacherDraftList(
+      source.ordered_panel_descriptions ?? source.orderedPanelDescriptions,
+      {
+        maxItems: 8,
+        maxLength: 280,
+      }
+    ),
+    ordered_panel_text: normalizeHumanTeacherDraftList(
+      source.ordered_panel_text ?? source.orderedPanelText,
+      {
+        maxItems: 8,
+        maxLength: 200,
+      }
+    ),
+    option_a_story_analysis: normalizeHumanTeacherDraftText(
+      source.option_a_story_analysis ?? source.optionAStoryAnalysis,
+      500
+    ),
+    option_b_story_analysis: normalizeHumanTeacherDraftText(
+      source.option_b_story_analysis ?? source.optionBStoryAnalysis,
+      500
     ),
     final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
       ? finalAnswer
@@ -2782,6 +2850,8 @@ function createLocalAiManager({
     offset = 0,
     trainNow = false,
     advance = false,
+    trainingModelPath = null,
+    localTrainingProfile = null,
   } = {}) {
     const chunk = await loadDeveloperHumanTeacherChunkWorkspace({
       sampleName,
@@ -2861,6 +2931,10 @@ function createLocalAiManager({
         input: {
           developerHumanTeacher: true,
           sampleName: chunk.sample.sampleName,
+          trainingModelPath:
+            String(trainingModelPath || '').trim() || undefined,
+          localTrainingProfile:
+            String(localTrainingProfile || '').trim() || undefined,
           offset: chunk.offset,
           chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
           normalizedAnnotationsPath: normalizedPath,
@@ -2946,6 +3020,18 @@ function createLocalAiManager({
       ),
       pendingTrainingTaskIds: pendingTaskIds,
       trainedTaskIds,
+      activeTrainingModelPath:
+        trainingStatus === 'trained'
+          ? String(trainingResult?.modelPath || '').trim() || null
+          : existingState.activeTrainingModelPath || null,
+      activeTrainingBackend:
+        trainingStatus === 'trained'
+          ? String(trainingResult?.trainingBackend || '').trim() || null
+          : existingState.activeTrainingBackend || null,
+      activeLocalTrainingProfile:
+        trainingStatus === 'trained'
+          ? String(trainingResult?.localTrainingProfile || '').trim() || null
+          : existingState.activeLocalTrainingProfile || null,
       chunks: chunkEntries,
       lastSavedAt: committedAt,
       comparison100: nextComparison,
@@ -3186,6 +3272,8 @@ function createLocalAiManager({
       timeoutMs: next.timeoutMs,
       responseFormat: next.responseFormat,
       generationOptions: next.generationOptions,
+      modelFallbacks: next.modelFallbacks,
+      visionModelFallbacks: next.visionModelFallbacks,
     })
 
     updateSidecarState({
@@ -5068,6 +5156,12 @@ function createLocalAiManager({
       offset: effectiveOffset,
       trainNow: next.trainNow === true,
       advance: next.advance === true,
+      trainingModelPath:
+        String(next.trainingModelPath || next.modelPath || '').trim() || null,
+      localTrainingProfile:
+        String(next.localTrainingProfile || '')
+          .trim()
+          .toLowerCase() || null,
     })
   }
 
@@ -5184,6 +5278,30 @@ function createLocalAiManager({
       {
         ...existingState,
         totalAvailableTasks: sample.totalFlips,
+        activeTrainingModelPath:
+          comparisonResult?.ok === true
+            ? String(
+                comparisonResult?.modelPath ||
+                  existingState.activeTrainingModelPath ||
+                  ''
+              ).trim() || null
+            : existingState.activeTrainingModelPath || null,
+        activeTrainingBackend:
+          comparisonResult?.ok === true
+            ? String(
+                comparisonResult?.trainingBackend ||
+                  existingState.activeTrainingBackend ||
+                  ''
+              ).trim() || null
+            : existingState.activeTrainingBackend || null,
+        activeLocalTrainingProfile:
+          comparisonResult?.ok === true
+            ? String(
+                comparisonResult?.localTrainingProfile ||
+                  existingState.activeLocalTrainingProfile ||
+                  ''
+              ).trim() || null
+            : existingState.activeLocalTrainingProfile || null,
         comparison100: nextComparison,
       }
     )

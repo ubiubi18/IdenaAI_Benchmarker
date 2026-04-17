@@ -216,12 +216,51 @@ def normalize_ai_annotation(value: Any) -> Dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
     final_answer = trim_text(raw.get("final_answer") or raw.get("finalAnswer"), 16).lower()
     rating = trim_text(raw.get("rating"), 32).lower()
+    def normalize_list(input_value: Any, max_items: int, max_length: int) -> List[str]:
+        items: List[Any] = []
+        if isinstance(input_value, list):
+            items = input_value
+        elif isinstance(input_value, dict):
+            items = [
+                item
+                for _, item in sorted(
+                    input_value.items(),
+                    key=lambda item: (
+                        not str(item[0]).isdigit(),
+                        int(item[0]) if str(item[0]).isdigit() else str(item[0]),
+                    ),
+                )
+            ]
+
+        next_items = [trim_text(item, max_length) for item in items[:max_items]]
+        while len(next_items) < max_items:
+            next_items.append("")
+        return next_items
+
     return {
         "generated_at": trim_text(raw.get("generated_at") or raw.get("generatedAt"), 64),
         "runtime_backend": trim_text(raw.get("runtime_backend") or raw.get("runtimeBackend"), 64),
         "runtime_type": trim_text(raw.get("runtime_type") or raw.get("runtimeType"), 64),
         "model": trim_text(raw.get("model"), 256),
         "vision_model": trim_text(raw.get("vision_model") or raw.get("visionModel"), 256),
+        "ordered_panel_descriptions": normalize_list(
+            raw.get("ordered_panel_descriptions") or raw.get("orderedPanelDescriptions"),
+            8,
+            280,
+        ),
+        "ordered_panel_text": normalize_list(
+            raw.get("ordered_panel_text") or raw.get("orderedPanelText"),
+            8,
+            200,
+        ),
+        "option_a_story_analysis": trim_text(
+            raw.get("option_a_story_analysis") or raw.get("optionAStoryAnalysis"),
+            500,
+        ),
+        "option_b_story_analysis": trim_text(
+            raw.get("option_b_story_analysis") or raw.get("optionBStoryAnalysis"),
+            500,
+        ),
         "final_answer": final_answer if final_answer in VALID_ANSWERS else "",
         "why_answer": trim_text(raw.get("why_answer") or raw.get("whyAnswer"), 900),
         "confidence": normalize_confidence(raw.get("confidence")),
@@ -276,6 +315,32 @@ def build_human_reasoning_summary(annotation: Dict[str, Any]) -> str:
             parts.append("The flip should be reported instead of solved normally.")
     if ai_annotation.get("final_answer") in VALID_ANSWERS:
         parts.append(f"AI draft before human correction chose {ai_annotation['final_answer'].upper()}.")
+    panel_descriptions = [
+        item for item in ai_annotation.get("ordered_panel_descriptions", []) if item
+    ]
+    if panel_descriptions:
+        parts.append(
+            "AI draft panel observations: "
+            + " ".join(
+                f"P{index + 1}: {item}."
+                for index, item in enumerate(ai_annotation["ordered_panel_descriptions"])
+                if item
+            )[:700]
+        )
+    panel_text = [item for item in ai_annotation.get("ordered_panel_text", []) if item]
+    if panel_text:
+        parts.append(
+            "AI draft text clues: "
+            + " ".join(
+                f"P{index + 1}: {item}."
+                for index, item in enumerate(ai_annotation["ordered_panel_text"])
+                if item
+            )[:500]
+        )
+    if ai_annotation.get("option_a_story_analysis"):
+        parts.append(f"AI draft LEFT analysis: {ai_annotation['option_a_story_analysis']}")
+    if ai_annotation.get("option_b_story_analysis"):
+        parts.append(f"AI draft RIGHT analysis: {ai_annotation['option_b_story_analysis']}")
     if ai_annotation.get("why_answer"):
         parts.append(f"AI draft reasoning: {ai_annotation['why_answer']}")
     if ai_annotation.get("rating") == "good":

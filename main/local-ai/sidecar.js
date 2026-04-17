@@ -13,7 +13,7 @@ const DEFAULT_MODEL = ''
 const DEFAULT_RUNTIME = LOCAL_AI_RUNTIME
 const DEFAULT_RUNTIME_TYPE = 'sidecar'
 const DEFAULT_OLLAMA_ENDPOINT = LOCAL_AI_OLLAMA_DEFAULT_BASE_URL
-const DEFAULT_VISION_MODEL = 'qwen2.5vl:7b'
+const DEFAULT_VISION_MODEL = 'qwen3.5:9b'
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_FLIP_IMAGES = 8
 const MIN_TIMEOUT_MS = 1000
@@ -32,7 +32,6 @@ const CHECKER_CLASSIFICATIONS = new Set([
 ])
 const CHECKER_CONFIDENCES = new Set(['low', 'medium', 'high'])
 const ALLOWED_RESPONSE_FORMATS = new Set(['json'])
-const PREFERRED_OLLAMA_MULTIMODAL_MODELS = ['qwen2.5vl:7b']
 const OCR_FIRST_CHAT_PATTERN =
   /\b(text|read|ocr|screenshot|transcribe|quote|what does it say|what should i answer)\b/i
 
@@ -177,18 +176,21 @@ function normalizeGenerationOptions(input) {
   return Object.keys(options).length > 0 ? options : null
 }
 
-function buildVisionModelCandidates(model, includesImages) {
+function buildVisionModelCandidates(
+  model,
+  includesImages,
+  fallbackModels = []
+) {
   const primary = String(model || '').trim()
+  const fallbacks = Array.isArray(fallbackModels)
+    ? fallbackModels.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
 
   if (!includesImages) {
     return primary ? [primary] : []
   }
 
-  return [
-    ...new Set(
-      [...PREFERRED_OLLAMA_MULTIMODAL_MODELS, primary].filter(Boolean)
-    ),
-  ]
+  return [...new Set([primary || DEFAULT_VISION_MODEL, ...fallbacks])]
 }
 
 function estimateBase64Bytes(value) {
@@ -1323,6 +1325,8 @@ function createLocalAiSidecar({
     timeoutMs = 15 * 1000,
     responseFormat = null,
     generationOptions = null,
+    modelFallbacks = [],
+    visionModelFallbacks = [],
   } = {}) {
     const rawMessages = Array.isArray(messages) ? messages : []
     const nextMessages = normalizeChatMessages({
@@ -1336,7 +1340,8 @@ function createLocalAiSidecar({
     )
     const visionModelCandidates = buildVisionModelCandidates(
       visionModel,
-      includesImages
+      includesImages,
+      visionModelFallbacks
     )
     const rawImages = includesImages ? extractRawImages(rawMessages) : []
     let result = null
@@ -1374,23 +1379,56 @@ function createLocalAiSidecar({
       }
     }
 
-    for (const candidateVisionModel of visionModelCandidates.length
-      ? visionModelCandidates
-      : ['']) {
+    const textModelCandidates = includesImages
+      ? ['']
+      : [
+          ...new Set(
+            [model]
+              .concat(Array.isArray(modelFallbacks) ? modelFallbacks : [])
+              .map((item) => String(item || '').trim())
+              .filter(Boolean)
+          ),
+        ]
+    const modelAttempts = []
+    const activeRequestedModel = includesImages
+      ? String(visionModel || '').trim() || DEFAULT_VISION_MODEL
+      : String(model || '').trim()
+    let selectedCandidateModel = ''
+    let activeModelCandidates = ['']
+
+    if (includesImages) {
+      activeModelCandidates = visionModelCandidates.length
+        ? visionModelCandidates
+        : ['']
+    } else if (textModelCandidates.length) {
+      activeModelCandidates = textModelCandidates
+    }
+
+    for (const candidateVisionModel of activeModelCandidates) {
+      const candidateModel = includesImages
+        ? candidateVisionModel
+        : String(candidateVisionModel || '').trim()
       // eslint-disable-next-line no-await-in-loop
       result = await requestOllamaChat({
         baseUrl,
         runtimeBackend,
         runtimeType,
-        model,
-        visionModel: candidateVisionModel,
+        model: includesImages ? model : candidateModel,
+        visionModel: includesImages ? candidateVisionModel : '',
         messages: nextMessages,
         timeoutMs,
         responseFormat,
         generationOptions,
       })
+      modelAttempts.push({
+        model: candidateModel,
+        ok: Boolean(result && result.ok),
+        lastError: String(result && result.lastError ? result.lastError : ''),
+      })
 
       if (result.ok && String(result.text || '').trim()) {
+        selectedCandidateModel =
+          String(result.model || candidateModel || '').trim() || candidateModel
         break
       }
     }
@@ -1410,8 +1448,31 @@ function createLocalAiSidecar({
       }
     }
 
+    const activeModel = String(
+      result && result.model ? result.model : selectedCandidateModel
+    ).trim()
+    const fallbackUsed = Boolean(
+      result &&
+        result.ok &&
+        activeRequestedModel &&
+        activeModel &&
+        activeModel !== activeRequestedModel
+    )
+    const fallbackAttempt = fallbackUsed
+      ? modelAttempts.find((attempt) => attempt.model === activeRequestedModel)
+      : null
+    const fallbackReason = fallbackUsed
+      ? String(fallbackAttempt && fallbackAttempt.lastError).trim() ||
+        `Requested runtime model ${activeRequestedModel} was unavailable or did not return a usable response.`
+      : ''
+
     return {
       ...result,
+      requestedModel: activeRequestedModel || null,
+      activeModel: activeModel || null,
+      fallbackUsed,
+      fallbackReason: fallbackReason || null,
+      modelAttempts,
       content: result.ok ? result.text : null,
     }
   }

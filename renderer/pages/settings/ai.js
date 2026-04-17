@@ -46,6 +46,7 @@ import {
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
   RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
@@ -724,7 +725,7 @@ export default function AiSettingsPage() {
     notify(
       t('Recommended Mac local AI setup applied'),
       t(
-        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen2.5vl:7b as the default local vision model. Local MLX training remains a separate path: Qwen3.5-9B MLX 4-bit is the recommended strong-Mac target, Qwen2.5-VL-7B 4-bit is the stronger fallback, and Qwen2-VL-2B 4-bit remains the safe minimum fallback.'
+        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen3.5:9b as the default local runtime for both text and image work. Local MLX training stays in the same Qwen3.5 family: Qwen3.5-9B MLX 4-bit is the recommended strong-Mac target, Qwen2.5-VL-7B 4-bit is the stronger fallback, and Qwen2-VL-2B 4-bit remains the safe minimum fallback.'
       ),
       'success'
     )
@@ -1580,7 +1581,8 @@ export default function AiSettingsPage() {
       )
   const localAiSummary = localAi.enabled
     ? t(
-        'Local AI custom settings are active now. Click Advanced if you need more settings.'
+        'Local AI custom settings are active now. The default local runtime is {{model}}. Click Advanced if you need more settings.',
+        {model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL}
       )
     : t(
         'Use this when you want to run AI locally on this machine instead of through an external API.'
@@ -3001,9 +3003,9 @@ export default function AiSettingsPage() {
                 <Text color="muted" fontSize="sm" mt={1}>
                   {localAi.runtimeBackend === 'ollama-direct'
                     ? t(
-                        'Recommended local runtime endpoint: http://127.0.0.1:11434. Default local text model: llama3.1:8b. Default local vision model: {{visionModel}}. Local MLX training is a separate path: {{trainingModel}} is the recommended strong-Mac target, {{strongFallbackModel}} is the stronger fallback, and {{fallbackModel}} remains the safe minimum fallback.',
+                        'Recommended local runtime endpoint: http://127.0.0.1:11434. Default local text and image model: {{runtimeModel}}. Local MLX training stays in the same Qwen family: {{trainingModel}} is the recommended strong-Mac target, {{strongFallbackModel}} is the stronger fallback, and {{fallbackModel}} remains the safe minimum fallback.',
                         {
-                          visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+                          runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
                           trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
                           strongFallbackModel:
                             STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,

@@ -5676,10 +5676,18 @@ Flip hash: ${hash}
       firstCandidateKey === 'a'
         ? optionAImages.concat(optionBImages)
         : optionBImages.concat(optionAImages)
-    const preferredVisionModels = [
-      'qwen2.5vl:7b',
-      String(runtimePayload.visionModel || '').trim(),
-    ].filter(Boolean)
+    const preferredVisionModels = Array.from(
+      new Set(
+        [String(runtimePayload.visionModel || '').trim()]
+          .concat(
+            Array.isArray(runtimePayload.visionModelFallbacks)
+              ? runtimePayload.visionModelFallbacks
+              : []
+          )
+          .map((item) => String(item || '').trim())
+          .filter(Boolean)
+      )
+    )
     const triedVisionModels = new Set()
     let lastError = null
 
