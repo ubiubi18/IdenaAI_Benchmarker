@@ -30,7 +30,8 @@ MODE_MAPPING = {
     "hybrid": "hybrid",
 }
 SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
-RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
 
 
 def run_command(command: List[str]) -> None:
@@ -217,11 +218,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--model-path",
-        default=SAFE_FALLBACK_MODEL_PATH,
+        default=RECOMMENDED_MAC_MODEL_PATH,
         help=(
             "MLX model repo or local path for training and evaluation. "
-            f"Safe fallback: {SAFE_FALLBACK_MODEL_PATH}. "
-            f"Recommended upgrade on stronger Macs: {RECOMMENDED_MAC_MODEL_PATH}."
+            f"Recommended strong-Mac target: {RECOMMENDED_MAC_MODEL_PATH}. "
+            f"Stronger fallback: {STRONG_FALLBACK_MODEL_PATH}. "
+            f"Safe minimum fallback: {SAFE_FALLBACK_MODEL_PATH}."
         ),
     )
     parser.add_argument("--train-take", type=int, default=0, help="Optional cap on training examples after preparation")

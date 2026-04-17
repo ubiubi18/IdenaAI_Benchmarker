@@ -9,6 +9,7 @@ Unlike `python -m mlx_vlm.lora`, this wrapper loads a local dataset created with
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 
@@ -20,18 +21,61 @@ from datasets import load_from_disk
 from tqdm import tqdm
 from transformers.models.qwen2.tokenization_qwen2 import Qwen2Tokenizer
 
-from mlx_vlm.trainer import (
-    Dataset,
-    Trainer,
-    find_all_linear_names,
-    get_peft_model,
-    save_adapter,
-)
+from mlx_vlm.trainer import find_all_linear_names, get_peft_model, save_adapter
 from mlx_vlm.utils import load, load_image_processor
+
+try:
+    from mlx_vlm.trainer import Dataset, Trainer
+
+    MODERN_TRAINER_API = False
+    VisionDataset = None
+    TrainingArgs = None
+    train_with_modern_api = None
+except ImportError:
+    from mlx_vlm.trainer import TrainingArgs, VisionDataset, train as train_with_modern_api
+
+    Dataset = None
+    Trainer = None
+    MODERN_TRAINER_API = True
 
 
 SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
-RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+
+def looks_like_qwen35_model_path(value: str) -> bool:
+    return "qwen3.5-9b" in str(value or "").strip().lower()
+
+
+def ensure_model_runtime_support(model_path: str) -> None:
+    if not looks_like_qwen35_model_path(model_path):
+        return
+
+    if importlib.util.find_spec("mlx_vlm.models.qwen3_5") is not None:
+        return
+
+    raise RuntimeError(
+        "The selected base model requires mlx-vlm support for qwen3_5, but the "
+        "current training environment does not provide that module. "
+        "Use Python 3.10+ and install a newer mlx-vlm release in a dedicated "
+        "training venv, for example: python3.11 -m venv .tmp/flip-train-venv-py311"
+    )
+
+
+def load_model_and_processor(model_path: str):
+    load_kwargs = {
+        "trust_remote_code": True,
+        "use_fast": False,
+    }
+
+    try:
+        return load(model_path, **load_kwargs)
+    except TypeError as error:
+        if "multiple values for keyword argument 'use_fast'" not in str(error):
+            raise
+
+    return load(model_path, trust_remote_code=True)
 
 
 def patch_qwen_tokenizer_vocab() -> None:
@@ -44,6 +88,37 @@ def patch_qwen_tokenizer_vocab() -> None:
 
     if not hasattr(Qwen2Tokenizer, "vocab"):
         Qwen2Tokenizer.vocab = property(lambda self: self.get_vocab())
+
+
+def resolve_image_token_index(config: dict) -> int:
+    direct_candidates = [
+        config.get("image_token_index"),
+        config.get("image_token_id"),
+    ]
+    nested_candidates = []
+    for nested_key in ("text_config", "vision_config"):
+        nested = config.get(nested_key)
+        if isinstance(nested, dict):
+            nested_candidates.extend(
+                [nested.get("image_token_index"), nested.get("image_token_id")]
+            )
+
+    for candidate in direct_candidates + nested_candidates:
+        if isinstance(candidate, int):
+            return candidate
+        if isinstance(candidate, float) and float(candidate).is_integer():
+            return int(candidate)
+
+    raise KeyError(
+        "Model config is missing image_token_index/image_token_id; "
+        "cannot prepare MLX-VLM training inputs for this base model"
+    )
+
+
+def normalize_model_config(config: dict) -> dict:
+    normalized = dict(config)
+    normalized["image_token_index"] = resolve_image_token_index(normalized)
+    return normalized
 
 
 def normalize_sample_weights(value, batch_size: int) -> mx.array:
@@ -99,8 +174,10 @@ def summarize_training_weights(raw_dataset, sample_weight_column: str) -> dict:
     }
 
 
-class WeightedDataset(Dataset):
+class WeightedDataset(Dataset if Dataset is not None else VisionDataset):
     def __init__(self, *args, sample_weight_column: str = "training_weight", **kwargs):
+        if MODERN_TRAINER_API:
+            kwargs.pop("image_processor", None)
         super().__init__(*args, **kwargs)
         self.sample_weight_column = sample_weight_column
 
@@ -121,79 +198,103 @@ class WeightedDataset(Dataset):
         return batch
 
 
-class WeightedTrainer(Trainer):
-    def loss_fn(self, model, batch):
-        pixel_values = batch["pixel_values"]
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
-        sample_weights = batch.get("sample_weights")
-        lengths = mx.sum(attention_mask, axis=1)
-        labels = input_ids[:, 1:]
+def weighted_vision_language_loss_fn(
+    model,
+    batch,
+    train_on_completions: bool = False,
+    assistant_id: int = 77091,
+):
+    pixel_values = batch["pixel_values"]
+    input_ids = batch["input_ids"]
+    attention_mask = batch["attention_mask"]
+    sample_weights = batch.get("sample_weights")
 
-        batch_size, seq_length = input_ids.shape
+    batch_size, seq_length = input_ids.shape
 
-        if self.train_on_completions:
-            weight_mask = mx.ones_like(attention_mask)
+    if train_on_completions:
+        weight_mask = mx.ones_like(attention_mask)
 
-            assistant_response_index = np.where(input_ids == self.assistant_id)[1]
-            range_matrix = mx.repeat(
-                mx.expand_dims(mx.arange(seq_length), 0), batch_size, axis=0
-            )
-            assistant_mask = range_matrix <= mx.array(assistant_response_index).reshape(
-                -1, 1
-            )
-            weight_mask = mx.where(
-                assistant_mask, mx.zeros_like(weight_mask), weight_mask
-            )[:, 1:]
-        else:
-            weight_mask = None
+        assistant_response_index = np.full((batch_size,), -1, dtype=np.int32)
+        input_ids_np = np.array(input_ids)
+        for row_idx, row in enumerate(input_ids_np):
+            positions = np.where(row == assistant_id)[0]
+            if positions.size > 0:
+                assistant_response_index[row_idx] = positions[0]
 
-        input_ids = input_ids[:, :-1]
+        range_matrix = mx.repeat(
+            mx.expand_dims(mx.arange(seq_length), 0), batch_size, axis=0
+        )
+        assistant_mask = range_matrix <= mx.array(assistant_response_index).reshape(
+            -1, 1
+        )
+        weight_mask = mx.where(
+            assistant_mask, mx.zeros_like(weight_mask), weight_mask
+        )[:, 1:]
+    else:
+        weight_mask = None
 
-        kwargs = {
-            k: v
-            for k, v in batch.items()
-            if k
-            not in [
-                "input_ids",
-                "pixel_values",
-                "attention_mask",
-                "sample_weights",
-            ]
-        }
+    input_ids = input_ids[:, :-1]
+    attention_mask = attention_mask[:, :-1]
+    lengths = mx.sum(attention_mask, axis=1)
+    labels = batch["input_ids"][:, 1:]
 
-        outputs = model(input_ids, pixel_values, attention_mask, **kwargs)
-        logits = outputs.logits.astype(mx.float32)
+    kwargs = {
+        k: v
+        for k, v in batch.items()
+        if k
+        not in [
+            "input_ids",
+            "pixel_values",
+            "attention_mask",
+            "sample_weights",
+        ]
+    }
 
-        if logits.shape[1] < labels.shape[1]:
-            pad_length = labels.shape[1] - logits.shape[1]
-            pad_width = ((0, 0), (0, pad_length), (0, 0))
-            logits = mx.pad(logits, pad_width, mode="constant", constant_values=-100)
-        elif logits.shape[1] > labels.shape[1]:
-            logits = logits[:, -labels.shape[1] :, :]
+    outputs = model(input_ids, pixel_values, attention_mask, **kwargs)
+    logits = outputs.logits.astype(mx.float32)
 
-        length_mask = mx.arange(input_ids.shape[1])[None, :] < lengths[:, None]
-        ce = (
-            nn.losses.cross_entropy(
-                logits,
-                labels,
-                weights=weight_mask,
-            )
-            * length_mask
+    if logits.shape[1] < labels.shape[1]:
+        pad_length = labels.shape[1] - logits.shape[1]
+        pad_width = ((0, 0), (0, pad_length), (0, 0))
+        logits = mx.pad(logits, pad_width, mode="constant", constant_values=-100)
+    elif logits.shape[1] > labels.shape[1]:
+        logits = logits[:, -labels.shape[1] :, :]
+
+    seq_len = input_ids.shape[1]
+    lengths = mx.minimum(lengths, seq_len)
+    length_mask = mx.arange(seq_len)[None, :] < lengths[:, None]
+    ce = (
+        nn.losses.cross_entropy(
+            logits,
+            labels,
+            weights=weight_mask,
+        )
+        * length_mask
+    )
+
+    if sample_weights is not None:
+        sample_weights = sample_weights.astype(mx.float32).reshape(-1, 1)
+        ce = ce * sample_weights
+        token_weights = length_mask.astype(mx.float32) * sample_weights
+        ntoks = mx.maximum(token_weights.sum(), mx.array(1.0, dtype=mx.float32))
+    else:
+        ntoks = mx.maximum(
+            length_mask.astype(mx.float32).sum(),
+            mx.array(1.0, dtype=mx.float32),
         )
 
-        if sample_weights is not None:
-            sample_weights = sample_weights.astype(mx.float32).reshape(-1, 1)
-            ce = ce * sample_weights
-            token_weights = length_mask.astype(mx.float32) * sample_weights
-            ntoks = mx.maximum(token_weights.sum(), mx.array(1.0, dtype=mx.float32))
-        else:
-            ntoks = mx.maximum(
-                length_mask.astype(mx.float32).sum(),
-                mx.array(1.0, dtype=mx.float32),
-            )
+    return ce.sum() / ntoks
 
-        return ce.sum() / ntoks
+
+if not MODERN_TRAINER_API:
+    class WeightedTrainer(Trainer):
+        def loss_fn(self, model, batch):
+            return weighted_vision_language_loss_fn(
+                model,
+                batch,
+                train_on_completions=self.train_on_completions,
+                assistant_id=self.assistant_id,
+            )
 
 
 def main(args) -> int:
@@ -202,14 +303,11 @@ def main(args) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     patch_qwen_tokenizer_vocab()
+    ensure_model_runtime_support(args.model_path)
 
     print(f"Loading model from {args.model_path}")
-    model, processor = load(
-        args.model_path,
-        trust_remote_code=True,
-        use_fast=False,
-    )
-    config = model.config.__dict__
+    model, processor = load_model_and_processor(args.model_path)
+    config = normalize_model_config(model.config.__dict__)
     image_processor = load_image_processor(
         args.model_path,
         trust_remote_code=True,
@@ -247,14 +345,8 @@ def main(args) -> int:
         dropout=args.lora_dropout,
     )
 
-    print("Setting up optimizer")
-    optimizer = optim.Adam(learning_rate=args.learning_rate)
-
-    print("Setting up trainer")
-    trainer = WeightedTrainer(model, optimizer)
-    model.train()
-
     steps_per_epoch = args.steps or max(1, len(dataset) // args.batch_size)
+    total_steps = steps_per_epoch * args.epochs
     print(
         f"Training for epochs={args.epochs} batch_size={args.batch_size} "
         f"steps_per_epoch={steps_per_epoch}"
@@ -262,37 +354,65 @@ def main(args) -> int:
     print(f"Sample weighting: {json.dumps(weight_summary, sort_keys=True)}")
 
     history = []
-    for epoch in range(args.epochs):
-        progress_bar = tqdm(range(steps_per_epoch), position=0, leave=True)
-        for step in progress_bar:
-            start = step * args.batch_size
-            end = (step + 1) * args.batch_size
-            batch = dataset[start:end]
-            loss = trainer.train_step(batch)
-            mx.eval(loss, model, optimizer.state)
-            loss_value = float(loss.item())
-            progress_bar.set_postfix(
-                {"epoch": epoch + 1, "step": step + 1, "loss": f"{loss_value:.4f}"}
-            )
-
-            if step % args.print_every == 0:
-                print(
-                    json.dumps(
-                        {
-                            "epoch": epoch + 1,
-                            "step": step + 1,
-                            "loss": round(loss_value, 6),
-                        }
-                    )
-                )
-
-            history.append(
-                {"epoch": epoch + 1, "step": step + 1, "loss": round(loss_value, 6)}
-            )
 
     adapter_file = output_dir / "adapters.safetensors"
-    print(f"Saving adapter to {adapter_file}")
-    save_adapter(model, adapter_file)
+    print("Setting up optimizer")
+    optimizer = optim.Adam(learning_rate=args.learning_rate)
+
+    if MODERN_TRAINER_API:
+        print("Using mlx_vlm modern trainer API")
+        training_args = TrainingArgs(
+            batch_size=args.batch_size,
+            iters=total_steps,
+            steps_per_report=max(1, min(args.print_every, total_steps)),
+            steps_per_eval=max(total_steps + 1, 2),
+            steps_per_save=max(total_steps, 1),
+            adapter_file=str(adapter_file),
+            learning_rate=args.learning_rate,
+        )
+        train_with_modern_api(
+            model=model,
+            optimizer=optimizer,
+            train_dataset=dataset,
+            val_dataset=None,
+            args=training_args,
+            loss_fn=weighted_vision_language_loss_fn,
+        )
+    else:
+        print("Using mlx_vlm legacy trainer API")
+        trainer = WeightedTrainer(model, optimizer)
+        model.train()
+
+        for epoch in range(args.epochs):
+            progress_bar = tqdm(range(steps_per_epoch), position=0, leave=True)
+            for step in progress_bar:
+                start = step * args.batch_size
+                end = (step + 1) * args.batch_size
+                batch = dataset[start:end]
+                loss = trainer.train_step(batch)
+                mx.eval(loss, model, optimizer.state)
+                loss_value = float(loss.item())
+                progress_bar.set_postfix(
+                    {"epoch": epoch + 1, "step": step + 1, "loss": f"{loss_value:.4f}"}
+                )
+
+                if step % args.print_every == 0:
+                    print(
+                        json.dumps(
+                            {
+                                "epoch": epoch + 1,
+                                "step": step + 1,
+                                "loss": round(loss_value, 6),
+                            }
+                        )
+                    )
+
+                history.append(
+                    {"epoch": epoch + 1, "step": step + 1, "loss": round(loss_value, 6)}
+                )
+
+        print(f"Saving adapter to {adapter_file}")
+        save_adapter(model, adapter_file)
 
     summary = {
         "model_path": args.model_path,
@@ -302,6 +422,8 @@ def main(args) -> int:
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "steps_per_epoch": steps_per_epoch,
+        "total_steps": total_steps,
+        "trainer_api": "modern" if MODERN_TRAINER_API else "legacy",
         "learning_rate": args.learning_rate,
         "lora_rank": args.lora_rank,
         "lora_alpha": args.lora_alpha,
@@ -328,11 +450,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--model-path",
-        default=SAFE_FALLBACK_MODEL_PATH,
+        default=RECOMMENDED_MAC_MODEL_PATH,
         help=(
             "MLX model repo or local path used as the base model. "
-            f"Safe fallback: {SAFE_FALLBACK_MODEL_PATH}. "
-            f"Recommended upgrade on stronger Macs: {RECOMMENDED_MAC_MODEL_PATH}."
+            f"Recommended strong-Mac target: {RECOMMENDED_MAC_MODEL_PATH}. "
+            f"Stronger fallback: {STRONG_FALLBACK_MODEL_PATH}. "
+            f"Safe minimum fallback: {SAFE_FALLBACK_MODEL_PATH}."
         ),
     )
     parser.add_argument(

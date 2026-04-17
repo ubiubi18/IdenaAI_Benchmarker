@@ -10,6 +10,7 @@ and writes an evaluation summary plus per-example results.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 from collections import Counter
@@ -20,7 +21,11 @@ import mlx.core as mx
 from datasets import load_from_disk
 from transformers.models.qwen2.tokenization_qwen2 import Qwen2Tokenizer
 
-from mlx_vlm.utils import generate, load, prepare_inputs
+try:
+    from mlx_vlm.utils import generate, load, prepare_inputs
+except ImportError:
+    from mlx_vlm.generate import generate
+    from mlx_vlm.utils import load, prepare_inputs
 from prepare_flip_challenge_mlx_vlm import (
     DEFAULT_COMPOSITE_PROMPT_TEMPLATE,
     DEFAULT_NATIVE_FRAMES_PROMPT_TEMPLATE,
@@ -34,12 +39,86 @@ from prepare_flip_challenge_mlx_vlm import (
 
 
 SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
-RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+
+def looks_like_qwen35_model_path(value: str) -> bool:
+    return "qwen3.5-9b" in str(value or "").strip().lower()
+
+
+def ensure_model_runtime_support(model_path: str) -> None:
+    if not looks_like_qwen35_model_path(model_path):
+        return
+
+    if importlib.util.find_spec("mlx_vlm.models.qwen3_5") is not None:
+        return
+
+    raise RuntimeError(
+        "The selected base model requires mlx-vlm support for qwen3_5, but the "
+        "current evaluation environment does not provide that module. "
+        "Use Python 3.10+ and install a newer mlx-vlm release in a dedicated "
+        "training venv, for example: python3.11 -m venv .tmp/flip-train-venv-py311"
+    )
+
+
+def load_model_and_processor(model_path: str, adapter_path: Optional[Path] = None):
+    load_kwargs = {
+        "adapter_path": str(adapter_path) if adapter_path else None,
+        "trust_remote_code": True,
+        "use_fast": False,
+    }
+
+    try:
+        return load(model_path, **load_kwargs)
+    except TypeError as error:
+        if "multiple values for keyword argument 'use_fast'" not in str(error):
+            raise
+
+    fallback_kwargs = {
+        "adapter_path": str(adapter_path) if adapter_path else None,
+        "trust_remote_code": True,
+    }
+    return load(model_path, **fallback_kwargs)
 
 
 def patch_qwen_tokenizer_vocab() -> None:
     if not hasattr(Qwen2Tokenizer, "vocab"):
         Qwen2Tokenizer.vocab = property(lambda self: self.get_vocab())
+
+
+def read_config_value(source: Any, *keys: str) -> Any:
+    current = source
+    for key in keys:
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            current = getattr(current, key, None)
+        if current is None:
+            return None
+    return current
+
+
+def resolve_image_token_index(config: Any) -> int:
+    candidates = [
+        read_config_value(config, "image_token_index"),
+        read_config_value(config, "image_token_id"),
+        read_config_value(config, "text_config", "image_token_index"),
+        read_config_value(config, "text_config", "image_token_id"),
+        read_config_value(config, "vision_config", "image_token_index"),
+        read_config_value(config, "vision_config", "image_token_id"),
+    ]
+
+    for candidate in candidates:
+        if isinstance(candidate, int):
+            return candidate
+        if isinstance(candidate, float) and float(candidate).is_integer():
+            return int(candidate)
+
+    raise KeyError(
+        "Model config is missing image_token_index/image_token_id; "
+        "cannot prepare MLX-VLM evaluation inputs for this base model"
+    )
 
 
 def normalize_candidate_answer(value: Any) -> Optional[str]:
@@ -213,10 +292,10 @@ def build_generation_inputs(model, processor, example: Dict[str, Any]) -> Dict[s
         add_generation_prompt=True,
     )
     prepared = prepare_inputs(
-        processor,
-        images,
-        prompt,
-        model.config.image_token_index,
+        processor=processor,
+        images=images,
+        prompts=[prompt],
+        image_token_index=resolve_image_token_index(model.config),
     )
     payload = {
         "prompt": prompt,
@@ -840,14 +919,10 @@ def evaluate(args) -> int:
     output_path = Path(args.output).resolve() if args.output else None
 
     patch_qwen_tokenizer_vocab()
+    ensure_model_runtime_support(args.model_path)
 
     print(f"Loading model from {args.model_path}")
-    model, processor = load(
-        args.model_path,
-        adapter_path=str(adapter_path) if adapter_path else None,
-        trust_remote_code=True,
-        use_fast=False,
-    )
+    model, processor = load_model_and_processor(args.model_path, adapter_path)
 
     print(f"Loading dataset from {dataset_path}")
     raw_dataset = load_from_disk(str(dataset_path))
@@ -1024,11 +1099,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--model-path",
-        default=SAFE_FALLBACK_MODEL_PATH,
+        default=RECOMMENDED_MAC_MODEL_PATH,
         help=(
             "MLX model repo or local path used as the base model. "
-            f"Safe fallback: {SAFE_FALLBACK_MODEL_PATH}. "
-            f"Recommended upgrade on stronger Macs: {RECOMMENDED_MAC_MODEL_PATH}."
+            f"Recommended strong-Mac target: {RECOMMENDED_MAC_MODEL_PATH}. "
+            f"Stronger fallback: {STRONG_FALLBACK_MODEL_PATH}. "
+            f"Safe minimum fallback: {SAFE_FALLBACK_MODEL_PATH}."
         ),
     )
     parser.add_argument(
@@ -1046,13 +1122,13 @@ if __name__ == "__main__":
         "--max-tokens",
         type=int,
         default=8,
-        help="Maximum generated tokens per example",
+        help="Maximum generated tokens per example when generation is enabled",
     )
     parser.add_argument(
         "--temperature",
         type=float,
         default=0.0,
-        help="Sampling temperature for generation",
+        help="Sampling temperature for generation; keep 0.0 for deterministic FLIP evals",
     )
     parser.add_argument(
         "--output",
@@ -1072,7 +1148,8 @@ if __name__ == "__main__":
         help=(
             "Evaluation mode: generate free-form answer, score fixed candidates, "
             "do both and prefer scored prediction, compare separate candidate analyses, "
-            "or compare separate candidate winner/loser classifications"
+            "or compare separate candidate winner/loser classifications. "
+            "The default score mode keeps Qwen3.5-style thinking output out of the main FLIP gate."
         ),
     )
     parser.add_argument(

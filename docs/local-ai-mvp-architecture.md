@@ -35,8 +35,8 @@ Implemented now:
 Still placeholder or stubbed:
 
 - sidecar `caption`, `ocr`, and `train` are interface-only or stub-only
-- `flipToText` uses Ollama vision with `moondream` as the default local vision
-  model; OCR is still not implemented
+- `flipToText` uses Ollama vision with `qwen2.5vl:7b` as the default local
+  vision model; OCR is still not implemented
 - image-aware `flipToText` and the flip checker use a 2-stage local pipeline:
   panel captions first, then ordered sequence reduction/checking
 - main-process signing verification does not yet perform full Node-RPC trust
@@ -49,6 +49,13 @@ Still placeholder or stubbed:
   deltas, and no federated exchange are performed yet
 - no relay/coordinator networking, automated sharing, or federated aggregation
   protocol exists yet
+
+Current model-role split:
+- local runtime vision inference stays on Ollama, currently `qwen2.5vl:7b`
+- local MLX training can intentionally use a different base model
+- recommended strong-Mac MLX training target: `mlx-community/Qwen3.5-9B-MLX-4bit`
+- stronger fallback: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
+- safe minimum fallback: `mlx-community/Qwen2-VL-2B-Instruct-4bit`
 
 ## Data Flow
 

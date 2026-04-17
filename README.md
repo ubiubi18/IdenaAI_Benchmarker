@@ -84,6 +84,7 @@ For local inference, the app expects a loopback-only runtime.
 Typical setup:
 - Ollama on `http://127.0.0.1:11434`
 - local text and multimodal models pulled on the same machine
+- runtime vision model: `qwen2.5vl:7b`
 
 Do not point Local AI at arbitrary remote URLs unless you intentionally want a
 hosted-provider setup and accept the privacy and cost tradeoff.
@@ -99,6 +100,12 @@ It supports:
 - matrix comparison of baseline vs human-assisted modes
 - side-by-side comparison of `best_single` vs `deepfunding`
 
+Model roles stay intentionally split:
+- runtime model: `qwen2.5vl:7b` via Ollama for local image-grounded inference
+- recommended strong-Mac MLX training model: `mlx-community/Qwen3.5-9B-MLX-4bit`
+- stronger training fallback: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
+- safe minimum training fallback: `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+
 Start here:
 - [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
 
@@ -109,11 +116,13 @@ Related protocol/design notes:
 Typical Python environment:
 
 ```bash
-python3 -m venv .tmp/flip-train-venv
-source .tmp/flip-train-venv/bin/activate
+python3.11 -m venv .tmp/flip-train-venv-py311
+source .tmp/flip-train-venv-py311/bin/activate
 python -m pip install -U pip setuptools wheel
 python -m pip install mlx-vlm pyarrow pillow datasets huggingface_hub torch torchvision scipy
 ```
+
+For Qwen3.5 local MLX training, use Python 3.10+.
 
 ## Related repo
 

@@ -7,7 +7,9 @@ const DEFAULT_TRAINING_EPOCHS = 1
 const DEFAULT_TRAINING_BATCH_SIZE = 1
 const DEFAULT_TRAINING_LEARNING_RATE = 1e-4
 const DEFAULT_TRAINING_LORA_RANK = 10
-const DEFAULT_TRAINING_MODEL_PATH = 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
+const DEFAULT_TRAINING_MODEL_PATH = 'mlx-community/Qwen3.5-9B-MLX-4bit'
+const STRONG_FALLBACK_TRAINING_MODEL_PATH =
+  'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
 const FALLBACK_TRAINING_MODEL_PATH = 'mlx-community/Qwen2-VL-2B-Instruct-4bit'
 const DEFAULT_PREPARE_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_TRAIN_TIMEOUT_MS = 30 * 60 * 1000
@@ -19,6 +21,10 @@ const PYTHON_COMMAND_CANDIDATES = [
   process.env.IDENAAI_PYTHON,
 ]
 let cachedPythonCommand = null
+
+function looksLikeQwen35ModelPath(value) {
+  return /qwen(?:\/|[-_.])?qwen3\.5-9b|qwen3\.5-9b/i.test(String(value || ''))
+}
 
 function resolveRepoRoot() {
   return path.resolve(__dirname, '..', '..')
@@ -118,6 +124,13 @@ function resolveCommandParts() {
   }
 
   const repoRoot = resolveRepoRoot()
+  const repoPython311 = path.join(
+    repoRoot,
+    '.tmp',
+    'flip-train-venv-py311',
+    'bin',
+    'python'
+  )
   const repoPython = path.join(
     repoRoot,
     '.tmp',
@@ -133,8 +146,10 @@ function resolveCommandParts() {
     'python'
   )
   const candidates = PYTHON_COMMAND_CANDIDATES.concat([
+    fs.existsSync(repoPython311) ? repoPython311 : null,
     fs.existsSync(repoPython) ? repoPython : null,
     fs.existsSync(benchmarkerPython) ? benchmarkerPython : null,
+    process.platform === 'win32' ? 'py -3.11' : 'python3.11',
     process.platform === 'win32' ? 'py -3' : 'python3',
   ])
 
@@ -214,6 +229,16 @@ function resolveTrainingFallbackModelPath() {
   ).trim()
 
   return explicit || FALLBACK_TRAINING_MODEL_PATH
+}
+
+function resolveTrainingStrongFallbackModelPath() {
+  const explicit = String(
+    process.env.IDENAAI_LOCAL_TRAINING_STRONG_FALLBACK_MODEL_PATH ||
+      process.env.IDENAAI_LOCAL_TRAINING_STRONG_FALLBACK_MODEL ||
+      ''
+  ).trim()
+
+  return explicit || STRONG_FALLBACK_TRAINING_MODEL_PATH
 }
 
 function parseEnvInteger(name, fallback) {
@@ -534,6 +559,28 @@ function extractFailureReason(error) {
   }
 
   return 'Developer FLIP training failed'
+}
+
+function formatTrainingFailureReason(error, modelPath) {
+  const rawReason = extractFailureReason(error)
+  const stderr = String(error && error.stderr ? error.stderr : '').trim()
+  const stdout = String(error && error.stdout ? error.stdout : '').trim()
+  const combined = `${rawReason}\n${stderr}\n${stdout}`
+
+  if (
+    looksLikeQwen35ModelPath(modelPath) &&
+    /qwen3_5|No module named 'mlx_vlm\.models\.qwen3_5'|Model type qwen3_5 not supported/i.test(
+      combined
+    )
+  ) {
+    return [
+      'Qwen3.5 local MLX training requires a newer mlx-vlm build than the current training environment provides.',
+      'Use Python 3.11 or newer, create a dedicated training venv, and install an mlx-vlm release that includes qwen3_5 support.',
+      'Recommended setup: python3.11 -m venv .tmp/flip-train-venv-py311',
+    ].join(' ')
+  }
+
+  return rawReason
 }
 
 function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
@@ -964,6 +1011,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
       await writeTrainingMetadata(metadataPath, {
         sampleName: request.sampleName,
         modelPath: preferredModelPath,
+        strongFallbackModelPath: resolveTrainingStrongFallbackModelPath(),
         fallbackModelPath: resolveTrainingFallbackModelPath(),
         latestPreparedDatasetPath: prepared.datasetPath,
         latestPreparedManifestPath: prepared.manifestPath,
@@ -999,7 +1047,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         comparison100: comparison.summary,
       }
     } catch (error) {
-      const failureReason = extractFailureReason(error)
+      const failureReason = formatTrainingFailureReason(
+        error,
+        resolveTrainingModelPath()
+      )
 
       if (isDev && logger && typeof logger.error === 'function') {
         logger.error('Developer FLIP training failed', {
@@ -1034,6 +1085,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
 module.exports = {
   DEFAULT_EVALUATION_FLIPS,
   DEFAULT_TRAINING_MODEL_PATH,
+  STRONG_FALLBACK_TRAINING_MODEL_PATH,
   FALLBACK_TRAINING_MODEL_PATH,
   createDeveloperTrainingRunner,
 }

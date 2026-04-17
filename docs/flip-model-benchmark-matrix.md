@@ -14,14 +14,27 @@ It is intended to answer:
 
 Current practical baseline:
 - local training safe fallback: `mlx-community/Qwen2-VL-2B-Instruct-4bit`
-- local training recommended upgrade on stronger Macs: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
+- local training stronger fallback: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
+- local training recommended strong-Mac target: `mlx-community/Qwen3.5-9B-MLX-4bit`
 - local runtime vision baseline: `qwen2.5vl:7b` via Ollama where available
 
 Recommended local Mac preset:
 - Ollama base URL: `http://127.0.0.1:11434`
 - local vision runtime: `qwen2.5vl:7b`
-- local MLX training upgrade: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
+- local MLX training target: `mlx-community/Qwen3.5-9B-MLX-4bit`
+- stronger MLX fallback: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
 - smaller MLX fallback: `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+
+Model-role split:
+- runtime model: `qwen2.5vl:7b`
+- training model: `mlx-community/Qwen3.5-9B-MLX-4bit`
+- benchmark candidate: the same MLX base used for held-out adapter evaluation unless overridden
+- fallback candidates: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`, then `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+
+Qwen3.5 evaluation policy:
+- keep FLIP evaluation deterministic
+- use `--mode score` and `--temperature 0.0`
+- avoid treating Qwen3.5 free-form thinking output as the main gate
 
 Known findings so far:
 - older direct A/B runs collapsed to one option slot
@@ -53,7 +66,8 @@ For short-session local solving, the main operational target remains:
 | --- | --- | --- | --- |
 | `Qwen2-VL-2B-Instruct-4bit` | Control | MLX | Existing training/eval baseline |
 | `qwen2.5vl:7b` | Main local runtime candidate | Ollama | Stronger open local vision baseline already available locally |
-| `Qwen2.5-VL-7B-Instruct-4bit` | Main local training upgrade target | MLX if feasible, otherwise cloud/CUDA later | Best straightforward open upgrade path |
+| `Qwen3.5-9B-MLX-4bit` | Main local training target | MLX | Recommended strong-Mac training/eval path |
+| `Qwen2.5-VL-7B-Instruct-4bit` | Stronger fallback training target | MLX | Reproducible fallback when Qwen3.5-9B is too heavy |
 
 ### Tier 2: should benchmark if time allows
 
@@ -200,8 +214,8 @@ Current interpretation:
 
 Compare:
 - current `Qwen2-VL-2B` adapters
-- new randomized native-frame adapters
-- future `Qwen2.5-VL-7B` adapters
+- `Qwen2.5-VL-7B` fallback adapters
+- `Qwen3.5-9B` adapters
 
 Goal:
 - determine whether training improvements survive against the stronger runtime
@@ -230,13 +244,18 @@ ollama pull qwen2.5vl:7b
 ```
 
 ```bash
-source .tmp/flip-train-venv/bin/activate
+source .tmp/flip-train-venv-py311/bin/activate
 python scripts/run_local_flip_ollama_smoke.py --input samples/flips/flip-challenge-test-20-decoded-labeled.json --model qwen2.5vl:7b --mode native_direct_ab --max-flips 10 --output .tmp/flip-train/smoke-qwen2.5vl-7b.json
 ```
 
 ```bash
-source .tmp/flip-train-venv/bin/activate
-python scripts/run_flip_human_annotation_matrix.py --output-root .tmp/flip-train/human-matrix-7b --train-split train --max-flips 30 --prompt-family runtime_aligned_native_frames_v2 --image-mode native_frames --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl --human-annotation-aggregations best_single deepfunding --eval-dataset-path .tmp/flip-train/pilot-val-200/hf-dataset --modes baseline weight_boost followup_reasoning hybrid --model-path mlx-community/Qwen2.5-VL-7B-Instruct-4bit
+source .tmp/flip-train-venv-py311/bin/activate
+python scripts/run_flip_human_annotation_matrix.py --output-root .tmp/flip-train/human-matrix-qwen3.5-9b --train-split train --max-flips 30 --prompt-family runtime_aligned_native_frames_v2 --image-mode native_frames --human-annotations-jsonl .tmp/human-teacher/normalized.jsonl --human-annotation-aggregations best_single deepfunding --eval-dataset-path .tmp/flip-train/pilot-val-200/hf-dataset --modes baseline weight_boost followup_reasoning hybrid --model-path mlx-community/Qwen3.5-9B-MLX-4bit
+```
+
+```bash
+source .tmp/flip-train-venv-py311/bin/activate
+python scripts/evaluate_flip_challenge_mlx_vlm.py --dataset-path .tmp/flip-train/pilot-val-200/hf-dataset --model-path mlx-community/Qwen3.5-9B-MLX-4bit --adapter-path .tmp/flip-train/runs/Idena-multimodal-v1-pilot-500-qwen3.5-9b/adapters.safetensors --output .tmp/flip-train/runs/Idena-multimodal-v1-pilot-500-qwen3.5-9b/eval.json --mode score --temperature 0.0
 ```
 
 If `separate_candidate_scoring` becomes available before step 3, insert it
@@ -244,12 +263,12 @@ immediately after step 2.
 
 ## Success criteria for replacing the old baseline
 
-`Qwen2.5-VL-7B` should become the primary local FLIP runtime target only if it:
-- beats the current control on fixed holdout accuracy
-- stays inside the short-session latency budget
+`Qwen3.5-9B` should become the primary local MLX training target only if it:
+- beats the current control and the 7B fallback on fixed holdout accuracy
 - lowers `candidate_slot_bias_score`
 - improves swap consistency
+- stays reproducible enough to rerun on stronger Macs without constant manual recovery
 
 If it is stronger but too slow, keep it as:
 - the high-quality offline benchmark model
-- while a smaller/faster model remains the live short-session runtime
+- while `Qwen2.5-VL-7B` or `Qwen2-VL-2B` remains the active MLX fallback and `qwen2.5vl:7b` remains the live short-session runtime
