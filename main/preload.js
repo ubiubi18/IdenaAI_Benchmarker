@@ -679,6 +679,10 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
     includePackage: sanitizeBoolean(source.includePackage, false),
     trainNow: sanitizeBoolean(source.trainNow, false),
     advance: sanitizeBoolean(source.advance, false),
+    allowSystemPressureOverride: sanitizeBoolean(
+      source.allowSystemPressureOverride,
+      false
+    ),
     refreshPublicFallback: sanitizeBoolean(source.refreshPublicFallback, false),
     fetchFlipPayloads: sanitizeBoolean(source.fetchFlipPayloads, false),
     requireFlipPayloads: sanitizeBoolean(source.requireFlipPayloads, false),

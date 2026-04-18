@@ -297,7 +297,8 @@ function createDefaultSystemTelemetryProvider() {
     const totalMemoryBytes = os.totalmem()
     const freeMemoryBytes = os.freemem()
     const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes)
-    const cpuCoreCount = Number(currentCpuSnapshot?.cores) || os.cpus().length || 0
+    const cpuCoreCount =
+      Number(currentCpuSnapshot?.cores) || os.cpus().length || 0
     const cpuUsagePercent = calculateCpuUsagePercent(
       previousCpuSnapshot,
       currentCpuSnapshot
@@ -365,6 +366,138 @@ function createDefaultSystemTelemetryProvider() {
         thermal,
       },
     }
+  }
+}
+
+function getTelemetrySystem(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  if (
+    !value.system ||
+    typeof value.system !== 'object' ||
+    Array.isArray(value.system)
+  ) {
+    return {}
+  }
+
+  return value.system
+}
+
+function getTelemetryTrainingReadiness(telemetry) {
+  const system = getTelemetrySystem(telemetry)
+  const thermal =
+    system.thermal &&
+    typeof system.thermal === 'object' &&
+    !Array.isArray(system.thermal)
+      ? system.thermal
+      : {}
+  const battery =
+    system.battery &&
+    typeof system.battery === 'object' &&
+    !Array.isArray(system.battery)
+      ? system.battery
+      : {}
+  const pressure = String(thermal.pressure || '')
+    .trim()
+    .toLowerCase()
+  const cpuSpeedLimit = Number(thermal.cpuSpeedLimit)
+  const batteryPercent = Number(battery.percent)
+  const cpuUsagePercent = Number(system.cpuUsagePercent)
+  const memoryUsagePercent = Number(system.memoryUsagePercent)
+
+  if (!Object.keys(system).length) {
+    return {
+      status: 'unknown',
+      tone: 'gray',
+      label: 'Telemetry unavailable',
+      message:
+        'No local system telemetry is available right now, so the app cannot verify heat, battery, or memory conditions before training starts.',
+      requiresExplicitOverride: false,
+      canStartWithoutOverride: true,
+    }
+  }
+
+  if (pressure === 'limited') {
+    return {
+      status: 'blocked',
+      tone: 'red',
+      label: 'Blocked by heat',
+      message: Number.isFinite(cpuSpeedLimit)
+        ? `macOS is already limiting CPU speed to ${cpuSpeedLimit}%. Cool the machine down first, or explicitly override this warning for one run.`
+        : 'macOS is already thermally limiting this machine. Cool it down first, or explicitly override this warning for one run.',
+      requiresExplicitOverride: true,
+      canStartWithoutOverride: false,
+    }
+  }
+
+  if (
+    battery.available === true &&
+    battery.isCharging === false &&
+    Number.isFinite(batteryPercent) &&
+    batteryPercent < 15
+  ) {
+    return {
+      status: 'blocked',
+      tone: 'red',
+      label: 'Blocked on low battery',
+      message: `Battery is at ${batteryPercent}% and not charging. Plug in before local training, or explicitly override this warning for one run.`,
+      requiresExplicitOverride: true,
+      canStartWithoutOverride: false,
+    }
+  }
+
+  if (pressure === 'elevated') {
+    return {
+      status: 'caution',
+      tone: 'orange',
+      label: 'Caution: warming up',
+      message:
+        'macOS has already recorded thermal warnings. Local training can still run, but it is more likely to slow down and add more heat.',
+      requiresExplicitOverride: false,
+      canStartWithoutOverride: true,
+    }
+  }
+
+  if (battery.available === true && battery.isCharging === false) {
+    return {
+      status: 'caution',
+      tone: 'orange',
+      label: 'Caution: on battery',
+      message: Number.isFinite(batteryPercent)
+        ? `This Mac is on battery at ${batteryPercent}%. A local run will trade battery life and battery wear for convenience.`
+        : 'This Mac is on battery. A local run will trade battery life and battery wear for convenience.',
+      requiresExplicitOverride: false,
+      canStartWithoutOverride: true,
+    }
+  }
+
+  if (
+    Number.isFinite(cpuUsagePercent) &&
+    cpuUsagePercent >= 80 &&
+    Number.isFinite(memoryUsagePercent) &&
+    memoryUsagePercent >= 80
+  ) {
+    return {
+      status: 'caution',
+      tone: 'yellow',
+      label: 'Caution: machine already busy',
+      message:
+        'CPU and memory are both already busy. Local training can still start, but it will compete harder with the rest of the desktop.',
+      requiresExplicitOverride: false,
+      canStartWithoutOverride: true,
+    }
+  }
+
+  return {
+    status: 'ready',
+    tone: 'green',
+    label: 'Ready for local training',
+    message:
+      'No hard heat or battery stop condition is visible right now. This does not guarantee a fast run, but the machine looks safe enough to start a small local pilot.',
+    requiresExplicitOverride: false,
+    canStartWithoutOverride: true,
   }
 }
 
@@ -1071,6 +1204,44 @@ function normalizeDeveloperTrainingThermalMode(value) {
     : DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
 }
 
+function readDeveloperHumanTeacherTrainingTarget(value) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : null
+
+  if (!source) {
+    return null
+  }
+
+  if (source.developerHumanTeacher === true) {
+    return source
+  }
+
+  if (
+    source.input &&
+    typeof source.input === 'object' &&
+    !Array.isArray(source.input) &&
+    source.input.developerHumanTeacher === true
+  ) {
+    return source.input
+  }
+
+  if (
+    source.payload &&
+    typeof source.payload === 'object' &&
+    !Array.isArray(source.payload) &&
+    source.payload.developerHumanTeacher === true
+  ) {
+    return source.payload
+  }
+
+  return null
+}
+
+function hasDeveloperTrainingSystemPressureOverride(value) {
+  const target = readDeveloperHumanTeacherTrainingTarget(value)
+  return Boolean(target && target.allowSystemPressureOverride === true)
+}
+
 function sanitizeDeveloperHumanTeacherTrainingTarget(value) {
   const source =
     value && typeof value === 'object' && !Array.isArray(value) ? value : null
@@ -1084,6 +1255,7 @@ function sanitizeDeveloperHumanTeacherTrainingTarget(value) {
   )
   const next = {
     ...source,
+    allowSystemPressureOverride: source.allowSystemPressureOverride === true,
     localTrainingProfile: normalizeDeveloperTrainingProfile(
       source.localTrainingProfile
     ),
@@ -2091,7 +2263,9 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
     sample_id: String(task.sample_id || task.sampleId || '').trim(),
     flip_hash: String(task.flip_hash || task.flipHash || '').trim(),
     epoch:
-      task.epoch === null || typeof task.epoch === 'undefined' ? null : task.epoch,
+      task.epoch === null || typeof task.epoch === 'undefined'
+        ? null
+        : task.epoch,
     consensus_answer: String(
       task.final_answer || task.finalAnswer || task.consensusAnswer || ''
     ).trim(),
@@ -2682,12 +2856,7 @@ function resolveOptionalConstrainedPath(baseDir, candidatePath, fallbackPath) {
 
 async function assertHumanTeacherWorkspaceIntegrity(
   localAiStorage,
-  {
-    outputDir,
-    taskManifestPath,
-    epoch = null,
-    packagePath = '',
-  } = {}
+  {outputDir, taskManifestPath, epoch = null, packagePath = ''} = {}
 ) {
   const metadataPath = path.join(
     outputDir,
@@ -3525,6 +3694,7 @@ function createLocalAiManager({
     offset = 0,
     trainNow = false,
     advance = false,
+    allowSystemPressureOverride = false,
     trainingModelPath = null,
     localTrainingProfile = null,
     localTrainingThermalMode = null,
@@ -3637,6 +3807,7 @@ function createLocalAiManager({
       trainingResult = await trainEpoch({
         input: {
           developerHumanTeacher: true,
+          allowSystemPressureOverride,
           sampleName: chunk.sample.sampleName,
           trainingModelPath: normalizedTrainingModelPath || undefined,
           localTrainingProfile: normalizedLocalTrainingProfile,
@@ -3933,23 +4104,35 @@ function createLocalAiManager({
   async function getDeveloperTelemetry() {
     try {
       const telemetry = await localSystemTelemetryProvider()
+      const normalizedTelemetry =
+        telemetry && typeof telemetry === 'object' && !Array.isArray(telemetry)
+          ? telemetry
+          : {
+              collectedAt: new Date().toISOString(),
+              system: {
+                available: false,
+                lastError: 'Developer telemetry provider returned no data',
+              },
+            }
 
-      return telemetry && typeof telemetry === 'object' && !Array.isArray(telemetry)
-        ? telemetry
-        : {
-            collectedAt: new Date().toISOString(),
-            system: {
-              available: false,
-              lastError: 'Developer telemetry provider returned no data',
-            },
-          }
-    } catch (error) {
       return {
+        ...normalizedTelemetry,
+        trainingReadiness: getTelemetryTrainingReadiness(normalizedTelemetry),
+      }
+    } catch (error) {
+      const fallbackTelemetry = {
         collectedAt: new Date().toISOString(),
         system: {
           available: false,
-          lastError: String(error && error.message ? error.message : error || ''),
+          lastError: String(
+            error && error.message ? error.message : error || ''
+          ),
         },
+      }
+
+      return {
+        ...fallbackTelemetry,
+        trainingReadiness: getTelemetryTrainingReadiness(fallbackTelemetry),
       }
     }
   }
@@ -4235,8 +4418,36 @@ function createLocalAiManager({
       normalizeRuntimePayload(payload, state)
     )
     const developerHumanTeacher = isDeveloperHumanTeacherTrainingRequest(next)
+    const allowSystemPressureOverride =
+      developerHumanTeacher && hasDeveloperTrainingSystemPressureOverride(next)
 
     applyRuntimeState(next)
+
+    if (developerHumanTeacher) {
+      const telemetry = await getDeveloperTelemetry()
+      const trainingReadiness =
+        telemetry &&
+        typeof telemetry.trainingReadiness === 'object' &&
+        !Array.isArray(telemetry.trainingReadiness)
+          ? telemetry.trainingReadiness
+          : getTelemetryTrainingReadiness(telemetry)
+
+      if (
+        trainingReadiness.status === 'blocked' &&
+        allowSystemPressureOverride !== true
+      ) {
+        return {
+          ...currentStatus(),
+          ok: false,
+          status: 'blocked_by_system_pressure',
+          error: 'system_pressure',
+          lastError:
+            trainingReadiness.message ||
+            'Local training is blocked by current system conditions.',
+          trainingReadiness,
+        }
+      }
+    }
 
     let result = await localAiSidecar.trainEpoch({
       ...next,
@@ -6013,6 +6224,7 @@ function createLocalAiManager({
       offset: effectiveOffset,
       trainNow: next.trainNow === true,
       advance: next.advance === true,
+      allowSystemPressureOverride: next.allowSystemPressureOverride === true,
       trainingModelPath:
         String(next.trainingModelPath || next.modelPath || '').trim() || null,
       localTrainingProfile:

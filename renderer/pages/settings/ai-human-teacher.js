@@ -4,6 +4,7 @@ import {
   Alert,
   Badge,
   Box,
+  Checkbox,
   Flex,
   Image,
   Modal,
@@ -1289,6 +1290,56 @@ function getTelemetryToneProps(tone = 'gray') {
   }
 }
 
+function normalizeDeveloperTrainingReadiness(telemetry, t) {
+  const source =
+    telemetry &&
+    typeof telemetry.trainingReadiness === 'object' &&
+    !Array.isArray(telemetry.trainingReadiness)
+      ? telemetry.trainingReadiness
+      : null
+
+  if (!source) {
+    return {
+      status: 'unknown',
+      tone: 'gray',
+      label: t('Telemetry unavailable'),
+      message: t(
+        'The app cannot verify local heat, power, or memory conditions yet.'
+      ),
+      requiresExplicitOverride: false,
+      canStartWithoutOverride: true,
+    }
+  }
+
+  return {
+    status: String(source.status || 'unknown').trim(),
+    tone: String(source.tone || 'gray').trim(),
+    label: String(source.label || '').trim() || t('Telemetry unavailable'),
+    message:
+      String(source.message || '').trim() ||
+      t('The app cannot verify local heat, power, or memory conditions yet.'),
+    requiresExplicitOverride: source.requiresExplicitOverride === true,
+    canStartWithoutOverride: source.canStartWithoutOverride !== false,
+  }
+}
+
+function getTrainingReadinessBadgeScheme(tone = 'gray') {
+  switch (tone) {
+    case 'red':
+      return 'red'
+    case 'orange':
+      return 'orange'
+    case 'yellow':
+      return 'yellow'
+    case 'green':
+      return 'green'
+    case 'blue':
+      return 'blue'
+    default:
+      return 'gray'
+  }
+}
+
 function describeDeveloperThermalTelemetry(system, t) {
   const thermal =
     system &&
@@ -2093,6 +2144,8 @@ function LocalTrainingImpactPanel({
     isBusy,
     t,
   })
+  const trainingReadiness = normalizeDeveloperTrainingReadiness(telemetry, t)
+  const readinessToneProps = getTelemetryToneProps(trainingReadiness.tone)
 
   return (
     <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={4}>
@@ -2134,6 +2187,45 @@ function LocalTrainingImpactPanel({
 
         {telemetry ? (
           <>
+            <Box
+              borderWidth="1px"
+              borderColor={readinessToneProps.borderColor}
+              borderRadius="md"
+              px={3}
+              py={3}
+              bg={readinessToneProps.bg}
+            >
+              <Stack spacing={2}>
+                <Flex
+                  justify="space-between"
+                  align={['flex-start', 'center']}
+                  direction={['column', 'row']}
+                  gap={2}
+                >
+                  <Text fontSize="sm" fontWeight={600}>
+                    {t('Training readiness')}
+                  </Text>
+                  <Badge
+                    colorScheme={getTrainingReadinessBadgeScheme(
+                      trainingReadiness.tone
+                    )}
+                    borderRadius="full"
+                    px={2}
+                    py={1}
+                  >
+                    {trainingReadiness.label}
+                  </Badge>
+                </Flex>
+                <Text fontSize="sm">{trainingReadiness.message}</Text>
+                {trainingReadiness.requiresExplicitOverride ? (
+                  <Text color="muted" fontSize="xs">
+                    {t(
+                      'The start button will stay locked until you explicitly confirm that you still want to run one local training pass.'
+                    )}
+                  </Text>
+                ) : null}
+              </Stack>
+            </Box>
             <SimpleGrid columns={[1, 2, 4]} spacing={3}>
               {stats.map((stat) => (
                 <LocalTrainingImpactStatCard
@@ -2935,6 +3027,10 @@ export default function AiHumanTeacherPage() {
     isOpen: false,
     mode: '',
   })
+  const [
+    developerTrainingPressureOverride,
+    setDeveloperTrainingPressureOverride,
+  ] = React.useState(false)
   const [contributionDialog, setContributionDialog] = React.useState({
     isOpen: false,
     mode: '',
@@ -3247,6 +3343,31 @@ export default function AiHumanTeacherPage() {
   }, [developerLocalTrainingBudgetTone, t])
   const developerTelemetryIsBusy =
     isFinalizingDeveloperChunk || isRunningDeveloperComparison
+  const developerTrainingReadiness = React.useMemo(
+    () => normalizeDeveloperTrainingReadiness(developerTelemetry, t),
+    [developerTelemetry, t]
+  )
+  const developerTrainingBlockedBySystemPressure =
+    developerTrainingReadiness.status === 'blocked'
+  const developerTrainingRequiresOverride =
+    developerTrainingReadiness.requiresExplicitOverride === true
+  const developerTrainingReadyToStart =
+    !developerTrainingBlockedBySystemPressure ||
+    developerTrainingPressureOverride === true
+  const developerTrainingReadinessAlertStatus = React.useMemo(() => {
+    if (developerTrainingReadiness.tone === 'red') {
+      return 'error'
+    }
+
+    if (
+      developerTrainingReadiness.tone === 'orange' ||
+      developerTrainingReadiness.tone === 'yellow'
+    ) {
+      return 'warning'
+    }
+
+    return 'info'
+  }, [developerTrainingReadiness.tone])
 
   React.useEffect(() => {
     if (!isDeveloperMode) {
@@ -3274,6 +3395,12 @@ export default function AiHumanTeacherPage() {
     isRunningDeveloperComparison,
     refreshDeveloperTelemetry,
   ])
+
+  React.useEffect(() => {
+    if (!developerTrainingBlockedBySystemPressure) {
+      setDeveloperTrainingPressureOverride(false)
+    }
+  }, [developerTrainingBlockedBySystemPressure])
 
   React.useEffect(() => {
     const runtimeBackend = String(localAi?.runtimeBackend || '').trim()
@@ -3517,6 +3644,7 @@ export default function AiHumanTeacherPage() {
   }, [t, toast, updateLocalAiSettings])
 
   const openChunkDecisionDialog = React.useCallback((mode) => {
+    setDeveloperTrainingPressureOverride(false)
     setChunkDecisionDialog({
       isOpen: true,
       mode,
@@ -3524,6 +3652,7 @@ export default function AiHumanTeacherPage() {
   }, [])
 
   const closeChunkDecisionDialog = React.useCallback(() => {
+    setDeveloperTrainingPressureOverride(false)
     setChunkDecisionDialog({
       isOpen: false,
       mode: '',
@@ -5183,7 +5312,12 @@ export default function AiHumanTeacherPage() {
   )
 
   const finalizeDeveloperChunk = React.useCallback(
-    async ({trainNow = false, advance = false, exitAfter = false} = {}) => {
+    async ({
+      trainNow = false,
+      advance = false,
+      exitAfter = false,
+      allowSystemPressureOverride = false,
+    } = {}) => {
       const saved = await saveTaskDraft({
         quiet: true,
         promptOnChunkComplete: false,
@@ -5226,6 +5360,7 @@ export default function AiHumanTeacherPage() {
             currentPeriod,
             trainNow,
             advance,
+            allowSystemPressureOverride,
             trainingModelPath: developerLocalTrainingModelPath,
             localTrainingProfile: developerLocalTrainingProfile,
             localTrainingThermalMode: developerLocalTrainingThermalMode,
@@ -6234,7 +6369,10 @@ export default function AiHumanTeacherPage() {
 
       if (mode === 'developer') {
         if (action === 'train') {
-          nextResult = await finalizeDeveloperChunk({trainNow: true})
+          nextResult = await finalizeDeveloperChunk({
+            trainNow: true,
+            allowSystemPressureOverride: developerTrainingPressureOverride,
+          })
         } else if (action === 'advance') {
           nextResult = await finalizeDeveloperChunk({advance: true})
         } else if (action === 'exit') {
@@ -6257,6 +6395,7 @@ export default function AiHumanTeacherPage() {
     [
       chunkDecisionMode,
       closeChunkDecisionDialog,
+      developerTrainingPressureOverride,
       finalizeDemoChunk,
       finalizeDeveloperChunk,
     ]
@@ -8875,6 +9014,55 @@ export default function AiHumanTeacherPage() {
                             'If you do not press "Start training now", this chunk stays saved locally and can be trained later.'
                           )}
                     </Text>
+                    {chunkDecisionDialog.mode === 'developer' ? (
+                      <Alert
+                        status={developerTrainingReadinessAlertStatus}
+                        borderRadius="md"
+                      >
+                        <Stack spacing={2} w="full">
+                          <Flex
+                            justify="space-between"
+                            align={['flex-start', 'center']}
+                            direction={['column', 'row']}
+                            gap={2}
+                            w="full"
+                          >
+                            <Text fontWeight={600}>
+                              {t('Training readiness')}
+                            </Text>
+                            <Badge
+                              colorScheme={getTrainingReadinessBadgeScheme(
+                                developerTrainingReadiness.tone
+                              )}
+                              borderRadius="full"
+                              px={2}
+                              py={1}
+                            >
+                              {developerTrainingReadiness.label}
+                            </Badge>
+                          </Flex>
+                          <Text fontSize="sm">
+                            {developerTrainingReadiness.message}
+                          </Text>
+                          {developerTrainingRequiresOverride ? (
+                            <Checkbox
+                              isChecked={developerTrainingPressureOverride}
+                              onChange={(e) =>
+                                setDeveloperTrainingPressureOverride(
+                                  e.target.checked
+                                )
+                              }
+                            >
+                              <Text fontSize="sm">
+                                {t(
+                                  'I understand this machine is already under pressure and I still want to run one local training pass now.'
+                                )}
+                              </Text>
+                            </Checkbox>
+                          ) : null}
+                        </Stack>
+                      </Alert>
+                    ) : null}
                   </Stack>
                 </ModalBody>
                 <ModalFooter>
@@ -8884,7 +9072,8 @@ export default function AiHumanTeacherPage() {
                       isDisabled={
                         isChunkDecisionBusy ||
                         (chunkDecisionDialog.mode === 'developer' &&
-                          developerTrainingUnsupported)
+                          (developerTrainingUnsupported ||
+                            !developerTrainingReadyToStart))
                       }
                       onClick={() => handleChunkDecisionAction('train')}
                     >
@@ -8897,6 +9086,15 @@ export default function AiHumanTeacherPage() {
                       <Text color="muted" fontSize="sm">
                         {t(
                           'Training is unavailable in the current Local AI runtime. Your annotations stay saved locally until a trainable backend exists.'
+                        )}
+                      </Text>
+                    ) : null}
+                    {chunkDecisionDialog.mode === 'developer' &&
+                    developerTrainingRequiresOverride &&
+                    !developerTrainingPressureOverride ? (
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'The start button stays locked until you explicitly confirm this override.'
                         )}
                       </Text>
                     ) : null}

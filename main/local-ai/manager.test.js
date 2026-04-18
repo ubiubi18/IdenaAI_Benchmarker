@@ -2004,6 +2004,137 @@ describe('local-ai manager', () => {
     expect(forwarded.evaluationFlips).toBe(100)
   })
 
+  it('blocks developer local training when telemetry reports a hard stop and no override is present', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async () => ({
+        ok: true,
+        status: 'trained',
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      systemTelemetryProvider: async () => ({
+        collectedAt: '2026-04-18T09:30:00.000Z',
+        system: {
+          thermal: {
+            available: true,
+            pressure: 'limited',
+            cpuSpeedLimit: 72,
+          },
+          battery: {
+            available: true,
+            isCharging: true,
+            percent: 100,
+          },
+        },
+      }),
+    })
+
+    const result = await manager.trainEpoch({
+      developerHumanTeacher: true,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'blocked_by_system_pressure',
+      error: 'system_pressure',
+      trainingReadiness: expect.objectContaining({
+        status: 'blocked',
+        requiresExplicitOverride: true,
+      }),
+    })
+    expect(result.lastError).toMatch(/CPU speed|override/i)
+    expect(sidecar.trainEpoch).not.toHaveBeenCalled()
+  })
+
+  it('allows an explicit system-pressure override for developer chunk training', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async ({input}) => {
+        await fs.writeJson(input.comparisonPath, {
+          totalFlips: 100,
+          correct: 58,
+          accuracy: 0.58,
+          evaluatedAt: '2026-04-18T10:15:00.000Z',
+        })
+
+        return {
+          ok: true,
+          status: 'trained',
+          acceptedRows: 5,
+        }
+      }),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      systemTelemetryProvider: async () => ({
+        collectedAt: '2026-04-18T10:00:00.000Z',
+        system: {
+          thermal: {
+            available: true,
+            pressure: 'limited',
+            cpuSpeedLimit: 74,
+          },
+          battery: {
+            available: true,
+            isCharging: true,
+            percent: 100,
+          },
+        },
+      }),
+    })
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    for (const task of session.workspace.tasks) {
+      await manager.saveHumanTeacherDeveloperDraft({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+        taskId: task.taskId,
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `override ${task.taskId}`
+        ),
+      })
+    }
+
+    const result = await manager.finalizeHumanTeacherDeveloperChunk({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      trainNow: true,
+      allowSystemPressureOverride: true,
+    })
+
+    expect(result.training).toMatchObject({
+      ok: true,
+      status: 'trained',
+    })
+    expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
+    expect(sidecar.trainEpoch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          developerHumanTeacher: true,
+          allowSystemPressureOverride: true,
+        }),
+      })
+    )
+  })
+
   it('falls back to the local developer training runner when the sidecar does not implement training', async () => {
     const sidecar = {
       getHealth: jest.fn(),
@@ -2890,7 +3021,7 @@ describe('local-ai manager', () => {
 
     await fs.writeFile(
       path.join(exportResult.outputDir, 'annotations.filled.jsonl'),
-      [
+      `${[
         JSON.stringify({
           task_id: 'flip-a::human-teacher',
           sample_id: 'flip-a::human-teacher',
@@ -2923,7 +3054,7 @@ describe('local-ai manager', () => {
           why_answer: 'left is coherent',
           confidence: 0.9,
         }),
-      ].join('\n') + '\n',
+      ].join('\n')}\n`,
       'utf8'
     )
 
@@ -2940,9 +3071,7 @@ describe('local-ai manager', () => {
         missingAnnotations: 1,
       }),
     })
-    await expect(
-      storage.readHumanTeacherPackage(filePath)
-    ).resolves.toEqual(
+    await expect(storage.readHumanTeacherPackage(filePath)).resolves.toEqual(
       expect.objectContaining({
         items: [
           expect.objectContaining({
