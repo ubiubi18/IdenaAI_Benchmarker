@@ -139,7 +139,8 @@ Current model-role split:
 ### Partial or stubbed now
 
 - sidecar runtime start/stop currently marks intent and probes reachability
-- local sidecar script is a small stub, not a real training runtime
+- local sidecar script is a small loopback-only stub by default, not a real
+  training runtime
 - placeholder signature handling is explicit but not yet equivalent to real
   verifier-backed identity checks
 - aggregation records readiness, accepted/rejected counts, and compatibility but
