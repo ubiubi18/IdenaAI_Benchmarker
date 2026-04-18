@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ipaddress
 import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -8,6 +9,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5000
 DEFAULT_MODEL = "local-stub-chat"
+MAX_REQUEST_BYTES = 1024 * 1024
+
+
+class RequestTooLargeError(Exception):
+    pass
+
+
+def is_loopback_host(value):
+    host = str(value or "").strip().strip("[]")
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def build_json_response(handler, status_code, payload):
@@ -26,7 +45,13 @@ class LocalAiHandler(BaseHTTPRequestHandler):
         return
 
     def _read_json(self):
-        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_length = str(self.headers.get("Content-Length", "0") or "0").strip()
+        length = int(raw_length or "0")
+
+        if length < 0:
+            raise ValueError("invalid_content_length")
+        if length > MAX_REQUEST_BYTES:
+            raise RequestTooLargeError(length)
         if length <= 0:
             return {}
         raw = self.rfile.read(length).decode("utf-8")
@@ -72,7 +97,20 @@ class LocalAiHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             payload = self._read_json()
-        except json.JSONDecodeError:
+        except RequestTooLargeError:
+            build_json_response(
+                self,
+                413,
+                {
+                    "error": {
+                        "message": "request_too_large",
+                        "type": "invalid_request",
+                        "detail": f"Request body exceeds {MAX_REQUEST_BYTES} bytes.",
+                    }
+                },
+            )
+            return
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
             build_json_response(
                 self,
                 400,
@@ -136,7 +174,17 @@ def main():
     )
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Allow binding the stub to a non-loopback host.",
+    )
     args = parser.parse_args()
+
+    if not args.allow_remote and not is_loopback_host(args.host):
+        parser.error(
+            "Refusing to bind the Local AI stub to a non-loopback host without --allow-remote."
+        )
 
     server = ThreadingHTTPServer((args.host, args.port), LocalAiHandler)
     print(f"Local AI sidecar stub listening on http://{args.host}:{args.port}")

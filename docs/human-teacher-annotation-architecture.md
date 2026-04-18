@@ -78,14 +78,28 @@ node scripts/export_human_teacher_tasks.js \
 Output:
 
 - `tasks.jsonl`
+- `workspace-metadata.json`
 - `annotations.template.jsonl`
 - per-task folders with:
   - `panel-1.png` .. `panel-4.png`
   - `README.md` with instructions and the annotation JSON template
 
+The export is now manifest-bound:
+
+- `workspace-metadata.json` stores the expected manifest hash and package
+  identity
+- the app re-checks that metadata before loading tasks, saving drafts, or
+  importing completed annotations
+- if `tasks.jsonl` is modified after export, the workspace is rejected and must
+  be exported again
+
 ### 3. Collect human annotations
 
 Humans fill rows based on `annotations.template.jsonl`.
+
+The prefilled reference fields such as `task_id`, `sample_id`, `flip_hash`,
+`epoch`, and `consensus_answer` should not be edited. They keep each annotation
+bound to the intended flip task.
 
 Required reasoning fields:
 
@@ -95,8 +109,10 @@ Required reasoning fields:
 - `text_required`
 - `sequence_markers_present`
 - `report_required`
+- `confidence`
 - `final_answer`
 - `why_answer`
+- `report_reason` when `report_required = true`
 
 ### 4. Normalize imports
 
@@ -108,6 +124,8 @@ python3 scripts/import_human_teacher_annotations.py \
 ```
 
 The normalized output is the stable interface for later training ingestion.
+Duplicate rows for one `task_id`, mismatched flip metadata, and incomplete
+annotations are rejected instead of being silently normalized.
 
 ## What this solves now
 

@@ -32,6 +32,21 @@ async function readJsonl(filePath) {
     .map((line) => JSON.parse(line))
 }
 
+function createCompleteDeveloperAnnotation(taskId, whyAnswer) {
+  return {
+    annotator: 'developer-test',
+    frame_captions: ['frame one', 'frame two', 'frame three', 'frame four'],
+    option_a_summary: 'left story',
+    option_b_summary: 'right story',
+    text_required: false,
+    sequence_markers_present: false,
+    report_required: false,
+    final_answer: 'left',
+    why_answer: whyAnswer || `human reason for ${taskId}`,
+    confidence: 5,
+  }
+}
+
 describe('local-ai manager', () => {
   let tempDir
   let storage
@@ -1179,6 +1194,9 @@ describe('local-ai manager', () => {
         )
       )
     ).resolves.toBe(true)
+    await expect(
+      storage.exists(path.join(result.outputDir, 'workspace-metadata.json'))
+    ).resolves.toBe(true)
   })
 
   it('loads a human-teacher annotation workspace and saves a task draft', async () => {
@@ -1257,6 +1275,7 @@ describe('local-ai manager', () => {
         option_a_summary: 'left story',
         option_b_summary: 'right story',
         ai_annotation: {
+          task_id: 'flip-a::human-teacher',
           generated_at: '2026-04-17T12:00:00.000Z',
           runtime_backend: 'ollama-direct',
           runtime_type: 'ollama',
@@ -1296,6 +1315,9 @@ describe('local-ai manager', () => {
             y: 0.35,
           },
         ],
+        text_required: false,
+        sequence_markers_present: false,
+        report_required: false,
         final_answer: 'left',
         why_answer: 'left is coherent',
         confidence: 5,
@@ -1328,6 +1350,7 @@ describe('local-ai manager', () => {
         annotationStatus: 'complete',
         annotation: expect.objectContaining({
           ai_annotation: expect.objectContaining({
+            task_id: 'flip-a::human-teacher',
             model: 'qwen3.5:9b',
             final_answer: 'right',
             rating: 'wrong',
@@ -1459,6 +1482,9 @@ describe('local-ai manager', () => {
         frame_captions: ['one', 'two', 'three', 'four'],
         option_a_summary: 'option a summary',
         option_b_summary: 'option b summary',
+        text_required: false,
+        sequence_markers_present: false,
+        report_required: false,
         final_answer: 'right',
         why_answer: 'testing the offline annotator path',
         confidence: 5,
@@ -1775,13 +1801,10 @@ describe('local-ai manager', () => {
         sampleName: 'flip-challenge-test-20-decoded-labeled',
         offset: 0,
         taskId: task.taskId,
-        annotation: {
-          annotator: 'developer-test',
-          final_answer: 'left',
-          why_answer: `human reason for ${task.taskId}`,
-          report_required: false,
-          confidence: 5,
-        },
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `human reason for ${task.taskId}`
+        ),
       })
     }
 
@@ -1792,6 +1815,10 @@ describe('local-ai manager', () => {
       advance: true,
       trainingModelPath: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
       localTrainingProfile: 'balanced',
+      localTrainingThermalMode: 'cool',
+      localTrainingEpochs: 3,
+      localTrainingBatchSize: 2,
+      localTrainingLoraRank: 6,
     })
 
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
@@ -1802,6 +1829,10 @@ describe('local-ai manager', () => {
           sampleName: 'flip-challenge-test-20-decoded-labeled',
           trainingModelPath: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
           localTrainingProfile: 'balanced',
+          localTrainingThermalMode: 'cool',
+          localTrainingEpochs: 3,
+          localTrainingBatchSize: 2,
+          localTrainingLoraRank: 6,
           offset: 0,
           chunkSize: 5,
           normalizedAnnotationsPath: expect.stringContaining(
@@ -1862,6 +1893,248 @@ describe('local-ai manager', () => {
     })
   })
 
+  it('sanitizes developer local training knobs before forwarding them to the backend', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async ({input}) => {
+        await fs.writeJson(input.comparisonPath, {
+          totalFlips: 100,
+          correct: 60,
+          accuracy: 0.6,
+          evaluatedAt: '2026-04-16T16:10:00.000Z',
+        })
+
+        return {
+          ok: true,
+          status: 'trained',
+          acceptedRows: 5,
+        }
+      }),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+    })
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    for (const task of session.workspace.tasks) {
+      await manager.saveHumanTeacherDeveloperDraft({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+        taskId: task.taskId,
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `sanitize ${task.taskId}`
+        ),
+      })
+    }
+
+    await manager.finalizeHumanTeacherDeveloperChunk({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      trainNow: true,
+      trainingModelPath: 'malicious/custom-model',
+      localTrainingProfile: 'unknown-profile',
+      localTrainingThermalMode: 'lava',
+      localTrainingEpochs: 99,
+      localTrainingBatchSize: 0,
+      localTrainingLoraRank: 999,
+    })
+
+    expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
+    const forwarded = sidecar.trainEpoch.mock.calls[0][0].input
+
+    expect(forwarded.trainingModelPath).toBeUndefined()
+    expect(forwarded.localTrainingProfile).toBe('strong')
+    expect(forwarded.localTrainingThermalMode).toBe('balanced')
+    expect(forwarded.localTrainingEpochs).toBe(6)
+    expect(forwarded.localTrainingBatchSize).toBe(1)
+    expect(forwarded.localTrainingLoraRank).toBe(16)
+  })
+
+  it('sanitizes direct developer trainEpoch payloads before they reach the sidecar', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async () => ({
+        ok: true,
+        status: 'trained',
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+    })
+
+    await manager.trainEpoch({
+      developerHumanTeacher: true,
+      trainingModelPath: 'malicious/custom-model',
+      modelPath: 'malicious/custom-model',
+      localTrainingProfile: 'unknown-profile',
+      localTrainingThermalMode: 'lava',
+      localTrainingEpochs: 99,
+      localTrainingBatchSize: 0,
+      localTrainingLoraRank: 999,
+      evaluationFlips: 123,
+    })
+
+    expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
+
+    const forwarded = sidecar.trainEpoch.mock.calls[0][0]
+
+    expect(forwarded.trainingModelPath).toBeUndefined()
+    expect(forwarded.modelPath).toBeUndefined()
+    expect(forwarded.localTrainingProfile).toBe('strong')
+    expect(forwarded.localTrainingThermalMode).toBe('balanced')
+    expect(forwarded.localTrainingEpochs).toBe(6)
+    expect(forwarded.localTrainingBatchSize).toBe(1)
+    expect(forwarded.localTrainingLoraRank).toBe(16)
+    expect(forwarded.evaluationFlips).toBe(100)
+  })
+
+  it('blocks developer local training when telemetry reports a hard stop and no override is present', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async () => ({
+        ok: true,
+        status: 'trained',
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      systemTelemetryProvider: async () => ({
+        collectedAt: '2026-04-18T09:30:00.000Z',
+        system: {
+          thermal: {
+            available: true,
+            pressure: 'limited',
+            cpuSpeedLimit: 72,
+          },
+          battery: {
+            available: true,
+            isCharging: true,
+            percent: 100,
+          },
+        },
+      }),
+    })
+
+    const result = await manager.trainEpoch({
+      developerHumanTeacher: true,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'blocked_by_system_pressure',
+      error: 'system_pressure',
+      trainingReadiness: expect.objectContaining({
+        status: 'blocked',
+        requiresExplicitOverride: true,
+      }),
+    })
+    expect(result.lastError).toMatch(/CPU speed|override/i)
+    expect(sidecar.trainEpoch).not.toHaveBeenCalled()
+  })
+
+  it('allows an explicit system-pressure override for developer chunk training', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async ({input}) => {
+        await fs.writeJson(input.comparisonPath, {
+          totalFlips: 100,
+          correct: 58,
+          accuracy: 0.58,
+          evaluatedAt: '2026-04-18T10:15:00.000Z',
+        })
+
+        return {
+          ok: true,
+          status: 'trained',
+          acceptedRows: 5,
+        }
+      }),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      systemTelemetryProvider: async () => ({
+        collectedAt: '2026-04-18T10:00:00.000Z',
+        system: {
+          thermal: {
+            available: true,
+            pressure: 'limited',
+            cpuSpeedLimit: 74,
+          },
+          battery: {
+            available: true,
+            isCharging: true,
+            percent: 100,
+          },
+        },
+      }),
+    })
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    for (const task of session.workspace.tasks) {
+      await manager.saveHumanTeacherDeveloperDraft({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+        taskId: task.taskId,
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `override ${task.taskId}`
+        ),
+      })
+    }
+
+    const result = await manager.finalizeHumanTeacherDeveloperChunk({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      trainNow: true,
+      allowSystemPressureOverride: true,
+    })
+
+    expect(result.training).toMatchObject({
+      ok: true,
+      status: 'trained',
+    })
+    expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
+    expect(sidecar.trainEpoch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          developerHumanTeacher: true,
+          allowSystemPressureOverride: true,
+        }),
+      })
+    )
+  })
+
   it('falls back to the local developer training runner when the sidecar does not implement training', async () => {
     const sidecar = {
       getHealth: jest.fn(),
@@ -1889,6 +2162,7 @@ describe('local-ai manager', () => {
           ok: true,
           status: 'trained',
           trainingBackend: 'mlx_vlm_local',
+          localTrainingThermalMode: 'balanced',
           acceptedRows: 5,
           accuracy: 0.63,
           correct: 63,
@@ -1913,13 +2187,10 @@ describe('local-ai manager', () => {
         sampleName: 'flip-challenge-test-20-decoded-labeled',
         offset: 0,
         taskId: task.taskId,
-        annotation: {
-          annotator: 'developer-test',
-          final_answer: 'left',
-          why_answer: `fallback reason for ${task.taskId}`,
-          report_required: false,
-          confidence: 5,
-        },
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `fallback reason for ${task.taskId}`
+        ),
       })
     }
 
@@ -1930,6 +2201,10 @@ describe('local-ai manager', () => {
       advance: true,
       trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
       localTrainingProfile: 'strong',
+      localTrainingThermalMode: 'balanced',
+      localTrainingEpochs: 4,
+      localTrainingBatchSize: 1,
+      localTrainingLoraRank: 12,
     })
 
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
@@ -1941,6 +2216,10 @@ describe('local-ai manager', () => {
           sampleName: 'flip-challenge-test-20-decoded-labeled',
           trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
           localTrainingProfile: 'strong',
+          localTrainingThermalMode: 'balanced',
+          localTrainingEpochs: 4,
+          localTrainingBatchSize: 1,
+          localTrainingLoraRank: 12,
           offset: 0,
           chunkSize: 5,
         }),
@@ -1955,6 +2234,7 @@ describe('local-ai manager', () => {
       state: expect.objectContaining({
         pendingTrainingCount: 0,
         trainedCount: 5,
+        activeLocalTrainingThermalMode: 'balanced',
         comparison100: expect.objectContaining({
           status: 'evaluated',
           accuracy: 0.63,
@@ -2040,7 +2320,7 @@ describe('local-ai manager', () => {
     })
   })
 
-  it('runs the explicit 100-flip developer comparison and stores the updated success history', async () => {
+  it('runs the explicit 50-flip developer comparison and stores the updated success history', async () => {
     const sidecar = {
       getHealth: jest.fn(),
       listModels: jest.fn(),
@@ -2049,9 +2329,9 @@ describe('local-ai manager', () => {
       ocrImage: jest.fn(),
       trainEpoch: jest.fn(async ({input}) => {
         await fs.writeJson(input.comparisonPath, {
-          totalFlips: 100,
-          correct: 67,
-          accuracy: 0.67,
+          totalFlips: 50,
+          correct: 33,
+          accuracy: 0.66,
           evaluatedAt: '2026-04-16T17:10:00.000Z',
         })
 
@@ -2093,6 +2373,7 @@ describe('local-ai manager', () => {
 
     const result = await manager.runHumanTeacherDeveloperComparison({
       sampleName: 'flip-challenge-test-20-decoded-labeled',
+      evaluationFlips: 50,
     })
 
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
@@ -2103,8 +2384,8 @@ describe('local-ai manager', () => {
           sampleName: 'flip-challenge-test-20-decoded-labeled',
           comparisonOnly: true,
           compareOnly: true,
-          evaluationFlips: 100,
-          comparisonPath: expect.stringContaining('comparison-100flips.json'),
+          evaluationFlips: 50,
+          comparisonPath: expect.stringContaining('comparison-50flips.json'),
         }),
       })
     )
@@ -2113,15 +2394,16 @@ describe('local-ai manager', () => {
       state: expect.objectContaining({
         comparison100: expect.objectContaining({
           status: 'evaluated',
-          accuracy: 0.67,
-          correct: 67,
-          totalFlips: 100,
-          bestAccuracy: 0.67,
+          benchmarkFlips: 50,
+          accuracy: 0.66,
+          correct: 33,
+          totalFlips: 50,
+          bestAccuracy: 0.66,
           history: [
             expect.objectContaining({
-              accuracy: 0.67,
-              correct: 67,
-              totalFlips: 100,
+              accuracy: 0.66,
+              correct: 33,
+              totalFlips: 50,
             }),
           ],
         }),
@@ -2129,7 +2411,7 @@ describe('local-ai manager', () => {
     })
   })
 
-  it('falls back to the local developer training runner for the explicit 100-flip comparison', async () => {
+  it('falls back to the local developer training runner for the explicit 200-flip comparison', async () => {
     const sidecar = {
       getHealth: jest.fn(),
       listModels: jest.fn(),
@@ -2148,9 +2430,9 @@ describe('local-ai manager', () => {
         ok: true,
         status: 'evaluated',
         trainingBackend: 'mlx_vlm_local',
-        accuracy: 0.69,
-        correct: 69,
-        totalFlips: 100,
+        accuracy: 0.695,
+        correct: 139,
+        totalFlips: 200,
         evaluatedAt: '2026-04-16T18:15:00.000Z',
       })),
     }
@@ -2187,6 +2469,7 @@ describe('local-ai manager', () => {
 
     const result = await manager.runHumanTeacherDeveloperComparison({
       sampleName: 'flip-challenge-test-20-decoded-labeled',
+      evaluationFlips: 200,
     })
 
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
@@ -2198,7 +2481,7 @@ describe('local-ai manager', () => {
           sampleName: 'flip-challenge-test-20-decoded-labeled',
           comparisonOnly: true,
           compareOnly: true,
-          evaluationFlips: 100,
+          evaluationFlips: 200,
         }),
       })
     )
@@ -2207,10 +2490,82 @@ describe('local-ai manager', () => {
       state: expect.objectContaining({
         comparison100: expect.objectContaining({
           status: 'evaluated',
-          accuracy: 0.69,
-          correct: 69,
-          totalFlips: 100,
-          bestAccuracy: 0.69,
+          benchmarkFlips: 200,
+          accuracy: 0.695,
+          correct: 139,
+          totalFlips: 200,
+          bestAccuracy: 0.695,
+        }),
+      }),
+    })
+  })
+
+  it('keeps the selected benchmark size on a failed explicit developer comparison', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async () => ({
+        ok: false,
+        status: 'not_implemented',
+        lastError:
+          'Local AI training request is not implemented by this Local AI sidecar',
+      })),
+    }
+    const developerTrainingRunner = {
+      runEpoch: jest.fn(async () => ({
+        ok: false,
+        status: 'failed',
+        failureReason: 'simulated compare failure',
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      developerTrainingRunner,
+    })
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkSize: 5,
+        totalAvailableTasks: 20,
+        currentOffset: 5,
+        annotatedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+        pendingTrainingTaskIds: [],
+        trainedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+        chunks: [],
+        comparison100: {
+          status: 'not_loaded',
+          history: [],
+        },
+      }
+    )
+
+    const result = await manager.runHumanTeacherDeveloperComparison({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      evaluationFlips: 200,
+    })
+
+    expect(result).toMatchObject({
+      developer: true,
+      state: expect.objectContaining({
+        comparison100: expect.objectContaining({
+          status: 'failed',
+          benchmarkFlips: 200,
+          accuracy: null,
+          correct: null,
+          totalFlips: null,
         }),
       }),
     })
@@ -2414,6 +2769,7 @@ describe('local-ai manager', () => {
         why_answer: 'left is coherent',
         confidence: 0.9,
         ai_annotation: {
+          task_id: 'flip-a::human-teacher',
           final_answer: 'right',
           why_answer: 'the AI thought the right sequence was smoother',
           confidence: 2,
@@ -2470,6 +2826,7 @@ describe('local-ai manager', () => {
       expect.arrayContaining([
         expect.objectContaining({
           ai_annotation: expect.objectContaining({
+            task_id: 'flip-a::human-teacher',
             final_answer: 'right',
             rating: 'bad',
             text_required: false,
@@ -2512,6 +2869,218 @@ describe('local-ai manager', () => {
         path.join(exportResult.outputDir, 'annotations.normalized.jsonl')
       )
     ).resolves.toBe(true)
+  })
+
+  it('rejects importing a tampered human-teacher task manifest', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+          annotationStatus: 'pending',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const exportResult = await manager.exportHumanTeacherTasks({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+
+    await fs.writeFile(
+      path.join(exportResult.outputDir, 'tasks.jsonl'),
+      `${JSON.stringify({
+        task_id: 'flip-a::human-teacher',
+        sample_id: 'flip-a::human-teacher',
+        flip_hash: 'flip-a',
+        epoch: 12,
+        final_answer: 'right',
+        panels: [],
+      })}\n`,
+      'utf8'
+    )
+
+    await expect(
+      manager.loadHumanTeacherAnnotationWorkspace({
+        epoch: 12,
+        currentEpoch: 13,
+      })
+    ).rejects.toThrow(
+      'Human teacher task manifest was modified; export annotation tasks again'
+    )
+
+    await expect(
+      manager.importHumanTeacherAnnotations({
+        epoch: 12,
+        currentEpoch: 13,
+      })
+    ).rejects.toThrow(
+      'Human teacher task manifest was modified; export annotation tasks again'
+    )
+  })
+
+  it('keeps duplicate or metadata-mismatched human-teacher rows out of the normalized import', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+          annotationStatus: 'pending',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const exportResult = await manager.exportHumanTeacherTasks({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+
+    await fs.writeFile(
+      path.join(exportResult.outputDir, 'annotations.filled.jsonl'),
+      `${[
+        JSON.stringify({
+          task_id: 'flip-a::human-teacher',
+          sample_id: 'flip-a::human-teacher',
+          flip_hash: 'flip-wrong',
+          epoch: 12,
+          annotator: 'tester',
+          frame_captions: ['a', 'b', 'c', 'd'],
+          option_a_summary: 'left story',
+          option_b_summary: 'right story',
+          text_required: false,
+          sequence_markers_present: false,
+          report_required: false,
+          final_answer: 'left',
+          why_answer: 'left is coherent',
+          confidence: 0.9,
+        }),
+        JSON.stringify({
+          task_id: 'flip-a::human-teacher',
+          sample_id: 'flip-a::human-teacher',
+          flip_hash: 'flip-a',
+          epoch: 12,
+          annotator: 'tester',
+          frame_captions: ['a', 'b', 'c', 'd'],
+          option_a_summary: 'left story',
+          option_b_summary: 'right story',
+          text_required: false,
+          sequence_markers_present: false,
+          report_required: false,
+          final_answer: 'left',
+          why_answer: 'left is coherent',
+          confidence: 0.9,
+        }),
+      ].join('\n')}\n`,
+      'utf8'
+    )
+
+    const importResult = await manager.importHumanTeacherAnnotations({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+
+    expect(importResult).toMatchObject({
+      import: expect.objectContaining({
+        normalizedRows: 0,
+        invalidAnnotations: 0,
+        duplicateAnnotations: 2,
+        missingAnnotations: 1,
+      }),
+    })
+    await expect(storage.readHumanTeacherPackage(filePath)).resolves.toEqual(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({
+            taskId: 'flip-a::human-teacher',
+            annotationStatus: 'pending',
+          }),
+        ],
+      })
+    )
   })
 
   it('rejects human-teacher import paths outside the managed workspace', async () => {

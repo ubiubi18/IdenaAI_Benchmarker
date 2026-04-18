@@ -65,6 +65,21 @@ function normalizeCaptions(value) {
   return captions
 }
 
+function countFilledEntries(value) {
+  return Array.isArray(value)
+    ? value.reduce((count, item) => (trimText(item) ? count + 1 : count), 0)
+    : 0
+}
+
+function normalizeOptionalEpoch(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 function normalizePanelReferenceIndex(value) {
   const parsed = Number.parseInt(value, 10)
 
@@ -159,7 +174,7 @@ async function loadJsonl(filePath) {
     .map((line) => JSON.parse(line))
 }
 
-function normalizeAiAnnotation(value) {
+function normalizeAiAnnotation(value, expectedTaskId = '') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }
@@ -189,13 +204,24 @@ function normalizeAiAnnotation(value) {
   const rating = String(value.rating || '')
     .trim()
     .toLowerCase()
+  const normalizedTaskId = trimText(value.task_id || value.taskId, 256)
   const rawFinalAnswer = trimText(value.final_answer || value.finalAnswer, 16)
   const finalAnswer = ['left', 'right', 'skip'].includes(
     rawFinalAnswer.toLowerCase()
   )
     ? rawFinalAnswer.toLowerCase()
     : null
+
+  if (
+    expectedTaskId &&
+    normalizedTaskId &&
+    normalizedTaskId !== String(expectedTaskId).trim()
+  ) {
+    throw new Error('AI annotation task_id does not match task_id')
+  }
+
   const next = {
+    task_id: String(expectedTaskId || normalizedTaskId || '').trim() || null,
     generated_at: trimText(value.generated_at || value.generatedAt, 64) || null,
     runtime_backend:
       trimText(value.runtime_backend || value.runtimeBackend, 64) || null,
@@ -245,7 +271,9 @@ function normalizeAiAnnotation(value) {
     rating: ['good', 'bad', 'wrong'].includes(rating) ? rating : '',
   }
 
-  return Object.values(next).some((item) =>
+  const {task_id: _taskId, ...contentFields} = next
+
+  return Object.values(contentFields).some((item) =>
     Array.isArray(item)
       ? item.some((entry) => entry !== null && entry !== '')
       : item !== null && item !== ''
@@ -254,8 +282,125 @@ function normalizeAiAnnotation(value) {
     : null
 }
 
+function validateAnnotationTaskBinding(taskRow, annotationRow) {
+  const taskId = trimText(taskRow.task_id, 256)
+  const sampleId = trimText(taskRow.sample_id || taskId, 256)
+  const flipHash = trimText(taskRow.flip_hash, 512)
+  const consensusAnswer = trimText(taskRow.final_answer, 16).toLowerCase()
+  const expectedEpoch = normalizeOptionalEpoch(taskRow.epoch)
+
+  if (trimText(annotationRow.task_id, 256) !== taskId) {
+    throw new Error('Annotation task_id does not match manifest task_id')
+  }
+
+  const annotationSampleId = trimText(annotationRow.sample_id, 256)
+  if (annotationSampleId && annotationSampleId !== sampleId) {
+    throw new Error('Annotation sample_id does not match manifest sample_id')
+  }
+
+  const annotationFlipHash = trimText(annotationRow.flip_hash, 512)
+  if (annotationFlipHash && annotationFlipHash !== flipHash) {
+    throw new Error('Annotation flip_hash does not match manifest flip_hash')
+  }
+
+  const annotationConsensusAnswer = trimText(
+    annotationRow.consensus_answer,
+    16
+  ).toLowerCase()
+  if (
+    annotationConsensusAnswer &&
+    consensusAnswer &&
+    annotationConsensusAnswer !== consensusAnswer
+  ) {
+    throw new Error(
+      'Annotation consensus_answer does not match manifest consensus answer'
+    )
+  }
+
+  const annotationEpoch = normalizeOptionalEpoch(annotationRow.epoch)
+  if (
+    annotationEpoch !== null &&
+    expectedEpoch !== null &&
+    annotationEpoch !== expectedEpoch
+  ) {
+    throw new Error('Annotation epoch does not match manifest epoch')
+  }
+}
+
+function assertCompleteHumanTeacherAnnotation({
+  frameCaptions,
+  optionASummary,
+  optionBSummary,
+  textRequired,
+  sequenceMarkersPresent,
+  reportRequired,
+  reportReason,
+  whyAnswer,
+  confidence,
+}) {
+  if (countFilledEntries(frameCaptions) < 4) {
+    throw new Error('frame_captions must contain 4 non-empty entries')
+  }
+
+  if (!optionASummary) {
+    throw new Error('option_a_summary is required')
+  }
+
+  if (!optionBSummary) {
+    throw new Error('option_b_summary is required')
+  }
+
+  if (textRequired === null) {
+    throw new Error('text_required is required')
+  }
+
+  if (sequenceMarkersPresent === null) {
+    throw new Error('sequence_markers_present is required')
+  }
+
+  if (reportRequired === null) {
+    throw new Error('report_required is required')
+  }
+
+  if (reportRequired === true && !reportReason) {
+    throw new Error('report_reason is required when report_required is true')
+  }
+
+  if (!whyAnswer) {
+    throw new Error('why_answer is required')
+  }
+
+  if (confidence === null) {
+    throw new Error('confidence is required')
+  }
+}
+
 function normalizeAnnotation(taskRow, annotationRow) {
+  validateAnnotationTaskBinding(taskRow, annotationRow)
   const frameCaptions = normalizeCaptions(annotationRow.frame_captions)
+  const optionASummary = trimText(annotationRow.option_a_summary)
+  const optionBSummary = trimText(annotationRow.option_b_summary)
+  const textRequired = normalizeBool(annotationRow.text_required)
+  const sequenceMarkersPresent = normalizeBool(
+    annotationRow.sequence_markers_present
+  )
+  const reportRequired = normalizeBool(annotationRow.report_required)
+  const reportReason = trimText(annotationRow.report_reason)
+  const whyAnswer = trimText(annotationRow.why_answer)
+  const confidence = normalizeConfidence(annotationRow.confidence)
+  const finalAnswer = validateFinalAnswer(annotationRow.final_answer)
+
+  assertCompleteHumanTeacherAnnotation({
+    frameCaptions,
+    optionASummary,
+    optionBSummary,
+    textRequired,
+    sequenceMarkersPresent,
+    reportRequired,
+    reportReason,
+    whyAnswer,
+    confidence,
+  })
 
   return {
     task_id: taskRow.task_id,
@@ -264,10 +409,11 @@ function normalizeAnnotation(taskRow, annotationRow) {
     epoch: taskRow.epoch ?? null,
     annotator: trimText(annotationRow.annotator, 256) || null,
     frame_captions: frameCaptions,
-    option_a_summary: trimText(annotationRow.option_a_summary),
-    option_b_summary: trimText(annotationRow.option_b_summary),
+    option_a_summary: optionASummary,
+    option_b_summary: optionBSummary,
     ai_annotation: normalizeAiAnnotation(
-      annotationRow.ai_annotation || annotationRow.aiAnnotation
+      annotationRow.ai_annotation || annotationRow.aiAnnotation,
+      taskRow.task_id
     ),
     ai_annotation_feedback: trimText(
       annotationRow.ai_annotation_feedback ||
@@ -277,15 +423,13 @@ function normalizeAnnotation(taskRow, annotationRow) {
     panel_references: normalizePanelReferences(
       annotationRow.panel_references || annotationRow.panelReferences
     ),
-    text_required: normalizeBool(annotationRow.text_required),
-    sequence_markers_present: normalizeBool(
-      annotationRow.sequence_markers_present
-    ),
-    report_required: normalizeBool(annotationRow.report_required),
-    report_reason: trimText(annotationRow.report_reason),
-    final_answer: validateFinalAnswer(annotationRow.final_answer),
-    why_answer: trimText(annotationRow.why_answer),
-    confidence: normalizeConfidence(annotationRow.confidence),
+    text_required: textRequired,
+    sequence_markers_present: sequenceMarkersPresent,
+    report_required: reportRequired,
+    report_reason: reportReason,
+    final_answer: finalAnswer,
+    why_answer: whyAnswer,
+    confidence,
     consensus_answer: taskRow.final_answer || null,
     consensus_strength: taskRow.consensus_strength || null,
     training_weight:
@@ -343,8 +487,20 @@ async function importHumanTeacherAnnotations({
 
   const normalizedRows = []
   const seenTaskIds = new Set()
+  const duplicateTaskCounts = annotationRows.reduce((counts, annotationRow) => {
+    const taskId = String(
+      annotationRow && annotationRow.task_id ? annotationRow.task_id : ''
+    ).trim()
+
+    if (taskId && taskById.has(taskId)) {
+      counts.set(taskId, (counts.get(taskId) || 0) + 1)
+    }
+
+    return counts
+  }, new Map())
   let unmatchedAnnotations = 0
   let invalidAnnotations = 0
+  let duplicateAnnotations = 0
 
   annotationRows.forEach((annotationRow) => {
     const taskId = String(
@@ -353,6 +509,11 @@ async function importHumanTeacherAnnotations({
 
     if (!taskId || !taskById.has(taskId)) {
       unmatchedAnnotations += 1
+      return
+    }
+
+    if ((duplicateTaskCounts.get(taskId) || 0) > 1) {
+      duplicateAnnotations += 1
       return
     }
 
@@ -379,6 +540,7 @@ async function importHumanTeacherAnnotations({
     missingAnnotations: Math.max(taskRows.length - seenTaskIds.size, 0),
     unmatchedAnnotations,
     invalidAnnotations,
+    duplicateAnnotations,
   }
 
   await fs.ensureDir(path.dirname(resolvedOutputPath))

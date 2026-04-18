@@ -9,8 +9,18 @@ const {
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
+  DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
+  DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
   DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
+  DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
@@ -20,12 +30,21 @@ const {
   getLocalAiEndpointSafety,
   mergeLocalAiSettings,
   normalizeDeveloperLocalTrainingProfile,
+  normalizeDeveloperLocalTrainingThermalMode,
+  normalizeDeveloperLocalBenchmarkSize,
   normalizeDeveloperAiDraftTriggerMode,
+  normalizeDeveloperLocalTrainingEpochs,
+  normalizeDeveloperLocalTrainingBatchSize,
+  normalizeDeveloperLocalTrainingLoraRank,
+  normalizeDeveloperAiDraftContextWindowTokens,
+  normalizeDeveloperAiDraftQuestionWindowChars,
+  normalizeDeveloperAiDraftAnswerWindowTokens,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
   resolveDeveloperLocalTrainingProfileRuntimeModel,
   resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
+  resolveDeveloperLocalTrainingThermalModeCooldowns,
   resolveLocalAiWireRuntimeType,
 } = require('./local-ai-settings')
 
@@ -48,8 +67,32 @@ describe('local-ai settings schema', () => {
     expect(settings.developerLocalTrainingProfile).toBe(
       DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
     )
+    expect(settings.developerLocalTrainingThermalMode).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+    )
+    expect(settings.developerLocalBenchmarkSize).toBe(
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+    )
     expect(settings.developerAiDraftTriggerMode).toBe(
       DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
+    )
+    expect(settings.developerLocalTrainingEpochs).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS
+    )
+    expect(settings.developerLocalTrainingBatchSize).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE
+    )
+    expect(settings.developerLocalTrainingLoraRank).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK
+    )
+    expect(settings.developerAiDraftContextWindowTokens).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS
+    )
+    expect(settings.developerAiDraftQuestionWindowChars).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS
+    )
+    expect(settings.developerAiDraftAnswerWindowTokens).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS
     )
     expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(false)
   })
@@ -249,6 +292,68 @@ describe('local-ai settings schema', () => {
     expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(true)
   })
 
+  it('keeps a persisted developer local training thermal mode', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalTrainingThermalMode: 'cool',
+    })
+
+    expect(settings.developerLocalTrainingThermalMode).toBe('cool')
+    expect(normalizeDeveloperLocalTrainingThermalMode('full_speed')).toBe(
+      'full_speed'
+    )
+    expect(normalizeDeveloperLocalTrainingThermalMode('balanced')).toBe(
+      'balanced'
+    )
+    expect(normalizeDeveloperLocalTrainingThermalMode('cool')).toBe('cool')
+    expect(normalizeDeveloperLocalTrainingThermalMode('unknown')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+    )
+    expect(
+      resolveDeveloperLocalTrainingThermalModeCooldowns('full_speed')
+    ).toMatchObject({
+      mode: 'full_speed',
+      stepCooldownMs: 0,
+      epochCooldownMs: 0,
+    })
+    expect(resolveDeveloperLocalTrainingThermalModeCooldowns('cool')).toEqual(
+      expect.objectContaining(DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG.cool)
+    )
+  })
+
+  it('keeps a persisted developer local benchmark size', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalBenchmarkSize: 200,
+    })
+
+    expect(settings.developerLocalBenchmarkSize).toBe(200)
+    expect(
+      normalizeDeveloperLocalBenchmarkSize(
+        DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS[0]
+      )
+    ).toBe(50)
+    expect(normalizeDeveloperLocalBenchmarkSize('999')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+    )
+  })
+
+  it('keeps persisted local training heaviness controls', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalTrainingEpochs: 3,
+      developerLocalTrainingBatchSize: 2,
+      developerLocalTrainingLoraRank: 6,
+    })
+
+    expect(settings.developerLocalTrainingEpochs).toBe(3)
+    expect(settings.developerLocalTrainingBatchSize).toBe(2)
+    expect(settings.developerLocalTrainingLoraRank).toBe(6)
+    expect(normalizeDeveloperLocalTrainingEpochs('0')).toBe(1)
+    expect(normalizeDeveloperLocalTrainingEpochs('999')).toBe(6)
+    expect(normalizeDeveloperLocalTrainingBatchSize('0')).toBe(1)
+    expect(normalizeDeveloperLocalTrainingBatchSize('999')).toBe(4)
+    expect(normalizeDeveloperLocalTrainingLoraRank('1')).toBe(4)
+    expect(normalizeDeveloperLocalTrainingLoraRank('999')).toBe(16)
+  })
+
   it('keeps a persisted developer AI draft trigger mode', () => {
     const settings = buildLocalAiSettings({
       developerAiDraftTriggerMode: 'automatic',
@@ -260,6 +365,26 @@ describe('local-ai settings schema', () => {
     expect(normalizeDeveloperAiDraftTriggerMode('unknown')).toBe(
       DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
     )
+  })
+
+  it('keeps persisted developer AI draft window sizes', () => {
+    const settings = buildLocalAiSettings({
+      developerAiDraftContextWindowTokens: 16384,
+      developerAiDraftQuestionWindowChars: 1800,
+      developerAiDraftAnswerWindowTokens: 1024,
+    })
+
+    expect(settings.developerAiDraftContextWindowTokens).toBe(16384)
+    expect(settings.developerAiDraftQuestionWindowChars).toBe(1800)
+    expect(settings.developerAiDraftAnswerWindowTokens).toBe(1024)
+    expect(normalizeDeveloperAiDraftContextWindowTokens('0')).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS
+    )
+    expect(normalizeDeveloperAiDraftContextWindowTokens('999999')).toBe(32768)
+    expect(normalizeDeveloperAiDraftQuestionWindowChars('50')).toBe(240)
+    expect(normalizeDeveloperAiDraftQuestionWindowChars('999999')).toBe(4000)
+    expect(normalizeDeveloperAiDraftAnswerWindowTokens('64')).toBe(128)
+    expect(normalizeDeveloperAiDraftAnswerWindowTokens('999999')).toBe(2048)
   })
 
   it('accepts loopback-only Local AI endpoints', () => {

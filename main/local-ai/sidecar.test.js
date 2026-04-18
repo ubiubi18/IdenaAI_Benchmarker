@@ -147,6 +147,82 @@ describe('local-ai sidecar', () => {
     })
   })
 
+  it('sanitizes training payloads before posting them to the local sidecar', async () => {
+    const httpClient = {
+      post: jest.fn(async () => ({
+        data: {
+          ok: true,
+          status: 'ok',
+        },
+      })),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.trainEpoch({
+        baseUrl: 'http://localhost:5000',
+        timeoutMs: 999999,
+        runtimeBackend: 'sidecar-http',
+        runtimeType: 'sidecar',
+        developerHumanTeacherSystemPrompt: 'x'.repeat(9000),
+        input: {
+          developerHumanTeacher: true,
+          sampleName: 'flip-sample',
+          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+          localTrainingProfile: 'invalid-profile',
+          localTrainingThermalMode: 'lava',
+          localTrainingEpochs: 99,
+          localTrainingBatchSize: 0,
+          localTrainingLoraRank: 999,
+          evaluationFlips: 123,
+          comparisonOnly: true,
+          compareOnly: true,
+          noisy: {
+            nested: {
+              value: 'kept but bounded',
+            },
+          },
+        },
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      endpoint: 'http://localhost:5000/train',
+    })
+
+    expect(httpClient.post).toHaveBeenCalledTimes(1)
+    expect(httpClient.post).toHaveBeenCalledWith(
+      'http://localhost:5000/train',
+      expect.objectContaining({
+        runtimeBackend: 'sidecar-http',
+        runtimeType: 'sidecar',
+        developerHumanTeacherSystemPrompt: 'x'.repeat(8000),
+        input: expect.objectContaining({
+          developerHumanTeacher: true,
+          sampleName: 'flip-sample',
+          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+          modelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+          localTrainingProfile: 'strong',
+          localTrainingThermalMode: 'balanced',
+          localTrainingEpochs: 6,
+          localTrainingBatchSize: 1,
+          localTrainingLoraRank: 16,
+          evaluationFlips: 100,
+          comparisonOnly: true,
+          compareOnly: true,
+        }),
+      }),
+      expect.objectContaining({
+        timeout: 90 * 1000,
+      })
+    )
+
+    const postedBody = httpClient.post.mock.calls[0][1]
+
+    expect(postedBody.baseUrl).toBeUndefined()
+    expect(postedBody.timeoutMs).toBeUndefined()
+    expect(postedBody.input.noisy).toBeUndefined()
+  })
+
   it('loads Ollama health from /api/version when runtimeType is ollama', async () => {
     const httpClient = {
       get: jest.fn(async () => ({

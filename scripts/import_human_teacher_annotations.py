@@ -63,9 +63,28 @@ def normalize_confidence(value: Any) -> Optional[float]:
 
 
 def normalize_captions(value: Any) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    return [normalize_text(item, max_length=400) for item in value[:4]]
+    captions = (
+        [normalize_text(item, max_length=400) for item in value[:4]]
+        if isinstance(value, list)
+        else []
+    )
+    while len(captions) < 4:
+        captions.append("")
+    return captions
+
+
+def count_filled_entries(value: List[str]) -> int:
+    return sum(1 for item in value if normalize_text(item))
+
+
+def normalize_optional_epoch(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed
 
 
 def validate_final_answer(value: Any) -> str:
@@ -73,6 +92,79 @@ def validate_final_answer(value: Any) -> str:
     if raw not in VALID_FINAL_ANSWERS:
         raise ValueError(f"Invalid final_answer: {raw or 'empty'}")
     return raw
+
+
+def validate_task_binding(task_row: Dict[str, Any], annotation_row: Dict[str, Any]) -> None:
+    task_id = normalize_text(task_row.get("task_id"), max_length=256)
+    sample_id = normalize_text(
+        task_row.get("sample_id") or task_row.get("task_id"), max_length=256
+    )
+    flip_hash = normalize_text(task_row.get("flip_hash"), max_length=512)
+    consensus_answer = normalize_text(task_row.get("final_answer"), max_length=16).lower()
+    expected_epoch = normalize_optional_epoch(task_row.get("epoch"))
+
+    if normalize_text(annotation_row.get("task_id"), max_length=256) != task_id:
+        raise ValueError("Annotation task_id does not match manifest task_id")
+
+    annotation_sample_id = normalize_text(annotation_row.get("sample_id"), max_length=256)
+    if annotation_sample_id and annotation_sample_id != sample_id:
+        raise ValueError("Annotation sample_id does not match manifest sample_id")
+
+    annotation_flip_hash = normalize_text(annotation_row.get("flip_hash"), max_length=512)
+    if annotation_flip_hash and annotation_flip_hash != flip_hash:
+        raise ValueError("Annotation flip_hash does not match manifest flip_hash")
+
+    annotation_consensus_answer = normalize_text(
+        annotation_row.get("consensus_answer"), max_length=16
+    ).lower()
+    if (
+        annotation_consensus_answer
+        and consensus_answer
+        and annotation_consensus_answer != consensus_answer
+    ):
+        raise ValueError(
+            "Annotation consensus_answer does not match manifest consensus answer"
+        )
+
+    annotation_epoch = normalize_optional_epoch(annotation_row.get("epoch"))
+    if (
+        annotation_epoch is not None
+        and expected_epoch is not None
+        and annotation_epoch != expected_epoch
+    ):
+        raise ValueError("Annotation epoch does not match manifest epoch")
+
+
+def assert_complete_annotation(
+    *,
+    captions: List[str],
+    option_a_summary: str,
+    option_b_summary: str,
+    text_required: Optional[bool],
+    sequence_markers_present: Optional[bool],
+    report_required: Optional[bool],
+    report_reason: str,
+    why_answer: str,
+    confidence: Optional[float],
+) -> None:
+    if count_filled_entries(captions) < 4:
+        raise ValueError("frame_captions must contain 4 non-empty entries")
+    if not option_a_summary:
+        raise ValueError("option_a_summary is required")
+    if not option_b_summary:
+        raise ValueError("option_b_summary is required")
+    if text_required is None:
+        raise ValueError("text_required is required")
+    if sequence_markers_present is None:
+        raise ValueError("sequence_markers_present is required")
+    if report_required is None:
+        raise ValueError("report_required is required")
+    if report_required is True and not report_reason:
+        raise ValueError("report_reason is required when report_required is true")
+    if not why_answer:
+        raise ValueError("why_answer is required")
+    if confidence is None:
+        raise ValueError("confidence is required")
 
 
 def build_reasoning_tags(annotation_row: Dict[str, Any]) -> List[str]:
@@ -166,11 +258,30 @@ def compute_quality_metrics(
 
 
 def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any]) -> Dict[str, Any]:
+    validate_task_binding(task_row, annotation_row)
     captions = normalize_captions(annotation_row.get("frame_captions"))
-    if len(captions) != 4:
-        raise ValueError("frame_captions must contain 4 entries")
-
+    option_a_summary = normalize_text(annotation_row.get("option_a_summary"))
+    option_b_summary = normalize_text(annotation_row.get("option_b_summary"))
+    text_required = normalize_bool(annotation_row.get("text_required"))
+    sequence_markers_present = normalize_bool(
+        annotation_row.get("sequence_markers_present")
+    )
+    report_required = normalize_bool(annotation_row.get("report_required"))
+    report_reason = normalize_text(annotation_row.get("report_reason"))
     final_answer = validate_final_answer(annotation_row.get("final_answer"))
+    why_answer = normalize_text(annotation_row.get("why_answer"))
+    confidence = normalize_confidence(annotation_row.get("confidence"))
+    assert_complete_annotation(
+        captions=captions,
+        option_a_summary=option_a_summary,
+        option_b_summary=option_b_summary,
+        text_required=text_required,
+        sequence_markers_present=sequence_markers_present,
+        report_required=report_required,
+        report_reason=report_reason,
+        why_answer=why_answer,
+        confidence=confidence,
+    )
     quality = compute_quality_metrics(
         task_row=task_row,
         annotation_row=annotation_row,
@@ -185,17 +296,15 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
         "epoch": task_row.get("epoch"),
         "annotator": normalize_text(annotation_row.get("annotator"), max_length=256) or None,
         "frame_captions": captions,
-        "option_a_summary": normalize_text(annotation_row.get("option_a_summary")),
-        "option_b_summary": normalize_text(annotation_row.get("option_b_summary")),
-        "text_required": normalize_bool(annotation_row.get("text_required")),
-        "sequence_markers_present": normalize_bool(
-            annotation_row.get("sequence_markers_present")
-        ),
-        "report_required": normalize_bool(annotation_row.get("report_required")),
-        "report_reason": normalize_text(annotation_row.get("report_reason")),
+        "option_a_summary": option_a_summary,
+        "option_b_summary": option_b_summary,
+        "text_required": text_required,
+        "sequence_markers_present": sequence_markers_present,
+        "report_required": report_required,
+        "report_reason": report_reason,
         "final_answer": final_answer,
-        "why_answer": normalize_text(annotation_row.get("why_answer")),
-        "confidence": normalize_confidence(annotation_row.get("confidence")),
+        "why_answer": why_answer,
+        "confidence": confidence,
         "consensus_answer": task_row.get("final_answer"),
         "consensus_strength": task_row.get("consensus_strength"),
         "training_weight": task_row.get("training_weight"),
@@ -237,12 +346,25 @@ def main() -> int:
     normalized_rows: List[Dict[str, Any]] = []
     unmatched_annotations = 0
     invalid_annotations = 0
+    duplicate_annotations = 0
     seen_task_ids = set()
+    task_counts: Dict[str, int] = {}
+    for row in annotation_rows:
+        task_id = str(row.get("task_id") or "").strip()
+        if task_id and task_id in task_by_id:
+            task_counts[task_id] = task_counts.get(task_id, 0) + 1
+    duplicate_task_ids = {
+        task_id for task_id, count in task_counts.items() if count > 1
+    }
 
     for annotation_row in annotation_rows:
         task_id = str(annotation_row.get("task_id") or "").strip()
         if not task_id or task_id not in task_by_id:
             unmatched_annotations += 1
+            continue
+
+        if task_id in duplicate_task_ids:
+            duplicate_annotations += 1
             continue
 
         try:
@@ -269,6 +391,7 @@ def main() -> int:
         "missing_annotations": max(len(task_rows) - len(seen_task_ids), 0),
         "unmatched_annotations": unmatched_annotations,
         "invalid_annotations": invalid_annotations,
+        "duplicate_annotations": duplicate_annotations,
         "qualityTierCounts": {
             tier: sum(
                 1

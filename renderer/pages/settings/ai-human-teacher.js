@@ -2,7 +2,9 @@
 import React from 'react'
 import {
   Alert,
+  Badge,
   Box,
+  Checkbox,
   Flex,
   Image,
   Modal,
@@ -29,16 +31,33 @@ import {
 } from '../../shared/providers/settings-context'
 import {
   DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
+  DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
+  DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
+  normalizeDeveloperAiDraftAnswerWindowTokens,
+  normalizeDeveloperAiDraftContextWindowTokens,
   normalizeDeveloperAiDraftTriggerMode,
+  normalizeDeveloperAiDraftQuestionWindowChars,
+  normalizeDeveloperLocalTrainingBatchSize,
+  normalizeDeveloperLocalTrainingEpochs,
+  normalizeDeveloperLocalTrainingLoraRank,
+  normalizeDeveloperLocalBenchmarkSize,
   normalizeDeveloperLocalTrainingProfile,
+  normalizeDeveloperLocalTrainingThermalMode,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeModel,
   resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
+  resolveDeveloperLocalTrainingThermalModeCooldowns,
 } from '../../shared/utils/local-ai-settings'
 import {
-  Checkbox,
   FormLabel,
   Input,
   Select,
@@ -57,9 +76,115 @@ function describeDeveloperLocalTrainingProfile(profile, t) {
   return {
     label: t('Fixed local Qwen lane'),
     detail: t(
-      'idena.vibe now uses one local lane here only: qwen3.5:9b at runtime and mlx-community/Qwen3.5-9B-MLX-4bit for local training.'
+      'IdenaAI now uses one local lane here only: qwen3.5:9b at runtime and mlx-community/Qwen3.5-9B-MLX-4bit for local training.'
     ),
   }
+}
+
+function describeDeveloperLocalTrainingThermalMode(mode, t) {
+  const {
+    mode: normalizedMode,
+    stepCooldownMs,
+    epochCooldownMs,
+  } = resolveDeveloperLocalTrainingThermalModeCooldowns(mode)
+
+  switch (normalizedMode) {
+    case 'full_speed':
+      return {
+        mode: normalizedMode,
+        label: t('Full speed'),
+        detail: t(
+          'Runs each local training step without extra cooling pauses. Fastest, hottest option.'
+        ),
+        stepCooldownMs,
+        epochCooldownMs,
+      }
+    case 'cool':
+      return {
+        mode: normalizedMode,
+        label: t('Cool and slower'),
+        detail: t(
+          'Adds longer cooling gaps between training steps and epochs to lower sustained heat on this Mac.'
+        ),
+        stepCooldownMs,
+        epochCooldownMs,
+      }
+    case 'balanced':
+    default:
+      return {
+        mode: 'balanced',
+        label: t('Balanced cooling'),
+        detail: t(
+          'Adds short pauses between local training steps so the MacBook runs cooler while still finishing in reasonable time.'
+        ),
+        stepCooldownMs,
+        epochCooldownMs,
+      }
+  }
+}
+
+function describeDeveloperLocalBenchmarkSizeOption(size, t) {
+  switch (Number(size)) {
+    case 50:
+      return t('50 flips (quickest)')
+    case 200:
+      return t('200 flips (stronger check, slower)')
+    case 100:
+    default:
+      return t('100 flips (balanced)')
+  }
+}
+
+function describeDeveloperAiDraftWindowTone({
+  contextWindowTokens,
+  questionWindowChars,
+  answerWindowTokens,
+}) {
+  if (
+    contextWindowTokens >= 16384 ||
+    questionWindowChars >= 2400 ||
+    answerWindowTokens >= 1024
+  ) {
+    return {
+      tone: 'orange',
+    }
+  }
+
+  if (
+    contextWindowTokens > 0 &&
+    contextWindowTokens <= 4096 &&
+    answerWindowTokens <= 384
+  ) {
+    return {
+      tone: 'blue',
+    }
+  }
+
+  return {
+    tone: 'green',
+  }
+}
+
+function describeDeveloperLocalTrainingBudgetTone({
+  batchSize,
+  epochs,
+  loraRank,
+  thermalMode,
+}) {
+  if (
+    batchSize >= 2 ||
+    epochs >= 3 ||
+    loraRank >= 12 ||
+    thermalMode === 'full_speed'
+  ) {
+    return {tone: 'orange'}
+  }
+
+  if (epochs <= 1 && loraRank <= 6 && thermalMode === 'cool') {
+    return {tone: 'blue'}
+  }
+
+  return {tone: 'green'}
 }
 
 function createAiDraftRuntimeResolution(overrides = {}) {
@@ -193,6 +318,7 @@ function normalizePanelReferences(value) {
 
 function createEmptyAiAnnotationDraft() {
   return {
+    task_id: '',
     generated_at: '',
     runtime_backend: '',
     runtime_type: '',
@@ -292,6 +418,9 @@ function normalizeAiAnnotationDraft(annotation = {}) {
     .toLowerCase()
   const normalized = {
     ...createEmptyAiAnnotationDraft(),
+    task_id: String(next.task_id ?? next.taskId ?? '')
+      .trim()
+      .slice(0, 256),
     generated_at: String(next.generated_at ?? next.generatedAt ?? '')
       .trim()
       .slice(0, 64),
@@ -368,6 +497,15 @@ function normalizeAiAnnotationDraft(annotation = {}) {
   return hasAiAnnotationContent(normalized) ? normalized : null
 }
 
+function isAiAnnotationBoundToTask(aiAnnotation, task = {}) {
+  const taskId = String(task?.taskId || task?.task_id || '').trim()
+  const annotationTaskId = String(
+    aiAnnotation?.task_id ?? aiAnnotation?.taskId ?? ''
+  ).trim()
+
+  return Boolean(taskId && annotationTaskId && taskId === annotationTaskId)
+}
+
 function hasAiAnnotationContent(annotation = {}) {
   const next =
     annotation && typeof annotation === 'object' && !Array.isArray(annotation)
@@ -417,11 +555,11 @@ function formatErrorMessage(error) {
       message
     )
   ) {
-    return 'This human-teacher feature is not available in the running main process yet. Fully restart idena.vibe and try again.'
+    return 'This human-teacher feature is not available in the running main process yet. Fully restart IdenaAI and try again.'
   }
 
   if (/Local AI human-teacher bridge is unavailable/i.test(message)) {
-    return 'The human-teacher bridge is unavailable in this build. Fully restart idena.vibe and try again.'
+    return 'The human-teacher bridge is unavailable in this build. Fully restart IdenaAI and try again.'
   }
 
   if (
@@ -659,14 +797,57 @@ function hasDraftContent(annotation = {}) {
   )
 }
 
-function isCompleteDraft(annotation = {}) {
+function getAnnotationCompletionState(annotation = {}) {
   const next = normalizeAnnotationDraft(annotation)
-  return Boolean(
-    next.final_answer.trim() &&
-      next.why_answer.trim() &&
-      next.confidence !== '' &&
-      (next.report_required !== true || next.report_reason.trim())
-  )
+  const filledFrameCaptions = next.frame_captions.filter((item) =>
+    String(item || '').trim()
+  ).length
+  const hasDecision = Boolean(next.final_answer.trim())
+  const hasReason = Boolean(next.why_answer.trim())
+  const hasTextDecision = next.text_required !== null
+  const hasSequenceDecision = next.sequence_markers_present !== null
+  const hasReportDecision = next.report_required !== null
+  const hasReportReason =
+    next.report_required !== true || Boolean(next.report_reason.trim())
+  const hasConfidence = next.confidence !== ''
+  const hasOptionASummary = Boolean(next.option_a_summary.trim())
+  const hasOptionBSummary = Boolean(next.option_b_summary.trim())
+  const hasStorySummaries = hasOptionASummary && hasOptionBSummary
+  const hasFrameCaptions = filledFrameCaptions === 4
+  const checks = [
+    hasDecision,
+    hasReason,
+    hasTextDecision,
+    hasSequenceDecision,
+    hasReportDecision && hasReportReason,
+    hasConfidence,
+    hasFrameCaptions,
+    hasStorySummaries,
+  ]
+
+  return {
+    filledFrameCaptions,
+    hasDecision,
+    hasReason,
+    hasTextDecision,
+    hasSequenceDecision,
+    hasReportDecision,
+    hasReportReason,
+    hasConfidence,
+    hasOptionASummary,
+    hasOptionBSummary,
+    hasStorySummaries,
+    hasFrameCaptions,
+    completedChecks: checks.filter(Boolean).length,
+    totalChecks: checks.length,
+    remainingChecks: checks.filter((item) => !item).length,
+    requiredDetailComplete: hasFrameCaptions && hasStorySummaries,
+    isComplete: checks.every(Boolean),
+  }
+}
+
+function isCompleteDraft(annotation = {}) {
+  return getAnnotationCompletionState(annotation).isComplete
 }
 
 function normalizePanelOrder(order = [], panelCount = 0) {
@@ -759,9 +940,10 @@ function buildAiAnnotationUserPrompt() {
   ].join(' ')
 }
 
-function buildStoredAiAnnotation(aiAnnotation, result = {}) {
+function buildStoredAiAnnotation(aiAnnotation, result = {}, task = {}) {
   const normalized = normalizeAiAnnotationDraft({
     ...aiAnnotation,
+    task_id: String(task?.taskId || task?.task_id || '').trim(),
     generated_at: new Date().toISOString(),
     runtime_backend: result.runtimeBackend || result.runtime_backend || '',
     runtime_type: result.runtimeType || result.runtime_type || '',
@@ -789,6 +971,83 @@ function applyAiAnnotationToDraft(currentDraft, aiAnnotation) {
     report_reason: aiAnnotation.report_reason || '',
     option_a_summary: aiAnnotation.option_a_summary || '',
     option_b_summary: aiAnnotation.option_b_summary || '',
+  })
+}
+
+function looksLikePureAiPrefillDraft(draft = {}, aiAnnotation = null) {
+  if (!hasAiAnnotationContent(aiAnnotation)) {
+    return false
+  }
+
+  const normalizedDraft = normalizeAnnotationDraft(draft)
+  const normalizedAiAnnotation = normalizeAiAnnotationDraft(aiAnnotation)
+
+  if (!normalizedAiAnnotation) {
+    return false
+  }
+
+  return Boolean(
+    !String(normalizedDraft.annotator || '').trim() &&
+      !normalizedDraft.frame_captions.some((item) =>
+        String(item || '').trim()
+      ) &&
+      !normalizedDraft.panel_references.some((reference) =>
+        hasPanelReferenceContent(reference)
+      ) &&
+      String(normalizedDraft.option_a_summary || '').trim() ===
+        String(normalizedAiAnnotation.option_a_summary || '').trim() &&
+      String(normalizedDraft.option_b_summary || '').trim() ===
+        String(normalizedAiAnnotation.option_b_summary || '').trim() &&
+      String(normalizedDraft.final_answer || '').trim() ===
+        String(normalizedAiAnnotation.final_answer || '').trim() &&
+      String(normalizedDraft.why_answer || '').trim() ===
+        String(normalizedAiAnnotation.why_answer || '').trim() &&
+      String(normalizedDraft.confidence || '').trim() ===
+        String(normalizedAiAnnotation.confidence || '').trim() &&
+      normalizedDraft.text_required === normalizedAiAnnotation.text_required &&
+      normalizedDraft.sequence_markers_present ===
+        normalizedAiAnnotation.sequence_markers_present &&
+      normalizedDraft.report_required ===
+        normalizedAiAnnotation.report_required &&
+      String(normalizedDraft.report_reason || '').trim() ===
+        String(normalizedAiAnnotation.report_reason || '').trim()
+  )
+}
+
+function sanitizeLoadedAnnotationDraftForTask(task = {}, annotation = {}) {
+  const normalizedDraft = normalizeAnnotationDraft(annotation)
+
+  if (!hasAiAnnotationContent(normalizedDraft.ai_annotation)) {
+    return normalizedDraft
+  }
+
+  if (isAiAnnotationBoundToTask(normalizedDraft.ai_annotation, task)) {
+    return normalizedDraft
+  }
+
+  if (
+    looksLikePureAiPrefillDraft(normalizedDraft, normalizedDraft.ai_annotation)
+  ) {
+    return normalizeAnnotationDraft({
+      ...normalizedDraft,
+      ai_annotation: null,
+      ai_annotation_feedback: '',
+      option_a_summary: '',
+      option_b_summary: '',
+      text_required: null,
+      sequence_markers_present: null,
+      report_required: null,
+      report_reason: '',
+      final_answer: '',
+      why_answer: '',
+      confidence: '',
+    })
+  }
+
+  return normalizeAnnotationDraft({
+    ...normalizedDraft,
+    ai_annotation: null,
+    ai_annotation_feedback: '',
   })
 }
 
@@ -840,13 +1099,16 @@ function getDraftHelperText(annotation, t) {
   }
 
   const nextAnnotation = annotation || {}
+  const completion = getAnnotationCompletionState(nextAnnotation)
 
-  if (isCompleteDraft(nextAnnotation)) {
+  if (completion.isComplete) {
     return t('This flip looks complete.')
   }
 
   if (hasDraftContent(nextAnnotation)) {
-    return t('This flip has unsaved or incomplete draft content.')
+    return t('This flip still needs {{count}} required item(s).', {
+      count: completion.remainingChecks,
+    })
   }
 
   return t('No annotation content yet.')
@@ -950,6 +1212,1076 @@ function formatSuccessRate(value) {
   return `${(parsed * 100).toFixed(1)}%`
 }
 
+function formatPercentMetric(value, digits = 0) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 'n/a'
+  }
+
+  return `${parsed.toFixed(digits)}%`
+}
+
+function formatGiB(value) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 'n/a'
+  }
+
+  return `${parsed.toFixed(1)} GiB`
+}
+
+function formatMinutes(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 'n/a'
+  }
+
+  if (parsed < 60) {
+    return `${parsed}m`
+  }
+
+  const hours = Math.floor(parsed / 60)
+  const minutes = parsed % 60
+
+  return `${hours}h ${minutes}m`
+}
+
+function getTelemetryToneProps(tone = 'gray') {
+  switch (tone) {
+    case 'red':
+      return {
+        borderColor: 'red.100',
+        bg: 'red.50',
+      }
+    case 'orange':
+      return {
+        borderColor: 'orange.100',
+        bg: 'orange.50',
+      }
+    case 'yellow':
+      return {
+        borderColor: 'yellow.100',
+        bg: 'yellow.50',
+      }
+    case 'green':
+      return {
+        borderColor: 'green.100',
+        bg: 'green.50',
+      }
+    case 'blue':
+      return {
+        borderColor: 'blue.100',
+        bg: 'blue.50',
+      }
+    case 'purple':
+      return {
+        borderColor: 'purple.100',
+        bg: 'purple.50',
+      }
+    case 'gray':
+    default:
+      return {
+        borderColor: 'gray.100',
+        bg: 'gray.50',
+      }
+  }
+}
+
+function normalizeDeveloperTrainingReadiness(telemetry, t) {
+  const source =
+    telemetry &&
+    typeof telemetry.trainingReadiness === 'object' &&
+    !Array.isArray(telemetry.trainingReadiness)
+      ? telemetry.trainingReadiness
+      : null
+
+  if (!source) {
+    return {
+      status: 'unknown',
+      tone: 'gray',
+      label: t('Telemetry unavailable'),
+      message: t(
+        'The app cannot verify local heat, power, or memory conditions yet.'
+      ),
+      requiresExplicitOverride: false,
+      canStartWithoutOverride: true,
+    }
+  }
+
+  return {
+    status: String(source.status || 'unknown').trim(),
+    tone: String(source.tone || 'gray').trim(),
+    label: String(source.label || '').trim() || t('Telemetry unavailable'),
+    message:
+      String(source.message || '').trim() ||
+      t('The app cannot verify local heat, power, or memory conditions yet.'),
+    requiresExplicitOverride: source.requiresExplicitOverride === true,
+    canStartWithoutOverride: source.canStartWithoutOverride !== false,
+  }
+}
+
+function getTrainingReadinessBadgeScheme(tone = 'gray') {
+  switch (tone) {
+    case 'red':
+      return 'red'
+    case 'orange':
+      return 'orange'
+    case 'yellow':
+      return 'yellow'
+    case 'green':
+      return 'green'
+    case 'blue':
+      return 'blue'
+    default:
+      return 'gray'
+  }
+}
+
+function describeDeveloperThermalTelemetry(system, t) {
+  const thermal =
+    system &&
+    typeof system.thermal === 'object' &&
+    !Array.isArray(system.thermal)
+      ? system.thermal
+      : {}
+  const pressure = String(thermal.pressure || 'unavailable').trim()
+  const cpuSpeedLimit = Number(thermal.cpuSpeedLimit)
+  const schedulerLimit = Number(thermal.schedulerLimit)
+  const thermalLevel = Number(thermal.thermalLevel)
+  const detailParts = []
+
+  if (Number.isFinite(cpuSpeedLimit)) {
+    detailParts.push(
+      t('CPU speed limit {{value}}%', {
+        value: cpuSpeedLimit,
+      })
+    )
+  }
+
+  if (Number.isFinite(schedulerLimit)) {
+    detailParts.push(
+      t('Scheduler limit {{value}}%', {
+        value: schedulerLimit,
+      })
+    )
+  }
+
+  if (Number.isFinite(thermalLevel)) {
+    detailParts.push(
+      t('Thermal level {{value}}', {
+        value: thermalLevel,
+      })
+    )
+  }
+
+  if (!thermal.available) {
+    return {
+      title: t('Thermal pressure'),
+      value: t('Unavailable'),
+      detail: t('macOS thermal telemetry has not been reported yet.'),
+      tone: 'gray',
+    }
+  }
+
+  if (pressure === 'limited') {
+    return {
+      title: t('Thermal pressure'),
+      value: t('Limited'),
+      detail:
+        detailParts.join(' · ') ||
+        t('macOS is already applying heat-related performance limits.'),
+      tone: 'red',
+    }
+  }
+
+  if (pressure === 'elevated') {
+    return {
+      title: t('Thermal pressure'),
+      value: t('Elevated'),
+      detail:
+        detailParts.join(' · ') ||
+        t(
+          'macOS has recorded thermal warnings even without an active speed cap.'
+        ),
+      tone: 'orange',
+    }
+  }
+
+  return {
+    title: t('Thermal pressure'),
+    value: t('Nominal'),
+    detail:
+      detailParts.join(' · ') ||
+      t('No active thermal throttling is reported right now.'),
+    tone: 'green',
+  }
+}
+
+function describeDeveloperComputeTelemetry(system, t) {
+  const cpuUsagePercent = Number(system?.cpuUsagePercent)
+  const loadAveragePerCore1m = Number(system?.loadAveragePerCore1m)
+  const loadAverage5m = Number(system?.loadAverage5m)
+  const cpuCoreCount = Number(system?.cpuCoreCount)
+  let tone = 'gray'
+
+  if (
+    (Number.isFinite(cpuUsagePercent) && cpuUsagePercent >= 85) ||
+    (Number.isFinite(loadAveragePerCore1m) && loadAveragePerCore1m >= 1)
+  ) {
+    tone = 'red'
+  } else if (
+    (Number.isFinite(cpuUsagePercent) && cpuUsagePercent >= 65) ||
+    (Number.isFinite(loadAveragePerCore1m) && loadAveragePerCore1m >= 0.75)
+  ) {
+    tone = 'orange'
+  } else if (
+    (Number.isFinite(cpuUsagePercent) && cpuUsagePercent >= 35) ||
+    (Number.isFinite(loadAveragePerCore1m) && loadAveragePerCore1m >= 0.4)
+  ) {
+    tone = 'yellow'
+  } else if (
+    Number.isFinite(cpuUsagePercent) ||
+    Number.isFinite(loadAveragePerCore1m)
+  ) {
+    tone = 'green'
+  }
+
+  const detailParts = []
+
+  if (Number.isFinite(loadAveragePerCore1m) && loadAveragePerCore1m >= 0) {
+    detailParts.push(
+      t('1m load/core {{value}}', {
+        value: loadAveragePerCore1m.toFixed(2),
+      })
+    )
+  }
+
+  if (Number.isFinite(loadAverage5m) && loadAverage5m >= 0) {
+    detailParts.push(
+      t('5m load {{value}}', {
+        value: loadAverage5m.toFixed(2),
+      })
+    )
+  }
+
+  if (Number.isFinite(cpuCoreCount) && cpuCoreCount > 0) {
+    detailParts.push(
+      t('{{count}} cores', {
+        count: cpuCoreCount,
+      })
+    )
+  }
+
+  let value = t('Unavailable')
+
+  if (Number.isFinite(cpuUsagePercent)) {
+    value = t('{{value}} CPU', {
+      value: formatPercentMetric(cpuUsagePercent),
+    })
+  } else if (Number.isFinite(loadAveragePerCore1m)) {
+    value = t('{{value}} load/core', {
+      value: loadAveragePerCore1m.toFixed(2),
+    })
+  }
+
+  return {
+    title: t('Compute load'),
+    value,
+    detail:
+      detailParts.join(' · ') ||
+      t('CPU telemetry will appear after the next sample.'),
+    tone,
+  }
+}
+
+function describeDeveloperMemoryTelemetry(system, t) {
+  const memoryUsagePercent = Number(system?.memoryUsagePercent)
+  const memoryUsedGiB = formatGiB(system?.memoryUsedGiB)
+  const memoryTotalGiB = formatGiB(system?.memoryTotalGiB)
+  const appMemoryRssMb = Number(system?.appMemoryRssMb)
+  let tone = 'gray'
+
+  if (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 85) {
+    tone = 'red'
+  } else if (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 75) {
+    tone = 'orange'
+  } else if (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 60) {
+    tone = 'yellow'
+  } else if (Number.isFinite(memoryUsagePercent)) {
+    tone = 'blue'
+  }
+
+  return {
+    title: t('Memory pressure'),
+    value: Number.isFinite(memoryUsagePercent)
+      ? t('{{value}} used', {
+          value: formatPercentMetric(memoryUsagePercent),
+        })
+      : memoryUsedGiB,
+    detail: t('{{used}} of {{total}} system · app RSS {{rss}} MB', {
+      used: memoryUsedGiB,
+      total: memoryTotalGiB,
+      rss: Number.isFinite(appMemoryRssMb) ? appMemoryRssMb : 'n/a',
+    }),
+    tone,
+  }
+}
+
+function describeDeveloperPowerTelemetry(system, t) {
+  const battery =
+    system &&
+    typeof system.battery === 'object' &&
+    !Array.isArray(system.battery)
+      ? system.battery
+      : {}
+  const percent = Number(battery.percent)
+  let tone = 'gray'
+
+  if (battery.available && battery.isCharging === false) {
+    if (Number.isFinite(percent) && percent < 20) {
+      tone = 'red'
+    } else if (Number.isFinite(percent) && percent < 50) {
+      tone = 'orange'
+    } else {
+      tone = 'yellow'
+    }
+  } else if (battery.available && battery.isCharging === true) {
+    tone = 'green'
+  }
+
+  const detailParts = []
+
+  if (battery.state) {
+    detailParts.push(String(battery.state).trim())
+  }
+
+  if (
+    Number.isFinite(battery.timeRemainingMinutes) &&
+    battery.timeRemainingMinutes >= 0
+  ) {
+    detailParts.push(
+      t('{{value}} remaining', {
+        value: formatMinutes(battery.timeRemainingMinutes),
+      })
+    )
+  }
+
+  if (!detailParts.length && battery.source) {
+    detailParts.push(String(battery.source).trim())
+  }
+
+  if (!battery.available) {
+    return {
+      title: t('Power source'),
+      value: t('Unavailable'),
+      detail: t('Battery telemetry is not exposed on this system.'),
+      tone,
+    }
+  }
+
+  const batteryPercentLabel = Number.isFinite(percent)
+    ? `${percent}%`
+    : t('Battery')
+  let value = batteryPercentLabel
+
+  if (battery.isCharging === true) {
+    value = t('{{value}} charging', {
+      value: batteryPercentLabel,
+    })
+  } else if (battery.isCharging === false) {
+    value = t('{{value}} battery', {
+      value: batteryPercentLabel,
+    })
+  }
+
+  return {
+    title: t('Power source'),
+    value,
+    detail:
+      detailParts.join(' · ') ||
+      t('Long local runs on battery increase drain and battery wear.'),
+    tone,
+  }
+}
+
+function describeDeveloperTelemetryNotice({
+  telemetry,
+  thermalSummary,
+  isBusy,
+  t,
+}) {
+  const system =
+    telemetry &&
+    typeof telemetry.system === 'object' &&
+    !Array.isArray(telemetry.system)
+      ? telemetry.system
+      : {}
+  const thermal =
+    system &&
+    typeof system.thermal === 'object' &&
+    !Array.isArray(system.thermal)
+      ? system.thermal
+      : {}
+  const battery =
+    system &&
+    typeof system.battery === 'object' &&
+    !Array.isArray(system.battery)
+      ? system.battery
+      : {}
+  const cpuSpeedLimit = Number(thermal.cpuSpeedLimit)
+  const batteryPercent = Number(battery.percent)
+  const cpuUsagePercent = Number(system.cpuUsagePercent)
+  const memoryUsagePercent = Number(system.memoryUsagePercent)
+
+  if (String(thermal.pressure || '').trim() === 'limited') {
+    return {
+      status: 'warning',
+      message: Number.isFinite(cpuSpeedLimit)
+        ? t(
+            'macOS is already limiting CPU speed to {{value}}%. Another local run will be slower and add more heat.',
+            {
+              value: cpuSpeedLimit,
+            }
+          )
+        : t(
+            'macOS is already thermally limiting this machine. Another local run will compete with that heat cap.'
+          ),
+    }
+  }
+
+  if (battery.available && battery.isCharging === false) {
+    return {
+      status: 'warning',
+      message: Number.isFinite(batteryPercent)
+        ? t(
+            'This Mac is on battery at {{value}}. Long local runs trade remaining runtime and battery wear for convenience.',
+            {
+              value: `${batteryPercent}%`,
+            }
+          )
+        : t(
+            'This Mac is on battery. Long local runs trade remaining runtime and battery wear for convenience.'
+          ),
+    }
+  }
+
+  if (
+    Number.isFinite(cpuUsagePercent) &&
+    cpuUsagePercent >= 80 &&
+    Number.isFinite(memoryUsagePercent) &&
+    memoryUsagePercent >= 80
+  ) {
+    return {
+      status: 'info',
+      message: t(
+        'This machine is already busy on both CPU and memory, so local training will compete harder with the rest of the desktop.'
+      ),
+    }
+  }
+
+  return {
+    status: 'info',
+    message: isBusy
+      ? t(
+          'These numbers refresh live while local training or the holdout comparison is running.'
+        )
+      : t(
+          '{{label}} keeps this pilot path slower but cooler by inserting pauses between steps and epochs.',
+          {
+            label: thermalSummary?.label || t('Balanced cooling'),
+          }
+        ),
+  }
+}
+
+function LocalTrainingImpactStatCard({title, value, detail, tone = 'gray'}) {
+  const toneProps = getTelemetryToneProps(tone)
+
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor={toneProps.borderColor}
+      borderRadius="md"
+      px={3}
+      py={3}
+      bg={toneProps.bg}
+    >
+      <Stack spacing={1}>
+        <Text color="muted" fontSize="xs">
+          {title}
+        </Text>
+        <Text fontWeight={700}>{value}</Text>
+        <Text color="muted" fontSize="xs">
+          {detail}
+        </Text>
+      </Stack>
+    </Box>
+  )
+}
+
+function getLocalTrainingJourneyToneStyles(tone) {
+  switch (tone) {
+    case 'green':
+      return {
+        borderColor: 'green.100',
+        bg: 'green.50',
+        badgeScheme: 'green',
+      }
+    case 'orange':
+      return {
+        borderColor: 'orange.100',
+        bg: 'orange.50',
+        badgeScheme: 'orange',
+      }
+    case 'red':
+      return {
+        borderColor: 'red.100',
+        bg: 'red.50',
+        badgeScheme: 'red',
+      }
+    case 'purple':
+      return {
+        borderColor: 'purple.100',
+        bg: 'purple.50',
+        badgeScheme: 'purple',
+      }
+    case 'blue':
+    default:
+      return {
+        borderColor: 'blue.100',
+        bg: 'blue.50',
+        badgeScheme: 'blue',
+      }
+  }
+}
+
+function LocalTrainingJourneyPanel({
+  title,
+  subtitle,
+  chunkCompletedCount = 0,
+  chunkTotalCount = 0,
+  pendingCount = 0,
+  annotatedCount = 0,
+  trainedCount = 0,
+  latestComparison = null,
+  benchmarkSize = 100,
+  canRunLocalTraining = true,
+  isTrainingActive = false,
+  isComparisonActive = false,
+  lastTraining = null,
+  totalUpdates = 0,
+  coolingFloorMs = 0,
+  epochs = 1,
+  batchSize = 1,
+  loraRank = 10,
+  t,
+}) {
+  const chunkProgressValue =
+    chunkTotalCount > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              (chunkCompletedCount / Math.max(1, chunkTotalCount)) * 100
+            )
+          )
+        )
+      : 0
+  const chunkIsComplete =
+    chunkTotalCount > 0 && chunkCompletedCount >= chunkTotalCount
+  const hasWorkToTeach =
+    chunkIsComplete ||
+    pendingCount > 0 ||
+    annotatedCount > 0 ||
+    trainedCount > 0
+  const lastTrainingStatus = String(lastTraining?.status || '').trim()
+  const latestAccuracy =
+    latestComparison && typeof latestComparison.accuracy === 'number'
+      ? formatSuccessRate(latestComparison.accuracy)
+      : null
+  const latestEvaluatedAt = latestComparison?.evaluatedAt
+    ? formatTimestamp(latestComparison.evaluatedAt)
+    : null
+
+  let overallBadgeLabel = t('Start with 5 flips')
+  let overallBadgeScheme = 'blue'
+
+  if (!canRunLocalTraining) {
+    overallBadgeLabel = t('Training backend missing')
+    overallBadgeScheme = 'orange'
+  } else if (isTrainingActive) {
+    overallBadgeLabel = t('Training now')
+    overallBadgeScheme = 'blue'
+  } else if (isComparisonActive) {
+    overallBadgeLabel = t('Testing now')
+    overallBadgeScheme = 'purple'
+  } else if (chunkTotalCount > 0 && !chunkIsComplete) {
+    overallBadgeLabel = t('Finish this 5-flip chunk')
+    overallBadgeScheme = 'blue'
+  } else if (chunkIsComplete || pendingCount > 0) {
+    overallBadgeLabel = t('Ready to train')
+    overallBadgeScheme = 'orange'
+  } else if (latestComparison) {
+    overallBadgeLabel = t('Last run checked')
+    overallBadgeScheme = 'green'
+  } else if (trainedCount > 0) {
+    overallBadgeLabel = t('Already trained')
+    overallBadgeScheme = 'green'
+  }
+
+  let teachStep = {
+    title: t('1. Teach 5 flips'),
+    statusLabel: t('Start here'),
+    tone: 'blue',
+    detail: t('Open the next 5 flips and answer them one by one.'),
+    footnote: t('Nothing trains yet. You are only teaching.'),
+    progressValue: null,
+  }
+
+  if (chunkTotalCount > 0) {
+    teachStep = chunkIsComplete
+      ? {
+          title: t('1. Teach 5 flips'),
+          statusLabel: t('Done'),
+          tone: 'green',
+          detail: t('All {{count}} flips in this chunk are finished.', {
+            count: chunkTotalCount,
+          }),
+          footnote: t('This chunk is ready for local training.'),
+          progressValue: 100,
+        }
+      : {
+          title: t('1. Teach 5 flips'),
+          statusLabel: t('Now'),
+          tone: 'blue',
+          detail: t('{{done}} of {{total}} flips in this chunk are finished.', {
+            done: chunkCompletedCount,
+            total: chunkTotalCount,
+          }),
+          footnote: t('Finish all 5 before the training button matters.'),
+          progressValue: chunkProgressValue,
+        }
+  } else if (hasWorkToTeach) {
+    teachStep = {
+      title: t('1. Teach 5 flips'),
+      statusLabel: t('Done before'),
+      tone: 'green',
+      detail: t(
+        'Earlier chunks are already saved. Open another 5 flips when you want to teach more.'
+      ),
+      footnote: t('Saved answers so far: {{count}}.', {
+        count: formatCountMetric(annotatedCount),
+      }),
+      progressValue: null,
+    }
+  }
+
+  let trainingStep = {
+    title: t('2. Let your computer practice'),
+    statusLabel: t('Waiting'),
+    tone: 'blue',
+    detail: t('Training starts after the first full 5-flip chunk is ready.'),
+    footnote: t(
+      'This run uses {{updates}} small update rounds with at least {{cooling}} of planned cooling pauses.',
+      {
+        updates: formatCountMetric(totalUpdates),
+        cooling: formatDurationMs(coolingFloorMs),
+      }
+    ),
+  }
+
+  if (!canRunLocalTraining) {
+    trainingStep = {
+      title: t('2. Let your computer practice'),
+      statusLabel: t('Unavailable'),
+      tone: 'orange',
+      detail: t(
+        'This desktop still needs a working local training backend before it can run the pilot here.'
+      ),
+      footnote: t(
+        'Your saved flips stay local and can still be exported later.'
+      ),
+    }
+  } else if (isTrainingActive) {
+    trainingStep = {
+      title: t('2. Let your computer practice'),
+      statusLabel: t('Now'),
+      tone: 'blue',
+      detail: t(
+        'This local run is practicing on the saved chunk right now. The active model changes only if the whole run finishes successfully.'
+      ),
+      footnote: t(
+        '{{updates}} update rounds · {{epochs}} epoch passes · batch {{batch}} · rank {{rank}} · minimum cooling {{cooling}}',
+        {
+          updates: formatCountMetric(totalUpdates),
+          epochs: formatCountMetric(epochs),
+          batch: formatCountMetric(batchSize),
+          rank: formatCountMetric(loraRank),
+          cooling: formatDurationMs(coolingFloorMs),
+        }
+      ),
+    }
+  } else if (lastTrainingStatus === 'failed' && pendingCount > 0) {
+    trainingStep = {
+      title: t('2. Let your computer practice'),
+      statusLabel: t('Needs retry'),
+      tone: 'red',
+      detail: t(
+        'The last training try stopped, so your newest saved flips are still waiting to be learned.'
+      ),
+      footnote: t('{{count}} saved flips are still waiting.', {
+        count: formatCountMetric(pendingCount),
+      }),
+    }
+  } else if (chunkIsComplete || pendingCount > 0) {
+    trainingStep = {
+      title: t('2. Let your computer practice'),
+      statusLabel: t('Next'),
+      tone: 'orange',
+      detail: t(
+        'This run is ready. When you start it, the computer practices on the saved chunk before the app checks the result.'
+      ),
+      footnote: t(
+        '{{updates}} update rounds · {{epochs}} epoch passes · batch {{batch}} · rank {{rank}} · minimum cooling {{cooling}}',
+        {
+          updates: formatCountMetric(totalUpdates),
+          epochs: formatCountMetric(epochs),
+          batch: formatCountMetric(batchSize),
+          rank: formatCountMetric(loraRank),
+          cooling: formatDurationMs(coolingFloorMs),
+        }
+      ),
+    }
+  } else if (trainedCount > 0) {
+    trainingStep = {
+      title: t('2. Let your computer practice'),
+      statusLabel: t('Done'),
+      tone: 'green',
+      detail: t(
+        '{{count}} flips are already inside the active local model from earlier runs.',
+        {
+          count: formatCountMetric(trainedCount),
+        }
+      ),
+      footnote: t('New saved flips will wait here until the next run.'),
+    }
+  }
+
+  let testStep = {
+    title: t('3. Check if it got better'),
+    statusLabel: t('Waiting'),
+    tone: 'blue',
+    detail: t('A test score appears after the first trained run.'),
+    footnote: t(
+      'The app uses {{count}} unseen flips here, so it does not reuse the teaching flips.',
+      {
+        count: formatCountMetric(benchmarkSize),
+      }
+    ),
+  }
+
+  if (isComparisonActive) {
+    testStep = {
+      title: t('3. Check if it got better'),
+      statusLabel: t('Now'),
+      tone: 'purple',
+      detail: t(
+        'The app is testing the model on {{count}} unseen flips right now.',
+        {
+          count: formatCountMetric(benchmarkSize),
+        }
+      ),
+      footnote: t(
+        'This checks progress without reusing the same 5 teaching flips.'
+      ),
+    }
+  } else if (latestComparison) {
+    testStep = {
+      title: t('3. Check if it got better'),
+      statusLabel: t('Done'),
+      tone: 'green',
+      detail: latestAccuracy
+        ? t('Last test score: {{accuracy}} on {{count}} unseen flips.', {
+            accuracy: latestAccuracy,
+            count: formatCountMetric(benchmarkSize),
+          })
+        : t('A benchmark result was saved for {{count}} unseen flips.', {
+            count: formatCountMetric(benchmarkSize),
+          }),
+      footnote:
+        latestEvaluatedAt ||
+        t('The next run can be compared against this result later.'),
+    }
+  } else if (
+    canRunLocalTraining &&
+    (chunkIsComplete || pendingCount > 0 || trainedCount > 0)
+  ) {
+    testStep = {
+      title: t('3. Check if it got better'),
+      statusLabel: t('Next'),
+      tone: 'orange',
+      detail: t(
+        'After training, the app checks {{count}} unseen flips so you can see whether the score moved up or down.',
+        {
+          count: formatCountMetric(benchmarkSize),
+        }
+      ),
+      footnote: t('This is the easiest way to tell if a run helped or not.'),
+    }
+  }
+
+  const steps = [teachStep, trainingStep, testStep]
+
+  return (
+    <Box borderWidth="1px" borderColor="gray.100" borderRadius="2xl" p={4}>
+      <Stack spacing={3}>
+        <Flex
+          justify="space-between"
+          align={['flex-start', 'center']}
+          direction={['column', 'row']}
+          gap={2}
+        >
+          <Box>
+            <Text fontWeight={600}>{title}</Text>
+            <Text color="muted" fontSize="sm">
+              {subtitle}
+            </Text>
+          </Box>
+          <Badge colorScheme={overallBadgeScheme} borderRadius="full" px={2}>
+            {overallBadgeLabel}
+          </Badge>
+        </Flex>
+
+        <SimpleGrid columns={[1, 3]} spacing={3}>
+          {steps.map((step) => {
+            const styles = getLocalTrainingJourneyToneStyles(step.tone)
+
+            return (
+              <Box
+                key={step.title}
+                borderWidth="1px"
+                borderColor={styles.borderColor}
+                borderRadius="xl"
+                bg={styles.bg}
+                px={3}
+                py={3}
+              >
+                <Stack spacing={2}>
+                  <Flex justify="space-between" align="center" gap={2}>
+                    <Text fontWeight={700}>{step.title}</Text>
+                    <Badge colorScheme={styles.badgeScheme} borderRadius="full">
+                      {step.statusLabel}
+                    </Badge>
+                  </Flex>
+                  <Text fontSize="sm">{step.detail}</Text>
+                  {typeof step.progressValue === 'number' ? (
+                    <Progress
+                      size="sm"
+                      value={step.progressValue}
+                      colorScheme={styles.badgeScheme}
+                      borderRadius="full"
+                    />
+                  ) : null}
+                  <Text color="muted" fontSize="xs">
+                    {step.footnote}
+                  </Text>
+                </Stack>
+              </Box>
+            )
+          })}
+        </SimpleGrid>
+
+        <Box
+          borderWidth="1px"
+          borderColor="gray.100"
+          borderRadius="xl"
+          px={3}
+          py={3}
+          bg="gray.50"
+        >
+          <Stack spacing={1}>
+            <Text fontSize="sm" fontWeight={600}>
+              {t('Plain-language key')}
+            </Text>
+            <Text color="muted" fontSize="xs">
+              {t(
+                'Saved answers = flips you already labeled. Waiting to learn = saved flips not inside the model yet. Already learned = flips already trained into the active model.'
+              )}
+            </Text>
+          </Stack>
+        </Box>
+      </Stack>
+    </Box>
+  )
+}
+
+function LocalTrainingImpactPanel({
+  telemetry,
+  telemetryError,
+  thermalSummary,
+  isBusy,
+  t,
+}) {
+  const system =
+    telemetry &&
+    typeof telemetry.system === 'object' &&
+    !Array.isArray(telemetry.system)
+      ? telemetry.system
+      : {}
+  const stats = [
+    describeDeveloperThermalTelemetry(system, t),
+    describeDeveloperComputeTelemetry(system, t),
+    describeDeveloperMemoryTelemetry(system, t),
+    describeDeveloperPowerTelemetry(system, t),
+  ]
+  const note = describeDeveloperTelemetryNotice({
+    telemetry,
+    thermalSummary,
+    isBusy,
+    t,
+  })
+  const trainingReadiness = normalizeDeveloperTrainingReadiness(telemetry, t)
+  const readinessToneProps = getTelemetryToneProps(trainingReadiness.tone)
+
+  return (
+    <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={4}>
+      <Stack spacing={3}>
+        <Flex
+          justify="space-between"
+          align={['flex-start', 'center']}
+          direction={['column', 'row']}
+          gap={2}
+        >
+          <Box>
+            <Text fontWeight={600}>{t('Thermal and compute impact')}</Text>
+            <Text color="muted" fontSize="sm">
+              {isBusy
+                ? t(
+                    'Live machine stats while local training or the holdout comparison is active.'
+                  )
+                : t(
+                    'Live machine stats for this desktop before you launch another local training run.'
+                  )}
+            </Text>
+          </Box>
+          <Badge
+            borderRadius="full"
+            px={2}
+            py={1}
+            bg={isBusy ? 'blue.50' : 'gray.100'}
+            color={isBusy ? 'blue.600' : 'gray.600'}
+          >
+            {isBusy ? t('Live sampling') : t('Standby sampling')}
+          </Badge>
+        </Flex>
+
+        {telemetryError ? (
+          <Alert status="warning" borderRadius="md">
+            <Text fontSize="sm">{telemetryError}</Text>
+          </Alert>
+        ) : null}
+
+        {telemetry ? (
+          <>
+            <Box
+              borderWidth="1px"
+              borderColor={readinessToneProps.borderColor}
+              borderRadius="md"
+              px={3}
+              py={3}
+              bg={readinessToneProps.bg}
+            >
+              <Stack spacing={2}>
+                <Flex
+                  justify="space-between"
+                  align={['flex-start', 'center']}
+                  direction={['column', 'row']}
+                  gap={2}
+                >
+                  <Text fontSize="sm" fontWeight={600}>
+                    {t('Training readiness')}
+                  </Text>
+                  <Badge
+                    colorScheme={getTrainingReadinessBadgeScheme(
+                      trainingReadiness.tone
+                    )}
+                    borderRadius="full"
+                    px={2}
+                    py={1}
+                  >
+                    {trainingReadiness.label}
+                  </Badge>
+                </Flex>
+                <Text fontSize="sm">{trainingReadiness.message}</Text>
+                {trainingReadiness.requiresExplicitOverride ? (
+                  <Text color="muted" fontSize="xs">
+                    {t(
+                      'The start button will stay locked until you explicitly confirm that you still want to run one local training pass.'
+                    )}
+                  </Text>
+                ) : null}
+              </Stack>
+            </Box>
+            <SimpleGrid columns={[1, 2, 4]} spacing={3}>
+              {stats.map((stat) => (
+                <LocalTrainingImpactStatCard
+                  key={stat.title}
+                  title={stat.title}
+                  value={stat.value}
+                  detail={stat.detail}
+                  tone={stat.tone}
+                />
+              ))}
+            </SimpleGrid>
+            <Box
+              borderWidth="1px"
+              borderColor={
+                note.status === 'warning' ? 'orange.100' : 'blue.100'
+              }
+              borderRadius="md"
+              px={3}
+              py={2}
+              bg={note.status === 'warning' ? 'orange.50' : 'blue.50'}
+            >
+              <Text fontSize="sm">{note.message}</Text>
+            </Box>
+            <Text color="muted" fontSize="xs">
+              {t('Last sample')}: {formatTimestamp(telemetry.collectedAt)} ·{' '}
+              {t('Heat mode')}: {thermalSummary?.label || t('Balanced cooling')}
+              {thermalSummary
+                ? ` · ${t(
+                    '{{stepMs}} ms between steps, {{epochMs}} ms between epochs',
+                    {
+                      stepMs: thermalSummary.stepCooldownMs,
+                      epochMs: thermalSummary.epochCooldownMs,
+                    }
+                  )}`
+                : ''}
+            </Text>
+          </>
+        ) : (
+          <Box
+            borderWidth="1px"
+            borderColor="gray.100"
+            borderRadius="md"
+            px={3}
+            py={3}
+            bg="gray.50"
+          >
+            <Text color="muted" fontSize="sm">
+              {t('Waiting for the first local system telemetry sample.')}
+            </Text>
+          </Box>
+        )}
+      </Stack>
+    </Box>
+  )
+}
+
 function formatTimestamp(value) {
   const raw = String(value || '').trim()
 
@@ -983,6 +2315,34 @@ function formatCompactTimestamp(value) {
     month: 'short',
     day: 'numeric',
   })
+}
+
+function formatCountMetric(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 'n/a'
+  }
+
+  return parsed.toLocaleString()
+}
+
+function formatDurationMs(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 'n/a'
+  }
+
+  if (parsed < 1000) {
+    return `${parsed} ms`
+  }
+
+  if (parsed < 60 * 1000) {
+    return `${(parsed / 1000).toFixed(1)} s`
+  }
+
+  return formatMinutes(Math.ceil(parsed / (60 * 1000)))
 }
 
 function clampPercent(value) {
@@ -1050,12 +2410,345 @@ function InterviewPrompt({title, children}) {
         mb={3}
       >
         <Text fontSize="sm" fontWeight={600} color="blue.500">
-          idena.vibe
+          IdenaAI
         </Text>
         <Text mt={1}>{title}</Text>
       </Box>
       <Box>{children}</Box>
     </Box>
+  )
+}
+
+function CompletionChecklistCard({item, t}) {
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor={item.done ? 'green.100' : 'gray.100'}
+      borderRadius="lg"
+      px={3}
+      py={2}
+      bg={item.done ? 'green.50' : 'gray.50'}
+    >
+      <Flex justify="space-between" align="flex-start" gap={2}>
+        <Box>
+          <Text fontSize="xs" color="muted">
+            {item.label}
+          </Text>
+          <Text fontSize="xs" color="muted" mt={1}>
+            {item.detail}
+          </Text>
+        </Box>
+        <Badge
+          colorScheme={item.done ? 'green' : 'gray'}
+          variant={item.done ? 'solid' : 'subtle'}
+          borderRadius="full"
+          px={2}
+        >
+          {item.done ? t('Done') : t('Needed')}
+        </Badge>
+      </Flex>
+    </Box>
+  )
+}
+
+function BooleanChoiceField({
+  title,
+  description = '',
+  value = null,
+  onChange,
+  trueLabel,
+  falseLabel,
+  t,
+}) {
+  let statusText = t('Choose one answer.')
+
+  if (value === true) {
+    statusText = t('Saved as: yes')
+  } else if (value === false) {
+    statusText = t('Saved as: no')
+  }
+
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor={value === null ? 'gray.100' : 'blue.100'}
+      borderRadius="lg"
+      px={3}
+      py={3}
+      bg={value === null ? 'white' : 'blue.50'}
+    >
+      <Stack spacing={2}>
+        <Box>
+          <Text fontWeight={600}>{title}</Text>
+          {description ? (
+            <Text color="muted" fontSize="sm" mt={1}>
+              {description}
+            </Text>
+          ) : null}
+        </Box>
+        <Stack direction={['column', 'row']} spacing={2} flexWrap="wrap">
+          {value === true ? (
+            <PrimaryButton onClick={() => onChange(true)}>
+              {trueLabel}
+            </PrimaryButton>
+          ) : (
+            <SecondaryButton onClick={() => onChange(true)}>
+              {trueLabel}
+            </SecondaryButton>
+          )}
+          {value === false ? (
+            <PrimaryButton onClick={() => onChange(false)}>
+              {falseLabel}
+            </PrimaryButton>
+          ) : (
+            <SecondaryButton onClick={() => onChange(false)}>
+              {falseLabel}
+            </SecondaryButton>
+          )}
+        </Stack>
+        <Text color="muted" fontSize="xs">
+          {statusText}
+        </Text>
+      </Stack>
+    </Box>
+  )
+}
+
+function AiChatBubble({messageRole = 'assistant', label, meta = '', children}) {
+  const isUser = messageRole === 'user'
+
+  return (
+    <Flex justify={isUser ? 'flex-end' : 'flex-start'}>
+      <Box
+        maxW={['100%', '92%']}
+        borderWidth="1px"
+        borderColor={isUser ? 'blue.100' : 'gray.100'}
+        borderRadius="2xl"
+        px={4}
+        py={3}
+        bg={isUser ? 'blue.50' : 'white'}
+      >
+        <Text
+          fontSize="xs"
+          fontWeight={700}
+          color={isUser ? 'blue.600' : 'gray.600'}
+        >
+          {label}
+        </Text>
+        {meta ? (
+          <Text color="muted" fontSize="xs" mt={1}>
+            {meta}
+          </Text>
+        ) : null}
+        <Box mt={2}>{children}</Box>
+      </Box>
+    </Flex>
+  )
+}
+
+function AiUserPromptMessage({text, t}) {
+  if (!String(text || '').trim()) {
+    return null
+  }
+
+  return (
+    <AiChatBubble
+      messageRole="user"
+      label={t('You')}
+      meta={t('Last correction or follow-up sent to the AI')}
+    >
+      <Text fontSize="sm" whiteSpace="pre-wrap">
+        {text}
+      </Text>
+    </AiChatBubble>
+  )
+}
+
+function AiAssistantDraftMessage({
+  annotation,
+  panelDescriptions = [],
+  panelText = [],
+  runtimeModelLabel = '',
+  trainingModelLabel = '',
+  onRate,
+  t,
+}) {
+  if (!annotation) {
+    return null
+  }
+
+  const ratingOptions = [
+    {value: 'good', label: t('Good')},
+    {value: 'bad', label: t('Bad')},
+    {value: 'wrong', label: t('Wrong')},
+  ]
+
+  return (
+    <AiChatBubble
+      label={t('Local AI')}
+      meta={t('Structured draft for this flip')}
+    >
+      <Stack spacing={3}>
+        <Flex gap={2} flexWrap="wrap">
+          <Badge colorScheme="blue" borderRadius="full" px={2}>
+            {t('Answer')}: {formatDecisionLabel(annotation.final_answer, t)}
+          </Badge>
+          <Badge colorScheme="gray" borderRadius="full" px={2}>
+            {t('Confidence')}: {annotation.confidence || '?'} / 5
+          </Badge>
+        </Flex>
+
+        <Text color="muted" fontSize="xs" wordBreak="break-all">
+          {t(
+            'Runtime model {{draftModel}} · Local training model {{trainingModel}}',
+            {
+              draftModel: annotation.model || runtimeModelLabel || t('unknown'),
+              trainingModel: trainingModelLabel || t('unknown'),
+            }
+          )}
+        </Text>
+
+        {annotation.why_answer ? (
+          <Text fontSize="sm" whiteSpace="pre-wrap">
+            {annotation.why_answer}
+          </Text>
+        ) : null}
+
+        {hasAiAnnotationListContent(panelDescriptions) ? (
+          <Box
+            borderWidth="1px"
+            borderColor="gray.100"
+            borderRadius="xl"
+            px={3}
+            py={3}
+            bg="gray.50"
+          >
+            <Text fontSize="xs" fontWeight={700} mb={2}>
+              {t('Ordered panel observations')}
+            </Text>
+            <Stack spacing={1}>
+              {panelDescriptions.map((item, index) =>
+                item ? (
+                  <Text key={`ai-panel-${index}`} fontSize="xs" color="muted">
+                    {t('Panel {{index}}', {
+                      index: index + 1,
+                    })}
+                    : {item}
+                  </Text>
+                ) : null
+              )}
+            </Stack>
+          </Box>
+        ) : null}
+
+        {hasAiAnnotationListContent(panelText) ? (
+          <Box
+            borderWidth="1px"
+            borderColor="gray.100"
+            borderRadius="xl"
+            px={3}
+            py={3}
+            bg="gray.50"
+          >
+            <Text fontSize="xs" fontWeight={700} mb={2}>
+              {t('Visible text by panel')}
+            </Text>
+            <Stack spacing={1}>
+              {panelText.map((item, index) =>
+                item ? (
+                  <Text key={`ai-text-${index}`} fontSize="xs" color="muted">
+                    {t('Panel {{index}}', {
+                      index: index + 1,
+                    })}
+                    : {item}
+                  </Text>
+                ) : null
+              )}
+            </Stack>
+          </Box>
+        ) : null}
+
+        {annotation.option_a_story_analysis ||
+        annotation.option_b_story_analysis ? (
+          <Box
+            borderWidth="1px"
+            borderColor="gray.100"
+            borderRadius="xl"
+            px={3}
+            py={3}
+            bg="gray.50"
+          >
+            <Text fontSize="xs" fontWeight={700} mb={2}>
+              {t('Story comparison')}
+            </Text>
+            <Stack spacing={1}>
+              {annotation.option_a_story_analysis ? (
+                <Text fontSize="xs" color="muted">
+                  {t('LEFT analysis')}: {annotation.option_a_story_analysis}
+                </Text>
+              ) : null}
+              {annotation.option_b_story_analysis ? (
+                <Text fontSize="xs" color="muted">
+                  {t('RIGHT analysis')}: {annotation.option_b_story_analysis}
+                </Text>
+              ) : null}
+            </Stack>
+          </Box>
+        ) : null}
+
+        {annotation.option_a_summary || annotation.option_b_summary ? (
+          <Box
+            borderWidth="1px"
+            borderColor="gray.100"
+            borderRadius="xl"
+            px={3}
+            py={3}
+            bg="gray.50"
+          >
+            <Text fontSize="xs" fontWeight={700} mb={2}>
+              {t('Story summaries')}
+            </Text>
+            <Stack spacing={1}>
+              {annotation.option_a_summary ? (
+                <Text fontSize="xs" color="muted">
+                  {t('LEFT summary')}: {annotation.option_a_summary}
+                </Text>
+              ) : null}
+              {annotation.option_b_summary ? (
+                <Text fontSize="xs" color="muted">
+                  {t('RIGHT summary')}: {annotation.option_b_summary}
+                </Text>
+              ) : null}
+            </Stack>
+          </Box>
+        ) : null}
+
+        <Box>
+          <Text color="muted" fontSize="xs" mb={2}>
+            {t('Rate this AI draft')}
+          </Text>
+          <Stack direction={['column', 'row']} spacing={2} flexWrap="wrap">
+            {ratingOptions.map((option) =>
+              annotation.rating === option.value ? (
+                <PrimaryButton
+                  key={option.value}
+                  onClick={() => onRate(option.value)}
+                >
+                  {option.label}
+                </PrimaryButton>
+              ) : (
+                <SecondaryButton
+                  key={option.value}
+                  onClick={() => onRate(option.value)}
+                >
+                  {option.label}
+                </SecondaryButton>
+              )
+            )}
+          </Stack>
+        </Box>
+      </Stack>
+    </AiChatBubble>
   )
 }
 
@@ -1115,7 +2808,7 @@ function SuccessRateHistoryChart({entries = [], t}) {
             </Text>
             <Text color="muted" fontSize="xs">
               {t(
-                'The same 100-flip holdout benchmark is appended here after each new comparison run.'
+                'The same validation holdout for this benchmark size is appended here after each new comparison run.'
               )}
             </Text>
           </Box>
@@ -1316,6 +3009,9 @@ export default function AiHumanTeacherPage() {
   const [demoOffset, setDemoOffset] = React.useState(0)
   const [developerSessionState, setDeveloperSessionState] = React.useState(null)
   const [developerOffset, setDeveloperOffset] = React.useState(0)
+  const [developerTelemetry, setDeveloperTelemetry] = React.useState(null)
+  const [developerTelemetryError, setDeveloperTelemetryError] =
+    React.useState('')
   const [isPromptToolsOpen, setIsPromptToolsOpen] = React.useState(false)
   const [isPromptEditingUnlocked, setIsPromptEditingUnlocked] =
     React.useState(false)
@@ -1324,12 +3020,17 @@ export default function AiHumanTeacherPage() {
   const [developerPromptDraft, setDeveloperPromptDraft] = React.useState(
     DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT
   )
+  const [aiReplyDraftByTaskId, setAiReplyDraftByTaskId] = React.useState({})
   const [_developerActionResult, setDeveloperActionResult] =
     React.useState(null)
   const [chunkDecisionDialog, setChunkDecisionDialog] = React.useState({
     isOpen: false,
     mode: '',
   })
+  const [
+    developerTrainingPressureOverride,
+    setDeveloperTrainingPressureOverride,
+  ] = React.useState(false)
   const [contributionDialog, setContributionDialog] = React.useState({
     isOpen: false,
     mode: '',
@@ -1392,6 +3093,26 @@ export default function AiHumanTeacherPage() {
     return global.localAi
   }, [])
 
+  const refreshDeveloperTelemetry = React.useCallback(async () => {
+    if (
+      !isDeveloperMode ||
+      !global.localAi ||
+      typeof global.localAi.getDeveloperTelemetry !== 'function'
+    ) {
+      return null
+    }
+
+    try {
+      const nextTelemetry = await global.localAi.getDeveloperTelemetry()
+      setDeveloperTelemetry(nextTelemetry || null)
+      setDeveloperTelemetryError('')
+      return nextTelemetry
+    } catch (nextError) {
+      setDeveloperTelemetryError(formatErrorMessage(nextError))
+      return null
+    }
+  }, [isDeveloperMode])
+
   const savedDeveloperPromptOverride = React.useMemo(
     () => String(localAi?.developerHumanTeacherSystemPrompt || '').trim(),
     [localAi?.developerHumanTeacherSystemPrompt]
@@ -1405,10 +3126,48 @@ export default function AiHumanTeacherPage() {
     localAi?.developerLocalTrainingProfile ||
       DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
   )
+  const developerLocalTrainingThermalMode =
+    normalizeDeveloperLocalTrainingThermalMode(
+      localAi?.developerLocalTrainingThermalMode ||
+        DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+    )
+  const developerLocalBenchmarkSize = normalizeDeveloperLocalBenchmarkSize(
+    localAi?.developerLocalBenchmarkSize ||
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+  )
   const developerAiDraftTriggerMode = normalizeDeveloperAiDraftTriggerMode(
     localAi?.developerAiDraftTriggerMode ||
       DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
   )
+  const developerAiDraftContextWindowTokens =
+    normalizeDeveloperAiDraftContextWindowTokens(
+      localAi?.developerAiDraftContextWindowTokens ||
+        DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS
+    )
+  const developerAiDraftQuestionWindowChars =
+    normalizeDeveloperAiDraftQuestionWindowChars(
+      localAi?.developerAiDraftQuestionWindowChars ||
+        DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS
+    )
+  const developerAiDraftAnswerWindowTokens =
+    normalizeDeveloperAiDraftAnswerWindowTokens(
+      localAi?.developerAiDraftAnswerWindowTokens ||
+        DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS
+    )
+  const developerLocalTrainingEpochs = normalizeDeveloperLocalTrainingEpochs(
+    localAi?.developerLocalTrainingEpochs ||
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS
+  )
+  const developerLocalTrainingBatchSize =
+    normalizeDeveloperLocalTrainingBatchSize(
+      localAi?.developerLocalTrainingBatchSize ||
+        DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE
+    )
+  const developerLocalTrainingLoraRank =
+    normalizeDeveloperLocalTrainingLoraRank(
+      localAi?.developerLocalTrainingLoraRank ||
+        DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK
+    )
   const developerLocalTrainingModelPath =
     resolveDeveloperLocalTrainingProfileModelPath(developerLocalTrainingProfile)
   const developerRequestedRuntimeModel =
@@ -1423,6 +3182,14 @@ export default function AiHumanTeacherPage() {
     () =>
       describeDeveloperLocalTrainingProfile(developerLocalTrainingProfile, t),
     [developerLocalTrainingProfile, t]
+  )
+  const developerLocalTrainingThermalSummary = React.useMemo(
+    () =>
+      describeDeveloperLocalTrainingThermalMode(
+        developerLocalTrainingThermalMode,
+        t
+      ),
+    [developerLocalTrainingThermalMode, t]
   )
   const localDraftRequestedRuntimeModelLabel = React.useMemo(
     () =>
@@ -1458,6 +3225,182 @@ export default function AiHumanTeacherPage() {
     localAi?.shareHumanTeacherAnnotationsWithNetwork
   )
   const autoTriggerAiDraft = developerAiDraftTriggerMode === 'automatic'
+  const developerAiDraftWindowTone = React.useMemo(
+    () =>
+      describeDeveloperAiDraftWindowTone({
+        contextWindowTokens: developerAiDraftContextWindowTokens,
+        questionWindowChars: developerAiDraftQuestionWindowChars,
+        answerWindowTokens: developerAiDraftAnswerWindowTokens,
+      }).tone,
+    [
+      developerAiDraftAnswerWindowTokens,
+      developerAiDraftContextWindowTokens,
+      developerAiDraftQuestionWindowChars,
+    ]
+  )
+  const developerAiDraftWindowStyles = React.useMemo(() => {
+    switch (developerAiDraftWindowTone) {
+      case 'orange':
+        return {
+          borderColor: 'orange.100',
+          bg: 'orange.50',
+          badgeScheme: 'orange',
+          badgeLabel: t('Roomier and heavier'),
+        }
+      case 'blue':
+        return {
+          borderColor: 'blue.100',
+          bg: 'blue.50',
+          badgeScheme: 'blue',
+          badgeLabel: t('Tighter and faster'),
+        }
+      case 'green':
+      default:
+        return {
+          borderColor: 'green.100',
+          bg: 'green.50',
+          badgeScheme: 'green',
+          badgeLabel: t('Balanced'),
+        }
+    }
+  }, [developerAiDraftWindowTone, t])
+  const developerLocalTrainingUpdatesPerEpoch = React.useMemo(
+    () =>
+      Math.max(
+        1,
+        Math.ceil(
+          DEVELOPER_TRAINING_CHUNK_SIZE / developerLocalTrainingBatchSize
+        )
+      ),
+    [developerLocalTrainingBatchSize]
+  )
+  const developerLocalTrainingTotalUpdates = React.useMemo(
+    () => developerLocalTrainingUpdatesPerEpoch * developerLocalTrainingEpochs,
+    [developerLocalTrainingEpochs, developerLocalTrainingUpdatesPerEpoch]
+  )
+  const developerLocalTrainingCoolingFloorMs = React.useMemo(
+    () =>
+      developerLocalTrainingTotalUpdates *
+        developerLocalTrainingThermalSummary.stepCooldownMs +
+      developerLocalTrainingEpochs *
+        developerLocalTrainingThermalSummary.epochCooldownMs,
+    [
+      developerLocalTrainingEpochs,
+      developerLocalTrainingThermalSummary.epochCooldownMs,
+      developerLocalTrainingThermalSummary.stepCooldownMs,
+      developerLocalTrainingTotalUpdates,
+    ]
+  )
+  const developerLocalTrainingRankRatio = React.useMemo(
+    () =>
+      Math.max(
+        0.1,
+        developerLocalTrainingLoraRank /
+          DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK
+      ),
+    [developerLocalTrainingLoraRank]
+  )
+  const developerLocalTrainingBudgetTone = React.useMemo(
+    () =>
+      describeDeveloperLocalTrainingBudgetTone({
+        batchSize: developerLocalTrainingBatchSize,
+        epochs: developerLocalTrainingEpochs,
+        loraRank: developerLocalTrainingLoraRank,
+        thermalMode: developerLocalTrainingThermalMode,
+      }).tone,
+    [
+      developerLocalTrainingBatchSize,
+      developerLocalTrainingEpochs,
+      developerLocalTrainingLoraRank,
+      developerLocalTrainingThermalMode,
+    ]
+  )
+  const developerLocalTrainingBudgetStyles = React.useMemo(() => {
+    switch (developerLocalTrainingBudgetTone) {
+      case 'orange':
+        return {
+          borderColor: 'orange.100',
+          bg: 'orange.50',
+          badgeScheme: 'orange',
+          badgeLabel: t('Heavier local run'),
+        }
+      case 'blue':
+        return {
+          borderColor: 'blue.100',
+          bg: 'blue.50',
+          badgeScheme: 'blue',
+          badgeLabel: t('Lighter participation'),
+        }
+      case 'green':
+      default:
+        return {
+          borderColor: 'green.100',
+          bg: 'green.50',
+          badgeScheme: 'green',
+          badgeLabel: t('Balanced pilot'),
+        }
+    }
+  }, [developerLocalTrainingBudgetTone, t])
+  const developerTelemetryIsBusy =
+    isFinalizingDeveloperChunk || isRunningDeveloperComparison
+  const developerTrainingReadiness = React.useMemo(
+    () => normalizeDeveloperTrainingReadiness(developerTelemetry, t),
+    [developerTelemetry, t]
+  )
+  const developerTrainingBlockedBySystemPressure =
+    developerTrainingReadiness.status === 'blocked'
+  const developerTrainingRequiresOverride =
+    developerTrainingReadiness.requiresExplicitOverride === true
+  const developerTrainingReadyToStart =
+    !developerTrainingBlockedBySystemPressure ||
+    developerTrainingPressureOverride === true
+  const developerTrainingReadinessAlertStatus = React.useMemo(() => {
+    if (developerTrainingReadiness.tone === 'red') {
+      return 'error'
+    }
+
+    if (
+      developerTrainingReadiness.tone === 'orange' ||
+      developerTrainingReadiness.tone === 'yellow'
+    ) {
+      return 'warning'
+    }
+
+    return 'info'
+  }, [developerTrainingReadiness.tone])
+
+  React.useEffect(() => {
+    if (!isDeveloperMode) {
+      setDeveloperTelemetry(null)
+      setDeveloperTelemetryError('')
+      return undefined
+    }
+
+    const refreshIntervalMs =
+      isFinalizingDeveloperChunk || isRunningDeveloperComparison ? 3000 : 10000
+
+    const refreshNow = async () => {
+      await refreshDeveloperTelemetry()
+    }
+
+    refreshNow()
+    const intervalId = window.setInterval(refreshNow, refreshIntervalMs)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [
+    isDeveloperMode,
+    isFinalizingDeveloperChunk,
+    isRunningDeveloperComparison,
+    refreshDeveloperTelemetry,
+  ])
+
+  React.useEffect(() => {
+    if (!developerTrainingBlockedBySystemPressure) {
+      setDeveloperTrainingPressureOverride(false)
+    }
+  }, [developerTrainingBlockedBySystemPressure])
 
   React.useEffect(() => {
     const runtimeBackend = String(localAi?.runtimeBackend || '').trim()
@@ -1701,6 +3644,7 @@ export default function AiHumanTeacherPage() {
   }, [t, toast, updateLocalAiSettings])
 
   const openChunkDecisionDialog = React.useCallback((mode) => {
+    setDeveloperTrainingPressureOverride(false)
     setChunkDecisionDialog({
       isOpen: true,
       mode,
@@ -1708,6 +3652,7 @@ export default function AiHumanTeacherPage() {
   }, [])
 
   const closeChunkDecisionDialog = React.useCallback(() => {
+    setDeveloperTrainingPressureOverride(false)
     setChunkDecisionDialog({
       isOpen: false,
       mode: '',
@@ -2260,7 +4205,10 @@ export default function AiHumanTeacherPage() {
         }
 
         const nextTask = nextResult.task || null
-        const nextDraft = normalizeAnnotationDraft(nextTask?.annotation || {})
+        const nextDraft = sanitizeLoadedAnnotationDraftForTask(
+          nextTask,
+          nextTask?.annotation || {}
+        )
 
         setTaskDetail(nextTask)
         setAnnotationDraft(nextDraft)
@@ -2411,10 +4359,110 @@ export default function AiHumanTeacherPage() {
     () => normalizeAnnotationDraft(annotationDraft),
     [annotationDraft]
   )
-  const currentAiAnnotation = React.useMemo(
-    () => normalizeAiAnnotationDraft(annotationDraft.ai_annotation),
-    [annotationDraft.ai_annotation]
+  const annotationCompletionState = React.useMemo(
+    () => getAnnotationCompletionState(annotationDraft),
+    [annotationDraft]
   )
+  const annotationCompletionItems = React.useMemo(
+    () => [
+      {
+        key: 'decision',
+        label: t('Answer'),
+        done: annotationCompletionState.hasDecision,
+        detail: annotationCompletionState.hasDecision
+          ? formatDecisionLabel(annotationDraft.final_answer, t)
+          : t('Choose LEFT, RIGHT, or SKIP'),
+      },
+      {
+        key: 'reason',
+        label: t('Reason'),
+        done: annotationCompletionState.hasReason,
+        detail: annotationCompletionState.hasReason
+          ? t('Reason written')
+          : t('Add one short concrete reason'),
+      },
+      {
+        key: 'flags',
+        label: t('Decision checks'),
+        done:
+          annotationCompletionState.hasTextDecision &&
+          annotationCompletionState.hasSequenceDecision &&
+          annotationCompletionState.hasReportDecision &&
+          annotationCompletionState.hasReportReason,
+        detail: t('{{done}} / 3 answered', {
+          done: [
+            annotationCompletionState.hasTextDecision,
+            annotationCompletionState.hasSequenceDecision,
+            annotationCompletionState.hasReportDecision &&
+              annotationCompletionState.hasReportReason,
+          ].filter(Boolean).length,
+        }),
+      },
+      {
+        key: 'confidence',
+        label: t('Confidence'),
+        done: annotationCompletionState.hasConfidence,
+        detail: annotationCompletionState.hasConfidence
+          ? t('{{value}} / 5 selected', {
+              value: annotationDraft.confidence,
+            })
+          : t('Choose one level'),
+      },
+      {
+        key: 'captions',
+        label: t('Frame notes'),
+        done: annotationCompletionState.hasFrameCaptions,
+        detail: t('{{count}} / 4 written', {
+          count: annotationCompletionState.filledFrameCaptions,
+        }),
+      },
+      {
+        key: 'summaries',
+        label: t('Story summaries'),
+        done: annotationCompletionState.hasStorySummaries,
+        detail: annotationCompletionState.hasStorySummaries
+          ? t('LEFT and RIGHT written')
+          : t('Write both LEFT and RIGHT'),
+      },
+    ],
+    [
+      annotationCompletionState.filledFrameCaptions,
+      annotationCompletionState.hasConfidence,
+      annotationCompletionState.hasDecision,
+      annotationCompletionState.hasFrameCaptions,
+      annotationCompletionState.hasReason,
+      annotationCompletionState.hasReportDecision,
+      annotationCompletionState.hasReportReason,
+      annotationCompletionState.hasSequenceDecision,
+      annotationCompletionState.hasStorySummaries,
+      annotationCompletionState.hasTextDecision,
+      annotationDraft.confidence,
+      annotationDraft.final_answer,
+      t,
+    ]
+  )
+  const taskDetailStatusTone = React.useMemo(() => {
+    if (annotationCompletionState.isComplete) {
+      return 'green'
+    }
+
+    if (hasDraftContent(annotationDraft)) {
+      return 'orange'
+    }
+
+    return 'gray'
+  }, [annotationCompletionState.isComplete, annotationDraft])
+  const showRequiredDetailSection =
+    showAdvancedFields || !annotationCompletionState.requiredDetailComplete
+  const currentAiAnnotation = React.useMemo(() => {
+    const nextAiAnnotation = normalizeAiAnnotationDraft(
+      annotationDraft.ai_annotation
+    )
+
+    return isAiAnnotationBoundToTask(nextAiAnnotation, taskDetail)
+      ? nextAiAnnotation
+      : null
+  }, [annotationDraft.ai_annotation, taskDetail])
   const currentAiPanelDescriptions = React.useMemo(
     () =>
       Array.isArray(currentAiAnnotation?.ordered_panel_descriptions)
@@ -2429,12 +4477,48 @@ export default function AiHumanTeacherPage() {
         : [],
     [currentAiAnnotation]
   )
+  const currentAiFeedbackText = String(
+    annotationDraft.ai_annotation_feedback || ''
+  ).trim()
+  const currentAiReplyDraft = String(
+    aiReplyDraftByTaskId[selectedTaskId] || ''
+  ).slice(0, developerAiDraftQuestionWindowChars)
+  const hasAiReplyDraft = Boolean(currentAiReplyDraft.trim())
+  let aiDraftPrimaryActionLabel = t('Ask AI for first draft')
+
+  if (hasAiReplyDraft) {
+    aiDraftPrimaryActionLabel = t('Send to AI')
+  } else if (currentAiAnnotation) {
+    aiDraftPrimaryActionLabel = t('Re-run AI draft')
+  }
+
+  const setCurrentAiReplyDraft = React.useCallback(
+    (value) => {
+      const taskId = String(selectedTaskId || '').trim()
+
+      if (!taskId) {
+        return
+      }
+
+      setAiReplyDraftByTaskId((current) => ({
+        ...current,
+        [taskId]: String(value || '').slice(
+          0,
+          developerAiDraftQuestionWindowChars
+        ),
+      }))
+    },
+    [developerAiDraftQuestionWindowChars, selectedTaskId]
+  )
   const requestAiAnnotationDraft = React.useCallback(
-    async ({triggerMode = 'manual'} = {}) => {
+    async ({triggerMode = 'manual', followUpPrompt = ''} = {}) => {
       const isAutomaticTrigger = triggerMode === 'automatic'
+      const trimmedFollowUpPrompt = String(followUpPrompt || '')
+        .trim()
+        .slice(0, developerAiDraftQuestionWindowChars)
 
       if (annotationSourceMode !== 'developer') {
-        return
+        return false
       }
 
       if (localAi?.enabled !== true) {
@@ -2447,7 +4531,7 @@ export default function AiHumanTeacherPage() {
             </Toast>
           ),
         })
-        return
+        return false
       }
 
       if (!global.localAi || typeof global.localAi.chat !== 'function') {
@@ -2455,12 +4539,12 @@ export default function AiHumanTeacherPage() {
           render: () => (
             <Toast title={t('Local AI chat bridge missing')}>
               {t(
-                'This build does not expose the Local AI chat bridge yet. Fully restart idena.vibe and try again.'
+                'This build does not expose the Local AI chat bridge yet. Fully restart IdenaAI and try again.'
               )}
             </Toast>
           ),
         })
-        return
+        return false
       }
 
       if (aiDraftRuntimeResolution.status === 'unsupported_backend') {
@@ -2474,7 +4558,7 @@ export default function AiHumanTeacherPage() {
             </Toast>
           ),
         })
-        return
+        return false
       }
 
       const requestedRuntimeModel =
@@ -2489,7 +4573,7 @@ export default function AiHumanTeacherPage() {
             </Toast>
           ),
         })
-        return
+        return false
       }
 
       if (
@@ -2507,7 +4591,7 @@ export default function AiHumanTeacherPage() {
             </Toast>
           ),
         })
-        return
+        return false
       }
 
       const orderedImages = [...leftPanels, ...rightPanels]
@@ -2527,7 +4611,7 @@ export default function AiHumanTeacherPage() {
             </Toast>
           ),
         })
-        return
+        return false
       }
 
       setIsGeneratingAiDraft(true)
@@ -2578,6 +4662,44 @@ export default function AiHumanTeacherPage() {
           }
         }
 
+        const aiMessages = [
+          {
+            role: 'system',
+            content: buildAiAnnotationSystemPrompt(effectiveDeveloperPrompt),
+          },
+          {
+            role: 'user',
+            content: buildAiAnnotationUserPrompt(),
+            images: orderedImages,
+          },
+        ]
+
+        if (trimmedFollowUpPrompt && currentAiAnnotation) {
+          aiMessages.push({
+            role: 'assistant',
+            content: JSON.stringify(currentAiAnnotation, null, 2),
+          })
+          aiMessages.push({
+            role: 'user',
+            content: [
+              t(
+                'Revise the draft using the human correction below. Keep the same JSON schema and return one full updated JSON object only.'
+              ),
+              `${t('Human correction')}: ${trimmedFollowUpPrompt}`,
+            ].join('\n\n'),
+          })
+        } else if (trimmedFollowUpPrompt) {
+          aiMessages.push({
+            role: 'user',
+            content: [
+              t(
+                'Apply this extra human instruction while creating the first draft. Keep the same JSON schema and return one full JSON object only.'
+              ),
+              `${t('Human instruction')}: ${trimmedFollowUpPrompt}`,
+            ].join('\n\n'),
+          })
+        }
+
         const aiDraftResult = await bridge.chat({
           baseUrl: localAi?.baseUrl,
           runtimeBackend: localAi?.runtimeBackend,
@@ -2588,19 +4710,13 @@ export default function AiHumanTeacherPage() {
           responseFormat: 'json',
           generationOptions: {
             temperature: 0,
-            numPredict: 768,
+            num_ctx:
+              developerAiDraftContextWindowTokens > 0
+                ? developerAiDraftContextWindowTokens
+                : undefined,
+            numPredict: developerAiDraftAnswerWindowTokens,
           },
-          messages: [
-            {
-              role: 'system',
-              content: buildAiAnnotationSystemPrompt(effectiveDeveloperPrompt),
-            },
-            {
-              role: 'user',
-              content: buildAiAnnotationUserPrompt(),
-              images: orderedImages,
-            },
-          ],
+          messages: aiMessages,
         })
 
         const aiText = String(
@@ -2618,7 +4734,8 @@ export default function AiHumanTeacherPage() {
 
         const aiAnnotation = buildStoredAiAnnotation(
           parseAiAnnotationResponse(aiText),
-          aiDraftResult
+          aiDraftResult,
+          taskDetail
         )
 
         setAiDraftRuntimeResolution((current) =>
@@ -2642,9 +4759,10 @@ export default function AiHumanTeacherPage() {
           })
         )
 
-        setAnnotationDraft((current) =>
-          applyAiAnnotationToDraft(current, aiAnnotation)
-        )
+        setAnnotationDraft((current) => ({
+          ...applyAiAnnotationToDraft(current, aiAnnotation),
+          ai_annotation_feedback: trimmedFollowUpPrompt,
+        }))
         setShowAdvancedFields(
           Boolean(
             aiAnnotation.option_a_summary || aiAnnotation.option_b_summary
@@ -2653,20 +4771,37 @@ export default function AiHumanTeacherPage() {
         if (!isAutomaticTrigger) {
           toast({
             render: () => (
-              <Toast title={t('AI draft applied')}>
-                {t(
-                  'The local AI filled a draft for this flip with {{model}}. Review it, edit it, and tell the AI what it got wrong if needed.',
-                  {
-                    model:
-                      aiDraftResult?.activeModel ||
-                      aiDraftResult?.model ||
-                      requestedRuntimeModel,
-                  }
-                )}
+              <Toast
+                title={
+                  trimmedFollowUpPrompt
+                    ? t('AI draft updated')
+                    : t('AI draft applied')
+                }
+              >
+                {trimmedFollowUpPrompt
+                  ? t(
+                      'The local AI revised this flip draft with {{model}} using your latest correction.',
+                      {
+                        model:
+                          aiDraftResult?.activeModel ||
+                          aiDraftResult?.model ||
+                          requestedRuntimeModel,
+                      }
+                    )
+                  : t(
+                      'The local AI filled a draft for this flip with {{model}}. Review it, edit it, and tell the AI what it got wrong if needed.',
+                      {
+                        model:
+                          aiDraftResult?.activeModel ||
+                          aiDraftResult?.model ||
+                          requestedRuntimeModel,
+                      }
+                    )}
               </Toast>
             ),
           })
         }
+        return true
       } catch (draftError) {
         const detail = String(
           (draftError && draftError.message) || draftError || ''
@@ -2687,6 +4822,7 @@ export default function AiHumanTeacherPage() {
             </Toast>
           ),
         })
+        return false
       } finally {
         setIsGeneratingAiDraft(false)
       }
@@ -2700,6 +4836,10 @@ export default function AiHumanTeacherPage() {
       aiDraftRuntimeResolution.lastError,
       aiDraftRuntimeResolution.activeModel,
       aiDraftRuntimeResolution.status,
+      currentAiAnnotation,
+      developerAiDraftAnswerWindowTokens,
+      developerAiDraftContextWindowTokens,
+      developerAiDraftQuestionWindowChars,
       developerRequestedRuntimeModel,
       developerRequestedRuntimeVisionModel,
       leftPanels,
@@ -2708,9 +4848,53 @@ export default function AiHumanTeacherPage() {
       localAi?.runtimeBackend,
       localAi?.runtimeType,
       rightPanels,
+      taskDetail,
       t,
       toast,
     ]
+  )
+  const rateCurrentAiDraft = React.useCallback((rating) => {
+    setAnnotationDraft((current) => ({
+      ...current,
+      ai_annotation: {
+        ...(normalizeAiAnnotationDraft(current.ai_annotation) ||
+          createEmptyAiAnnotationDraft()),
+        rating,
+      },
+    }))
+  }, [])
+  const submitAiChatPrompt = React.useCallback(async () => {
+    const trimmedPrompt = String(currentAiReplyDraft || '').trim()
+    const ok = await requestAiAnnotationDraft({
+      followUpPrompt: trimmedPrompt,
+    })
+
+    if (ok) {
+      setCurrentAiReplyDraft('')
+    }
+  }, [currentAiReplyDraft, requestAiAnnotationDraft, setCurrentAiReplyDraft])
+  const handleAiChatComposerKeyDown = React.useCallback(
+    async (e) => {
+      if (
+        e.key !== 'Enter' ||
+        e.shiftKey ||
+        e.altKey ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.nativeEvent?.isComposing
+      ) {
+        return
+      }
+
+      e.preventDefault()
+
+      if (isGeneratingAiDraft) {
+        return
+      }
+
+      await submitAiChatPrompt()
+    },
+    [isGeneratingAiDraft, submitAiChatPrompt]
   )
 
   React.useEffect(() => {
@@ -2775,6 +4959,14 @@ export default function AiHumanTeacherPage() {
       selectedTaskId,
     ]
   )
+  const taskDraftMatchesSelectedTask = React.useMemo(() => {
+    const loadedTaskId = String(taskDetail?.taskId || '').trim()
+    const activeTaskId = String(selectedTaskId || '').trim()
+
+    return Boolean(
+      loadedTaskId && activeTaskId && loadedTaskId === activeTaskId
+    )
+  }, [selectedTaskId, taskDetail?.taskId])
   const hasCurrentDraftContent = React.useMemo(
     () => hasDraftContent(annotationDraft),
     [annotationDraft]
@@ -2782,7 +4974,8 @@ export default function AiHumanTeacherPage() {
   const hasUnsavedDraftChanges = React.useMemo(
     () =>
       Boolean(
-        currentDraftKey &&
+        taskDraftMatchesSelectedTask &&
+          currentDraftKey &&
           hasCurrentDraftContent &&
           (lastPersistedDraft.key !== currentDraftKey ||
             lastPersistedDraft.snapshot !== currentDraftSnapshot)
@@ -2792,6 +4985,7 @@ export default function AiHumanTeacherPage() {
       currentDraftSnapshot,
       hasCurrentDraftContent,
       lastPersistedDraft,
+      taskDraftMatchesSelectedTask,
     ]
   )
   const completionPreview = React.useMemo(
@@ -3118,7 +5312,12 @@ export default function AiHumanTeacherPage() {
   )
 
   const finalizeDeveloperChunk = React.useCallback(
-    async ({trainNow = false, advance = false, exitAfter = false} = {}) => {
+    async ({
+      trainNow = false,
+      advance = false,
+      exitAfter = false,
+      allowSystemPressureOverride = false,
+    } = {}) => {
       const saved = await saveTaskDraft({
         quiet: true,
         promptOnChunkComplete: false,
@@ -3161,8 +5360,14 @@ export default function AiHumanTeacherPage() {
             currentPeriod,
             trainNow,
             advance,
+            allowSystemPressureOverride,
             trainingModelPath: developerLocalTrainingModelPath,
             localTrainingProfile: developerLocalTrainingProfile,
+            localTrainingThermalMode: developerLocalTrainingThermalMode,
+            localTrainingEpochs: developerLocalTrainingEpochs,
+            localTrainingBatchSize: developerLocalTrainingBatchSize,
+            localTrainingLoraRank: developerLocalTrainingLoraRank,
+            evaluationFlips: developerLocalBenchmarkSize,
           })
         setDeveloperActionResult(nextResult)
         setDeveloperSessionState(nextResult.state || null)
@@ -3255,9 +5460,14 @@ export default function AiHumanTeacherPage() {
     },
     [
       demoSampleName,
+      developerLocalBenchmarkSize,
+      developerLocalTrainingBatchSize,
+      developerLocalTrainingEpochs,
+      developerLocalTrainingLoraRank,
       developerLocalTrainingModelPath,
       developerOffset,
       developerLocalTrainingProfile,
+      developerLocalTrainingThermalMode,
       ensureBridge,
       currentPeriod,
       loadDeveloperSession,
@@ -3397,6 +5607,7 @@ export default function AiHumanTeacherPage() {
         await ensureBridge().runHumanTeacherDeveloperComparison({
           sampleName: demoSampleName,
           currentPeriod,
+          evaluationFlips: developerLocalBenchmarkSize,
         })
       setDeveloperActionResult(nextResult)
       setDeveloperSessionState(nextResult.state || null)
@@ -3406,7 +5617,9 @@ export default function AiHumanTeacherPage() {
       const latestTotal = nextResult?.state?.comparison100?.totalFlips
 
       toast({
-        title: t('100-flip comparison finished'),
+        title: t('{{count}}-flip comparison finished', {
+          count: developerLocalBenchmarkSize,
+        }),
         description:
           typeof latestAccuracy === 'number'
             ? t(
@@ -3430,7 +5643,9 @@ export default function AiHumanTeacherPage() {
       const message = formatErrorMessage(nextError)
       setError(message)
       toast({
-        title: t('100-flip comparison failed'),
+        title: t('{{count}}-flip comparison failed', {
+          count: developerLocalBenchmarkSize,
+        }),
         description: message,
         status: 'error',
         duration: 5000,
@@ -3440,7 +5655,14 @@ export default function AiHumanTeacherPage() {
     } finally {
       setIsRunningDeveloperComparison(false)
     }
-  }, [currentPeriod, demoSampleName, ensureBridge, t, toast])
+  }, [
+    currentPeriod,
+    demoSampleName,
+    developerLocalBenchmarkSize,
+    ensureBridge,
+    t,
+    toast,
+  ])
 
   const importAnnotations = React.useCallback(async () => {
     const nextEpoch = String(epoch || '').trim()
@@ -3578,9 +5800,6 @@ export default function AiHumanTeacherPage() {
   const developerRemainingCount =
     Number(developerSessionState?.remainingTaskCount) || 0
   const developerComparison = developerSessionState?.comparison100 || null
-  const developerComparisonStatus = String(
-    developerComparison?.status || 'not_loaded'
-  ).trim()
   const developerLastTraining = developerSessionState?.lastTraining || null
   const developerSupportsLocalTraining =
     developerSessionState?.supportsLocalTraining !== false
@@ -3592,6 +5811,9 @@ export default function AiHumanTeacherPage() {
   ).trim()
   const developerActiveLocalTrainingProfile = String(
     developerSessionState?.activeLocalTrainingProfile || ''
+  ).trim()
+  const developerActiveLocalTrainingThermalMode = String(
+    developerSessionState?.activeLocalTrainingThermalMode || ''
   ).trim()
   const developerLastTrainingFailureReason =
     developerLastTraining?.failureReason ||
@@ -3605,6 +5827,9 @@ export default function AiHumanTeacherPage() {
   const developerLastAttemptedTrainingProfile = String(
     developerLastTraining?.result?.localTrainingProfile || ''
   ).trim()
+  const developerLastAttemptedTrainingThermalMode = String(
+    developerLastTraining?.result?.localTrainingThermalMode || ''
+  ).trim()
   const developerActiveTrainingProfileSummary = React.useMemo(
     () =>
       developerActiveLocalTrainingProfile
@@ -3615,6 +5840,16 @@ export default function AiHumanTeacherPage() {
         : null,
     [developerActiveLocalTrainingProfile, t]
   )
+  const developerActiveTrainingThermalSummary = React.useMemo(
+    () =>
+      developerActiveLocalTrainingThermalMode
+        ? describeDeveloperLocalTrainingThermalMode(
+            developerActiveLocalTrainingThermalMode,
+            t
+          )
+        : null,
+    [developerActiveLocalTrainingThermalMode, t]
+  )
   const developerLastAttemptedTrainingProfileSummary = React.useMemo(
     () =>
       developerLastAttemptedTrainingProfile
@@ -3624,6 +5859,16 @@ export default function AiHumanTeacherPage() {
           )
         : null,
     [developerLastAttemptedTrainingProfile, t]
+  )
+  const developerLastAttemptedTrainingThermalSummary = React.useMemo(
+    () =>
+      developerLastAttemptedTrainingThermalMode
+        ? describeDeveloperLocalTrainingThermalMode(
+            developerLastAttemptedTrainingThermalMode,
+            t
+          )
+        : null,
+    [developerLastAttemptedTrainingThermalMode, t]
   )
   const developerTrainingUnsupported =
     !developerSupportsLocalTraining &&
@@ -3787,12 +6032,35 @@ export default function AiHumanTeacherPage() {
   const developerComparisonHistory = Array.isArray(developerComparison?.history)
     ? developerComparison.history
     : []
-  const latestDeveloperComparison = developerComparisonHistory[0] || null
-  const previousDeveloperComparison = developerComparisonHistory[1] || null
+  const developerComparisonHistoryForSelectedBenchmark =
+    developerComparisonHistory.filter(
+      (entry) =>
+        Number.parseInt(entry?.totalFlips, 10) === developerLocalBenchmarkSize
+    )
+  const latestDeveloperComparison =
+    developerComparisonHistoryForSelectedBenchmark[0] || null
+  const previousDeveloperComparison =
+    developerComparisonHistoryForSelectedBenchmark[1] || null
   const developerBestAccuracy =
-    typeof developerComparison?.bestAccuracy === 'number'
-      ? developerComparison.bestAccuracy
+    developerComparisonHistoryForSelectedBenchmark.some(
+      (entry) => typeof entry?.accuracy === 'number'
+    )
+      ? developerComparisonHistoryForSelectedBenchmark.reduce((best, entry) => {
+          if (typeof entry?.accuracy !== 'number') {
+            return best
+          }
+
+          return best === null ? entry.accuracy : Math.max(best, entry.accuracy)
+        }, null)
       : latestDeveloperComparison?.accuracy ?? null
+  const developerComparisonStatus = String(
+    latestDeveloperComparison?.status ||
+      (Number.parseInt(developerComparison?.benchmarkFlips, 10) ===
+      developerLocalBenchmarkSize
+        ? developerComparison?.status
+        : '') ||
+      (isRunningDeveloperComparison ? 'running' : 'not_loaded')
+  ).trim()
   const developerAccuracyDelta =
     latestDeveloperComparison &&
     previousDeveloperComparison &&
@@ -4101,7 +6369,10 @@ export default function AiHumanTeacherPage() {
 
       if (mode === 'developer') {
         if (action === 'train') {
-          nextResult = await finalizeDeveloperChunk({trainNow: true})
+          nextResult = await finalizeDeveloperChunk({
+            trainNow: true,
+            allowSystemPressureOverride: developerTrainingPressureOverride,
+          })
         } else if (action === 'advance') {
           nextResult = await finalizeDeveloperChunk({advance: true})
         } else if (action === 'exit') {
@@ -4124,6 +6395,7 @@ export default function AiHumanTeacherPage() {
     [
       chunkDecisionMode,
       closeChunkDecisionDialog,
+      developerTrainingPressureOverride,
       finalizeDemoChunk,
       finalizeDeveloperChunk,
     ]
@@ -4309,7 +6581,7 @@ export default function AiHumanTeacherPage() {
                       : t('Start training your AI')}
                   </PrimaryButton>
                   <SecondaryButton onClick={() => router.push('/ai-chat')}>
-                    {t('Back to idena.vibe')}
+                    {t('Back to IdenaAI')}
                   </SecondaryButton>
                 </Stack>
 
@@ -4455,6 +6727,37 @@ export default function AiHumanTeacherPage() {
                   </Stack>
                 </Box>
 
+                <LocalTrainingImpactPanel
+                  telemetry={developerTelemetry}
+                  telemetryError={developerTelemetryError}
+                  thermalSummary={developerLocalTrainingThermalSummary}
+                  isBusy={developerTelemetryIsBusy}
+                  t={t}
+                />
+                <LocalTrainingJourneyPanel
+                  title={t('Local training at a glance')}
+                  subtitle={t(
+                    'The loop is always the same: answer 5 flips, let the computer practice on them, then check whether the score on unseen flips changed.'
+                  )}
+                  chunkCompletedCount={Number(workspace?.completedCount) || 0}
+                  chunkTotalCount={totalTaskCount}
+                  pendingCount={developerPendingCount}
+                  annotatedCount={developerAnnotatedCount}
+                  trainedCount={developerTrainedCount}
+                  latestComparison={latestDeveloperComparison}
+                  benchmarkSize={developerLocalBenchmarkSize}
+                  canRunLocalTraining={developerSupportsLocalTraining}
+                  isTrainingActive={isFinalizingDeveloperChunk}
+                  isComparisonActive={isRunningDeveloperComparison}
+                  lastTraining={developerLastTraining}
+                  totalUpdates={developerLocalTrainingTotalUpdates}
+                  coolingFloorMs={developerLocalTrainingCoolingFloorMs}
+                  epochs={developerLocalTrainingEpochs}
+                  batchSize={developerLocalTrainingBatchSize}
+                  loraRank={developerLocalTrainingLoraRank}
+                  t={t}
+                />
+
                 <Box
                   ref={localPilotTrainingRef}
                   borderWidth="1px"
@@ -4502,11 +6805,14 @@ export default function AiHumanTeacherPage() {
                         bg="gray.50"
                       >
                         <Text color="muted" fontSize="xs">
-                          {t('Active model')}
+                          {t('Model state')}
                         </Text>
                         <Text fontWeight={700}>
                           {developerModelStatus?.summary || t('Baseline model')}
                         </Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('What the computer is using right now.')}
+                        </Text>
                       </Box>
                       <Box
                         borderWidth="1px"
@@ -4517,9 +6823,12 @@ export default function AiHumanTeacherPage() {
                         bg="gray.50"
                       >
                         <Text color="muted" fontSize="xs">
-                          {t('Annotated')}
+                          {t('Saved answers')}
                         </Text>
                         <Text fontWeight={700}>{developerAnnotatedCount}</Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('Flips you already labeled.')}
+                        </Text>
                       </Box>
                       <Box
                         borderWidth="1px"
@@ -4530,9 +6839,12 @@ export default function AiHumanTeacherPage() {
                         bg="gray.50"
                       >
                         <Text color="muted" fontSize="xs">
-                          {t('Pending training')}
+                          {t('Waiting to learn')}
                         </Text>
                         <Text fontWeight={700}>{developerPendingCount}</Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('Saved flips not inside the model yet.')}
+                        </Text>
                       </Box>
                       <Box
                         borderWidth="1px"
@@ -4543,9 +6855,12 @@ export default function AiHumanTeacherPage() {
                         bg="gray.50"
                       >
                         <Text color="muted" fontSize="xs">
-                          {t('Inside active model')}
+                          {t('Already learned')}
                         </Text>
                         <Text fontWeight={700}>{developerTrainedCount}</Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('Flips already trained into the active model.')}
+                        </Text>
                       </Box>
                     </SimpleGrid>
                     {isFinalizingDeveloperChunk ? (
@@ -4585,7 +6900,9 @@ export default function AiHumanTeacherPage() {
                       >
                         <Stack spacing={2}>
                           <Text fontWeight={600}>
-                            {t('100-flip comparison running')}
+                            {t('{{count}}-flip comparison running', {
+                              count: developerLocalBenchmarkSize,
+                            })}
                           </Text>
                           <Progress
                             size="sm"
@@ -4594,7 +6911,10 @@ export default function AiHumanTeacherPage() {
                           />
                           <Text color="muted" fontSize="sm">
                             {t(
-                              'The app is checking the latest local model against the same 100-flip holdout target used for earlier comparison runs.'
+                              'The app is checking the latest local model against the same {{count}}-flip validation holdout used for earlier runs at this size.',
+                              {
+                                count: developerLocalBenchmarkSize,
+                              }
                             )}
                           </Text>
                         </Stack>
@@ -4643,10 +6963,14 @@ export default function AiHumanTeacherPage() {
                               {[
                                 developerLastAttemptedTrainingProfileSummary?.label ||
                                   '',
+                                developerLastAttemptedTrainingThermalSummary?.label ||
+                                  '',
                                 developerLastAttemptedTrainingBackend || '',
                               ].filter(Boolean).length
                                 ? ` · ${[
                                     developerLastAttemptedTrainingProfileSummary?.label ||
+                                      '',
+                                    developerLastAttemptedTrainingThermalSummary?.label ||
                                       '',
                                     developerLastAttemptedTrainingBackend || '',
                                   ]
@@ -4715,10 +7039,13 @@ export default function AiHumanTeacherPage() {
                           {developerActiveModelLabel}
                         </Text>
                         {(developerActiveTrainingProfileSummary ||
+                          developerActiveTrainingThermalSummary ||
                           developerActiveTrainingBackend) && (
                           <Text color="muted" fontSize="xs">
                             {[
                               developerActiveTrainingProfileSummary?.label ||
+                                '',
+                              developerActiveTrainingThermalSummary?.label ||
                                 '',
                               developerActiveTrainingBackend || '',
                             ]
@@ -4743,6 +7070,9 @@ export default function AiHumanTeacherPage() {
                         <Text color="muted" fontSize="xs">
                           {developerLocalTrainingProfileSummary.label}
                         </Text>
+                        <Text color="muted" fontSize="xs">
+                          {developerLocalTrainingThermalSummary.label}
+                        </Text>
                       </Box>
                     </SimpleGrid>
                     <SimpleGrid columns={[1, 3]} spacing={3}>
@@ -4754,7 +7084,7 @@ export default function AiHumanTeacherPage() {
                         py={2}
                       >
                         <Text color="muted" fontSize="xs">
-                          {t('Latest success rate')}
+                          {t('Last test score')}
                         </Text>
                         <Text fontWeight={700}>
                           {latestDeveloperComparison
@@ -4763,6 +7093,9 @@ export default function AiHumanTeacherPage() {
                               )
                             : 'n/a'}
                         </Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('How the latest unseen-flip test went.')}
+                        </Text>
                       </Box>
                       <Box
                         borderWidth="1px"
@@ -4772,13 +7105,16 @@ export default function AiHumanTeacherPage() {
                         py={2}
                       >
                         <Text color="muted" fontSize="xs">
-                          {t('Best success rate')}
+                          {t('Best test score')}
                         </Text>
                         <Text fontWeight={700}>
                           {latestDeveloperComparison
                             ? formatSuccessRate(developerBestAccuracy)
                             : 'n/a'}
                         </Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('The strongest score saved for this test size.')}
+                        </Text>
                       </Box>
                       <Box
                         borderWidth="1px"
@@ -4788,10 +7124,17 @@ export default function AiHumanTeacherPage() {
                         py={2}
                       >
                         <Text color="muted" fontSize="xs">
-                          {t('100-flip benchmark')}
+                          {t('{{count}}-flip test status', {
+                            count: developerLocalBenchmarkSize,
+                          })}
                         </Text>
                         <Text fontWeight={700}>
                           {developerComparisonStatus}
+                        </Text>
+                        <Text color="muted" fontSize="xs">
+                          {t(
+                            'Shows whether the latest check is waiting, running, or saved.'
+                          )}
                         </Text>
                       </Box>
                     </SimpleGrid>
@@ -4812,7 +7155,10 @@ export default function AiHumanTeacherPage() {
                               'No benchmark result yet because the current Local AI runtime cannot train or run the held-out comparison.'
                             )
                           : t(
-                              'No benchmark result yet. After training succeeds, run the fixed 100-flip comparison to audit the latest local model.'
+                              'No benchmark result yet for the selected {{count}}-flip holdout. After training succeeds, run that local comparison to audit the latest model without reusing the training flips.',
+                              {
+                                count: developerLocalBenchmarkSize,
+                              }
                             )}
                       </Text>
                     )}
@@ -4822,12 +7168,14 @@ export default function AiHumanTeacherPage() {
                         isLoading={isRunningDeveloperComparison}
                         onClick={runDeveloperComparison}
                       >
-                        {t('Run 100-flip comparison now')}
+                        {t('Run {{count}}-flip comparison now', {
+                          count: developerLocalBenchmarkSize,
+                        })}
                       </PrimaryButton>
                     </Stack>
-                    {developerComparisonHistory.length ? (
+                    {developerComparisonHistoryForSelectedBenchmark.length ? (
                       <SuccessRateHistoryChart
-                        entries={developerComparisonHistory}
+                        entries={developerComparisonHistoryForSelectedBenchmark}
                         t={t}
                       />
                     ) : null}
@@ -4837,10 +7185,50 @@ export default function AiHumanTeacherPage() {
                       {developerLocalTrainingModelPath}
                     </Text>
                     <Text color="muted" fontSize="xs">
-                      {t('Chunk size')}: {DEVELOPER_TRAINING_CHUNK_SIZE} ·{' '}
-                      {t('Benchmark size')}: 100 ·{' '}
+                      {t('Current training heat mode')}:{' '}
+                      {developerLocalTrainingThermalSummary.label} ·{' '}
                       {t(
-                        'The same holdout set is reused so later runs stay comparable.'
+                        '{{stepMs}} ms between steps, {{epochMs}} ms between epochs',
+                        {
+                          stepMs:
+                            developerLocalTrainingThermalSummary.stepCooldownMs,
+                          epochMs:
+                            developerLocalTrainingThermalSummary.epochCooldownMs,
+                        }
+                      )}
+                    </Text>
+                    <Text color="muted" fontSize="xs">
+                      {t('Current local run budget')}:{' '}
+                      {developerLocalTrainingBudgetStyles.badgeLabel} ·{' '}
+                      {t(
+                        '{{epochs}} epoch passes · batch {{batch}} · LoRA rank {{rank}} · {{updates}} updates each epoch · {{total}} total updates · minimum added cooling {{cooling}}',
+                        {
+                          epochs: formatCountMetric(
+                            developerLocalTrainingEpochs
+                          ),
+                          batch: formatCountMetric(
+                            developerLocalTrainingBatchSize
+                          ),
+                          rank: formatCountMetric(
+                            developerLocalTrainingLoraRank
+                          ),
+                          updates: formatCountMetric(
+                            developerLocalTrainingUpdatesPerEpoch
+                          ),
+                          total: formatCountMetric(
+                            developerLocalTrainingTotalUpdates
+                          ),
+                          cooling: formatDurationMs(
+                            developerLocalTrainingCoolingFloorMs
+                          ),
+                        }
+                      )}
+                    </Text>
+                    <Text color="muted" fontSize="xs">
+                      {t('Chunk size')}: {DEVELOPER_TRAINING_CHUNK_SIZE} ·{' '}
+                      {t('Benchmark size')}: {developerLocalBenchmarkSize} ·{' '}
+                      {t(
+                        'The same validation holdout is reused for this size so later runs stay comparable.'
                       )}
                     </Text>
                   </Stack>
@@ -5217,33 +7605,78 @@ export default function AiHumanTeacherPage() {
                                 )}
                           </Text>
                         </Box>
-                        {workspace.tasks.map((task) => (
-                          <Box
-                            key={task.taskId}
-                            px={3}
-                            py={3}
-                            borderBottomWidth="1px"
-                            borderBottomColor="gray.50"
-                            bg={
-                              task.taskId === selectedTaskId
-                                ? 'blue.50'
-                                : 'transparent'
-                            }
-                            cursor="pointer"
-                            onClick={() => navigateToTask(task.taskId)}
-                          >
-                            <Text fontSize="sm" fontWeight={600}>
-                              {t('Flip')} {taskIds.indexOf(task.taskId) + 1}
-                            </Text>
-                            <Text color="muted" fontSize="xs" noOfLines={1}>
-                              {task.flipHash || task.taskId}
-                            </Text>
-                            <Text color="muted" fontSize="xs">
-                              {t('Consensus')}: {task.consensusAnswer || 'n/a'}{' '}
-                              · {getDraftStatusLabel(task, t)}
-                            </Text>
-                          </Box>
-                        ))}
+                        {workspace.tasks.map((task, index) => {
+                          let taskStatusTone = 'gray'
+
+                          if (task.isComplete) {
+                            taskStatusTone = 'green'
+                          } else if (task.hasDraft) {
+                            taskStatusTone = 'orange'
+                          }
+
+                          const isSelectedTask = task.taskId === selectedTaskId
+                          const isNextQueuedTask = task.taskId === nextTaskId
+
+                          return (
+                            <Box
+                              key={task.taskId}
+                              px={3}
+                              py={3}
+                              borderBottomWidth="1px"
+                              borderBottomColor="gray.50"
+                              bg={isSelectedTask ? 'blue.50' : 'transparent'}
+                              cursor="pointer"
+                              onClick={() => navigateToTask(task.taskId)}
+                            >
+                              <Flex
+                                justify="space-between"
+                                align="flex-start"
+                                gap={2}
+                                mb={1}
+                              >
+                                <Text fontSize="sm" fontWeight={600}>
+                                  {t('Flip')} {index + 1}
+                                </Text>
+                                <Stack
+                                  direction="row"
+                                  spacing={1}
+                                  flexWrap="wrap"
+                                  justify="flex-end"
+                                >
+                                  {isSelectedTask ? (
+                                    <Badge
+                                      colorScheme="blue"
+                                      borderRadius="full"
+                                    >
+                                      {t('Current')}
+                                    </Badge>
+                                  ) : null}
+                                  {isNextQueuedTask ? (
+                                    <Badge
+                                      colorScheme="purple"
+                                      borderRadius="full"
+                                    >
+                                      {t('Next')}
+                                    </Badge>
+                                  ) : null}
+                                  <Badge
+                                    colorScheme={taskStatusTone}
+                                    borderRadius="full"
+                                  >
+                                    {getDraftStatusLabel(task, t)}
+                                  </Badge>
+                                </Stack>
+                              </Flex>
+                              <Text color="muted" fontSize="xs" noOfLines={1}>
+                                {task.flipHash || task.taskId}
+                              </Text>
+                              <Text color="muted" fontSize="xs" mt={1}>
+                                {t('Consensus')}:{' '}
+                                {task.consensusAnswer || 'n/a'}
+                              </Text>
+                            </Box>
+                          )
+                        })}
                       </Stack>
                     </Box>
 
@@ -5272,6 +7705,75 @@ export default function AiHumanTeacherPage() {
                                 'Review it like a normal flip test: decide which story order looks more humanly coherent, then explain that judgment briefly.'
                               )}
                             </Text>
+                            <Stack
+                              direction={['column', 'row']}
+                              spacing={2}
+                              flexWrap="wrap"
+                              mt={3}
+                            >
+                              <Badge colorScheme="blue" borderRadius="full">
+                                {t('Consensus')}:&nbsp;
+                                {taskDetail.consensusAnswer || t('Unknown')}
+                              </Badge>
+                              <Badge
+                                colorScheme={taskDetailStatusTone}
+                                borderRadius="full"
+                              >
+                                {getDraftStatusLabel(annotationDraft, t)}
+                              </Badge>
+                              <Badge colorScheme="purple" borderRadius="full">
+                                {t('{{done}} / {{total}} complete', {
+                                  done: annotationCompletionState.completedChecks,
+                                  total: annotationCompletionState.totalChecks,
+                                })}
+                              </Badge>
+                            </Stack>
+                          </Box>
+
+                          <Box
+                            borderWidth="1px"
+                            borderColor={
+                              annotationCompletionState.isComplete
+                                ? 'green.100'
+                                : 'gray.100'
+                            }
+                            borderRadius="lg"
+                            p={3}
+                            bg={
+                              annotationCompletionState.isComplete
+                                ? 'green.50'
+                                : 'gray.50'
+                            }
+                          >
+                            <Stack spacing={3}>
+                              <Box>
+                                <Text fontWeight={600}>
+                                  {annotationCompletionState.isComplete
+                                    ? t(
+                                        'This flip is ready to save as complete'
+                                      )
+                                    : t('What is still required for this flip')}
+                                </Text>
+                                <Text color="muted" fontSize="sm" mt={1}>
+                                  {annotationCompletionState.isComplete
+                                    ? t(
+                                        'All required human-teacher fields are filled. You can save this flip now.'
+                                      )
+                                    : t(
+                                        'Complete these remaining items before this flip counts as fully annotated.'
+                                      )}
+                                </Text>
+                              </Box>
+                              <SimpleGrid columns={[1, 2, 3]} spacing={2}>
+                                {annotationCompletionItems.map((item) => (
+                                  <CompletionChecklistCard
+                                    key={item.key}
+                                    item={item}
+                                    t={t}
+                                  />
+                                ))}
+                              </SimpleGrid>
+                            </Stack>
                           </Box>
 
                           {!nextTaskId && totalTaskCount > 0 ? (
@@ -5584,23 +8086,18 @@ export default function AiHumanTeacherPage() {
                               <Box
                                 borderWidth="1px"
                                 borderColor="gray.100"
-                                borderRadius="lg"
-                                p={3}
+                                borderRadius="2xl"
+                                p={4}
                                 bg="white"
                               >
-                                <Flex
-                                  justify="space-between"
-                                  align={['flex-start', 'center']}
-                                  gap={3}
-                                  direction={['column', 'row']}
-                                >
+                                <Stack spacing={4}>
                                   <Box>
                                     <Text fontWeight={600}>
-                                      {t('Optional AI draft')}
+                                      {t('AI draft chat')}
                                     </Text>
                                     <Text color="muted" fontSize="sm">
                                       {t(
-                                        'Ask the local AI to prefill this flip, then review and correct it like a normal human-teacher annotation.'
+                                        'Use the local AI to prefill this flip, then keep refining it in the same place like a normal chat.'
                                       )}
                                     </Text>
                                     <Text color="muted" fontSize="xs" mt={1}>
@@ -5614,321 +8111,356 @@ export default function AiHumanTeacherPage() {
                                         }
                                       )}
                                     </Text>
-                                    <Box mt={3} maxW="320px">
-                                      <Text
-                                        color="muted"
-                                        fontSize="xs"
-                                        fontWeight={600}
-                                        mb={1}
-                                      >
-                                        {t('AI draft trigger')}
-                                      </Text>
-                                      <Select
-                                        size="sm"
-                                        value={developerAiDraftTriggerMode}
-                                        onChange={(e) =>
-                                          updateLocalAiSettings({
-                                            developerAiDraftTriggerMode:
-                                              e.target.value,
-                                          })
-                                        }
-                                      >
-                                        <option value="manual">
-                                          {t('Trigger AI draft manually')}
-                                        </option>
-                                        <option value="automatic">
-                                          {t('Trigger AI draft automatically')}
-                                        </option>
-                                      </Select>
-                                      <Text color="muted" fontSize="xs" mt={1}>
-                                        {autoTriggerAiDraft
-                                          ? t(
-                                              'Each fresh empty flip will clear first, then request a new AI draft automatically.'
-                                            )
-                                          : t(
-                                              'Each new flip starts empty. Use the draft button only when you want a fresh AI draft.'
-                                            )}
-                                      </Text>
-                                    </Box>
                                   </Box>
-                                  <PrimaryButton
-                                    onClick={() => requestAiAnnotationDraft()}
-                                    isLoading={isGeneratingAiDraft}
-                                    loadingText={t('Drafting')}
-                                  >
-                                    {currentAiAnnotation
-                                      ? t('Re-run AI draft')
-                                      : t('Ask AI to draft this flip')}
-                                  </PrimaryButton>
-                                </Flex>
 
-                                {currentAiAnnotation ? (
+                                  <Box maxW="320px">
+                                    <Text
+                                      color="muted"
+                                      fontSize="xs"
+                                      fontWeight={600}
+                                      mb={1}
+                                    >
+                                      {t('AI draft trigger')}
+                                    </Text>
+                                    <Select
+                                      size="sm"
+                                      value={developerAiDraftTriggerMode}
+                                      onChange={(e) =>
+                                        updateLocalAiSettings({
+                                          developerAiDraftTriggerMode:
+                                            e.target.value,
+                                        })
+                                      }
+                                    >
+                                      <option value="manual">
+                                        {t('Trigger AI draft manually')}
+                                      </option>
+                                      <option value="automatic">
+                                        {t('Trigger AI draft automatically')}
+                                      </option>
+                                    </Select>
+                                    <Text color="muted" fontSize="xs" mt={1}>
+                                      {autoTriggerAiDraft
+                                        ? t(
+                                            'Each fresh empty flip will clear first, then request a new AI draft automatically.'
+                                          )
+                                        : t(
+                                            'Each new flip starts empty. Use the chat composer only when you want a fresh AI draft or revision.'
+                                          )}
+                                    </Text>
+                                  </Box>
+
                                   <Box
-                                    mt={3}
-                                    p={3}
-                                    borderRadius="lg"
-                                    bg="gray.50"
+                                    borderWidth="1px"
+                                    borderColor={
+                                      developerAiDraftWindowStyles.borderColor
+                                    }
+                                    borderRadius="2xl"
+                                    bg={developerAiDraftWindowStyles.bg}
+                                    px={3}
+                                    py={3}
+                                  >
+                                    <Stack spacing={3}>
+                                      <Flex
+                                        justify="space-between"
+                                        align={['flex-start', 'center']}
+                                        direction={['column', 'row']}
+                                        gap={2}
+                                      >
+                                        <Box>
+                                          <Text fontWeight={600}>
+                                            {t('Conversation window ownership')}
+                                          </Text>
+                                          <Text color="muted" fontSize="sm">
+                                            {t(
+                                              'These three local-only windows decide how much the AI can keep, how much you can send in one turn, and how much room the answer gets back.'
+                                            )}
+                                          </Text>
+                                        </Box>
+                                        <Badge
+                                          colorScheme={
+                                            developerAiDraftWindowStyles.badgeScheme
+                                          }
+                                          borderRadius="full"
+                                          px={2}
+                                        >
+                                          {
+                                            developerAiDraftWindowStyles.badgeLabel
+                                          }
+                                        </Badge>
+                                      </Flex>
+
+                                      <SimpleGrid columns={[1, 3]} spacing={3}>
+                                        <Box>
+                                          <FormLabel mb={1}>
+                                            {t('Context window')}
+                                          </FormLabel>
+                                          <Input
+                                            type="number"
+                                            min={0}
+                                            max={32768}
+                                            step={1024}
+                                            value={
+                                              developerAiDraftContextWindowTokens >
+                                              0
+                                                ? String(
+                                                    developerAiDraftContextWindowTokens
+                                                  )
+                                                : ''
+                                            }
+                                            placeholder={t(
+                                              'Auto runtime default'
+                                            )}
+                                            onChange={(e) =>
+                                              updateLocalAiSettings({
+                                                developerAiDraftContextWindowTokens:
+                                                  e.target.value
+                                                    ? Number.parseInt(
+                                                        e.target.value,
+                                                        10
+                                                      )
+                                                    : 0,
+                                              })
+                                            }
+                                          />
+                                          <Text
+                                            color="muted"
+                                            fontSize="xs"
+                                            mt={1}
+                                          >
+                                            {t(
+                                              'Larger context keeps more of the flip instructions, current draft, and your correction together, but it uses more RAM and can make the Mac slower and hotter.'
+                                            )}
+                                          </Text>
+                                        </Box>
+
+                                        <Box>
+                                          <FormLabel mb={1}>
+                                            {t('Question window')}
+                                          </FormLabel>
+                                          <Input
+                                            type="number"
+                                            min={240}
+                                            max={4000}
+                                            step={120}
+                                            value={String(
+                                              developerAiDraftQuestionWindowChars
+                                            )}
+                                            onChange={(e) =>
+                                              updateLocalAiSettings({
+                                                developerAiDraftQuestionWindowChars:
+                                                  Number.parseInt(
+                                                    e.target.value,
+                                                    10
+                                                  ),
+                                              })
+                                            }
+                                          />
+                                          <Text
+                                            color="muted"
+                                            fontSize="xs"
+                                            mt={1}
+                                          >
+                                            {t(
+                                              'This caps how much of your typed instruction or correction reaches the AI in one turn. Smaller keeps prompts cleaner and faster; larger keeps more nuance.'
+                                            )}
+                                          </Text>
+                                        </Box>
+
+                                        <Box>
+                                          <FormLabel mb={1}>
+                                            {t('Answer window')}
+                                          </FormLabel>
+                                          <Input
+                                            type="number"
+                                            min={128}
+                                            max={2048}
+                                            step={64}
+                                            value={String(
+                                              developerAiDraftAnswerWindowTokens
+                                            )}
+                                            onChange={(e) =>
+                                              updateLocalAiSettings({
+                                                developerAiDraftAnswerWindowTokens:
+                                                  Number.parseInt(
+                                                    e.target.value,
+                                                    10
+                                                  ),
+                                              })
+                                            }
+                                          />
+                                          <Text
+                                            color="muted"
+                                            fontSize="xs"
+                                            mt={1}
+                                          >
+                                            {t(
+                                              'This is the maximum reply budget. Smaller answers return faster and ramble less; larger answers give the AI more room for summaries and structured reasoning.'
+                                            )}
+                                          </Text>
+                                        </Box>
+                                      </SimpleGrid>
+
+                                      <Text color="muted" fontSize="xs">
+                                        {t(
+                                          'Current window mix: {{context}} context tokens · {{question}} question chars · {{answer}} answer tokens.',
+                                          {
+                                            context:
+                                              developerAiDraftContextWindowTokens >
+                                              0
+                                                ? formatCountMetric(
+                                                    developerAiDraftContextWindowTokens
+                                                  )
+                                                : t('runtime default'),
+                                            question: formatCountMetric(
+                                              developerAiDraftQuestionWindowChars
+                                            ),
+                                            answer: formatCountMetric(
+                                              developerAiDraftAnswerWindowTokens
+                                            ),
+                                          }
+                                        )}
+                                      </Text>
+                                    </Stack>
+                                  </Box>
+
+                                  <Box
                                     borderWidth="1px"
                                     borderColor="gray.100"
+                                    borderRadius="2xl"
+                                    bg="gray.50"
+                                    px={3}
+                                    py={3}
                                   >
-                                    <Stack spacing={2}>
-                                      <Text fontSize="sm" fontWeight={600}>
-                                        {t('Current AI draft')}
-                                      </Text>
-                                      <Text fontSize="sm" color="muted">
-                                        {t(
-                                          'Answer: {{answer}} · Confidence: {{confidence}}/5',
-                                          {
-                                            answer: formatDecisionLabel(
-                                              currentAiAnnotation.final_answer,
-                                              t
-                                            ),
-                                            confidence:
-                                              currentAiAnnotation.confidence ||
-                                              '?',
-                                          }
-                                        )}
-                                      </Text>
-                                      <Text fontSize="xs" color="muted">
-                                        {t(
-                                          'Drafted with runtime model {{draftModel}}. The local training model is {{trainingModel}}.',
-                                          {
-                                            draftModel:
-                                              currentAiAnnotation.model ||
-                                              localDraftActiveRuntimeModelLabel,
-                                            trainingModel:
-                                              developerLocalTrainingModelPath,
-                                          }
-                                        )}
-                                      </Text>
-                                      {currentAiAnnotation.why_answer ? (
-                                        <Text fontSize="sm">
-                                          {currentAiAnnotation.why_answer}
-                                        </Text>
-                                      ) : null}
-                                      {hasAiAnnotationListContent(
-                                        currentAiPanelDescriptions
-                                      ) ? (
-                                        <Box fontSize="xs" color="muted">
-                                          <Text fontWeight={600} mb={1}>
-                                            {t('Ordered panel observations')}
-                                          </Text>
-                                          {currentAiPanelDescriptions.map(
-                                            (item, index) =>
-                                              item ? (
-                                                <Text key={`ai-panel-${index}`}>
-                                                  {t('Panel {{index}}', {
-                                                    index: index + 1,
-                                                  })}
-                                                  : {item}
-                                                </Text>
-                                              ) : null
-                                          )}
-                                        </Box>
-                                      ) : null}
-                                      {hasAiAnnotationListContent(
-                                        currentAiPanelText
-                                      ) ? (
-                                        <Box fontSize="xs" color="muted">
-                                          <Text fontWeight={600} mb={1}>
-                                            {t('Visible text by panel')}
-                                          </Text>
-                                          {currentAiPanelText.map(
-                                            (item, index) =>
-                                              item ? (
-                                                <Text key={`ai-text-${index}`}>
-                                                  {t('Panel {{index}}', {
-                                                    index: index + 1,
-                                                  })}
-                                                  : {item}
-                                                </Text>
-                                              ) : null
-                                          )}
-                                        </Box>
-                                      ) : null}
-                                      {currentAiAnnotation.option_a_story_analysis ||
-                                      currentAiAnnotation.option_b_story_analysis ? (
-                                        <Box fontSize="xs" color="muted">
-                                          <Text fontWeight={600} mb={1}>
-                                            {t('Story comparison')}
-                                          </Text>
-                                          {currentAiAnnotation.option_a_story_analysis ? (
-                                            <Text>
-                                              {t('LEFT analysis')}:&nbsp;
-                                              {
-                                                currentAiAnnotation.option_a_story_analysis
-                                              }
-                                            </Text>
-                                          ) : null}
-                                          {currentAiAnnotation.option_b_story_analysis ? (
-                                            <Text>
-                                              {t('RIGHT analysis')}:&nbsp;
-                                              {
-                                                currentAiAnnotation.option_b_story_analysis
-                                              }
-                                            </Text>
-                                          ) : null}
-                                        </Box>
-                                      ) : null}
-                                      {currentAiAnnotation.option_a_summary ||
-                                      currentAiAnnotation.option_b_summary ? (
-                                        <Box fontSize="xs" color="muted">
-                                          {currentAiAnnotation.option_a_summary ? (
-                                            <Text>
-                                              {t('LEFT summary')}:&nbsp;
-                                              {
-                                                currentAiAnnotation.option_a_summary
-                                              }
-                                            </Text>
-                                          ) : null}
-                                          {currentAiAnnotation.option_b_summary ? (
-                                            <Text>
-                                              {t('RIGHT summary')}:&nbsp;
-                                              {
-                                                currentAiAnnotation.option_b_summary
-                                              }
-                                            </Text>
-                                          ) : null}
-                                        </Box>
-                                      ) : null}
-                                      <Box>
-                                        <Text
-                                          fontSize="xs"
-                                          color="muted"
-                                          mb={2}
+                                    <Stack spacing={3}>
+                                      {!currentAiFeedbackText &&
+                                      !currentAiAnnotation ? (
+                                        <AiChatBubble
+                                          label={t('Local AI')}
+                                          meta={t('Ready for the first draft')}
                                         >
-                                          {t('Rate this AI draft')}
-                                        </Text>
+                                          <Text fontSize="sm">
+                                            {t(
+                                              'Ask for a first draft, or type one instruction first if you want the AI to focus on something specific in the flip.'
+                                            )}
+                                          </Text>
+                                        </AiChatBubble>
+                                      ) : null}
+
+                                      <AiUserPromptMessage
+                                        text={currentAiFeedbackText}
+                                        t={t}
+                                      />
+
+                                      <AiAssistantDraftMessage
+                                        annotation={currentAiAnnotation}
+                                        panelDescriptions={
+                                          currentAiPanelDescriptions
+                                        }
+                                        panelText={currentAiPanelText}
+                                        runtimeModelLabel={
+                                          localDraftActiveRuntimeModelLabel
+                                        }
+                                        trainingModelLabel={
+                                          developerLocalTrainingModelPath
+                                        }
+                                        onRate={rateCurrentAiDraft}
+                                        t={t}
+                                      />
+                                    </Stack>
+                                  </Box>
+
+                                  <Box
+                                    borderWidth="1px"
+                                    borderColor="gray.100"
+                                    borderRadius="2xl"
+                                    bg="white"
+                                    px={3}
+                                    py={3}
+                                  >
+                                    <Stack spacing={3}>
+                                      <Text color="muted" fontSize="xs">
+                                        {currentAiAnnotation
+                                          ? t(
+                                              'Reply below to correct the draft, ask for a revision, or request a fresh read from the panels.'
+                                            )
+                                          : t(
+                                              'Optionally add one instruction for the first draft, then press Enter to send.'
+                                            )}
+                                      </Text>
+                                      <Textarea
+                                        minH="96px"
+                                        maxLength={
+                                          developerAiDraftQuestionWindowChars
+                                        }
+                                        placeholder={
+                                          currentAiAnnotation
+                                            ? t(
+                                                'Tell the AI what to revise. Press Enter to send, or Shift+Enter for a new line.'
+                                              )
+                                            : t(
+                                                'Optional: tell the AI what to focus on before the first draft. Press Enter to send.'
+                                              )
+                                        }
+                                        value={currentAiReplyDraft}
+                                        onChange={(e) =>
+                                          setCurrentAiReplyDraft(
+                                            e?.target?.value || ''
+                                          )
+                                        }
+                                        onKeyDown={handleAiChatComposerKeyDown}
+                                      />
+                                      <Flex
+                                        justify="space-between"
+                                        align={['flex-start', 'center']}
+                                        direction={['column', 'row']}
+                                        gap={3}
+                                      >
+                                        <Stack spacing={1}>
+                                          <Text color="muted" fontSize="xs">
+                                            {t(
+                                              'Enter sends to the AI. Shift+Enter adds a new line.'
+                                            )}
+                                          </Text>
+                                          <Text color="muted" fontSize="xs">
+                                            {t('{{count}} / {{limit}} chars', {
+                                              count: currentAiReplyDraft.length,
+                                              limit:
+                                                developerAiDraftQuestionWindowChars,
+                                            })}
+                                          </Text>
+                                        </Stack>
                                         <Stack
                                           direction={['column', 'row']}
                                           spacing={2}
                                           flexWrap="wrap"
                                         >
-                                          {currentAiAnnotation.rating ===
-                                          'good' ? (
-                                            <PrimaryButton
-                                              onClick={() =>
-                                                setAnnotationDraft(
-                                                  (current) => ({
-                                                    ...current,
-                                                    ai_annotation: {
-                                                      ...(normalizeAiAnnotationDraft(
-                                                        current.ai_annotation
-                                                      ) ||
-                                                        createEmptyAiAnnotationDraft()),
-                                                      rating: 'good',
-                                                    },
-                                                  })
-                                                )
-                                              }
-                                            >
-                                              {t('Good')}
-                                            </PrimaryButton>
-                                          ) : (
+                                          {currentAiAnnotation ? (
                                             <SecondaryButton
                                               onClick={() =>
-                                                setAnnotationDraft(
-                                                  (current) => ({
-                                                    ...current,
-                                                    ai_annotation: {
-                                                      ...(normalizeAiAnnotationDraft(
-                                                        current.ai_annotation
-                                                      ) ||
-                                                        createEmptyAiAnnotationDraft()),
-                                                      rating: 'good',
-                                                    },
-                                                  })
-                                                )
+                                                requestAiAnnotationDraft()
                                               }
+                                              isDisabled={isGeneratingAiDraft}
                                             >
-                                              {t('Good')}
+                                              {t('Fresh draft from panels')}
                                             </SecondaryButton>
-                                          )}
-                                          {currentAiAnnotation.rating ===
-                                          'bad' ? (
-                                            <PrimaryButton
-                                              onClick={() =>
-                                                setAnnotationDraft(
-                                                  (current) => ({
-                                                    ...current,
-                                                    ai_annotation: {
-                                                      ...(normalizeAiAnnotationDraft(
-                                                        current.ai_annotation
-                                                      ) ||
-                                                        createEmptyAiAnnotationDraft()),
-                                                      rating: 'bad',
-                                                    },
-                                                  })
-                                                )
-                                              }
-                                            >
-                                              {t('Bad')}
-                                            </PrimaryButton>
-                                          ) : (
-                                            <SecondaryButton
-                                              onClick={() =>
-                                                setAnnotationDraft(
-                                                  (current) => ({
-                                                    ...current,
-                                                    ai_annotation: {
-                                                      ...(normalizeAiAnnotationDraft(
-                                                        current.ai_annotation
-                                                      ) ||
-                                                        createEmptyAiAnnotationDraft()),
-                                                      rating: 'bad',
-                                                    },
-                                                  })
-                                                )
-                                              }
-                                            >
-                                              {t('Bad')}
-                                            </SecondaryButton>
-                                          )}
-                                          {currentAiAnnotation.rating ===
-                                          'wrong' ? (
-                                            <PrimaryButton
-                                              onClick={() =>
-                                                setAnnotationDraft(
-                                                  (current) => ({
-                                                    ...current,
-                                                    ai_annotation: {
-                                                      ...(normalizeAiAnnotationDraft(
-                                                        current.ai_annotation
-                                                      ) ||
-                                                        createEmptyAiAnnotationDraft()),
-                                                      rating: 'wrong',
-                                                    },
-                                                  })
-                                                )
-                                              }
-                                            >
-                                              {t('Wrong')}
-                                            </PrimaryButton>
-                                          ) : (
-                                            <SecondaryButton
-                                              onClick={() =>
-                                                setAnnotationDraft(
-                                                  (current) => ({
-                                                    ...current,
-                                                    ai_annotation: {
-                                                      ...(normalizeAiAnnotationDraft(
-                                                        current.ai_annotation
-                                                      ) ||
-                                                        createEmptyAiAnnotationDraft()),
-                                                      rating: 'wrong',
-                                                    },
-                                                  })
-                                                )
-                                              }
-                                            >
-                                              {t('Wrong')}
-                                            </SecondaryButton>
-                                          )}
+                                          ) : null}
+                                          <PrimaryButton
+                                            onClick={submitAiChatPrompt}
+                                            isLoading={isGeneratingAiDraft}
+                                            loadingText={
+                                              hasAiReplyDraft
+                                                ? t('Sending')
+                                                : t('Drafting')
+                                            }
+                                          >
+                                            {aiDraftPrimaryActionLabel}
+                                          </PrimaryButton>
                                         </Stack>
-                                      </Box>
+                                      </Flex>
                                     </Stack>
                                   </Box>
-                                ) : null}
+                                </Stack>
                               </Box>
                             ) : null}
 
@@ -6049,76 +8581,51 @@ export default function AiHumanTeacherPage() {
                               </InterviewPrompt>
                             ) : null}
 
-                            {isDeveloperSourceMode && currentAiAnnotation ? (
-                              <InterviewPrompt
-                                title={t(
-                                  'What did the AI get wrong? Keep it to one or two short sentences.'
-                                )}
-                              >
-                                <Textarea
-                                  placeholder={t(
-                                    'For example: the AI assumed the car falls before the crash, but the human sequence shows the crash first and the fall only after that.'
-                                  )}
-                                  value={annotationDraft.ai_annotation_feedback}
-                                  onChange={(e) => {
-                                    const nextValue = e?.target?.value || ''
-
-                                    setAnnotationDraft((current) => ({
-                                      ...current,
-                                      ai_annotation_feedback: nextValue,
-                                    }))
-                                  }}
-                                />
-                                <Text color="muted" fontSize="xs" mt={2}>
-                                  {t(
-                                    'This extra note is stored with the flip so the later training dataset can learn from your correction of the AI draft.'
-                                  )}
-                                </Text>
-                              </InterviewPrompt>
-                            ) : null}
-
                             {hasDecision && hasReason ? (
                               <InterviewPrompt
                                 title={t(
-                                  'Did you need readable text or explicit sequence markers to judge this flip?'
+                                  'Answer the remaining judgment checks before saving this flip.'
                                 )}
                               >
-                                <Stack spacing={2}>
-                                  <Checkbox
-                                    isChecked={
-                                      annotationDraft.text_required === true
-                                    }
-                                    onChange={(e) => {
-                                      const isChecked =
-                                        e?.target?.checked === true
-
+                                <Stack spacing={3}>
+                                  <BooleanChoiceField
+                                    title={t(
+                                      'Did you need readable text to judge this flip?'
+                                    )}
+                                    description={t(
+                                      'Answer yes if the visible words changed your decision. Otherwise answer no.'
+                                    )}
+                                    value={annotationDraft.text_required}
+                                    onChange={(value) =>
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        text_required: isChecked ? true : null,
+                                        text_required: value,
                                       }))
-                                    }}
-                                  >
-                                    {t('Readable text was required')}
-                                  </Checkbox>
-                                  <Checkbox
-                                    isChecked={
-                                      annotationDraft.sequence_markers_present ===
-                                      true
                                     }
-                                    onChange={(e) => {
-                                      const isChecked =
-                                        e?.target?.checked === true
-
+                                    trueLabel={t('Yes, text mattered')}
+                                    falseLabel={t('No, text was not needed')}
+                                    t={t}
+                                  />
+                                  <BooleanChoiceField
+                                    title={t(
+                                      'Were explicit sequence markers present?'
+                                    )}
+                                    description={t(
+                                      'Use yes for arrows, numbering, or other obvious ordering cues.'
+                                    )}
+                                    value={
+                                      annotationDraft.sequence_markers_present
+                                    }
+                                    onChange={(value) =>
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        sequence_markers_present: isChecked
-                                          ? true
-                                          : null,
+                                        sequence_markers_present: value,
                                       }))
-                                    }}
-                                  >
-                                    {t('Sequence markers were present')}
-                                  </Checkbox>
+                                    }
+                                    trueLabel={t('Yes, markers were present')}
+                                    falseLabel={t('No, no markers')}
+                                    t={t}
+                                  />
                                 </Stack>
                               </InterviewPrompt>
                             ) : null}
@@ -6130,24 +8637,26 @@ export default function AiHumanTeacherPage() {
                                 )}
                               >
                                 <Stack spacing={3}>
-                                  <Checkbox
-                                    isChecked={
-                                      annotationDraft.report_required === true
-                                    }
-                                    onChange={(e) => {
-                                      const isChecked =
-                                        e?.target?.checked === true
-
+                                  <BooleanChoiceField
+                                    title={t('Should this flip be reported?')}
+                                    description={t(
+                                      'Choose yes only if it depends on disallowed cues or otherwise breaks the rules.'
+                                    )}
+                                    value={annotationDraft.report_required}
+                                    onChange={(value) =>
                                       setAnnotationDraft((current) => ({
                                         ...current,
-                                        report_required: isChecked
-                                          ? true
-                                          : null,
+                                        report_required: value,
+                                        report_reason:
+                                          value === true
+                                            ? current.report_reason
+                                            : '',
                                       }))
-                                    }}
-                                  >
-                                    {t('Yes, this should be reported')}
-                                  </Checkbox>
+                                    }
+                                    trueLabel={t('Yes, report this flip')}
+                                    falseLabel={t('No, do not report')}
+                                    t={t}
+                                  />
 
                                   {annotationDraft.report_required === true ? (
                                     <Textarea
@@ -6211,30 +8720,54 @@ export default function AiHumanTeacherPage() {
                               >
                                 <Box>
                                   <Text fontWeight={600}>
-                                    {t('Optional detail')}
+                                    {annotationCompletionState.requiredDetailComplete
+                                      ? t('Required detail is complete')
+                                      : t(
+                                          'Required detail for a complete flip'
+                                        )}
                                   </Text>
                                   <Text color="muted" fontSize="sm">
-                                    {t(
-                                      'Open this only when you want to teach extra captions or side summaries for this flip.'
-                                    )}
+                                    {annotationCompletionState.requiredDetailComplete
+                                      ? t(
+                                          'You already filled the required frame notes and both story summaries. You can review them here before saving.'
+                                        )
+                                      : t(
+                                          'Frame notes and both short story summaries are part of the required human-teacher record for this flip.'
+                                        )}
                                   </Text>
                                 </Box>
-                                <SecondaryButton
-                                  onClick={() =>
-                                    setShowAdvancedFields((current) => !current)
-                                  }
-                                >
-                                  {showAdvancedFields
-                                    ? t('Hide detail')
-                                    : t('Add detail')}
-                                </SecondaryButton>
+                                {annotationCompletionState.requiredDetailComplete ? (
+                                  <SecondaryButton
+                                    onClick={() =>
+                                      setShowAdvancedFields(
+                                        (current) => !current
+                                      )
+                                    }
+                                  >
+                                    {showRequiredDetailSection
+                                      ? t('Hide detail')
+                                      : t('Review detail')}
+                                  </SecondaryButton>
+                                ) : (
+                                  <Badge
+                                    colorScheme="orange"
+                                    borderRadius="full"
+                                  >
+                                    {t('{{count}} item(s) left', {
+                                      count: [
+                                        !annotationCompletionState.hasFrameCaptions,
+                                        !annotationCompletionState.hasStorySummaries,
+                                      ].filter(Boolean).length,
+                                    })}
+                                  </Badge>
+                                )}
                               </Flex>
 
-                              {showAdvancedFields ? (
+                              {showRequiredDetailSection ? (
                                 <Stack spacing={3} mt={3}>
                                   <InterviewPrompt
                                     title={t(
-                                      'If you want, add a short note for each panel.'
+                                      'Add one short factual note for each panel.'
                                     )}
                                   >
                                     <Stack spacing={3}>
@@ -6272,7 +8805,7 @@ export default function AiHumanTeacherPage() {
 
                                   <InterviewPrompt
                                     title={t(
-                                      'If the AI needs more help, summarize the LEFT and RIGHT stories in your own words.'
+                                      'Write one short summary for the LEFT story and one for the RIGHT story.'
                                     )}
                                   >
                                     <Stack spacing={3}>
@@ -6330,6 +8863,15 @@ export default function AiHumanTeacherPage() {
                                             }))
                                           }}
                                         />
+                                        <Text
+                                          color="muted"
+                                          fontSize="xs"
+                                          mt={1}
+                                        >
+                                          {t(
+                                            'Optional. Use this only if you want to tag who wrote the annotation on this desktop profile.'
+                                          )}
+                                        </Text>
                                       </Box>
                                     </Stack>
                                   </InterviewPrompt>
@@ -6472,6 +9014,55 @@ export default function AiHumanTeacherPage() {
                             'If you do not press "Start training now", this chunk stays saved locally and can be trained later.'
                           )}
                     </Text>
+                    {chunkDecisionDialog.mode === 'developer' ? (
+                      <Alert
+                        status={developerTrainingReadinessAlertStatus}
+                        borderRadius="md"
+                      >
+                        <Stack spacing={2} w="full">
+                          <Flex
+                            justify="space-between"
+                            align={['flex-start', 'center']}
+                            direction={['column', 'row']}
+                            gap={2}
+                            w="full"
+                          >
+                            <Text fontWeight={600}>
+                              {t('Training readiness')}
+                            </Text>
+                            <Badge
+                              colorScheme={getTrainingReadinessBadgeScheme(
+                                developerTrainingReadiness.tone
+                              )}
+                              borderRadius="full"
+                              px={2}
+                              py={1}
+                            >
+                              {developerTrainingReadiness.label}
+                            </Badge>
+                          </Flex>
+                          <Text fontSize="sm">
+                            {developerTrainingReadiness.message}
+                          </Text>
+                          {developerTrainingRequiresOverride ? (
+                            <Checkbox
+                              isChecked={developerTrainingPressureOverride}
+                              onChange={(e) =>
+                                setDeveloperTrainingPressureOverride(
+                                  e.target.checked
+                                )
+                              }
+                            >
+                              <Text fontSize="sm">
+                                {t(
+                                  'I understand this machine is already under pressure and I still want to run one local training pass now.'
+                                )}
+                              </Text>
+                            </Checkbox>
+                          ) : null}
+                        </Stack>
+                      </Alert>
+                    ) : null}
                   </Stack>
                 </ModalBody>
                 <ModalFooter>
@@ -6481,7 +9072,8 @@ export default function AiHumanTeacherPage() {
                       isDisabled={
                         isChunkDecisionBusy ||
                         (chunkDecisionDialog.mode === 'developer' &&
-                          developerTrainingUnsupported)
+                          (developerTrainingUnsupported ||
+                            !developerTrainingReadyToStart))
                       }
                       onClick={() => handleChunkDecisionAction('train')}
                     >
@@ -6494,6 +9086,15 @@ export default function AiHumanTeacherPage() {
                       <Text color="muted" fontSize="sm">
                         {t(
                           'Training is unavailable in the current Local AI runtime. Your annotations stay saved locally until a trainable backend exists.'
+                        )}
+                      </Text>
+                    ) : null}
+                    {chunkDecisionDialog.mode === 'developer' &&
+                    developerTrainingRequiresOverride &&
+                    !developerTrainingPressureOverride ? (
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'The start button stays locked until you explicitly confirm this override.'
                         )}
                       </Text>
                     ) : null}
@@ -6803,6 +9404,31 @@ export default function AiHumanTeacherPage() {
                           'Local training is still useful right after your own small annotation chunk, especially if you want one quick personal experiment on this machine.'
                         )}
                       </Text>
+                      <LocalTrainingJourneyPanel
+                        title={t('What this local run looks like')}
+                        subtitle={t(
+                          'First you finish 5 flips. Then the computer practices on just those 5. Then the app checks whether the score on unseen flips changed.'
+                        )}
+                        chunkCompletedCount={
+                          Number(workspace?.completedCount) || 0
+                        }
+                        chunkTotalCount={totalTaskCount}
+                        pendingCount={developerPendingCount}
+                        annotatedCount={developerAnnotatedCount}
+                        trainedCount={developerTrainedCount}
+                        latestComparison={latestDeveloperComparison}
+                        benchmarkSize={developerLocalBenchmarkSize}
+                        canRunLocalTraining={developerSupportsLocalTraining}
+                        isTrainingActive={isFinalizingDeveloperChunk}
+                        isComparisonActive={isRunningDeveloperComparison}
+                        lastTraining={developerLastTraining}
+                        totalUpdates={developerLocalTrainingTotalUpdates}
+                        coolingFloorMs={developerLocalTrainingCoolingFloorMs}
+                        epochs={developerLocalTrainingEpochs}
+                        batchSize={developerLocalTrainingBatchSize}
+                        loraRank={developerLocalTrainingLoraRank}
+                        t={t}
+                      />
                       <Box
                         borderWidth="1px"
                         borderColor="orange.100"
@@ -6864,9 +9490,238 @@ export default function AiHumanTeacherPage() {
                             {t('Locked runtime model')}:{' '}
                             {localDraftRequestedRuntimeModelLabel}
                           </Text>
+                          <Box maxW="320px">
+                            <FormLabel mb={1}>
+                              {t('Local benchmark size')}
+                            </FormLabel>
+                            <Select
+                              size="sm"
+                              value={String(developerLocalBenchmarkSize)}
+                              onChange={(e) =>
+                                updateLocalAiSettings({
+                                  developerLocalBenchmarkSize: Number.parseInt(
+                                    e.target.value,
+                                    10
+                                  ),
+                                })
+                              }
+                            >
+                              {DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS.map(
+                                (size) => (
+                                  <option key={size} value={String(size)}>
+                                    {describeDeveloperLocalBenchmarkSizeOption(
+                                      size,
+                                      t
+                                    )}
+                                  </option>
+                                )
+                              )}
+                            </Select>
+                            <Text color="muted" fontSize="xs" mt={1}>
+                              {t(
+                                'This benchmark always uses a separate validation holdout and never reuses the flips you just trained on.'
+                              )}
+                            </Text>
+                          </Box>
+                          <Box maxW="320px">
+                            <FormLabel mb={1}>
+                              {t('Training heat mode')}
+                            </FormLabel>
+                            <Select
+                              size="sm"
+                              value={developerLocalTrainingThermalMode}
+                              onChange={(e) =>
+                                updateLocalAiSettings({
+                                  developerLocalTrainingThermalMode:
+                                    e.target.value,
+                                })
+                              }
+                            >
+                              <option value="full_speed">
+                                {t('Full speed')}
+                              </option>
+                              <option value="balanced">
+                                {t('Balanced cooling')}
+                              </option>
+                              <option value="cool">
+                                {t('Cool and slower')}
+                              </option>
+                            </Select>
+                            <Text color="muted" fontSize="xs" mt={1}>
+                              {developerLocalTrainingThermalSummary.detail}
+                            </Text>
+                            <Text color="muted" fontSize="xs" mt={1}>
+                              {t(
+                                'This inserts {{stepMs}} ms between training steps and {{epochMs}} ms between epochs.',
+                                {
+                                  stepMs:
+                                    developerLocalTrainingThermalSummary.stepCooldownMs,
+                                  epochMs:
+                                    developerLocalTrainingThermalSummary.epochCooldownMs,
+                                }
+                              )}
+                            </Text>
+                          </Box>
+                          <Box
+                            borderWidth="1px"
+                            borderColor={
+                              developerLocalTrainingBudgetStyles.borderColor
+                            }
+                            borderRadius="2xl"
+                            bg={developerLocalTrainingBudgetStyles.bg}
+                            px={3}
+                            py={3}
+                          >
+                            <Stack spacing={3}>
+                              <Flex
+                                justify="space-between"
+                                align={['flex-start', 'center']}
+                                direction={['column', 'row']}
+                                gap={2}
+                              >
+                                <Box>
+                                  <Text fontWeight={600}>
+                                    {t('Training budget ownership')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t(
+                                      'These three knobs decide how heavy the local pilot becomes on this machine. Smaller settings make weaker computers slower but more able to participate.'
+                                    )}
+                                  </Text>
+                                </Box>
+                                <Badge
+                                  colorScheme={
+                                    developerLocalTrainingBudgetStyles.badgeScheme
+                                  }
+                                  borderRadius="full"
+                                  px={2}
+                                >
+                                  {
+                                    developerLocalTrainingBudgetStyles.badgeLabel
+                                  }
+                                </Badge>
+                              </Flex>
+
+                              <SimpleGrid columns={[1, 3]} spacing={3}>
+                                <Box>
+                                  <FormLabel mb={1}>{t('Epochs')}</FormLabel>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={6}
+                                    step={1}
+                                    value={String(developerLocalTrainingEpochs)}
+                                    onChange={(e) =>
+                                      updateLocalAiSettings({
+                                        developerLocalTrainingEpochs: e.target
+                                          .value
+                                          ? Number.parseInt(e.target.value, 10)
+                                          : DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
+                                      })
+                                    }
+                                  />
+                                  <Text color="muted" fontSize="xs" mt={1}>
+                                    {t(
+                                      'Each extra epoch repeats the same 5-flip chunk one more time. That can improve the adapter, but total time and heat scale up directly.'
+                                    )}
+                                  </Text>
+                                </Box>
+
+                                <Box>
+                                  <FormLabel mb={1}>
+                                    {t('Batch size')}
+                                  </FormLabel>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={4}
+                                    step={1}
+                                    value={String(
+                                      developerLocalTrainingBatchSize
+                                    )}
+                                    onChange={(e) =>
+                                      updateLocalAiSettings({
+                                        developerLocalTrainingBatchSize: e
+                                          .target.value
+                                          ? Number.parseInt(e.target.value, 10)
+                                          : DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
+                                      })
+                                    }
+                                  />
+                                  <Text color="muted" fontSize="xs" mt={1}>
+                                    {t(
+                                      'Batch size is the biggest memory lever. Batch 1 is the easiest on weak machines, but it creates more update steps and takes longer.'
+                                    )}
+                                  </Text>
+                                </Box>
+
+                                <Box>
+                                  <FormLabel mb={1}>{t('LoRA rank')}</FormLabel>
+                                  <Input
+                                    type="number"
+                                    min={4}
+                                    max={16}
+                                    step={2}
+                                    value={String(
+                                      developerLocalTrainingLoraRank
+                                    )}
+                                    onChange={(e) =>
+                                      updateLocalAiSettings({
+                                        developerLocalTrainingLoraRank: e.target
+                                          .value
+                                          ? Number.parseInt(e.target.value, 10)
+                                          : DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
+                                      })
+                                    }
+                                  />
+                                  <Text color="muted" fontSize="xs" mt={1}>
+                                    {t(
+                                      'Lower rank keeps the adapter lighter and easier to fit into memory, but it also reduces how much change each run can carry.'
+                                    )}
+                                  </Text>
+                                </Box>
+                              </SimpleGrid>
+
+                              <Text color="muted" fontSize="xs">
+                                {t(
+                                  'Current math for this 5-flip chunk: {{updates}} updates per epoch, {{total}} total updates this run, and at least {{cooling}} of intentional cooling pauses before raw compute time.',
+                                  {
+                                    updates: formatCountMetric(
+                                      developerLocalTrainingUpdatesPerEpoch
+                                    ),
+                                    total: formatCountMetric(
+                                      developerLocalTrainingTotalUpdates
+                                    ),
+                                    cooling: formatDurationMs(
+                                      developerLocalTrainingCoolingFloorMs
+                                    ),
+                                  }
+                                )}
+                              </Text>
+                              <Text color="muted" fontSize="xs">
+                                {t(
+                                  'Current adapter rank is {{percent}}% of the default local rank 10. Weak machines should usually stay at batch 1, drop rank toward 4-6, and use a cooler heat mode if they want to contribute safely.',
+                                  {
+                                    percent: formatCountMetric(
+                                      Math.round(
+                                        developerLocalTrainingRankRatio * 100
+                                      )
+                                    ),
+                                  }
+                                )}
+                              </Text>
+                            </Stack>
+                          </Box>
                           {localDraftRuntimeStatusHint}
                         </Stack>
                       </Box>
+                      <LocalTrainingImpactPanel
+                        telemetry={developerTelemetry}
+                        telemetryError={developerTelemetryError}
+                        thermalSummary={developerLocalTrainingThermalSummary}
+                        isBusy={developerTelemetryIsBusy}
+                        t={t}
+                      />
                       {!developerSupportsLocalTraining ? (
                         <Alert status="warning" borderRadius="md">
                           <Text fontSize="sm">

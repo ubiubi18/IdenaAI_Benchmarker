@@ -1111,7 +1111,7 @@ export default function AiChatPage() {
             <Stack spacing={2}>
               <HStack spacing={3} align="center">
                 <ChatIcon boxSize="6" color="brandBlue.500" />
-                <PageTitle mb={0}>{t('idena.vibe')}</PageTitle>
+                <PageTitle mb={0}>{t('IdenaAI')}</PageTitle>
               </HStack>
               <Text color="muted" maxW="3xl">
                 {t(
@@ -1195,7 +1195,7 @@ export default function AiChatPage() {
                     {t('Chat')}
                   </Badge>
                   <Text fontSize="xl" fontWeight={700}>
-                    {t('Chat with idena.vibe')}
+                    {t('Chat with IdenaAI')}
                   </Text>
                   <Text color="muted" flex={1}>
                     {t(
@@ -1206,7 +1206,7 @@ export default function AiChatPage() {
                     variant="solid"
                     onClick={() => router.push('/ai-chat?mode=chat')}
                   >
-                    {t('Chat with idena.vibe')}
+                    {t('Chat with IdenaAI')}
                   </PrimaryButton>
                 </Stack>
               </Box>
@@ -1227,7 +1227,7 @@ export default function AiChatPage() {
             <Stack spacing={2}>
               <HStack spacing={3} align="center">
                 <ChatIcon boxSize="6" color="brandBlue.500" />
-                <PageTitle mb={0}>{t('idena.vibe')}</PageTitle>
+                <PageTitle mb={0}>{t('IdenaAI')}</PageTitle>
               </HStack>
               <Text color="muted" maxW="3xl">
                 {t(
@@ -1312,7 +1312,7 @@ export default function AiChatPage() {
                   gap={3}
                 >
                   <Stack spacing={1}>
-                    <Text fontWeight={700}>{t('Ask idena.vibe')}</Text>
+                    <Text fontWeight={700}>{t('Ask IdenaAI')}</Text>
                     <Text color="muted" fontSize="sm">
                       {t(
                         'Type a question directly. Add images only when they help the answer.'

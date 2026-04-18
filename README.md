@@ -1,6 +1,6 @@
-# idena.vibe
+# IdenaAI
 
-`idena.vibe` is the main experimental desktop fork of `idena-desktop` in the `IdenaAI` repository for:
+`IdenaAI` is the main experimental desktop fork of `idena-desktop` in the `IdenaAI` repository for:
 - local or hosted AI integration
 - in-app FLIP annotation and human-teacher flows
 - local FLIP training experiments tied to the desktop app
@@ -69,6 +69,13 @@ npm run build
 npm run dist
 ```
 
+For explicit macOS targets on Apple Silicon:
+
+```bash
+npm run pack:mac:arm64
+npm run pack:mac:universal
+```
+
 Useful checks:
 
 ```bash
@@ -76,6 +83,16 @@ npm run audit:privacy
 npm run audit:electron
 npm test
 ```
+
+## Large bundled artifacts
+
+This repo intentionally carries large static libraries in
+`idena-wasm-binding/lib/` for reproducible local builds.
+
+For a more polished public release flow:
+- keep those files under review before every tag
+- consider Git LFS or external release artifacts if the bundle grows further
+- make sure `THIRD_PARTY_NOTICES.md` ships with any redistributed binary bundle
 
 ## Local AI runtime
 

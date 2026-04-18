@@ -68,29 +68,39 @@ for (const filePath of expectedFiles) {
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'))
 
 requireCondition(
-  packageJson.name === 'idena-desktop',
-  'package.json name must remain idena-desktop'
+  packageJson.name === 'idena-ai',
+  'package.json name must remain idena-ai'
 )
 requireCondition(
-  packageJson.productName === 'idena-desktop',
-  'package.json productName must remain idena-desktop'
+  packageJson.productName === 'IdenaAI',
+  'package.json productName must remain IdenaAI'
 )
 requireCondition(
   packageJson.repository &&
-    packageJson.repository.url ===
-      'https://github.com/ubiubi18/IdenaAI_Benchmarker.git',
-  'package.json repository must point to the benchmark fork'
+    packageJson.repository.url === 'https://github.com/ubiubi18/IdenaAI.git',
+  'package.json repository must point to the main IdenaAI repo'
 )
 requireCondition(
-  packageJson.homepage ===
-    'https://github.com/ubiubi18/IdenaAI_Benchmarker#readme',
-  'package.json homepage must point to the benchmark fork'
+  packageJson.homepage === 'https://github.com/ubiubi18/IdenaAI#readme',
+  'package.json homepage must point to the main IdenaAI repo'
 )
 requireCondition(
   packageJson.bugs &&
-    packageJson.bugs.url ===
-      'https://github.com/ubiubi18/IdenaAI_Benchmarker/issues',
-  'package.json bugs URL must point to the benchmark fork'
+    packageJson.bugs.url === 'https://github.com/ubiubi18/IdenaAI/issues',
+  'package.json bugs URL must point to the main IdenaAI repo'
+)
+requireCondition(
+  packageJson.author === 'ubiubi18',
+  'package.json author must be set for release metadata'
+)
+requireCondition(
+  packageJson.build &&
+    packageJson.build.publish &&
+    packageJson.build.publish[0] &&
+    packageJson.build.publish[0].provider === 'github' &&
+    packageJson.build.publish[0].owner === 'ubiubi18' &&
+    packageJson.build.publish[0].repo === 'IdenaAI',
+  'package.json build.publish must point to the IdenaAI GitHub release feed'
 )
 
 const buildFiles = new Set(
