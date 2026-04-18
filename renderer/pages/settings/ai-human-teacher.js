@@ -76,7 +76,7 @@ function describeDeveloperLocalTrainingProfile(profile, t) {
   return {
     label: t('Fixed local Qwen lane'),
     detail: t(
-      'idena.vibe now uses one local lane here only: qwen3.5:9b at runtime and mlx-community/Qwen3.5-9B-MLX-4bit for local training.'
+      'IdenaAI now uses one local lane here only: qwen3.5:9b at runtime and mlx-community/Qwen3.5-9B-MLX-4bit for local training.'
     ),
   }
 }
@@ -555,11 +555,11 @@ function formatErrorMessage(error) {
       message
     )
   ) {
-    return 'This human-teacher feature is not available in the running main process yet. Fully restart idena.vibe and try again.'
+    return 'This human-teacher feature is not available in the running main process yet. Fully restart IdenaAI and try again.'
   }
 
   if (/Local AI human-teacher bridge is unavailable/i.test(message)) {
-    return 'The human-teacher bridge is unavailable in this build. Fully restart idena.vibe and try again.'
+    return 'The human-teacher bridge is unavailable in this build. Fully restart IdenaAI and try again.'
   }
 
   if (
@@ -2410,7 +2410,7 @@ function InterviewPrompt({title, children}) {
         mb={3}
       >
         <Text fontSize="sm" fontWeight={600} color="blue.500">
-          idena.vibe
+          IdenaAI
         </Text>
         <Text mt={1}>{title}</Text>
       </Box>
@@ -4539,7 +4539,7 @@ export default function AiHumanTeacherPage() {
           render: () => (
             <Toast title={t('Local AI chat bridge missing')}>
               {t(
-                'This build does not expose the Local AI chat bridge yet. Fully restart idena.vibe and try again.'
+                'This build does not expose the Local AI chat bridge yet. Fully restart IdenaAI and try again.'
               )}
             </Toast>
           ),
@@ -6581,7 +6581,7 @@ export default function AiHumanTeacherPage() {
                       : t('Start training your AI')}
                   </PrimaryButton>
                   <SecondaryButton onClick={() => router.push('/ai-chat')}>
-                    {t('Back to idena.vibe')}
+                    {t('Back to IdenaAI')}
                   </SecondaryButton>
                 </Stack>
 

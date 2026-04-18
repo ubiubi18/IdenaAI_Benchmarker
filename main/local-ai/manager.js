@@ -3406,7 +3406,7 @@ function createLocalAiManager({
     developerPromptActive,
   }) {
     return [
-      '# idena.vibe external training bundle',
+      '# IdenaAI external training bundle',
       '',
       'This folder is the provider-neutral export for external GPU training.',
       'Upload only this folder to the machine or provider you want to use.',
@@ -3429,7 +3429,7 @@ function createLocalAiManager({
       `4. For serious training, use the recommended MLX base ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}.`,
       `5. If that is too heavy, fall back to ${EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL} or ${EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL}.`,
       `6. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
-      '7. Import only the result files you intend to trust back into idena.vibe later.',
+      '7. Import only the result files you intend to trust back into IdenaAI later.',
       '',
       'Safety notes:',
       '- this bundle should contain training data only, not wallet secrets or your whole desktop profile',

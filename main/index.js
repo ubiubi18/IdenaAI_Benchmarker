@@ -29,7 +29,7 @@ const isWin = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
 const isLinux = process.platform === 'linux'
 const isDev = !app.isPackaged
-const RUNTIME_APP_NAME = 'idena.vibe'
+const RUNTIME_APP_NAME = 'IdenaAI'
 const RUNTIME_STORAGE_NAME = 'IdenaAI'
 const RUNTIME_APP_ID = 'io.idena.ai'
 

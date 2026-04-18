@@ -72,8 +72,8 @@ requireCondition(
   'package.json name must remain idena-ai'
 )
 requireCondition(
-  packageJson.productName === 'idena.vibe',
-  'package.json productName must remain idena.vibe'
+  packageJson.productName === 'IdenaAI',
+  'package.json productName must remain IdenaAI'
 )
 requireCondition(
   packageJson.repository &&

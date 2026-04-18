@@ -1,6 +1,6 @@
-# idena.vibe
+# IdenaAI
 
-`idena.vibe` is the main experimental desktop fork of `idena-desktop` in the `IdenaAI` repository for:
+`IdenaAI` is the main experimental desktop fork of `idena-desktop` in the `IdenaAI` repository for:
 - local or hosted AI integration
 - in-app FLIP annotation and human-teacher flows
 - local FLIP training experiments tied to the desktop app

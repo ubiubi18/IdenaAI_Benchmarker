@@ -728,7 +728,7 @@ export default function AiSettingsPage() {
     notify(
       t('Recommended Mac local AI setup applied'),
       t(
-        'idena.vibe now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen3.5:9b as the default local runtime for both text and image work. Local MLX training stays in the same Qwen3.5 family: Qwen3.5-9B MLX 4-bit is the recommended strong-Mac target, Qwen2.5-VL-7B 4-bit is the stronger fallback, and Qwen2-VL-2B 4-bit remains the safe minimum fallback.'
+        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen3.5:9b as the default local runtime for both text and image work. Local MLX training stays in the same Qwen3.5 family: Qwen3.5-9B MLX 4-bit is the recommended strong-Mac target, Qwen2.5-VL-7B 4-bit is the stronger fallback, and Qwen2-VL-2B 4-bit remains the safe minimum fallback.'
       ),
       'success'
     )
@@ -2891,7 +2891,7 @@ export default function AiSettingsPage() {
             <Stack spacing={4}>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'These settings are local-only and opt-in. idena.vibe should expose its own branded text and multimodal identities here; the runtime backend below is only the local transport and compatibility layer.'
+                  'These settings are local-only and opt-in. IdenaAI should expose its own branded text and multimodal identities here; the runtime backend below is only the local transport and compatibility layer.'
                 )}
               </Text>
 
@@ -2986,7 +2986,7 @@ export default function AiSettingsPage() {
                 />
                 <Text color="muted" fontSize="sm" mt={1}>
                   {t(
-                    'This is the product-facing text identity exposed by idena.vibe, independent of the backend model override.'
+                    'This is the product-facing text identity exposed by IdenaAI, independent of the backend model override.'
                   )}
                 </Text>
               </SettingsFormControl>
@@ -3005,7 +3005,7 @@ export default function AiSettingsPage() {
                 />
                 <Text color="muted" fontSize="sm" mt={1}>
                   {t(
-                    'Use this for the image-aware and flip-aware idena.vibe identity that sits above the local transport.'
+                    'Use this for the image-aware and flip-aware IdenaAI identity that sits above the local transport.'
                   )}
                 </Text>
               </SettingsFormControl>

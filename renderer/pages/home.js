@@ -760,7 +760,7 @@ function HomeFeaturedDestinations() {
           <HomeFeaturedCard
             href="/ai-chat"
             icon={<ChatIcon boxSize={5} />}
-            title={t('idena.vibe')}
+            title={t('IdenaAI')}
             cta={t('Start chat')}
             stamp={t('AI')}
             stampColorScheme="blue"
