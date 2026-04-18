@@ -20,7 +20,16 @@ const STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL =
 const FALLBACK_LOCAL_AI_TRAINING_MODEL =
   'mlx-community/Qwen2-VL-2B-Instruct-4bit'
 const DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE = 'strong'
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE = 'balanced'
+const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
 const DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE = 'manual'
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS = 1
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE = 1
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK = 10
+const DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS = 0
+const DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS = 1200
+const DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS = 768
+const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [50, 100, 200]
 const DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG = {
   safe: {
     modelPath: FALLBACK_LOCAL_AI_TRAINING_MODEL,
@@ -42,6 +51,20 @@ const DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG = {
     runtimeVisionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
     runtimeFallbackModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
     runtimeFallbackVisionModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+  },
+}
+const DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG = {
+  full_speed: {
+    stepCooldownMs: 0,
+    epochCooldownMs: 0,
+  },
+  balanced: {
+    stepCooldownMs: 250,
+    epochCooldownMs: 1500,
+  },
+  cool: {
+    stepCooldownMs: 750,
+    epochCooldownMs: 4000,
   },
 }
 const DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT =
@@ -69,7 +92,19 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   trainingPolicy: 'approved-post-consensus-only',
   developerHumanTeacherSystemPrompt: '',
   developerLocalTrainingProfile: DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  developerLocalTrainingThermalMode:
+    DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  developerLocalBenchmarkSize: DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   developerAiDraftTriggerMode: DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
+  developerLocalTrainingEpochs: DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
+  developerLocalTrainingBatchSize: DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
+  developerLocalTrainingLoraRank: DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
+  developerAiDraftContextWindowTokens:
+    DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
+  developerAiDraftQuestionWindowChars:
+    DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
+  developerAiDraftAnswerWindowTokens:
+    DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
   shareHumanTeacherAnnotationsWithNetwork: false,
   contractVersion: 'idena-local/v1',
   captureEnabled: false,
@@ -311,10 +346,89 @@ function normalizeDeveloperLocalTrainingProfile(_value) {
   return DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
 }
 
+function normalizeDeveloperLocalTrainingThermalMode(value) {
+  const nextValue = trimString(value).toLowerCase()
+
+  return Object.prototype.hasOwnProperty.call(
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
+    nextValue
+  )
+    ? nextValue
+    : DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+}
+
 function normalizeDeveloperAiDraftTriggerMode(value) {
   return trimString(value).toLowerCase() === 'automatic'
     ? 'automatic'
     : DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
+}
+
+function normalizeDeveloperAiDraftContextWindowTokens(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS
+  }
+
+  return Math.min(32768, Math.max(2048, parsed))
+}
+
+function normalizeDeveloperAiDraftQuestionWindowChars(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS
+  }
+
+  return Math.min(4000, Math.max(240, parsed))
+}
+
+function normalizeDeveloperAiDraftAnswerWindowTokens(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS
+  }
+
+  return Math.min(2048, Math.max(128, parsed))
+}
+
+function normalizeDeveloperLocalBenchmarkSize(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  return DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS.includes(parsed)
+    ? parsed
+    : DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+}
+
+function normalizeDeveloperLocalTrainingEpochs(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS
+  }
+
+  return Math.min(6, Math.max(1, parsed))
+}
+
+function normalizeDeveloperLocalTrainingBatchSize(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE
+  }
+
+  return Math.min(4, Math.max(1, parsed))
+}
+
+function normalizeDeveloperLocalTrainingLoraRank(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK
+  }
+
+  return Math.min(16, Math.max(4, parsed))
 }
 
 function resolveDeveloperLocalTrainingProfileModelPath(_value) {
@@ -337,6 +451,21 @@ function resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel(
   _value
 ) {
   return ''
+}
+
+function resolveDeveloperLocalTrainingThermalModeCooldowns(value) {
+  const normalizedMode = normalizeDeveloperLocalTrainingThermalMode(value)
+  const config =
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG[normalizedMode] ||
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG[
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+    ]
+
+  return {
+    mode: normalizedMode,
+    stepCooldownMs: config.stepCooldownMs,
+    epochCooldownMs: config.epochCooldownMs,
+  }
 }
 
 function resolveLocalAiWireRuntimeType(settings = {}) {
@@ -473,9 +602,37 @@ function buildLocalAiSettings(settings = {}) {
     developerLocalTrainingProfile: normalizeDeveloperLocalTrainingProfile(
       source.developerLocalTrainingProfile
     ),
+    developerLocalTrainingThermalMode:
+      normalizeDeveloperLocalTrainingThermalMode(
+        source.developerLocalTrainingThermalMode
+      ),
+    developerLocalBenchmarkSize: normalizeDeveloperLocalBenchmarkSize(
+      source.developerLocalBenchmarkSize
+    ),
     developerAiDraftTriggerMode: normalizeDeveloperAiDraftTriggerMode(
       source.developerAiDraftTriggerMode
     ),
+    developerLocalTrainingEpochs: normalizeDeveloperLocalTrainingEpochs(
+      source.developerLocalTrainingEpochs
+    ),
+    developerLocalTrainingBatchSize: normalizeDeveloperLocalTrainingBatchSize(
+      source.developerLocalTrainingBatchSize
+    ),
+    developerLocalTrainingLoraRank: normalizeDeveloperLocalTrainingLoraRank(
+      source.developerLocalTrainingLoraRank
+    ),
+    developerAiDraftContextWindowTokens:
+      normalizeDeveloperAiDraftContextWindowTokens(
+        source.developerAiDraftContextWindowTokens
+      ),
+    developerAiDraftQuestionWindowChars:
+      normalizeDeveloperAiDraftQuestionWindowChars(
+        source.developerAiDraftQuestionWindowChars
+      ),
+    developerAiDraftAnswerWindowTokens:
+      normalizeDeveloperAiDraftAnswerWindowTokens(
+        source.developerAiDraftAnswerWindowTokens
+      ),
     shareHumanTeacherAnnotationsWithNetwork:
       source.shareHumanTeacherAnnotationsWithNetwork === true,
     contractVersion: normalizeContractVersion(source.contractVersion),
@@ -535,8 +692,18 @@ module.exports = {
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
+  DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
+  DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
   DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
+  DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
@@ -546,12 +713,21 @@ module.exports = {
   buildLocalAiRuntimePreset,
   buildRecommendedLocalAiMacPreset,
   normalizeDeveloperLocalTrainingProfile,
+  normalizeDeveloperLocalTrainingThermalMode,
+  normalizeDeveloperLocalBenchmarkSize,
   normalizeDeveloperAiDraftTriggerMode,
+  normalizeDeveloperLocalTrainingEpochs,
+  normalizeDeveloperLocalTrainingBatchSize,
+  normalizeDeveloperLocalTrainingLoraRank,
+  normalizeDeveloperAiDraftContextWindowTokens,
+  normalizeDeveloperAiDraftQuestionWindowChars,
+  normalizeDeveloperAiDraftAnswerWindowTokens,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeModel,
   resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
+  resolveDeveloperLocalTrainingThermalModeCooldowns,
   buildLocalAiSettings,
   mergeLocalAiSettings,
 }

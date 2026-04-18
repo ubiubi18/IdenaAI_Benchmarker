@@ -596,6 +596,7 @@ function sanitizeLocalAiGenerationOptions(value) {
 
   return {
     temperature: sanitizeFiniteNumber(source.temperature, 0, 0, 2),
+    num_ctx: sanitizeInteger(source.num_ctx, 0, 0, 32768),
     num_predict: sanitizeInteger(source.num_predict, 256, 1, 2048),
   }
 }
@@ -652,6 +653,29 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
     offset: sanitizeInteger(source.offset, 0, 0),
     sampleName: sanitizeOptionalBoundedString(source.sampleName, 128),
     batchSize: sanitizeInteger(source.batchSize, null, 1, 50),
+    localTrainingThermalMode: sanitizeOptionalBoundedString(
+      source.localTrainingThermalMode,
+      32
+    ),
+    localTrainingEpochs: sanitizeInteger(
+      source.localTrainingEpochs,
+      null,
+      1,
+      6
+    ),
+    localTrainingBatchSize: sanitizeInteger(
+      source.localTrainingBatchSize,
+      null,
+      1,
+      4
+    ),
+    localTrainingLoraRank: sanitizeInteger(
+      source.localTrainingLoraRank,
+      null,
+      4,
+      16
+    ),
+    evaluationFlips: sanitizeInteger(source.evaluationFlips, null, 50, 200),
     includePackage: sanitizeBoolean(source.includePackage, false),
     trainNow: sanitizeBoolean(source.trainNow, false),
     advance: sanitizeBoolean(source.advance, false),
@@ -1122,6 +1146,7 @@ const aiSolverBridge = Object.freeze({
 const localAiBridge = Object.freeze({
   status: (payload) =>
     invokeCloneable('localAi.status', sanitizeLocalAiRuntimePayload(payload)),
+  getDeveloperTelemetry: () => invokeCloneable('localAi.getDeveloperTelemetry'),
   start: (payload) =>
     invokeCloneable('localAi.start', sanitizeLocalAiRuntimePayload(payload)),
   stop: () => invokeCloneable('localAi.stop'),

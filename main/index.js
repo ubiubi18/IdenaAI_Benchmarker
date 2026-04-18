@@ -2128,6 +2128,11 @@ handleTrusted('localAi.status', async (_event, payload) => {
   return buildLocalAiStatusResponse(await localAiManager.status(payload))
 })
 
+handleTrusted('localAi.getDeveloperTelemetry', async () => ({
+  ...(await localAiManager.getDeveloperTelemetry()),
+  enabled: isLocalAiEnabled(),
+}))
+
 handleTrusted(
   'localAi.start',
   withLocalAiEnabled('start', async (_event, payload) =>

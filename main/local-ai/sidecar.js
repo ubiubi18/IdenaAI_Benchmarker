@@ -24,6 +24,11 @@ const MAX_CHAT_MESSAGE_CHARS = 10 * 1000
 const MAX_TOTAL_CHAT_CHARS = 80 * 1000
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
+const MAX_TRAIN_STRING_CHARS = 8000
+const MAX_TRAIN_PATH_CHARS = 4096
+const MAX_TRAIN_OBJECT_DEPTH = 4
+const MAX_TRAIN_ARRAY_ITEMS = 24
+const MAX_TRAIN_OBJECT_KEYS = 48
 const ALLOWED_CHAT_ROLES = new Set(['system', 'user', 'assistant'])
 const CHECKER_CLASSIFICATIONS = new Set([
   'consistent',
@@ -32,6 +37,13 @@ const CHECKER_CLASSIFICATIONS = new Set([
 ])
 const CHECKER_CONFIDENCES = new Set(['low', 'medium', 'high'])
 const ALLOWED_RESPONSE_FORMATS = new Set(['json'])
+const ALLOWED_TRAINING_THERMAL_MODES = new Set([
+  'full_speed',
+  'balanced',
+  'cool',
+])
+const ALLOWED_TRAINING_PROFILES = new Set(['safe', 'balanced', 'strong'])
+const ALLOWED_EVALUATION_FLIPS = new Set([50, 100, 200])
 const OCR_FIRST_CHAT_PATTERN =
   /\b(text|read|ocr|screenshot|transcribe|quote|what does it say|what should i answer)\b/i
 
@@ -163,17 +175,374 @@ function normalizeGenerationOptions(input) {
 
   const options = {}
   const temperature = Number.parseFloat(input.temperature)
+  const numCtx = Number.parseInt(input.num_ctx ?? input.numCtx, 10)
   const numPredict = Number.parseInt(input.num_predict ?? input.numPredict, 10)
 
   if (Number.isFinite(temperature)) {
     options.temperature = Math.min(1, Math.max(0, temperature))
   }
 
+  if (Number.isFinite(numCtx) && numCtx > 0) {
+    options.num_ctx = Math.min(32768, Math.max(2048, numCtx))
+  }
+
   if (Number.isFinite(numPredict)) {
-    options.num_predict = Math.min(256, Math.max(1, numPredict))
+    options.num_predict = Math.min(2048, Math.max(1, numPredict))
   }
 
   return Object.keys(options).length > 0 ? options : null
+}
+
+function sanitizeTrainString(value, maxLength = MAX_TRAIN_STRING_CHARS) {
+  const text = String(value || '').trim()
+  return text ? text.slice(0, maxLength) : ''
+}
+
+function sanitizeTrainInteger(value, fallback = null, min = 0, max = Infinity) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, parsed))
+}
+
+function sanitizeCloneableTrainValue(value, depth = 0) {
+  if (depth > MAX_TRAIN_OBJECT_DEPTH) {
+    return null
+  }
+
+  if (value === null || typeof value === 'undefined') {
+    return value
+  }
+
+  if (typeof value === 'string') {
+    return value.slice(0, MAX_TRAIN_STRING_CHARS)
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, MAX_TRAIN_ARRAY_ITEMS)
+      .map((entry) => sanitizeCloneableTrainValue(entry, depth + 1))
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .slice(0, MAX_TRAIN_OBJECT_KEYS)
+      .reduce((result, [key, entryValue]) => {
+        if (typeof key !== 'string') {
+          return result
+        }
+
+        const sanitized = sanitizeCloneableTrainValue(entryValue, depth + 1)
+
+        if (typeof sanitized !== 'undefined') {
+          result[key] = sanitized
+        }
+
+        return result
+      }, {})
+  }
+
+  return undefined
+}
+
+function sanitizeTrainingProfile(value) {
+  const profile = sanitizeTrainString(value, 32).toLowerCase()
+  return ALLOWED_TRAINING_PROFILES.has(profile) ? profile : 'strong'
+}
+
+function sanitizeTrainingThermalMode(value) {
+  const thermalMode = sanitizeTrainString(value, 32).toLowerCase()
+  return ALLOWED_TRAINING_THERMAL_MODES.has(thermalMode)
+    ? thermalMode
+    : 'balanced'
+}
+
+function sanitizeTrainingEvaluationFlips(value) {
+  const parsed = sanitizeTrainInteger(value, 100, 50, 200)
+  return ALLOWED_EVALUATION_FLIPS.has(parsed) ? parsed : 100
+}
+
+function sanitizeTrainingTarget(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = value
+  const result = {}
+  const isDeveloperHumanTeacher = source.developerHumanTeacher === true
+  const hasExplicitTrainingProfile =
+    typeof source.localTrainingProfile !== 'undefined'
+  const hasExplicitThermalMode =
+    typeof source.localTrainingThermalMode !== 'undefined'
+  const hasExplicitEpochs = typeof source.localTrainingEpochs !== 'undefined'
+  const hasExplicitTrainingBatchSize =
+    typeof source.localTrainingBatchSize !== 'undefined'
+  const hasExplicitLoraRank =
+    typeof source.localTrainingLoraRank !== 'undefined'
+  const hasExplicitEvaluationFlips =
+    typeof source.evaluationFlips !== 'undefined'
+  const sampleName = sanitizeTrainString(source.sampleName, 128)
+  const currentPeriod = sanitizeTrainString(source.currentPeriod, 64)
+  const trainingModelPath =
+    sanitizeTrainString(source.trainingModelPath || source.modelPath, 256) || ''
+  const annotatedAnnotationsPath = sanitizeTrainString(
+    source.annotatedAnnotationsPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const pendingAnnotationsPath = sanitizeTrainString(
+    source.pendingAnnotationsPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const trainedAnnotationsPath = sanitizeTrainString(
+    source.trainedAnnotationsPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const developerStatePath = sanitizeTrainString(
+    source.developerStatePath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const comparisonPath = sanitizeTrainString(
+    source.comparisonPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const normalizedAnnotationsPath = sanitizeTrainString(
+    source.normalizedAnnotationsPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+
+  if (isDeveloperHumanTeacher) {
+    result.developerHumanTeacher = true
+  }
+
+  if (sampleName) {
+    result.sampleName = sampleName
+  }
+
+  if (currentPeriod) {
+    result.currentPeriod = currentPeriod
+  }
+
+  if (trainingModelPath) {
+    result.trainingModelPath = trainingModelPath
+    result.modelPath = trainingModelPath
+  }
+
+  if (annotatedAnnotationsPath) {
+    result.annotatedAnnotationsPath = annotatedAnnotationsPath
+  }
+
+  if (pendingAnnotationsPath) {
+    result.pendingAnnotationsPath = pendingAnnotationsPath
+  }
+
+  if (trainedAnnotationsPath) {
+    result.trainedAnnotationsPath = trainedAnnotationsPath
+  }
+
+  if (developerStatePath) {
+    result.developerStatePath = developerStatePath
+  }
+
+  if (comparisonPath) {
+    result.comparisonPath = comparisonPath
+  }
+
+  if (normalizedAnnotationsPath) {
+    result.normalizedAnnotationsPath = normalizedAnnotationsPath
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitTrainingProfile) {
+    result.localTrainingProfile = sanitizeTrainingProfile(
+      source.localTrainingProfile
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitThermalMode) {
+    result.localTrainingThermalMode = sanitizeTrainingThermalMode(
+      source.localTrainingThermalMode
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitEpochs) {
+    result.localTrainingEpochs = sanitizeTrainInteger(
+      source.localTrainingEpochs,
+      1,
+      1,
+      6
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitTrainingBatchSize) {
+    result.localTrainingBatchSize = sanitizeTrainInteger(
+      source.localTrainingBatchSize,
+      1,
+      1,
+      4
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitLoraRank) {
+    result.localTrainingLoraRank = sanitizeTrainInteger(
+      source.localTrainingLoraRank,
+      10,
+      4,
+      16
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitEvaluationFlips) {
+    result.evaluationFlips = sanitizeTrainingEvaluationFlips(
+      source.evaluationFlips
+    )
+  }
+
+  if (typeof source.compareOnly === 'boolean') {
+    result.compareOnly = source.compareOnly
+  }
+
+  if (typeof source.comparisonOnly === 'boolean') {
+    result.comparisonOnly = source.comparisonOnly
+  }
+
+  if (typeof source.trainNow === 'boolean') {
+    result.trainNow = source.trainNow
+  }
+
+  if (typeof source.advance === 'boolean') {
+    result.advance = source.advance
+  }
+
+  const epoch = sanitizeTrainInteger(source.epoch, null, 0, 1_000_000)
+  const currentEpoch = sanitizeTrainInteger(
+    source.currentEpoch,
+    null,
+    0,
+    1_000_000
+  )
+  const offset = sanitizeTrainInteger(source.offset, null, 0, 1_000_000)
+  const batchSize = sanitizeTrainInteger(source.batchSize, null, 1, 50)
+
+  if (epoch !== null) {
+    result.epoch = epoch
+  }
+
+  if (currentEpoch !== null) {
+    result.currentEpoch = currentEpoch
+  }
+
+  if (offset !== null) {
+    result.offset = offset
+  }
+
+  if (batchSize !== null) {
+    result.batchSize = batchSize
+  }
+
+  return result
+}
+
+function sanitizeTrainEndpointPayload(payload = {}) {
+  const source =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {}
+  const runtime = {}
+  const runtimeBackend = sanitizeTrainString(source.runtimeBackend, 64)
+  const runtimeType = sanitizeTrainString(source.runtimeType, 64)
+  const reasonerBackend = sanitizeTrainString(source.reasonerBackend, 64)
+  const visionBackend = sanitizeTrainString(source.visionBackend, 64)
+  const contractVersion = sanitizeTrainString(source.contractVersion, 64)
+  const adapterStrategy = sanitizeTrainString(source.adapterStrategy, 64)
+  const trainingPolicy = sanitizeTrainString(source.trainingPolicy, 64)
+  const publicModelId = sanitizeTrainString(source.publicModelId, 256)
+  const publicVisionId = sanitizeTrainString(source.publicVisionId, 256)
+  const model = sanitizeTrainString(source.model, 256)
+  const visionModel = sanitizeTrainString(source.visionModel, 256)
+  const developerPrompt = sanitizeTrainString(
+    source.developerHumanTeacherSystemPrompt,
+    8000
+  )
+  const rankingPolicy = sanitizeCloneableTrainValue(source.rankingPolicy)
+  const topLevelTraining = sanitizeTrainingTarget(source)
+  const nestedInput = sanitizeTrainingTarget(source.input)
+  const nestedPayload = sanitizeTrainingTarget(source.payload)
+
+  if (runtimeBackend) {
+    runtime.runtimeBackend = runtimeBackend
+  }
+
+  if (runtimeType) {
+    runtime.runtimeType = runtimeType
+  }
+
+  if (reasonerBackend) {
+    runtime.reasonerBackend = reasonerBackend
+  }
+
+  if (visionBackend) {
+    runtime.visionBackend = visionBackend
+  }
+
+  if (contractVersion) {
+    runtime.contractVersion = contractVersion
+  }
+
+  if (adapterStrategy) {
+    runtime.adapterStrategy = adapterStrategy
+  }
+
+  if (trainingPolicy) {
+    runtime.trainingPolicy = trainingPolicy
+  }
+
+  if (publicModelId) {
+    runtime.publicModelId = publicModelId
+  }
+
+  if (publicVisionId) {
+    runtime.publicVisionId = publicVisionId
+  }
+
+  if (model) {
+    runtime.model = model
+  }
+
+  if (visionModel) {
+    runtime.visionModel = visionModel
+  }
+
+  if (developerPrompt) {
+    runtime.developerHumanTeacherSystemPrompt = developerPrompt
+  }
+
+  if (rankingPolicy && typeof rankingPolicy === 'object') {
+    runtime.rankingPolicy = rankingPolicy
+  }
+
+  if (topLevelTraining) {
+    Object.assign(runtime, topLevelTraining)
+  }
+
+  if (nestedInput) {
+    runtime.input = nestedInput
+  }
+
+  if (nestedPayload) {
+    runtime.payload = nestedPayload
+  }
+
+  return runtime
 }
 
 function supportsOllamaThinkingToggle(model) {
@@ -1735,7 +2104,8 @@ function createLocalAiSidecar({
       callLocalEndpoint({
         baseUrl: payload.baseUrl,
         endpointPath: '/train',
-        payload,
+        payload: sanitizeTrainEndpointPayload(payload),
+        timeoutMs: payload.timeoutMs,
         action: 'Local AI training request',
       }),
   }

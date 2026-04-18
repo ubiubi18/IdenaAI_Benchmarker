@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
+import time
 from pathlib import Path
 
 import mlx.core as mx
@@ -42,6 +44,13 @@ except ImportError:
 SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
 STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+
+def maybe_sleep_for_cooldown(cooldown_ms: int) -> None:
+    if int(cooldown_ms or 0) <= 0:
+        return
+
+    time.sleep(float(cooldown_ms) / 1000.0)
 
 
 def looks_like_qwen35_model_path(value: str) -> bool:
@@ -203,7 +212,10 @@ def weighted_vision_language_loss_fn(
     batch,
     train_on_completions: bool = False,
     assistant_id: int = 77091,
+    step_cooldown_ms: int = 0,
 ):
+    maybe_sleep_for_cooldown(step_cooldown_ms)
+
     pixel_values = batch["pixel_values"]
     input_ids = batch["input_ids"]
     attention_mask = batch["attention_mask"]
@@ -288,12 +300,17 @@ def weighted_vision_language_loss_fn(
 
 if not MODERN_TRAINER_API:
     class WeightedTrainer(Trainer):
+        def __init__(self, *args, step_cooldown_ms: int = 0, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.step_cooldown_ms = int(step_cooldown_ms or 0)
+
         def loss_fn(self, model, batch):
             return weighted_vision_language_loss_fn(
                 model,
                 batch,
                 train_on_completions=self.train_on_completions,
                 assistant_id=self.assistant_id,
+                step_cooldown_ms=self.step_cooldown_ms,
             )
 
 
@@ -345,11 +362,15 @@ def main(args) -> int:
         dropout=args.lora_dropout,
     )
 
-    steps_per_epoch = args.steps or max(1, len(dataset) // args.batch_size)
+    steps_per_epoch = args.steps or max(1, math.ceil(len(dataset) / args.batch_size))
     total_steps = steps_per_epoch * args.epochs
     print(
         f"Training for epochs={args.epochs} batch_size={args.batch_size} "
         f"steps_per_epoch={steps_per_epoch}"
+    )
+    print(
+        f"Thermal throttle: step_cooldown_ms={args.step_cooldown_ms} "
+        f"epoch_cooldown_ms={args.epoch_cooldown_ms}"
     )
     print(f"Sample weighting: {json.dumps(weight_summary, sort_keys=True)}")
 
@@ -376,11 +397,19 @@ def main(args) -> int:
             train_dataset=dataset,
             val_dataset=None,
             args=training_args,
-            loss_fn=weighted_vision_language_loss_fn,
+            loss_fn=lambda *loss_args, **loss_kwargs: weighted_vision_language_loss_fn(
+                *loss_args,
+                **loss_kwargs,
+                step_cooldown_ms=args.step_cooldown_ms,
+            ),
         )
     else:
         print("Using mlx_vlm legacy trainer API")
-        trainer = WeightedTrainer(model, optimizer)
+        trainer = WeightedTrainer(
+            model,
+            optimizer,
+            step_cooldown_ms=args.step_cooldown_ms,
+        )
         model.train()
 
         for epoch in range(args.epochs):
@@ -411,6 +440,8 @@ def main(args) -> int:
                     {"epoch": epoch + 1, "step": step + 1, "loss": round(loss_value, 6)}
                 )
 
+            maybe_sleep_for_cooldown(args.epoch_cooldown_ms)
+
         print(f"Saving adapter to {adapter_file}")
         save_adapter(model, adapter_file)
 
@@ -425,6 +456,10 @@ def main(args) -> int:
         "total_steps": total_steps,
         "trainer_api": "modern" if MODERN_TRAINER_API else "legacy",
         "learning_rate": args.learning_rate,
+        "step_cooldown_ms": args.step_cooldown_ms,
+        "epoch_cooldown_ms": args.epoch_cooldown_ms,
+        "epoch_cooldown_applied": (not MODERN_TRAINER_API)
+        and int(args.epoch_cooldown_ms or 0) > 0,
         "lora_rank": args.lora_rank,
         "lora_alpha": args.lora_alpha,
         "lora_dropout": args.lora_dropout,
@@ -496,6 +531,18 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--print-every", type=int, default=10, help="Print loss every n steps"
+    )
+    parser.add_argument(
+        "--step-cooldown-ms",
+        type=int,
+        default=0,
+        help="Optional pause after each training step to reduce sustained heat",
+    )
+    parser.add_argument(
+        "--epoch-cooldown-ms",
+        type=int,
+        default=0,
+        help="Optional pause after each epoch to reduce sustained heat",
     )
     parser.add_argument(
         "--lora-alpha", type=float, default=0.1, help="LoRA alpha parameter"

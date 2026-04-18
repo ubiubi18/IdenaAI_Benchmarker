@@ -3,6 +3,7 @@ const fs = require('fs')
 const path = require('path')
 
 const DEFAULT_EVALUATION_FLIPS = 100
+const ALLOWED_EVALUATION_FLIPS = [50, 100, 200]
 const DEFAULT_TRAINING_EPOCHS = 1
 const DEFAULT_TRAINING_BATCH_SIZE = 1
 const DEFAULT_TRAINING_LEARNING_RATE = 1e-4
@@ -11,9 +12,26 @@ const DEFAULT_TRAINING_MODEL_PATH = 'mlx-community/Qwen3.5-9B-MLX-4bit'
 const STRONG_FALLBACK_TRAINING_MODEL_PATH =
   'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
 const FALLBACK_TRAINING_MODEL_PATH = 'mlx-community/Qwen2-VL-2B-Instruct-4bit'
+const DEFAULT_LOCAL_TRAINING_THERMAL_MODE = 'balanced'
+const ALLOWED_LOCAL_TRAINING_PROFILES = new Set(['safe', 'balanced', 'strong'])
+const LOCAL_TRAINING_THERMAL_MODE_CONFIG = {
+  full_speed: {
+    stepCooldownMs: 0,
+    epochCooldownMs: 0,
+  },
+  balanced: {
+    stepCooldownMs: 250,
+    epochCooldownMs: 1500,
+  },
+  cool: {
+    stepCooldownMs: 750,
+    epochCooldownMs: 4000,
+  },
+}
 const DEFAULT_PREPARE_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_TRAIN_TIMEOUT_MS = 30 * 60 * 1000
 const DEFAULT_EVALUATE_TIMEOUT_MS = 30 * 60 * 1000
+const MAX_STDIO_CAPTURE_BYTES = 128 * 1024
 const DEFAULT_TRAINING_STATUS = 'trained'
 const DEFAULT_COMPARISON_STATUS = 'evaluated'
 const PYTHON_COMMAND_CANDIDATES = [
@@ -90,6 +108,57 @@ function normalizeAccuracy(value) {
 function normalizeInteger(value) {
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function normalizePositiveInteger(value, fallback, min = 1, max = Infinity) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, parsed))
+}
+
+function normalizeEvaluationFlips(value) {
+  const parsed = normalizeInteger(value)
+  return ALLOWED_EVALUATION_FLIPS.includes(parsed)
+    ? parsed
+    : DEFAULT_EVALUATION_FLIPS
+}
+
+function normalizeDeveloperLocalTrainingThermalMode(value) {
+  const nextValue = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return Object.prototype.hasOwnProperty.call(
+    LOCAL_TRAINING_THERMAL_MODE_CONFIG,
+    nextValue
+  )
+    ? nextValue
+    : DEFAULT_LOCAL_TRAINING_THERMAL_MODE
+}
+
+function normalizeDeveloperLocalTrainingProfile(value) {
+  const nextValue = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return ALLOWED_LOCAL_TRAINING_PROFILES.has(nextValue) ? nextValue : null
+}
+
+function resolveThermalThrottle(mode) {
+  const normalizedMode = normalizeDeveloperLocalTrainingThermalMode(mode)
+  const config =
+    LOCAL_TRAINING_THERMAL_MODE_CONFIG[normalizedMode] ||
+    LOCAL_TRAINING_THERMAL_MODE_CONFIG[DEFAULT_LOCAL_TRAINING_THERMAL_MODE]
+
+  return {
+    localTrainingThermalMode: normalizedMode,
+    stepCooldownMs: config.stepCooldownMs,
+    epochCooldownMs: config.epochCooldownMs,
+  }
 }
 
 function readMetric(source, candidates = []) {
@@ -241,6 +310,21 @@ function resolveTrainingStrongFallbackModelPath() {
   return explicit || STRONG_FALLBACK_TRAINING_MODEL_PATH
 }
 
+function resolveApprovedTrainingModelPaths() {
+  return new Set(
+    [
+      resolveTrainingModelPath(),
+      resolveTrainingStrongFallbackModelPath(),
+      resolveTrainingFallbackModelPath(),
+      DEFAULT_TRAINING_MODEL_PATH,
+      STRONG_FALLBACK_TRAINING_MODEL_PATH,
+      FALLBACK_TRAINING_MODEL_PATH,
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  )
+}
+
 function parseEnvInteger(name, fallback) {
   const parsed = Number.parseInt(process.env[name], 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
@@ -267,6 +351,43 @@ function ensureInsideDir(baseDir, targetPath) {
   }
 
   return resolvedTargetPath
+}
+
+function createOutputCollector(maxBytes = MAX_STDIO_CAPTURE_BYTES) {
+  const chunks = []
+  let size = 0
+  let truncated = false
+
+  return {
+    append(chunk) {
+      const buffer = Buffer.from(chunk)
+
+      if (!buffer.length) {
+        return
+      }
+
+      if (size >= maxBytes) {
+        truncated = true
+        return
+      }
+
+      const remaining = maxBytes - size
+
+      if (buffer.length > remaining) {
+        chunks.push(buffer.subarray(0, remaining))
+        size += remaining
+        truncated = true
+        return
+      }
+
+      chunks.push(buffer)
+      size += buffer.length
+    },
+    toString() {
+      const text = Buffer.concat(chunks).toString('utf8')
+      return truncated ? `${text}\n...[truncated]` : text
+    },
+  }
 }
 
 async function ensureDir(dirPath) {
@@ -332,10 +453,11 @@ async function runPythonScript({
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    const stdoutChunks = []
-    const stderrChunks = []
+    const stdoutCollector = createOutputCollector()
+    const stderrCollector = createOutputCollector()
     let settled = false
     let timeoutId = null
+    let forceKillId = null
 
     function finalize(result) {
       if (settled) {
@@ -346,6 +468,10 @@ async function runPythonScript({
 
       if (timeoutId) {
         clearTimeout(timeoutId)
+      }
+
+      if (forceKillId) {
+        clearTimeout(forceKillId)
       }
 
       resolve(result)
@@ -362,18 +488,22 @@ async function runPythonScript({
         clearTimeout(timeoutId)
       }
 
+      if (forceKillId) {
+        clearTimeout(forceKillId)
+      }
+
       reject(error)
     }
 
     if (child.stdout) {
       child.stdout.on('data', (chunk) => {
-        stdoutChunks.push(Buffer.from(chunk))
+        stdoutCollector.append(chunk)
       })
     }
 
     if (child.stderr) {
       child.stderr.on('data', (chunk) => {
-        stderrChunks.push(Buffer.from(chunk))
+        stderrCollector.append(chunk)
       })
     }
 
@@ -385,16 +515,20 @@ async function runPythonScript({
             status: 'spawn_failed',
             command,
             args: finalArgs,
-            stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-            stderr: Buffer.concat(stderrChunks).toString('utf8'),
+            stdout: stdoutCollector.toString(),
+            stderr: stderrCollector.toString(),
           }
         )
       )
     })
 
     child.once('exit', (code, signal) => {
-      const stdout = Buffer.concat(stdoutChunks).toString('utf8')
-      const stderr = Buffer.concat(stderrChunks).toString('utf8')
+      if (forceKillId) {
+        clearTimeout(forceKillId)
+      }
+
+      const stdout = stdoutCollector.toString()
+      const stderr = stderrCollector.toString()
 
       if (code === 0) {
         finalize({
@@ -430,16 +564,29 @@ async function runPythonScript({
 
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
       timeoutId = setTimeout(() => {
-        child.kill('SIGTERM')
+        try {
+          child.kill('SIGTERM')
+        } catch {
+          // Best effort timeout cleanup.
+        }
+
         fail(
           createProcessError(`${targetLabel} timed out after ${timeoutMs}ms`, {
             status: 'timeout',
             command,
             args: finalArgs,
-            stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-            stderr: Buffer.concat(stderrChunks).toString('utf8'),
+            stdout: stdoutCollector.toString(),
+            stderr: stderrCollector.toString(),
           })
         )
+
+        forceKillId = setTimeout(() => {
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // Best effort forced cleanup.
+          }
+        }, 2000)
       }, timeoutMs)
     }
 
@@ -457,16 +604,42 @@ async function runPythonScript({
 function normalizeTrainingRequest(input = {}) {
   const source =
     input && typeof input === 'object' && !Array.isArray(input) ? input : {}
+  const requestedModelPath = String(
+    source.trainingModelPath || source.modelPath || ''
+  ).trim()
+  const approvedTrainingModelPaths = resolveApprovedTrainingModelPaths()
 
   return {
     developerHumanTeacher: source.developerHumanTeacher === true,
     sampleName: String(source.sampleName || '').trim(),
     trainingModelPath:
-      String(source.trainingModelPath || source.modelPath || '').trim() || null,
-    localTrainingProfile:
-      String(source.localTrainingProfile || '')
-        .trim()
-        .toLowerCase() || null,
+      requestedModelPath && approvedTrainingModelPaths.has(requestedModelPath)
+        ? requestedModelPath
+        : null,
+    localTrainingProfile: normalizeDeveloperLocalTrainingProfile(
+      source.localTrainingProfile
+    ),
+    localTrainingThermalMode: normalizeDeveloperLocalTrainingThermalMode(
+      source.localTrainingThermalMode
+    ),
+    localTrainingEpochs: normalizePositiveInteger(
+      source.localTrainingEpochs,
+      DEFAULT_TRAINING_EPOCHS,
+      1,
+      6
+    ),
+    localTrainingBatchSize: normalizePositiveInteger(
+      source.localTrainingBatchSize,
+      DEFAULT_TRAINING_BATCH_SIZE,
+      1,
+      4
+    ),
+    localTrainingLoraRank: normalizePositiveInteger(
+      source.localTrainingLoraRank,
+      DEFAULT_TRAINING_LORA_RANK,
+      4,
+      16
+    ),
     annotatedAnnotationsPath:
       String(source.annotatedAnnotationsPath || '').trim() || null,
     pendingAnnotationsPath:
@@ -478,8 +651,7 @@ function normalizeTrainingRequest(input = {}) {
     normalizedAnnotationsPath:
       String(source.normalizedAnnotationsPath || '').trim() || null,
     compareOnly: source.compareOnly === true || source.comparisonOnly === true,
-    evaluationFlips:
-      normalizeInteger(source.evaluationFlips) || DEFAULT_EVALUATION_FLIPS,
+    evaluationFlips: normalizeEvaluationFlips(source.evaluationFlips),
   }
 }
 
@@ -730,25 +902,55 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
     }
   }
 
-  async function runTraining({runtimeTrainingDir, datasetPath, modelPath}) {
+  async function runTraining({
+    runtimeTrainingDir,
+    datasetPath,
+    modelPath,
+    localTrainingThermalMode,
+    localTrainingEpochs,
+    localTrainingBatchSize,
+    localTrainingLoraRank,
+  }) {
     const outputDir = resolveTrainingOutputDir(runtimeTrainingDir)
     const steps = parseEnvInteger('IDENAAI_DEVELOPER_TRAIN_STEPS', 0)
-    const epochs = parseEnvInteger(
-      'IDENAAI_DEVELOPER_TRAIN_EPOCHS',
-      DEFAULT_TRAINING_EPOCHS
+    const epochs = normalizePositiveInteger(
+      localTrainingEpochs,
+      parseEnvInteger(
+        'IDENAAI_DEVELOPER_TRAIN_EPOCHS',
+        DEFAULT_TRAINING_EPOCHS
+      ),
+      1,
+      6
     )
-    const batchSize = parseEnvInteger(
-      'IDENAAI_DEVELOPER_TRAIN_BATCH_SIZE',
-      DEFAULT_TRAINING_BATCH_SIZE
+    const batchSize = normalizePositiveInteger(
+      localTrainingBatchSize,
+      parseEnvInteger(
+        'IDENAAI_DEVELOPER_TRAIN_BATCH_SIZE',
+        DEFAULT_TRAINING_BATCH_SIZE
+      ),
+      1,
+      4
     )
     const learningRate = parseEnvFloat(
       'IDENAAI_DEVELOPER_TRAIN_LEARNING_RATE',
       DEFAULT_TRAINING_LEARNING_RATE
     )
-    const loraRank = parseEnvInteger(
-      'IDENAAI_DEVELOPER_TRAIN_LORA_RANK',
-      DEFAULT_TRAINING_LORA_RANK
+    const loraRank = normalizePositiveInteger(
+      localTrainingLoraRank,
+      parseEnvInteger(
+        'IDENAAI_DEVELOPER_TRAIN_LORA_RANK',
+        DEFAULT_TRAINING_LORA_RANK
+      ),
+      4,
+      16
     )
+    const thermalThrottle = resolveThermalThrottle(localTrainingThermalMode)
+    const stepCooldownMs =
+      normalizeInteger(process.env.IDENAAI_DEVELOPER_TRAIN_STEP_COOLDOWN_MS) ??
+      thermalThrottle.stepCooldownMs
+    const epochCooldownMs =
+      normalizeInteger(process.env.IDENAAI_DEVELOPER_TRAIN_EPOCH_COOLDOWN_MS) ??
+      thermalThrottle.epochCooldownMs
 
     await ensureScriptAvailable(trainScript)
     await runPythonScript({
@@ -772,6 +974,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         String(learningRate),
         '--lora-rank',
         String(loraRank),
+        '--step-cooldown-ms',
+        String(stepCooldownMs),
+        '--epoch-cooldown-ms',
+        String(epochCooldownMs),
       ].concat(steps > 0 ? ['--steps', String(steps)] : []),
     })
 
@@ -789,6 +995,12 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
       adapterPath,
       summaryPath,
       summary: await readJsonIfExists(summaryPath, null),
+      localTrainingThermalMode: thermalThrottle.localTrainingThermalMode,
+      localTrainingEpochs: epochs,
+      localTrainingBatchSize: batchSize,
+      localTrainingLoraRank: loraRank,
+      stepCooldownMs,
+      epochCooldownMs,
     }
   }
 
@@ -981,6 +1193,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
             request.localTrainingProfile ||
             metadata.localTrainingProfile ||
             null,
+          localTrainingThermalMode:
+            request.localTrainingThermalMode ||
+            metadata.localTrainingThermalMode ||
+            null,
           latestComparisonPath: comparisonPath,
           latestHoldoutPath: comparisonRun.holdout.datasetPath,
           lastEvaluatedAt: comparisonRun.summary.evaluatedAt,
@@ -994,6 +1210,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
           localTrainingProfile:
             request.localTrainingProfile ||
             metadata.localTrainingProfile ||
+            null,
+          localTrainingThermalMode:
+            request.localTrainingThermalMode ||
+            metadata.localTrainingThermalMode ||
             null,
           adapterPath,
           comparisonPath,
@@ -1024,6 +1244,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         runtimeTrainingDir,
         datasetPath: prepared.datasetPath,
         modelPath: preferredModelPath,
+        localTrainingThermalMode: request.localTrainingThermalMode,
+        localTrainingEpochs: request.localTrainingEpochs,
+        localTrainingBatchSize: request.localTrainingBatchSize,
+        localTrainingLoraRank: request.localTrainingLoraRank,
       })
       const comparison = await buildComparison({
         runtimeTrainingDir,
@@ -1037,6 +1261,15 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         sampleName: request.sampleName,
         modelPath: preferredModelPath,
         localTrainingProfile: request.localTrainingProfile || null,
+        localTrainingThermalMode:
+          training.localTrainingThermalMode ||
+          request.localTrainingThermalMode ||
+          null,
+        localTrainingEpochs: training.localTrainingEpochs,
+        localTrainingBatchSize: training.localTrainingBatchSize,
+        localTrainingLoraRank: training.localTrainingLoraRank,
+        stepCooldownMs: training.stepCooldownMs,
+        epochCooldownMs: training.epochCooldownMs,
         strongFallbackModelPath: resolveTrainingStrongFallbackModelPath(),
         fallbackModelPath: resolveTrainingFallbackModelPath(),
         latestPreparedDatasetPath: prepared.datasetPath,
@@ -1058,6 +1291,15 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         trainingBackend: 'mlx_vlm_local',
         modelPath: preferredModelPath,
         localTrainingProfile: request.localTrainingProfile || null,
+        localTrainingThermalMode:
+          training.localTrainingThermalMode ||
+          request.localTrainingThermalMode ||
+          null,
+        localTrainingEpochs: training.localTrainingEpochs,
+        localTrainingBatchSize: training.localTrainingBatchSize,
+        localTrainingLoraRank: training.localTrainingLoraRank,
+        stepCooldownMs: training.stepCooldownMs,
+        epochCooldownMs: training.epochCooldownMs,
         adapterPath: training.adapterPath,
         preparedDatasetPath: prepared.datasetPath,
         preparedManifestPath: prepared.manifestPath,
@@ -1097,6 +1339,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         trainingBackend: 'mlx_vlm_local',
         modelPath: preferredModelPath,
         localTrainingProfile: request.localTrainingProfile || null,
+        localTrainingThermalMode: request.localTrainingThermalMode || null,
+        localTrainingEpochs: request.localTrainingEpochs,
+        localTrainingBatchSize: request.localTrainingBatchSize,
+        localTrainingLoraRank: request.localTrainingLoraRank,
         failureReason,
         message: failureReason,
         error:

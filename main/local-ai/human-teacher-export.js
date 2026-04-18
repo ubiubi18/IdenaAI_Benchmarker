@@ -1,9 +1,18 @@
+const crypto = require('crypto')
 const fs = require('fs-extra')
 const path = require('path')
 const {decode} = require('rlp')
 
+const HUMAN_TEACHER_WORKSPACE_TYPE =
+  'local-ai-human-teacher-annotation-workspace'
+const HUMAN_TEACHER_PACKAGE_TYPE = 'local-ai-human-teacher-tasks'
+
 function trimText(value) {
   return String(value || '').trim()
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex')
 }
 
 function ensureHexPrefix(value) {
@@ -120,6 +129,7 @@ function buildTaskMarkdown(task) {
     '- Mark whether the flip should be reported.',
     '- Give the final answer: `left`, `right`, or `skip`.',
     '- Explain briefly why that answer is better than the alternatives.',
+    '- Keep the prefilled reference fields unchanged so the annotation stays bound to this flip task.',
     '',
     '## Panels',
     '',
@@ -134,6 +144,87 @@ function buildTaskMarkdown(task) {
   ].join('\n')
 }
 
+function normalizeReviewStatus(value) {
+  return trimText(value).toLowerCase()
+}
+
+function normalizeEpoch(value) {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function assertExportableTeacherPackage(teacherPackage) {
+  if (
+    !teacherPackage ||
+    typeof teacherPackage !== 'object' ||
+    Array.isArray(teacherPackage)
+  ) {
+    throw new Error('Human teacher package is invalid')
+  }
+
+  if (trimText(teacherPackage.packageType) !== HUMAN_TEACHER_PACKAGE_TYPE) {
+    throw new Error('Human teacher package type is invalid')
+  }
+
+  if (normalizeReviewStatus(teacherPackage.reviewStatus) !== 'approved') {
+    throw new Error(
+      'Human teacher package must be approved before annotation tasks can be exported'
+    )
+  }
+
+  if (teacherPackage.annotationReady !== true) {
+    throw new Error(
+      'Human teacher package must be annotation-ready before export'
+    )
+  }
+
+  const packageEpoch = normalizeEpoch(teacherPackage.epoch)
+
+  if (packageEpoch === null) {
+    throw new Error('Human teacher package epoch is invalid')
+  }
+
+  const items = Array.isArray(teacherPackage.items) ? teacherPackage.items : []
+
+  if (!items.length) {
+    throw new Error('Human teacher package does not contain any tasks')
+  }
+
+  const seenTaskIds = new Set()
+
+  items.forEach((item, index) => {
+    const taskId = trimText(item && item.taskId)
+
+    if (!taskId) {
+      throw new Error(`Human teacher task ${index + 1} is missing taskId`)
+    }
+
+    if (seenTaskIds.has(taskId)) {
+      throw new Error(`Duplicate human teacher taskId: ${taskId}`)
+    }
+
+    seenTaskIds.add(taskId)
+
+    if (!trimText(item && item.payloadPath)) {
+      throw new Error(`Human teacher task ${taskId} is missing payloadPath`)
+    }
+
+    const itemEpoch = normalizeEpoch(item && item.epoch)
+
+    if (itemEpoch !== null && itemEpoch !== packageEpoch) {
+      throw new Error(
+        `Human teacher task ${taskId} does not match package epoch ${packageEpoch}`
+      )
+    }
+  })
+
+  return {
+    ...teacherPackage,
+    epoch: packageEpoch,
+    items,
+  }
+}
+
 async function exportHumanTeacherTasks({
   packagePath,
   outputDir,
@@ -146,14 +237,10 @@ async function exportHumanTeacherTasks({
     throw new Error('packagePath and outputDir are required')
   }
 
-  const teacherPackage = await fs.readJson(resolvedPackagePath)
-  const items = Array.isArray(teacherPackage && teacherPackage.items)
-    ? teacherPackage.items
-    : []
-
-  if (!items.length) {
-    throw new Error('Human teacher package does not contain any tasks')
-  }
+  const teacherPackage = assertExportableTeacherPackage(
+    await fs.readJson(resolvedPackagePath)
+  )
+  const items = teacherPackage.items
 
   const selectedItems = take > 0 ? items.slice(0, take) : items
   const tasksDir = path.join(resolvedOutputDir, 'tasks')
@@ -163,6 +250,7 @@ async function exportHumanTeacherTasks({
     'annotations.template.jsonl'
   )
   const filledPath = path.join(resolvedOutputDir, 'annotations.filled.jsonl')
+  const metadataPath = path.join(resolvedOutputDir, 'workspace-metadata.json')
 
   await fs.remove(resolvedOutputDir)
   await fs.ensureDir(tasksDir)
@@ -202,6 +290,11 @@ async function exportHumanTeacherTasks({
 
     const annotationTemplate = {
       task_id: item.taskId,
+      sample_id: item.sampleId || item.taskId,
+      flip_hash: item.flipHash || '',
+      epoch: item.epoch ?? teacherPackage.epoch,
+      consensus_answer: item.finalAnswer || '',
+      consensus_strength: item.consensusStrength || '',
       annotator: '',
       frame_captions: ['', '', '', ''],
       option_a_summary: '',
@@ -249,21 +342,39 @@ async function exportHumanTeacherTasks({
     templateRows.push(annotationTemplate)
   }
 
+  const manifestContent = manifestRows.length
+    ? `${manifestRows.map((row) => JSON.stringify(row)).join('\n')}\n`
+    : ''
+  const templateContent = templateRows.length
+    ? `${templateRows.map((row) => JSON.stringify(row)).join('\n')}\n`
+    : ''
+
   await fs.writeFile(
     manifestPath,
-    `${manifestRows.map((row) => JSON.stringify(row)).join('\n')}\n`,
+    manifestContent,
     'utf8'
   )
-  await fs.writeFile(
-    templatePath,
-    `${templateRows.map((row) => JSON.stringify(row)).join('\n')}\n`,
-    'utf8'
-  )
-  await fs.writeFile(
-    filledPath,
-    `${templateRows.map((row) => JSON.stringify(row)).join('\n')}\n`,
-    'utf8'
-  )
+  await fs.writeFile(templatePath, templateContent, 'utf8')
+  await fs.writeFile(filledPath, templateContent, 'utf8')
+
+  const metadata = {
+    schemaVersion: 1,
+    workspaceType: HUMAN_TEACHER_WORKSPACE_TYPE,
+    exportedAt: new Date().toISOString(),
+    packagePath: resolvedPackagePath,
+    packageType: teacherPackage.packageType,
+    epoch: teacherPackage.epoch,
+    reviewStatus: teacherPackage.reviewStatus,
+    annotationReady: true,
+    taskCount: manifestRows.length,
+    taskIds: manifestRows.map((row) => row.task_id),
+    taskManifestPath: manifestPath,
+    annotationsTemplatePath: templatePath,
+    annotationsFilledPath: filledPath,
+    taskManifestSha256: sha256(manifestContent),
+  }
+
+  await fs.writeJson(metadataPath, metadata, {spaces: 2})
 
   const summary = {
     packagePath: resolvedPackagePath,
@@ -272,6 +383,8 @@ async function exportHumanTeacherTasks({
     templatePath,
     filledPath,
     manifestPath,
+    metadataPath,
+    manifestSha256: metadata.taskManifestSha256,
   }
 
   await fs.writeJson(path.join(resolvedOutputDir, 'summary.json'), summary, {

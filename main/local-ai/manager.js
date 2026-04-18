@@ -1,5 +1,6 @@
-const {spawn} = require('child_process')
+const {spawn, spawnSync} = require('child_process')
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 
 const {createLocalAiStorage} = require('./storage')
@@ -51,12 +52,321 @@ const EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL =
 const EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL =
   'mlx-community/Qwen2-VL-2B-Instruct-4bit'
 const EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE = 200
+const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
+const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [50, 100, 200]
+const DEVELOPER_LOCAL_TRAINING_MODEL_OPTIONS = new Set([
+  EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
+  EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
+  EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
+])
+const DEVELOPER_LOCAL_TRAINING_PROFILE_OPTIONS = new Set([
+  'safe',
+  'balanced',
+  'strong',
+])
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE = 'strong'
+const DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_OPTIONS = new Set([
+  'full_speed',
+  'balanced',
+  'cool',
+])
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE = 'balanced'
+const HUMAN_TEACHER_WORKSPACE_METADATA_FILE = 'workspace-metadata.json'
+const HUMAN_TEACHER_WORKSPACE_TYPE =
+  'local-ai-human-teacher-annotation-workspace'
 const OLLAMA_COMMAND_CANDIDATES = [
   '/opt/homebrew/bin/ollama',
   '/usr/local/bin/ollama',
   'ollama',
 ]
 const ELIGIBLE_CONSENSUS_ANSWERS = new Set(['left', 'right'])
+
+function roundTelemetryValue(value, precision = 1) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  const factor = 10 ** precision
+  return Math.round(parsed * factor) / factor
+}
+
+function bytesToGiB(value) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null
+  }
+
+  return roundTelemetryValue(parsed / 1024 / 1024 / 1024, 2)
+}
+
+function captureCpuSnapshot() {
+  const cpus = Array.isArray(os.cpus()) ? os.cpus() : []
+
+  if (!cpus.length) {
+    return null
+  }
+
+  return cpus.reduce(
+    (snapshot, cpu) => {
+      const times = cpu && cpu.times ? cpu.times : {}
+      const total =
+        Number(times.user || 0) +
+        Number(times.nice || 0) +
+        Number(times.sys || 0) +
+        Number(times.idle || 0) +
+        Number(times.irq || 0)
+
+      snapshot.total += total
+      snapshot.idle += Number(times.idle || 0)
+      snapshot.cores += 1
+
+      return snapshot
+    },
+    {capturedAt: Date.now(), total: 0, idle: 0, cores: 0}
+  )
+}
+
+function calculateCpuUsagePercent(previousSnapshot, nextSnapshot) {
+  if (!previousSnapshot || !nextSnapshot) {
+    return null
+  }
+
+  const totalDelta = Number(nextSnapshot.total) - Number(previousSnapshot.total)
+  const idleDelta = Number(nextSnapshot.idle) - Number(previousSnapshot.idle)
+
+  if (!Number.isFinite(totalDelta) || totalDelta <= 0) {
+    return null
+  }
+
+  return roundTelemetryValue(
+    ((totalDelta - Math.max(0, idleDelta)) / totalDelta) * 100,
+    1
+  )
+}
+
+function runBestEffortCommand(command, args = [], timeoutMs = 1200) {
+  try {
+    const result = spawnSync(command, args, {
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    return {
+      ok: !result.error,
+      status: result.status,
+      stdout: String(result.stdout || ''),
+      stderr: String(result.stderr || ''),
+      error: result.error ? String(result.error.message || result.error) : '',
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: null,
+      stdout: '',
+      stderr: '',
+      error: String(error && error.message ? error.message : error || ''),
+    }
+  }
+}
+
+function parseBatteryTimeRemainingMinutes(text) {
+  const match = String(text || '').match(/(\d+):(\d+)\s+remaining/i)
+
+  if (!match) {
+    return null
+  }
+
+  return Number.parseInt(match[1], 10) * 60 + Number.parseInt(match[2], 10)
+}
+
+function parsePmsetBatteryOutput(stdout) {
+  const raw = String(stdout || '').trim()
+
+  if (!raw) {
+    return {
+      available: false,
+      source: '',
+      percent: null,
+      state: '',
+      isCharging: null,
+      timeRemainingMinutes: null,
+      raw: '',
+    }
+  }
+
+  const lines = raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const sourceLine = lines[0] || ''
+  const detailLine = lines.find((line) => /%/.test(line)) || ''
+  const sourceMatch = sourceLine.match(/Now drawing from '([^']+)'/i)
+  const percentMatch = detailLine.match(/(\d+)%/)
+  const stateMatch = detailLine.match(/\d+%;\s*([^;]+);/i)
+  const percent = percentMatch ? Number.parseInt(percentMatch[1], 10) : null
+  const state = stateMatch ? String(stateMatch[1] || '').trim() : ''
+  const source = sourceMatch ? String(sourceMatch[1] || '').trim() : ''
+  const isCharging =
+    /AC Power/i.test(source) ||
+    /charged|charging|finishing charge/i.test(detailLine)
+
+  return {
+    available: Boolean(source || percent !== null),
+    source,
+    percent,
+    state,
+    isCharging,
+    timeRemainingMinutes: parseBatteryTimeRemainingMinutes(detailLine),
+    raw,
+  }
+}
+
+function parsePmsetThermalOutput(stdout) {
+  const raw = String(stdout || '').trim()
+
+  if (!raw) {
+    return {
+      available: false,
+      pressure: 'unavailable',
+      thermalLevel: null,
+      cpuSpeedLimit: null,
+      schedulerLimit: null,
+      notes: [],
+      raw: '',
+    }
+  }
+
+  const lines = raw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const readMetric = (name) => {
+    const line = lines.find((entry) => entry.startsWith(`${name} =`))
+
+    if (!line) {
+      return null
+    }
+
+    const parsed = Number.parseInt(line.split('=').pop(), 10)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const thermalLevel = readMetric('ThermalLevel')
+  const cpuSpeedLimit = readMetric('CPU_Speed_Limit')
+  const schedulerLimit = readMetric('Scheduler_Limit')
+  const hasExplicitLimiting =
+    (Number.isFinite(thermalLevel) && thermalLevel > 0) ||
+    (Number.isFinite(cpuSpeedLimit) && cpuSpeedLimit < 100) ||
+    (Number.isFinite(schedulerLimit) && schedulerLimit < 100)
+  const hasWarningNote = lines.some(
+    (line) =>
+      /^Note:/i.test(line) &&
+      !/No thermal warning level has been recorded/i.test(line) &&
+      !/No performance warning level has been recorded/i.test(line) &&
+      !/No CPU power status has been recorded/i.test(line)
+  )
+
+  let pressure = 'nominal'
+
+  if (hasExplicitLimiting) {
+    pressure = 'limited'
+  } else if (hasWarningNote) {
+    pressure = 'elevated'
+  }
+
+  return {
+    available: true,
+    pressure,
+    thermalLevel,
+    cpuSpeedLimit,
+    schedulerLimit,
+    notes: lines.filter((line) => /^Note:/i.test(line)),
+    raw,
+  }
+}
+
+function createDefaultSystemTelemetryProvider() {
+  let previousCpuSnapshot = captureCpuSnapshot()
+
+  return async function getDeveloperTelemetry() {
+    const currentCpuSnapshot = captureCpuSnapshot()
+    const loadAverage = Array.isArray(os.loadavg()) ? os.loadavg() : [0, 0, 0]
+    const totalMemoryBytes = os.totalmem()
+    const freeMemoryBytes = os.freemem()
+    const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes)
+    const cpuCoreCount = Number(currentCpuSnapshot?.cores) || os.cpus().length || 0
+    const cpuUsagePercent = calculateCpuUsagePercent(
+      previousCpuSnapshot,
+      currentCpuSnapshot
+    )
+
+    previousCpuSnapshot = currentCpuSnapshot
+
+    let battery = {
+      available: false,
+      source: '',
+      percent: null,
+      state: '',
+      isCharging: null,
+      timeRemainingMinutes: null,
+      raw: '',
+    }
+    let thermal = {
+      available: false,
+      pressure: 'unavailable',
+      thermalLevel: null,
+      cpuSpeedLimit: null,
+      schedulerLimit: null,
+      notes: [],
+      raw: '',
+    }
+
+    if (process.platform === 'darwin') {
+      const batteryCommand = runBestEffortCommand('pmset', ['-g', 'batt'])
+      if (batteryCommand.ok) {
+        battery = parsePmsetBatteryOutput(batteryCommand.stdout)
+      }
+
+      const thermalCommand = runBestEffortCommand('pmset', ['-g', 'therm'])
+      if (thermalCommand.ok) {
+        thermal = parsePmsetThermalOutput(thermalCommand.stdout)
+      }
+    }
+
+    return {
+      collectedAt: new Date().toISOString(),
+      system: {
+        platform: process.platform,
+        arch: process.arch,
+        cpuCoreCount: cpuCoreCount || null,
+        cpuUsagePercent,
+        loadAverage1m: roundTelemetryValue(loadAverage[0], 2),
+        loadAverage5m: roundTelemetryValue(loadAverage[1], 2),
+        loadAverage15m: roundTelemetryValue(loadAverage[2], 2),
+        loadAveragePerCore1m:
+          cpuCoreCount > 0
+            ? roundTelemetryValue(loadAverage[0] / cpuCoreCount, 2)
+            : null,
+        memoryUsedGiB: bytesToGiB(usedMemoryBytes),
+        memoryFreeGiB: bytesToGiB(freeMemoryBytes),
+        memoryTotalGiB: bytesToGiB(totalMemoryBytes),
+        memoryUsagePercent:
+          totalMemoryBytes > 0
+            ? roundTelemetryValue((usedMemoryBytes / totalMemoryBytes) * 100, 1)
+            : null,
+        appMemoryRssMb: roundTelemetryValue(
+          process.memoryUsage().rss / 1024 / 1024,
+          0
+        ),
+        battery,
+        thermal,
+      },
+    }
+  }
+}
 
 function normalizeMode(value, fallback = 'sidecar') {
   const mode = String(value || fallback).trim()
@@ -643,11 +953,14 @@ function developerHumanTeacherTrainedPath(
 
 function developerHumanTeacherComparisonPath(
   storage,
-  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+  sampleName = DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE,
+  evaluationFlips = DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
 ) {
   return path.join(
     developerHumanTeacherDir(storage, sampleName),
-    'comparison-100flips.json'
+    `comparison-${normalizeDeveloperLocalBenchmarkFlips(
+      evaluationFlips
+    )}flips.json`
   )
 }
 
@@ -706,6 +1019,149 @@ function normalizeDeveloperHumanTeacherOffset(value) {
 
 function normalizeDemoHumanTeacherOffset(value) {
   return normalizeDeveloperHumanTeacherOffset(value)
+}
+
+function normalizeDeveloperLocalBenchmarkFlips(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  return DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS.includes(parsed)
+    ? parsed
+    : DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+}
+
+function normalizeDeveloperTrainingInteger(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, parsed))
+}
+
+function normalizeDeveloperTrainingModelPath(value) {
+  const modelPath = String(value || '').trim()
+
+  if (!modelPath) {
+    return null
+  }
+
+  return DEVELOPER_LOCAL_TRAINING_MODEL_OPTIONS.has(modelPath)
+    ? modelPath
+    : null
+}
+
+function normalizeDeveloperTrainingProfile(value) {
+  const profile = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return DEVELOPER_LOCAL_TRAINING_PROFILE_OPTIONS.has(profile)
+    ? profile
+    : DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+}
+
+function normalizeDeveloperTrainingThermalMode(value) {
+  const thermalMode = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_OPTIONS.has(thermalMode)
+    ? thermalMode
+    : DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+}
+
+function sanitizeDeveloperHumanTeacherTrainingTarget(value) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : null
+
+  if (!source || source.developerHumanTeacher !== true) {
+    return value
+  }
+
+  const normalizedTrainingModelPath = normalizeDeveloperTrainingModelPath(
+    source.trainingModelPath || source.modelPath
+  )
+  const next = {
+    ...source,
+    localTrainingProfile: normalizeDeveloperTrainingProfile(
+      source.localTrainingProfile
+    ),
+    localTrainingThermalMode: normalizeDeveloperTrainingThermalMode(
+      source.localTrainingThermalMode
+    ),
+    localTrainingEpochs: normalizeDeveloperTrainingInteger(
+      source.localTrainingEpochs,
+      1,
+      1,
+      6
+    ),
+    localTrainingBatchSize: normalizeDeveloperTrainingInteger(
+      source.localTrainingBatchSize,
+      1,
+      1,
+      4
+    ),
+    localTrainingLoraRank: normalizeDeveloperTrainingInteger(
+      source.localTrainingLoraRank,
+      10,
+      4,
+      16
+    ),
+  }
+
+  if (typeof source.evaluationFlips !== 'undefined') {
+    next.evaluationFlips = normalizeDeveloperLocalBenchmarkFlips(
+      source.evaluationFlips
+    )
+  }
+
+  if (normalizedTrainingModelPath) {
+    next.trainingModelPath = normalizedTrainingModelPath
+    next.modelPath = normalizedTrainingModelPath
+  } else {
+    delete next.trainingModelPath
+    delete next.modelPath
+  }
+
+  return next
+}
+
+function sanitizeDeveloperHumanTeacherTrainingPayload(payload) {
+  const source =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {}
+  const next = sanitizeDeveloperHumanTeacherTrainingTarget(source)
+
+  if (next !== source) {
+    return next
+  }
+
+  let changed = false
+  const updated = {...source}
+
+  if (typeof source.input !== 'undefined') {
+    const nextInput = sanitizeDeveloperHumanTeacherTrainingTarget(source.input)
+
+    if (nextInput !== source.input) {
+      updated.input = nextInput
+      changed = true
+    }
+  }
+
+  if (typeof source.payload !== 'undefined') {
+    const nextPayload = sanitizeDeveloperHumanTeacherTrainingTarget(
+      source.payload
+    )
+
+    if (nextPayload !== source.payload) {
+      updated.payload = nextPayload
+      changed = true
+    }
+  }
+
+  return changed ? updated : source
 }
 
 function clampDemoHumanTeacherOffset(offset, totalFlips) {
@@ -842,6 +1298,7 @@ function normalizeIsoDate(value) {
 function createDefaultDeveloperComparisonState() {
   return {
     status: 'not_loaded',
+    benchmarkFlips: null,
     holdoutPath: null,
     lastEvaluatedAt: null,
     lastResultPath: null,
@@ -859,6 +1316,12 @@ function normalizeDeveloperComparisonHistoryEntry(entry = {}) {
 
   return {
     status: normalizeDeveloperComparisonStatus(source.status, 'evaluated'),
+    benchmarkFlips: normalizeNonNegativeInteger(
+      source.benchmarkFlips ||
+        source.totalFlips ||
+        source.total ||
+        source.flipCount
+    ),
     evaluatedAt: normalizeIsoDate(
       source.evaluatedAt || source.lastEvaluatedAt || source.generatedAt
     ),
@@ -881,6 +1344,7 @@ function dedupeDeveloperComparisonHistory(entries = []) {
     .filter(
       (entry) =>
         entry.evaluatedAt ||
+        entry.benchmarkFlips !== null ||
         entry.resultPath ||
         entry.accuracy !== null ||
         entry.correct !== null ||
@@ -898,6 +1362,7 @@ function dedupeDeveloperComparisonHistory(entries = []) {
   normalizedEntries.forEach((entry) => {
     const key = [
       entry.evaluatedAt || '',
+      entry.benchmarkFlips === null ? '' : String(entry.benchmarkFlips),
       entry.resultPath || '',
       entry.accuracy === null ? '' : String(entry.accuracy),
       entry.correct === null ? '' : String(entry.correct),
@@ -922,6 +1387,7 @@ function normalizeDeveloperComparisonState(value) {
     history[0] ||
     normalizeDeveloperComparisonHistoryEntry({
       status: source.status,
+      benchmarkFlips: source.benchmarkFlips,
       evaluatedAt: source.lastEvaluatedAt,
       resultPath: source.lastResultPath,
       holdoutPath: source.holdoutPath,
@@ -944,6 +1410,10 @@ function normalizeDeveloperComparisonState(value) {
       latestEntry?.status || source.status,
       fallback.status
     ),
+    benchmarkFlips:
+      latestEntry?.benchmarkFlips !== null
+        ? latestEntry.benchmarkFlips
+        : normalizeNonNegativeInteger(source.benchmarkFlips),
     holdoutPath:
       String(
         latestEntry?.holdoutPath || source.holdoutPath || fallback.holdoutPath
@@ -1103,6 +1573,10 @@ function mergeDeveloperComparisonSnapshot(
   return normalizeDeveloperComparisonState({
     ...normalizedCurrent,
     status: normalizeDeveloperComparisonStatus(snapshot.status, fallbackStatus),
+    benchmarkFlips:
+      snapshot.benchmarkFlips !== null
+        ? snapshot.benchmarkFlips
+        : normalizedCurrent.benchmarkFlips,
     holdoutPath: snapshot.holdoutPath || normalizedCurrent.holdoutPath,
     lastEvaluatedAt: snapshot.evaluatedAt || normalizedCurrent.lastEvaluatedAt,
     lastResultPath: snapshot.resultPath || normalizedCurrent.lastResultPath,
@@ -1285,6 +1759,7 @@ function createDefaultDeveloperHumanTeacherState({
     activeTrainingModelPath: null,
     activeTrainingBackend: null,
     activeLocalTrainingProfile: null,
+    activeLocalTrainingThermalMode: null,
     comparison100: createDefaultDeveloperComparisonState(),
   }
 }
@@ -1333,6 +1808,8 @@ function normalizeDeveloperHumanTeacherState(
       String(source.activeTrainingBackend || '').trim() || null,
     activeLocalTrainingProfile:
       String(source.activeLocalTrainingProfile || '').trim() || null,
+    activeLocalTrainingThermalMode:
+      String(source.activeLocalTrainingThermalMode || '').trim() || null,
     lastTraining: normalizeDeveloperLastTrainingState(source.lastTraining),
     chunks: Array.isArray(source.chunks)
       ? source.chunks
@@ -1611,6 +2088,16 @@ function buildHumanTeacherItem(item) {
 function buildDefaultHumanTeacherAnnotationRow(task = {}) {
   return {
     task_id: String(task.task_id || task.taskId || '').trim(),
+    sample_id: String(task.sample_id || task.sampleId || '').trim(),
+    flip_hash: String(task.flip_hash || task.flipHash || '').trim(),
+    epoch:
+      task.epoch === null || typeof task.epoch === 'undefined' ? null : task.epoch,
+    consensus_answer: String(
+      task.final_answer || task.finalAnswer || task.consensusAnswer || ''
+    ).trim(),
+    consensus_strength: String(
+      task.consensus_strength || task.consensusStrength || ''
+    ).trim(),
     annotator: '',
     frame_captions: ['', '', '', ''],
     option_a_summary: '',
@@ -1636,6 +2123,7 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
 
 function buildDefaultHumanTeacherAiAnnotation() {
   return {
+    task_id: '',
     generated_at: '',
     runtime_backend: '',
     runtime_type: '',
@@ -1861,15 +2349,26 @@ function hasHumanTeacherAiAnnotation(annotation = null) {
   )
 }
 
-function normalizeHumanTeacherAiAnnotation(value = null) {
+function normalizeHumanTeacherAiAnnotation(value = null, expectedTaskId = '') {
   const source =
     value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const normalizedTaskId = normalizeHumanTeacherDraftText(
+    source.task_id ?? source.taskId,
+    256
+  )
+  const boundTaskId = normalizeHumanTeacherDraftText(expectedTaskId, 256)
   const finalAnswer = normalizeHumanTeacherDraftText(
     source.final_answer ?? source.finalAnswer,
     16
   ).toLowerCase()
+
+  if (boundTaskId && normalizedTaskId && normalizedTaskId !== boundTaskId) {
+    return null
+  }
+
   const next = {
     ...buildDefaultHumanTeacherAiAnnotation(),
+    task_id: boundTaskId || normalizedTaskId,
     generated_at: normalizeHumanTeacherDraftText(
       source.generated_at ?? source.generatedAt,
       64
@@ -1949,6 +2448,7 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
     annotation && typeof annotation === 'object' && !Array.isArray(annotation)
       ? annotation
       : {}
+  const expectedTaskId = String(task.task_id || task.taskId || '').trim()
   const finalAnswer = normalizeHumanTeacherDraftText(
     source.final_answer ?? source.finalAnswer,
     16
@@ -1967,7 +2467,8 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
       source.option_b_summary ?? source.optionBSummary
     ),
     ai_annotation: normalizeHumanTeacherAiAnnotation(
-      source.ai_annotation ?? source.aiAnnotation
+      source.ai_annotation ?? source.aiAnnotation,
+      expectedTaskId
     ),
     ai_annotation_feedback: normalizeHumanTeacherDraftText(
       source.ai_annotation_feedback ?? source.aiAnnotationFeedback,
@@ -2023,9 +2524,16 @@ function hasHumanTeacherAnnotationDraft(annotation = {}) {
 
 function isHumanTeacherAnnotationComplete(annotation = {}) {
   const next = normalizeHumanTeacherAnnotationDraft({}, annotation)
+  const filledFrameCaptions = next.frame_captions.filter(Boolean).length
 
   return Boolean(
-    next.final_answer &&
+    filledFrameCaptions === 4 &&
+      next.option_a_summary &&
+      next.option_b_summary &&
+      next.text_required !== null &&
+      next.sequence_markers_present !== null &&
+      next.report_required !== null &&
+      next.final_answer &&
       next.why_answer &&
       next.confidence !== null &&
       (next.report_required !== true || next.report_reason)
@@ -2172,6 +2680,97 @@ function resolveOptionalConstrainedPath(baseDir, candidatePath, fallbackPath) {
   return resolveWorkspaceChildPath(baseDir, rawCandidate)
 }
 
+async function assertHumanTeacherWorkspaceIntegrity(
+  localAiStorage,
+  {
+    outputDir,
+    taskManifestPath,
+    epoch = null,
+    packagePath = '',
+  } = {}
+) {
+  const metadataPath = path.join(
+    outputDir,
+    HUMAN_TEACHER_WORKSPACE_METADATA_FILE
+  )
+
+  if (!(await localAiStorage.exists(metadataPath))) {
+    throw new Error(
+      'Human teacher workspace metadata is unavailable; export annotation tasks again'
+    )
+  }
+
+  const metadataValue = await localAiStorage.readJson(metadataPath, null)
+  const metadata =
+    metadataValue &&
+    typeof metadataValue === 'object' &&
+    !Array.isArray(metadataValue)
+      ? metadataValue
+      : null
+
+  if (
+    !metadata ||
+    String(metadata.workspaceType || '').trim() !== HUMAN_TEACHER_WORKSPACE_TYPE
+  ) {
+    throw new Error(
+      'Human teacher workspace metadata is invalid; export annotation tasks again'
+    )
+  }
+
+  const metadataEpoch = normalizeOptionalEpoch(metadata.epoch)
+
+  if (epoch !== null && metadataEpoch !== null && metadataEpoch !== epoch) {
+    throw new Error(
+      'Human teacher workspace metadata does not match the requested epoch; export annotation tasks again'
+    )
+  }
+
+  const metadataPackagePath = String(metadata.packagePath || '').trim()
+  if (
+    packagePath &&
+    metadataPackagePath &&
+    path.resolve(metadataPackagePath) !== path.resolve(packagePath)
+  ) {
+    throw new Error(
+      'Human teacher workspace metadata does not match the current package; export annotation tasks again'
+    )
+  }
+
+  const metadataManifestPath = String(metadata.taskManifestPath || '').trim()
+  if (
+    metadataManifestPath &&
+    path.resolve(metadataManifestPath) !== path.resolve(taskManifestPath)
+  ) {
+    throw new Error(
+      'Human teacher workspace metadata does not match the current manifest path; export annotation tasks again'
+    )
+  }
+
+  const expectedManifestSha256 = String(
+    metadata.taskManifestSha256 || ''
+  ).trim()
+
+  if (!expectedManifestSha256) {
+    throw new Error(
+      'Human teacher workspace metadata is incomplete; export annotation tasks again'
+    )
+  }
+
+  const actualManifestSha256 = await localAiStorage.sha256File(taskManifestPath)
+
+  if (actualManifestSha256 !== expectedManifestSha256) {
+    throw new Error(
+      'Human teacher task manifest was modified; export annotation tasks again'
+    )
+  }
+
+  return {
+    metadataPath,
+    metadata,
+    actualManifestSha256,
+  }
+}
+
 function getHumanTeacherAnnotationStatus(annotation = {}) {
   const hasDraft = hasHumanTeacherAnnotationDraft(annotation)
 
@@ -2237,6 +2836,7 @@ function createLocalAiManager({
   runtimeController,
   modernTrainingCollector,
   developerTrainingRunner,
+  systemTelemetryProvider,
 } = {}) {
   const localAiStorage = storage || createLocalAiStorage()
   const localAiSidecar =
@@ -2255,6 +2855,8 @@ function createLocalAiManager({
     })
   const localAiDeveloperTrainingRunner =
     developerTrainingRunner || createDeveloperTrainingRunner({logger, isDev})
+  const localSystemTelemetryProvider =
+    systemTelemetryProvider || createDefaultSystemTelemetryProvider()
   const initialRuntime = resolveLocalAiRuntimeAdapter()
   const state = {
     available: true,
@@ -2925,11 +3527,40 @@ function createLocalAiManager({
     advance = false,
     trainingModelPath = null,
     localTrainingProfile = null,
+    localTrainingThermalMode = null,
+    localTrainingEpochs = null,
+    localTrainingBatchSize = null,
+    localTrainingLoraRank = null,
+    evaluationFlips = DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   } = {}) {
     const chunk = await loadDeveloperHumanTeacherChunkWorkspace({
       sampleName,
       offset,
     })
+    const normalizedTrainingModelPath =
+      normalizeDeveloperTrainingModelPath(trainingModelPath)
+    const normalizedLocalTrainingProfile =
+      normalizeDeveloperTrainingProfile(localTrainingProfile)
+    const normalizedLocalTrainingThermalMode =
+      normalizeDeveloperTrainingThermalMode(localTrainingThermalMode)
+    const normalizedLocalTrainingEpochs = normalizeDeveloperTrainingInteger(
+      localTrainingEpochs,
+      1,
+      1,
+      6
+    )
+    const normalizedLocalTrainingBatchSize = normalizeDeveloperTrainingInteger(
+      localTrainingBatchSize,
+      1,
+      1,
+      4
+    )
+    const normalizedLocalTrainingLoraRank = normalizeDeveloperTrainingInteger(
+      localTrainingLoraRank,
+      10,
+      4,
+      16
+    )
 
     if (
       Number(chunk.workspace.taskCount) > 0 &&
@@ -2994,20 +3625,25 @@ function createLocalAiManager({
     let nextComparison = normalizeDeveloperComparisonState(
       existingState.comparison100
     )
+    const resolvedEvaluationFlips =
+      normalizeDeveloperLocalBenchmarkFlips(evaluationFlips)
 
     if (trainNow) {
       const comparisonPath = developerHumanTeacherComparisonPath(
         localAiStorage,
-        chunk.sample.sampleName
+        chunk.sample.sampleName,
+        resolvedEvaluationFlips
       )
       trainingResult = await trainEpoch({
         input: {
           developerHumanTeacher: true,
           sampleName: chunk.sample.sampleName,
-          trainingModelPath:
-            String(trainingModelPath || '').trim() || undefined,
-          localTrainingProfile:
-            String(localTrainingProfile || '').trim() || undefined,
+          trainingModelPath: normalizedTrainingModelPath || undefined,
+          localTrainingProfile: normalizedLocalTrainingProfile,
+          localTrainingThermalMode: normalizedLocalTrainingThermalMode,
+          localTrainingEpochs: normalizedLocalTrainingEpochs,
+          localTrainingBatchSize: normalizedLocalTrainingBatchSize,
+          localTrainingLoraRank: normalizedLocalTrainingLoraRank,
           offset: chunk.offset,
           chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
           normalizedAnnotationsPath: normalizedPath,
@@ -3016,6 +3652,7 @@ function createLocalAiManager({
           trainedAnnotationsPath: trainedPath,
           developerStatePath: chunk.statePath,
           comparisonPath,
+          evaluationFlips: resolvedEvaluationFlips,
         },
       })
 
@@ -3060,6 +3697,7 @@ function createLocalAiManager({
         nextComparison = normalizeDeveloperComparisonState({
           ...nextComparison,
           status: 'trained_pending_evaluation',
+          benchmarkFlips: resolvedEvaluationFlips,
           lastResultPath: nextComparison.lastResultPath || comparisonPath,
         })
       }
@@ -3105,6 +3743,11 @@ function createLocalAiManager({
         trainingStatus === 'trained'
           ? String(trainingResult?.localTrainingProfile || '').trim() || null
           : existingState.activeLocalTrainingProfile || null,
+      activeLocalTrainingThermalMode:
+        trainingStatus === 'trained'
+          ? String(trainingResult?.localTrainingThermalMode || '').trim() ||
+            null
+          : existingState.activeLocalTrainingThermalMode || null,
       chunks: chunkEntries,
       lastSavedAt: committedAt,
       comparison100: nextComparison,
@@ -3150,6 +3793,7 @@ function createLocalAiManager({
         missingAnnotations: Number(importSummary.missingAnnotations) || 0,
         unmatchedAnnotations: Number(importSummary.unmatchedAnnotations) || 0,
         invalidAnnotations: Number(importSummary.invalidAnnotations) || 0,
+        duplicateAnnotations: Number(importSummary.duplicateAnnotations) || 0,
       },
       training: trainingResult,
       statePath: persistedState.statePath,
@@ -3282,6 +3926,30 @@ function createLocalAiManager({
         lastError:
           state.lastError || 'Unable to start the configured Local AI runtime.',
         ...currentStatus(),
+      }
+    }
+  }
+
+  async function getDeveloperTelemetry() {
+    try {
+      const telemetry = await localSystemTelemetryProvider()
+
+      return telemetry && typeof telemetry === 'object' && !Array.isArray(telemetry)
+        ? telemetry
+        : {
+            collectedAt: new Date().toISOString(),
+            system: {
+              available: false,
+              lastError: 'Developer telemetry provider returned no data',
+            },
+          }
+    } catch (error) {
+      return {
+        collectedAt: new Date().toISOString(),
+        system: {
+          available: false,
+          lastError: String(error && error.message ? error.message : error || ''),
+        },
       }
     }
   }
@@ -3563,7 +4231,9 @@ function createLocalAiManager({
   async function trainEpoch(payload = {}) {
     await hydrate()
 
-    const next = normalizeRuntimePayload(payload, state)
+    const next = sanitizeDeveloperHumanTeacherTrainingPayload(
+      normalizeRuntimePayload(payload, state)
+    )
     const developerHumanTeacher = isDeveloperHumanTeacherTrainingRequest(next)
 
     applyRuntimeState(next)
@@ -4486,6 +5156,13 @@ function createLocalAiManager({
       )
     }
 
+    await assertHumanTeacherWorkspaceIntegrity(localAiStorage, {
+      outputDir,
+      taskManifestPath,
+      epoch,
+      packagePath: nextPackagePath,
+    })
+
     const taskRows = await readJsonlRows(taskManifestPath, [])
     const annotationRows = await readJsonlRows(annotationsPath, [])
     const tasks = buildHumanTeacherWorkspaceTasks(
@@ -4593,6 +5270,7 @@ function createLocalAiManager({
         status: String(
           developerState.comparison100?.status || 'not_loaded'
         ).trim(),
+        benchmarkFlips: developerState.comparison100?.benchmarkFlips ?? null,
         holdoutPath: developerState.comparison100?.holdoutPath || null,
         lastEvaluatedAt: developerState.comparison100?.lastEvaluatedAt || null,
         lastResultPath: developerState.comparison100?.lastResultPath || null,
@@ -4605,7 +5283,8 @@ function createLocalAiManager({
           : [],
         expectedPath: developerHumanTeacherComparisonPath(
           localAiStorage,
-          sample.sampleName
+          sample.sampleName,
+          developerState.comparison100?.benchmarkFlips
         ),
       },
     }
@@ -4812,6 +5491,12 @@ function createLocalAiManager({
     const outputDir = humanTeacherExportDir(localAiStorage, epoch)
     const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
     const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+    await assertHumanTeacherWorkspaceIntegrity(localAiStorage, {
+      outputDir,
+      taskManifestPath,
+      epoch,
+      packagePath: nextPackagePath,
+    })
     const taskRows = await readJsonlRows(taskManifestPath, [])
     const annotationRows = await readJsonlRows(annotationsPath, [])
     const taskRow = taskRows.find(
@@ -5034,6 +5719,12 @@ function createLocalAiManager({
     const outputDir = humanTeacherExportDir(localAiStorage, epoch)
     const taskManifestPath = path.join(outputDir, 'tasks.jsonl')
     const annotationsPath = path.join(outputDir, 'annotations.filled.jsonl')
+    await assertHumanTeacherWorkspaceIntegrity(localAiStorage, {
+      outputDir,
+      taskManifestPath,
+      epoch,
+      packagePath: nextPackagePath,
+    })
     const taskRows = await readJsonlRows(taskManifestPath, [])
     const taskRow = taskRows.find(
       (row) => String(row && row.task_id ? row.task_id : '').trim() === taskId
@@ -5328,6 +6019,26 @@ function createLocalAiManager({
         String(next.localTrainingProfile || '')
           .trim()
           .toLowerCase() || null,
+      localTrainingThermalMode:
+        String(next.localTrainingThermalMode || '')
+          .trim()
+          .toLowerCase() || null,
+      localTrainingEpochs:
+        typeof next.localTrainingEpochs === 'number'
+          ? next.localTrainingEpochs
+          : null,
+      localTrainingBatchSize:
+        typeof next.localTrainingBatchSize === 'number'
+          ? next.localTrainingBatchSize
+          : null,
+      localTrainingLoraRank:
+        typeof next.localTrainingLoraRank === 'number'
+          ? next.localTrainingLoraRank
+          : null,
+      evaluationFlips:
+        typeof next.evaluationFlips !== 'undefined'
+          ? next.evaluationFlips
+          : DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
     })
   }
 
@@ -5345,13 +6056,16 @@ function createLocalAiManager({
     const sample = await loadDeveloperHumanTeacherSample(sampleName)
     const {statePath, state: existingState} =
       await loadDeveloperHumanTeacherState(sample.sampleName, sample.totalFlips)
+    const evaluationFlips = normalizeDeveloperLocalBenchmarkFlips(
+      next.evaluationFlips
+    )
 
     if (
       existingState.trainedTaskIds.length === 0 &&
       existingState.pendingTrainingTaskIds.length === 0
     ) {
       throw new Error(
-        'Annotate and train at least one 5-flip chunk before running the 100-flip comparison'
+        `Annotate and train at least one 5-flip chunk before running the ${evaluationFlips}-flip comparison`
       )
     }
 
@@ -5369,7 +6083,8 @@ function createLocalAiManager({
     )
     const comparisonPath = developerHumanTeacherComparisonPath(
       localAiStorage,
-      sample.sampleName
+      sample.sampleName,
+      evaluationFlips
     )
 
     const runningState = await writeDeveloperHumanTeacherState(
@@ -5380,6 +6095,7 @@ function createLocalAiManager({
         comparison100: normalizeDeveloperComparisonState({
           ...existingState.comparison100,
           status: 'running',
+          benchmarkFlips: evaluationFlips,
           lastResultPath:
             existingState.comparison100?.lastResultPath || comparisonPath,
         }),
@@ -5392,7 +6108,7 @@ function createLocalAiManager({
         sampleName: sample.sampleName,
         comparisonOnly: true,
         compareOnly: true,
-        evaluationFlips: 100,
+        evaluationFlips,
         annotatedAnnotationsPath: annotatedPath,
         pendingAnnotationsPath: pendingPath,
         trainedAnnotationsPath: trainedPath,
@@ -5435,6 +6151,7 @@ function createLocalAiManager({
       nextComparison = normalizeDeveloperComparisonState({
         ...nextComparison,
         status: 'failed',
+        benchmarkFlips: evaluationFlips,
         lastResultPath: nextComparison.lastResultPath || comparisonPath,
       })
     }
@@ -5468,6 +6185,14 @@ function createLocalAiManager({
                   ''
               ).trim() || null
             : existingState.activeLocalTrainingProfile || null,
+        activeLocalTrainingThermalMode:
+          comparisonResult?.ok === true
+            ? String(
+                comparisonResult?.localTrainingThermalMode ||
+                  existingState.activeLocalTrainingThermalMode ||
+                  ''
+              ).trim() || null
+            : existingState.activeLocalTrainingThermalMode || null,
         comparison100: nextComparison,
       }
     )
@@ -5555,6 +6280,13 @@ function createLocalAiManager({
       )
     }
 
+    await assertHumanTeacherWorkspaceIntegrity(localAiStorage, {
+      outputDir,
+      taskManifestPath,
+      epoch,
+      packagePath: nextPackagePath,
+    })
+
     if (!(await localAiStorage.exists(annotationsPath))) {
       throw new Error(
         'Filled annotation file is unavailable; complete annotations.filled.jsonl first'
@@ -5614,6 +6346,7 @@ function createLocalAiManager({
         missingAnnotations: Number(importSummary.missingAnnotations) || 0,
         unmatchedAnnotations: Number(importSummary.unmatchedAnnotations) || 0,
         invalidAnnotations: Number(importSummary.invalidAnnotations) || 0,
+        duplicateAnnotations: Number(importSummary.duplicateAnnotations) || 0,
       },
     }
   }
@@ -5622,6 +6355,7 @@ function createLocalAiManager({
     status,
     start,
     stop,
+    getDeveloperTelemetry,
     listModels,
     chat,
     checkFlipSequence,
