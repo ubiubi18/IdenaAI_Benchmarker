@@ -6,6 +6,7 @@ import {BASE_API_URL, BASE_INTERNAL_API_PORT} from '../api/api-client'
 import useLogger from '../hooks/use-logger'
 import {AVAILABLE_LANGS} from '../../i18n'
 import {
+  DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   buildLocalAiSettings,
   mergeLocalAiSettings,
 } from '../utils/local-ai-settings'
@@ -71,6 +72,10 @@ function buildAiSolverSettings(settings = {}) {
   const nextSettings = {
     ...DEFAULT_AI_SOLVER_SETTINGS,
     ...(settings || {}),
+  }
+
+  if (nextSettings.provider === 'local-ai') {
+    nextSettings.model = DEFAULT_LOCAL_AI_OLLAMA_MODEL
   }
 
   if (

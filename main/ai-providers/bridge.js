@@ -6107,7 +6107,9 @@ Flip hash: ${hash}
 
     if (isLocalAiProvider(normalized)) {
       const manager = ensureLocalAiManager()
-      const result = await manager.listModels(buildLocalAiPayload({}))
+      const result = await manager.listModels(
+        buildLocalAiPayload({allowRuntimeStart: false})
+      )
       const message = String(
         (result && (result.lastError || result.error)) || ''
       ).trim()

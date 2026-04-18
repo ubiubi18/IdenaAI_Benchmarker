@@ -9,7 +9,7 @@ const {
 } = require('./runtime-adapter')
 
 const DEFAULT_BASE_URL = 'http://localhost:5000'
-const DEFAULT_MODEL = ''
+const DEFAULT_MODEL = 'qwen3.5:9b'
 const DEFAULT_RUNTIME = LOCAL_AI_RUNTIME
 const DEFAULT_RUNTIME_TYPE = 'sidecar'
 const DEFAULT_OLLAMA_ENDPOINT = LOCAL_AI_OLLAMA_DEFAULT_BASE_URL
@@ -174,6 +174,23 @@ function normalizeGenerationOptions(input) {
   }
 
   return Object.keys(options).length > 0 ? options : null
+}
+
+function supportsOllamaThinkingToggle(model) {
+  const nextModel = String(model || '')
+    .trim()
+    .toLowerCase()
+
+  if (!nextModel) {
+    return false
+  }
+
+  return (
+    nextModel.startsWith('qwen3') ||
+    nextModel.startsWith('deepseek-r1') ||
+    nextModel.includes('/qwen3') ||
+    nextModel.includes('/deepseek-r1')
+  )
 }
 
 function buildVisionModelCandidates(
@@ -1077,6 +1094,9 @@ function createLocalAiSidecar({
           model: selectedModel,
           messages: nextMessages,
           stream: false,
+          ...(supportsOllamaThinkingToggle(modelValidation.model)
+            ? {think: false}
+            : {}),
           ...(normalizedResponseFormat
             ? {format: normalizedResponseFormat}
             : {}),

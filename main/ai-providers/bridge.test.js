@@ -4571,4 +4571,33 @@ describe('createAiProviderBridge', () => {
       })
     )
   })
+
+  it('lists Local AI models without requesting a runtime auto-start through the provider bridge', async () => {
+    const localAiManager = {
+      checkFlipSequence: jest.fn(),
+      listModels: jest.fn(async () => ({
+        ok: true,
+        models: ['qwen3.5:9b'],
+        total: 1,
+      })),
+    }
+
+    const bridge = createAiProviderBridge(mockLogger(), {
+      localAiManager,
+    })
+
+    const result = await bridge.listModels({provider: 'local-ai'})
+
+    expect(result).toEqual({
+      ok: true,
+      provider: 'local-ai',
+      total: 1,
+      models: ['qwen3.5:9b'],
+    })
+    expect(localAiManager.listModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowRuntimeStart: false,
+      })
+    )
+  })
 })

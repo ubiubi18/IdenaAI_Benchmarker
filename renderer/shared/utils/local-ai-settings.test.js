@@ -9,6 +9,7 @@ const {
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
   DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
@@ -19,6 +20,7 @@ const {
   getLocalAiEndpointSafety,
   mergeLocalAiSettings,
   normalizeDeveloperLocalTrainingProfile,
+  normalizeDeveloperAiDraftTriggerMode,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
@@ -45,6 +47,9 @@ describe('local-ai settings schema', () => {
     expect(settings.developerHumanTeacherSystemPrompt).toBe('')
     expect(settings.developerLocalTrainingProfile).toBe(
       DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+    )
+    expect(settings.developerAiDraftTriggerMode).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
     )
     expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(false)
   })
@@ -242,6 +247,19 @@ describe('local-ai settings schema', () => {
     })
 
     expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(true)
+  })
+
+  it('keeps a persisted developer AI draft trigger mode', () => {
+    const settings = buildLocalAiSettings({
+      developerAiDraftTriggerMode: 'automatic',
+    })
+
+    expect(settings.developerAiDraftTriggerMode).toBe('automatic')
+    expect(normalizeDeveloperAiDraftTriggerMode('manual')).toBe('manual')
+    expect(normalizeDeveloperAiDraftTriggerMode('automatic')).toBe('automatic')
+    expect(normalizeDeveloperAiDraftTriggerMode('unknown')).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
+    )
   })
 
   it('accepts loopback-only Local AI endpoints', () => {

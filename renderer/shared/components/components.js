@@ -317,6 +317,7 @@ const escape = keyframes`
 export function Toast({
   title,
   description,
+  children,
   status = 'info',
   actionContent,
   actionColor = status === 'error' ? 'red.500' : 'brandBlue.500',
@@ -325,6 +326,8 @@ export function Toast({
   onAction,
   ...props
 }) {
+  const body = typeof description === 'undefined' ? children : description
+
   return (
     <Alert
       status={status}
@@ -358,7 +361,7 @@ export function Toast({
           w="full"
           isTruncated
         >
-          {description}
+          {body}
         </AlertDescription>
       </Flex>
       {actionContent && (

@@ -662,6 +662,24 @@ export default function AiChatPage() {
     refreshRuntimeStatus()
   }, [refreshRuntimeStatus])
 
+  const ensureInteractiveRuntimeReady = React.useCallback(async () => {
+    if (!localAi.enabled) {
+      throw new Error(t('Enable Local AI first in AI settings.'))
+    }
+
+    const bridge = getLocalAiBridge()
+    const result = await bridge.start(runtimePayload)
+
+    setStatusResult(result)
+
+    if (result?.sidecarReachable !== true) {
+      throw new Error(formatRuntimeStatusError(result, t))
+    }
+
+    setLastError('')
+    return {bridge, result}
+  }, [localAi.enabled, runtimePayload, t])
+
   const appendAssistantErrorToast = React.useCallback(
     (description) => {
       toast({
@@ -768,7 +786,7 @@ export default function AiChatPage() {
     setIsSending(true)
 
     try {
-      const bridge = getLocalAiBridge()
+      const {bridge} = await ensureInteractiveRuntimeReady()
       let flipAnalysis = null
 
       if (shouldAnalyzeFlipRequest(effectivePrompt, outgoingAttachments)) {
@@ -852,7 +870,7 @@ export default function AiChatPage() {
                 num_predict: 256,
               }
             : null,
-        timeoutMs: outgoingAttachments.length > 0 ? 90 * 1000 : 15 * 1000,
+        timeoutMs: outgoingAttachments.length > 0 ? 90 * 1000 : 60 * 1000,
       })
       const assistantContent = extractChatContent(result)
 
@@ -896,6 +914,7 @@ export default function AiChatPage() {
     appendAssistantErrorToast,
     attachments,
     draft,
+    ensureInteractiveRuntimeReady,
     isSending,
     latestFlipContextMessage,
     messages,
@@ -1092,7 +1111,7 @@ export default function AiChatPage() {
             <Stack spacing={2}>
               <HStack spacing={3} align="center">
                 <ChatIcon boxSize="6" color="brandBlue.500" />
-                <PageTitle mb={0}>{t('IdenaAI-GPT')}</PageTitle>
+                <PageTitle mb={0}>{t('idena.vibe')}</PageTitle>
               </HStack>
               <Text color="muted" maxW="3xl">
                 {t(
@@ -1176,7 +1195,7 @@ export default function AiChatPage() {
                     {t('Chat')}
                   </Badge>
                   <Text fontSize="xl" fontWeight={700}>
-                    {t('Chat with IdenaAI-GPT')}
+                    {t('Chat with idena.vibe')}
                   </Text>
                   <Text color="muted" flex={1}>
                     {t(
@@ -1187,7 +1206,7 @@ export default function AiChatPage() {
                     variant="solid"
                     onClick={() => router.push('/ai-chat?mode=chat')}
                   >
-                    {t('Chat with IdenaAI-GPT')}
+                    {t('Chat with idena.vibe')}
                   </PrimaryButton>
                 </Stack>
               </Box>
@@ -1208,7 +1227,7 @@ export default function AiChatPage() {
             <Stack spacing={2}>
               <HStack spacing={3} align="center">
                 <ChatIcon boxSize="6" color="brandBlue.500" />
-                <PageTitle mb={0}>{t('IdenaAI-GPT')}</PageTitle>
+                <PageTitle mb={0}>{t('idena.vibe')}</PageTitle>
               </HStack>
               <Text color="muted" maxW="3xl">
                 {t(
@@ -1293,7 +1312,7 @@ export default function AiChatPage() {
                   gap={3}
                 >
                   <Stack spacing={1}>
-                    <Text fontWeight={700}>{t('Ask IdenaAI-GPT')}</Text>
+                    <Text fontWeight={700}>{t('Ask idena.vibe')}</Text>
                     <Text color="muted" fontSize="sm">
                       {t(
                         'Type a question directly. Add images only when they help the answer.'

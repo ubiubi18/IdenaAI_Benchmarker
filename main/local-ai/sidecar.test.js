@@ -381,6 +381,48 @@ describe('local-ai sidecar', () => {
     )
   })
 
+  it('disables Ollama thinking for qwen3 local chat requests', async () => {
+    const httpClient = {
+      post: jest.fn(async () => ({
+        data: {
+          model: 'qwen3.5:9b',
+          message: {
+            role: 'assistant',
+            content: 'Fast local chat.',
+          },
+        },
+        config: {
+          url: 'http://127.0.0.1:11434/api/chat',
+        },
+      })),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'qwen3.5:9b',
+        input: 'Say hello.',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      model: 'qwen3.5:9b',
+      text: 'Fast local chat.',
+    })
+
+    expect(httpClient.post).toHaveBeenCalledWith(
+      'http://127.0.0.1:11434/api/chat',
+      expect.objectContaining({
+        model: 'qwen3.5:9b',
+        think: false,
+      }),
+      expect.objectContaining({
+        timeout: 15000,
+      })
+    )
+  })
+
   it('accepts alternate Ollama response shapes for assistant text', async () => {
     const httpClient = {
       post: jest

@@ -616,6 +616,7 @@ function sanitizeLocalAiRuntimePayload(payload = {}) {
   return {
     model: sanitizeOptionalBoundedString(source.model, 256),
     visionModel: sanitizeOptionalBoundedString(source.visionModel, 256),
+    allowRuntimeStart: sanitizeBoolean(source.allowRuntimeStart, true),
     runtimeBackend: sanitizeOptionalBoundedString(source.runtimeBackend, 64),
     runtimeType: sanitizeOptionalBoundedString(source.runtimeType, 64),
     reasonerBackend: sanitizeOptionalBoundedString(source.reasonerBackend, 64),

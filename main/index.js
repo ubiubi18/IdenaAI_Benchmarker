@@ -29,7 +29,8 @@ const isWin = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
 const isLinux = process.platform === 'linux'
 const isDev = !app.isPackaged
-const RUNTIME_APP_NAME = 'IdenaAI'
+const RUNTIME_APP_NAME = 'idena.vibe'
+const RUNTIME_STORAGE_NAME = 'IdenaAI'
 const RUNTIME_APP_ID = 'io.idena.ai'
 
 app.setName(RUNTIME_APP_NAME)
@@ -38,7 +39,7 @@ if (isWin && typeof app.setAppUserModelId === 'function') {
   app.setAppUserModelId(RUNTIME_APP_ID)
 }
 
-const runtimeUserDataPath = join(app.getPath('appData'), RUNTIME_APP_NAME)
+const runtimeUserDataPath = join(app.getPath('appData'), RUNTIME_STORAGE_NAME)
 app.commandLine.appendSwitch(
   'disk-cache-dir',
   join(runtimeUserDataPath, 'Cache')

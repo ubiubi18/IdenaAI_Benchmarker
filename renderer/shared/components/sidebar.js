@@ -310,7 +310,7 @@ function Navbar() {
       <Box pb={4} borderBottomWidth="1px" borderBottomColor="whiteAlpha.100">
         <NavSectionTitle mt={0}>{t('Discover')}</NavSectionTitle>
         <NavItem href="/ai-chat" icon={ChatIcon} featured badge={t('AI')}>
-          {t('IdenaAI-GPT')}
+          {t('idena.vibe')}
         </NavItem>
         <NavItem href="/social" icon={GlobeIcon} featured badge={t('Live')}>
           {t('idena.social')}
@@ -870,7 +870,7 @@ export function Version({
   return (
     <Stack spacing="2">
       <Stack spacing="px" mx="2">
-        <VersionText>{`IdenaAI v.${appVersion}`}</VersionText>
+        <VersionText>{`idena.vibe v.${appVersion}`}</VersionText>
         <VersionText>
           {t('Node version: {{version}}', {
             version: nodeCurrentVersion,

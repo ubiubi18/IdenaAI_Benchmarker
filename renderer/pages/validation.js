@@ -1592,6 +1592,25 @@ function ValidationSession({
     })
 
     try {
+      if (typeof global.localAi.start === 'function') {
+        const runtimeStart = await global.localAi.start({timeoutMs: 10000})
+        const runtimeError = String(
+          (runtimeStart &&
+            (runtimeStart.lastError || runtimeStart.error || '')) ||
+            ''
+        ).trim()
+
+        if (
+          runtimeStart?.sidecarReachable !== true &&
+          runtimeStart?.ok !== true
+        ) {
+          throw new Error(
+            runtimeError ||
+              'The configured Local AI runtime is not reachable yet.'
+          )
+        }
+      }
+
       const leftImages = await buildOrderedLocalAiImages(
         currentFlip.images,
         currentFlip.orders[0]

@@ -58,7 +58,7 @@ import {
 } from '../../shared/utils/local-ai-settings'
 
 const DEFAULT_MODELS = {
-  'local-ai': '',
+  'local-ai': RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
   openai: 'gpt-5.4',
   'openai-compatible': 'gpt-4o-mini',
   gemini: 'gemini-2.0-flash',
@@ -226,7 +226,10 @@ function buildProviderConfigForBridge(aiSolver, provider) {
 
 function resolveDefaultModelForProvider(provider, localAi = {}) {
   if (isLocalAiProvider(provider)) {
-    return String(localAi && localAi.model ? localAi.model : '').trim()
+    return (
+      String(localAi && localAi.model ? localAi.model : '').trim() ||
+      RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+    )
   }
 
   return DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai
@@ -725,7 +728,7 @@ export default function AiSettingsPage() {
     notify(
       t('Recommended Mac local AI setup applied'),
       t(
-        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen3.5:9b as the default local runtime for both text and image work. Local MLX training stays in the same Qwen3.5 family: Qwen3.5-9B MLX 4-bit is the recommended strong-Mac target, Qwen2.5-VL-7B 4-bit is the stronger fallback, and Qwen2-VL-2B 4-bit remains the safe minimum fallback.'
+        'idena.vibe now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen3.5:9b as the default local runtime for both text and image work. Local MLX training stays in the same Qwen3.5 family: Qwen3.5-9B MLX 4-bit is the recommended strong-Mac target, Qwen2.5-VL-7B 4-bit is the stronger fallback, and Qwen2-VL-2B 4-bit remains the safe minimum fallback.'
       ),
       'success'
     )
@@ -773,13 +776,10 @@ export default function AiSettingsPage() {
       rankingPolicy: localAi.rankingPolicy,
       baseUrl: localAiRuntimeUrl,
       endpoint: localAiRuntimeUrl,
-      model: String(localAi.model || '').trim(),
-      visionModel: String(
-        localAi.visionModel || DEFAULT_LOCAL_AI_SETTINGS.visionModel
-      ).trim(),
+      model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+      visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
     }),
     [
-      localAi.model,
       localAi.contractVersion,
       localAi.publicModelId,
       localAi.publicVisionId,
@@ -790,7 +790,6 @@ export default function AiSettingsPage() {
       localAi.adapterStrategy,
       localAi.trainingPolicy,
       localAiWireRuntimeType,
-      localAi.visionModel,
       localAi.visionBackend,
       localAiRuntimeUrl,
     ]
@@ -850,6 +849,31 @@ export default function AiSettingsPage() {
     localAi.runtimeBackend,
     localAiRuntimeUrl,
   ])
+
+  const ensureInteractiveLocalAiRuntime = useCallback(async () => {
+    if (!localAi.enabled) {
+      throw new Error(t('Enable Local AI first.'))
+    }
+
+    const result = normalizeLocalAiStatusResult(
+      await ensureLocalAiBridge().start({
+        ...localAiRuntimePayload,
+        timeoutMs: 10000,
+      }),
+      localAiRuntimeUrl
+    )
+
+    setLocalAiStatusResult(result)
+
+    if (result.sidecarReachable !== true) {
+      throw new Error(
+        formatLocalAiStatusDescription(result, t) ||
+          t('The configured Local AI runtime is not reachable yet.')
+      )
+    }
+
+    return result
+  }, [localAi.enabled, localAiRuntimePayload, localAiRuntimeUrl, t])
 
   useEffect(() => {
     if (!localAi.enabled) {
@@ -958,9 +982,11 @@ export default function AiSettingsPage() {
     setIsRunningLocalAiChat(true)
 
     try {
+      await ensureInteractiveLocalAiRuntime()
       const result = await ensureLocalAiBridge().chat({
         ...localAiRuntimePayload,
         prompt,
+        timeoutMs: 60 * 1000,
       })
       setLocalAiChatResult(result)
     } catch (error) {
@@ -973,7 +999,12 @@ export default function AiSettingsPage() {
     } finally {
       setIsRunningLocalAiChat(false)
     }
-  }, [localAiDebugChatPrompt, localAiRuntimePayload, t])
+  }, [
+    ensureInteractiveLocalAiRuntime,
+    localAiDebugChatPrompt,
+    localAiRuntimePayload,
+    t,
+  ])
 
   const runLocalAiFlipTest = useCallback(
     async (method) => {
@@ -1002,6 +1033,7 @@ export default function AiSettingsPage() {
       }
 
       try {
+        await ensureInteractiveLocalAiRuntime()
         const bridge = ensureLocalAiBridge()
         const handler =
           method === 'flipToText'
@@ -1038,7 +1070,11 @@ export default function AiSettingsPage() {
         }
       }
     },
-    [localAiDebugFlipInput, localAiRuntimePayload]
+    [
+      ensureInteractiveLocalAiRuntime,
+      localAiDebugFlipInput,
+      localAiRuntimePayload,
+    ]
   )
 
   const runLocalAiTrainingPackageAction = useCallback(
@@ -1325,6 +1361,7 @@ export default function AiSettingsPage() {
 
   const refreshModelsForProvider = async (provider) => {
     if (isLocalAiProvider(provider)) {
+      await ensureInteractiveLocalAiRuntime()
       const localResult = await ensureLocalAiBridge().listModels(
         localAiRuntimePayload
       )
@@ -2854,7 +2891,7 @@ export default function AiSettingsPage() {
             <Stack spacing={4}>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'These settings are local-only and opt-in. IdenaAI should expose its own branded text and multimodal identities here; the runtime backend below is only the local transport and compatibility layer.'
+                  'These settings are local-only and opt-in. idena.vibe should expose its own branded text and multimodal identities here; the runtime backend below is only the local transport and compatibility layer.'
                 )}
               </Text>
 
@@ -2949,7 +2986,7 @@ export default function AiSettingsPage() {
                 />
                 <Text color="muted" fontSize="sm" mt={1}>
                   {t(
-                    'This is the product-facing text identity exposed by IdenaAI, independent of the backend model override.'
+                    'This is the product-facing text identity exposed by idena.vibe, independent of the backend model override.'
                   )}
                 </Text>
               </SettingsFormControl>
@@ -2968,7 +3005,7 @@ export default function AiSettingsPage() {
                 />
                 <Text color="muted" fontSize="sm" mt={1}>
                   {t(
-                    'Use this for the image-aware and flip-aware IdenaAI identity that sits above the local transport.'
+                    'Use this for the image-aware and flip-aware idena.vibe identity that sits above the local transport.'
                   )}
                 </Text>
               </SettingsFormControl>

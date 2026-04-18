@@ -20,6 +20,7 @@ const STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL =
 const FALLBACK_LOCAL_AI_TRAINING_MODEL =
   'mlx-community/Qwen2-VL-2B-Instruct-4bit'
 const DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE = 'strong'
+const DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE = 'manual'
 const DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG = {
   safe: {
     modelPath: FALLBACK_LOCAL_AI_TRAINING_MODEL,
@@ -68,6 +69,7 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   trainingPolicy: 'approved-post-consensus-only',
   developerHumanTeacherSystemPrompt: '',
   developerLocalTrainingProfile: DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  developerAiDraftTriggerMode: DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
   shareHumanTeacherAnnotationsWithNetwork: false,
   contractVersion: 'idena-local/v1',
   captureEnabled: false,
@@ -309,6 +311,12 @@ function normalizeDeveloperLocalTrainingProfile(_value) {
   return DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
 }
 
+function normalizeDeveloperAiDraftTriggerMode(value) {
+  return trimString(value).toLowerCase() === 'automatic'
+    ? 'automatic'
+    : DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
+}
+
 function resolveDeveloperLocalTrainingProfileModelPath(_value) {
   return RECOMMENDED_LOCAL_AI_TRAINING_MODEL
 }
@@ -445,15 +453,13 @@ function buildLocalAiSettings(settings = {}) {
     runtimeType: trimString(source.runtimeType),
     runtimeFamily: normalizeLegacyRuntimeFamily(source),
     model:
-      trimString(source.model) ||
-      (normalizeRuntimeBackend(source) === 'ollama-direct'
+      normalizeRuntimeBackend(source) === 'ollama-direct'
         ? DEFAULT_LOCAL_AI_OLLAMA_MODEL
-        : ''),
+        : '',
     visionModel:
-      trimString(source.visionModel) ||
-      (normalizeRuntimeBackend(source) === 'ollama-direct'
+      normalizeRuntimeBackend(source) === 'ollama-direct'
         ? DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL
-        : ''),
+        : '',
     adapterStrategy:
       trimString(source.adapterStrategy) ||
       DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy,
@@ -466,6 +472,9 @@ function buildLocalAiSettings(settings = {}) {
       ),
     developerLocalTrainingProfile: normalizeDeveloperLocalTrainingProfile(
       source.developerLocalTrainingProfile
+    ),
+    developerAiDraftTriggerMode: normalizeDeveloperAiDraftTriggerMode(
+      source.developerAiDraftTriggerMode
     ),
     shareHumanTeacherAnnotationsWithNetwork:
       source.shareHumanTeacherAnnotationsWithNetwork === true,
@@ -526,6 +535,7 @@ module.exports = {
   STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
   DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
@@ -536,6 +546,7 @@ module.exports = {
   buildLocalAiRuntimePreset,
   buildRecommendedLocalAiMacPreset,
   normalizeDeveloperLocalTrainingProfile,
+  normalizeDeveloperAiDraftTriggerMode,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeModel,
   resolveDeveloperLocalTrainingProfileRuntimeVisionModel,

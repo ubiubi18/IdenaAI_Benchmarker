@@ -1,6 +1,6 @@
 {
   "name": "idena-ai",
-  "productName": "IdenaAI",
+  "productName": "idena.vibe",
   "version": "0.0.1",
   "description": "Idena desktop fork with optional experimental AI flip tooling and benchmark helpers.",
   "main": "main/index.js",

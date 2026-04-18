@@ -23,6 +23,7 @@ const {createDeveloperTrainingRunner} = require('./developer-training-runner')
 const {
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
   resolveLocalAiRuntimeAdapter,
+  validateLocalAiBaseUrl,
 } = require('./runtime-adapter')
 
 const CAPTURE_INDEX_VERSION = 1
@@ -125,7 +126,21 @@ function createDefaultRuntimeController({logger, isDev = false} = {}) {
 
       const command = resolveOllamaCommand()
       const env = {...process.env}
-      const host = resolveOllamaHostEnv(payload.baseUrl)
+      const baseUrlValidation = validateLocalAiBaseUrl(payload.baseUrl)
+
+      if (!baseUrlValidation.ok) {
+        return {
+          started: false,
+          managed: false,
+          error: baseUrlValidation.reason,
+          lastError: baseUrlValidation.message,
+          baseUrl:
+            baseUrlValidation.normalizedBaseUrl ||
+            String(payload.baseUrl || ''),
+        }
+      }
+
+      const host = resolveOllamaHostEnv(baseUrlValidation.normalizedBaseUrl)
 
       if (host) {
         env.OLLAMA_HOST = host
@@ -2313,6 +2328,64 @@ function createLocalAiManager({
     return result
   }
 
+  function resolveInteractiveRuntimeTimeoutMs(value) {
+    const parsed = Number.parseInt(value, 10)
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return DEFAULT_RUNTIME_START_TIMEOUT_MS
+    }
+
+    return Math.min(parsed, DEFAULT_RUNTIME_START_TIMEOUT_MS)
+  }
+
+  function normalizeSidecarHealthResult(rawHealth) {
+    return rawHealth && typeof rawHealth === 'object'
+      ? rawHealth
+      : {
+          ok: false,
+          lastError: 'Local AI runtime health check returned no response.',
+        }
+  }
+
+  function normalizeSidecarModelsResult(rawModels) {
+    return rawModels && typeof rawModels === 'object'
+      ? rawModels
+      : {
+          ok: false,
+          models: [],
+          total: 0,
+          lastError: 'Local AI model listing returned no response.',
+        }
+  }
+
+  function normalizeSidecarActionResult(rawResult, fallback) {
+    return rawResult && typeof rawResult === 'object'
+      ? rawResult
+      : {
+          ok: false,
+          status: 'error',
+          ...fallback,
+        }
+  }
+
+  async function ensureInteractiveRuntimeReady(next) {
+    if (next.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
+      return null
+    }
+
+    const readinessPayload = {
+      ...next,
+      timeoutMs: resolveInteractiveRuntimeTimeoutMs(next.timeoutMs),
+    }
+    const refreshed = await refreshSidecarStatus(readinessPayload)
+
+    if (refreshed.ok || next.allowRuntimeStart === false) {
+      return refreshed
+    }
+
+    return start(readinessPayload)
+  }
+
   async function hydrate() {
     if (state.hydrated) {
       return
@@ -2562,7 +2635,7 @@ function createLocalAiManager({
     developerPromptActive,
   }) {
     return [
-      '# IdenaAI external training bundle',
+      '# idena.vibe external training bundle',
       '',
       'This folder is the provider-neutral export for external GPU training.',
       'Upload only this folder to the machine or provider you want to use.',
@@ -2585,7 +2658,7 @@ function createLocalAiManager({
       `4. For serious training, use the recommended MLX base ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}.`,
       `5. If that is too heavy, fall back to ${EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL} or ${EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL}.`,
       `6. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
-      '7. Import only the result files you intend to trust back into IdenaAI later.',
+      '7. Import only the result files you intend to trust back into idena.vibe later.',
       '',
       'Safety notes:',
       '- this bundle should contain training data only, not wallet secrets or your whole desktop profile',
@@ -3089,26 +3162,24 @@ function createLocalAiManager({
 
     applyRuntimeState(next)
 
-    const health = await localAiSidecar.getHealth({
+    const rawHealth = await localAiSidecar.getHealth({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       timeoutMs: next.timeoutMs,
     })
-    let models = {
-      ok: false,
-      models: [],
-      total: 0,
-      lastError: null,
-    }
+    const health = normalizeSidecarHealthResult(rawHealth)
+    let models = normalizeSidecarModelsResult(null)
+    models.lastError = null
 
     if (health.ok) {
-      models = await localAiSidecar.listModels({
+      const rawModels = await localAiSidecar.listModels({
         baseUrl: state.baseUrl,
         runtimeBackend: next.runtimeBackend,
         runtimeType: next.runtimeType,
         timeoutMs: next.timeoutMs,
       })
+      models = normalizeSidecarModelsResult(rawModels)
     }
 
     updateSidecarState({
@@ -3120,6 +3191,10 @@ function createLocalAiManager({
 
     return {
       ok: Boolean(health.ok),
+      status:
+        String(health.status || (health.ok ? 'ok' : 'error')).trim() ||
+        (health.ok ? 'ok' : 'error'),
+      error: health.ok ? models.error || null : health.error || null,
       health,
       models,
       ...currentStatus(),
@@ -3157,10 +3232,15 @@ function createLocalAiManager({
 
     if (
       initialStatus.ok ||
+      initialStatus.status === 'config_error' ||
       next.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND
     ) {
       state.runtimeManaged = false
-      return initialStatus
+      state.running = Boolean(initialStatus.ok)
+      return {
+        ...initialStatus,
+        ...currentStatus(),
+      }
     }
 
     try {
@@ -3168,10 +3248,14 @@ function createLocalAiManager({
       state.runtimeManaged = Boolean(runtimeStart && runtimeStart.managed)
 
       const readyStatus = await waitForRuntimeReady(next)
+      state.running = Boolean(
+        readyStatus.ok || (runtimeStart && runtimeStart.started)
+      )
 
       if (!readyStatus.ok && runtimeStart && runtimeStart.started) {
         return {
           ...readyStatus,
+          ...currentStatus(),
           error: readyStatus.error || 'runtime_start_timeout',
           lastError:
             readyStatus.lastError ||
@@ -3179,8 +3263,12 @@ function createLocalAiManager({
         }
       }
 
-      return readyStatus
+      return {
+        ...readyStatus,
+        ...currentStatus(),
+      }
     } catch (error) {
+      state.running = false
       state.runtimeManaged = false
       state.lastError = String((error && error.message) || error || '').trim()
       state.sidecarReachable = false
@@ -3232,12 +3320,27 @@ function createLocalAiManager({
 
     applyRuntimeState(next)
 
-    const result = await localAiSidecar.listModels({
+    const readiness = await ensureInteractiveRuntimeReady(next)
+
+    if (readiness && !readiness.ok) {
+      return {
+        ok: false,
+        models: [],
+        total: 0,
+        error: readiness.error || 'runtime_unavailable',
+        lastError:
+          readiness.lastError || 'Local AI runtime is unavailable right now.',
+        ...currentStatus(),
+      }
+    }
+
+    const rawResult = await localAiSidecar.listModels({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
       timeoutMs: next.timeoutMs,
     })
+    const result = normalizeSidecarModelsResult(rawResult)
 
     updateSidecarState({
       reachable: Boolean(result.ok),
@@ -3259,7 +3362,21 @@ function createLocalAiManager({
 
     applyRuntimeState(next)
 
-    const result = await localAiSidecar.chat({
+    const readiness = await ensureInteractiveRuntimeReady(next)
+
+    if (readiness && !readiness.ok) {
+      return {
+        ok: false,
+        status: 'error',
+        error: readiness.error || 'runtime_unavailable',
+        lastError:
+          readiness.lastError || 'Local AI runtime is unavailable right now.',
+        content: null,
+        ...currentStatus(),
+      }
+    }
+
+    const rawResult = await localAiSidecar.chat({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
@@ -3274,6 +3391,11 @@ function createLocalAiManager({
       generationOptions: next.generationOptions,
       modelFallbacks: next.modelFallbacks,
       visionModelFallbacks: next.visionModelFallbacks,
+    })
+    const result = normalizeSidecarActionResult(rawResult, {
+      error: 'chat_unavailable',
+      lastError: 'Local AI chat returned no response.',
+      content: null,
     })
 
     updateSidecarState({
@@ -3295,7 +3417,21 @@ function createLocalAiManager({
 
     applyRuntimeState(next)
 
-    const result = await localAiSidecar.flipToText({
+    const readiness = await ensureInteractiveRuntimeReady(next)
+
+    if (readiness && !readiness.ok) {
+      return {
+        ok: false,
+        status: 'error',
+        error: readiness.error || 'runtime_unavailable',
+        lastError:
+          readiness.lastError || 'Local AI runtime is unavailable right now.',
+        text: null,
+        ...currentStatus(),
+      }
+    }
+
+    const rawResult = await localAiSidecar.flipToText({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
@@ -3303,6 +3439,11 @@ function createLocalAiManager({
       model: next.model,
       input: pickRuntimeInput(next),
       timeoutMs: next.timeoutMs,
+    })
+    const result = normalizeSidecarActionResult(rawResult, {
+      error: 'flip_to_text_unavailable',
+      lastError: 'Local AI flip text returned no response.',
+      text: null,
     })
 
     updateSidecarState({
@@ -3324,7 +3465,24 @@ function createLocalAiManager({
 
     applyRuntimeState(next)
 
-    const result = await localAiSidecar.checkFlipSequence({
+    const readiness = await ensureInteractiveRuntimeReady(next)
+
+    if (readiness && !readiness.ok) {
+      return {
+        ok: false,
+        status: 'error',
+        error: readiness.error || 'runtime_unavailable',
+        lastError:
+          readiness.lastError || 'Local AI runtime is unavailable right now.',
+        classification: null,
+        confidence: null,
+        reason: null,
+        sequenceText: null,
+        ...currentStatus(),
+      }
+    }
+
+    const rawResult = await localAiSidecar.checkFlipSequence({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
@@ -3332,6 +3490,14 @@ function createLocalAiManager({
       model: next.model,
       input: pickRuntimeInput(next),
       timeoutMs: next.timeoutMs,
+    })
+    const result = normalizeSidecarActionResult(rawResult, {
+      error: 'flip_check_unavailable',
+      lastError: 'Local AI flip checker returned no response.',
+      classification: null,
+      confidence: null,
+      reason: null,
+      sequenceText: null,
     })
 
     updateSidecarState({

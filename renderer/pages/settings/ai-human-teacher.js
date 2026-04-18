@@ -28,8 +28,10 @@ import {
   useSettingsState,
 } from '../../shared/providers/settings-context'
 import {
+  DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
+  normalizeDeveloperAiDraftTriggerMode,
   normalizeDeveloperLocalTrainingProfile,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeModel,
@@ -55,7 +57,7 @@ function describeDeveloperLocalTrainingProfile(profile, t) {
   return {
     label: t('Fixed local Qwen lane'),
     detail: t(
-      'IdenaAI now uses one local lane here only: qwen3.5:9b at runtime and mlx-community/Qwen3.5-9B-MLX-4bit for local training.'
+      'idena.vibe now uses one local lane here only: qwen3.5:9b at runtime and mlx-community/Qwen3.5-9B-MLX-4bit for local training.'
     ),
   }
 }
@@ -415,11 +417,11 @@ function formatErrorMessage(error) {
       message
     )
   ) {
-    return 'This human-teacher feature is not available in the running main process yet. Fully restart IdenaAI and try again.'
+    return 'This human-teacher feature is not available in the running main process yet. Fully restart idena.vibe and try again.'
   }
 
   if (/Local AI human-teacher bridge is unavailable/i.test(message)) {
-    return 'The human-teacher bridge is unavailable in this build. Fully restart IdenaAI and try again.'
+    return 'The human-teacher bridge is unavailable in this build. Fully restart idena.vibe and try again.'
   }
 
   if (
@@ -1048,7 +1050,7 @@ function InterviewPrompt({title, children}) {
         mb={3}
       >
         <Text fontSize="sm" fontWeight={600} color="blue.500">
-          IdenaAI
+          idena.vibe
         </Text>
         <Text mt={1}>{title}</Text>
       </Box>
@@ -1349,6 +1351,7 @@ export default function AiHumanTeacherPage() {
     savedAt: null,
     error: '',
   })
+  const lastAutoDraftTaskIdRef = React.useRef('')
 
   React.useEffect(() => {
     if (queryEpoch) {
@@ -1402,6 +1405,10 @@ export default function AiHumanTeacherPage() {
     localAi?.developerLocalTrainingProfile ||
       DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
   )
+  const developerAiDraftTriggerMode = normalizeDeveloperAiDraftTriggerMode(
+    localAi?.developerAiDraftTriggerMode ||
+      DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
+  )
   const developerLocalTrainingModelPath =
     resolveDeveloperLocalTrainingProfileModelPath(developerLocalTrainingProfile)
   const developerRequestedRuntimeModel =
@@ -1450,6 +1457,7 @@ export default function AiHumanTeacherPage() {
   const shareHumanTeacherAnnotationsWithNetwork = Boolean(
     localAi?.shareHumanTeacherAnnotationsWithNetwork
   )
+  const autoTriggerAiDraft = developerAiDraftTriggerMode === 'automatic'
 
   React.useEffect(() => {
     const runtimeBackend = String(localAi?.runtimeBackend || '').trim()
@@ -1539,6 +1547,7 @@ export default function AiHumanTeacherPage() {
       try {
         const bridge = ensureBridge()
         const modelListResult = await bridge.listModels({
+          allowRuntimeStart: false,
           baseUrl: localAi?.baseUrl,
           runtimeBackend: localAi?.runtimeBackend,
           runtimeType: localAi?.runtimeType,
@@ -2216,6 +2225,15 @@ export default function AiHumanTeacherPage() {
 
       setIsTaskLoading(true)
       setError('')
+      setAnnotationDraft(createEmptyAnnotationDraft())
+      setLastPersistedDraft({key: '', snapshot: ''})
+      setAutosaveMeta({
+        status: 'idle',
+        savedAt: null,
+        error: '',
+      })
+      setShowAdvancedFields(false)
+      setShowReferenceTool(false)
 
       try {
         let nextResult = null
@@ -2411,229 +2429,329 @@ export default function AiHumanTeacherPage() {
         : [],
     [currentAiAnnotation]
   )
-  const requestAiAnnotationDraft = React.useCallback(async () => {
-    if (annotationSourceMode !== 'developer') {
-      return
-    }
+  const requestAiAnnotationDraft = React.useCallback(
+    async ({triggerMode = 'manual'} = {}) => {
+      const isAutomaticTrigger = triggerMode === 'automatic'
 
-    if (localAi?.enabled !== true) {
-      toast({
-        render: () => (
-          <Toast title={t('Enable local AI first')}>
-            {t(
-              'The AI draft button uses the local runtime. Turn on Local AI in AI settings, then try again.'
-            )}
-          </Toast>
-        ),
-      })
-      return
-    }
-
-    if (!global.localAi || typeof global.localAi.chat !== 'function') {
-      toast({
-        render: () => (
-          <Toast title={t('Local AI chat bridge missing')}>
-            {t(
-              'This build does not expose the Local AI chat bridge yet. Fully restart IdenaAI and try again.'
-            )}
-          </Toast>
-        ),
-      })
-      return
-    }
-
-    if (aiDraftRuntimeResolution.status === 'unsupported_backend') {
-      toast({
-        render: () => (
-          <Toast title={t('Unsupported local runtime backend')}>
-            {aiDraftRuntimeResolution.lastError ||
-              t(
-                'The current Local AI backend is not Ollama, so the requested Qwen runtime family cannot be used for AI drafting here.'
-              )}
-          </Toast>
-        ),
-      })
-      return
-    }
-
-    const requestedRuntimeModel =
-      developerRequestedRuntimeVisionModel || developerRequestedRuntimeModel
-    if (!requestedRuntimeModel) {
-      toast({
-        render: () => (
-          <Toast title={t('No runtime model selected')}>
-            {t(
-              'The fixed local Qwen training lane is not configured yet on this desktop profile.'
-            )}
-          </Toast>
-        ),
-      })
-      return
-    }
-
-    if (
-      !aiDraftRuntimeResolution.activeModel &&
-      aiDraftRuntimeResolution.status !== 'loading'
-    ) {
-      toast({
-        render: () => (
-          <Toast title={t('Requested runtime model is unavailable')}>
-            {aiDraftRuntimeResolution.fallbackReason ||
-              t(
-                'The requested runtime model is not installed yet. Install it locally, then try again.'
-              )}{' '}
-            {aiDraftRuntimeResolution.installHint || ''}
-          </Toast>
-        ),
-      })
-      return
-    }
-
-    const orderedImages = [...leftPanels, ...rightPanels]
-      .map((panel) => panel?.dataUrl)
-      .filter(Boolean)
-
-    if (orderedImages.length !== 8) {
-      toast({
-        render: () => (
-          <Toast title={t('Current flip is missing panel images')}>
-            {t(
-              'The current flip only exposed {{count}} of 8 ordered panel images, so the local AI draft could not start.',
-              {
-                count: orderedImages.length,
-              }
-            )}
-          </Toast>
-        ),
-      })
-      return
-    }
-
-    setIsGeneratingAiDraft(true)
-    setError('')
-
-    try {
-      const bridge = ensureBridge()
-      const aiDraftResult = await bridge.chat({
-        baseUrl: localAi?.baseUrl,
-        runtimeBackend: localAi?.runtimeBackend,
-        runtimeType: localAi?.runtimeType,
-        model: requestedRuntimeModel,
-        visionModel: requestedRuntimeModel,
-        timeoutMs: 45000,
-        responseFormat: 'json',
-        generationOptions: {
-          temperature: 0,
-          numPredict: 768,
-        },
-        messages: [
-          {
-            role: 'system',
-            content: buildAiAnnotationSystemPrompt(effectiveDeveloperPrompt),
-          },
-          {
-            role: 'user',
-            content: buildAiAnnotationUserPrompt(),
-            images: orderedImages,
-          },
-        ],
-      })
-
-      const aiText = String(
-        aiDraftResult?.text || aiDraftResult?.content || ''
-      ).trim()
-
-      if (!aiDraftResult?.ok || !aiText) {
-        throw new Error(
-          String(aiDraftResult?.lastError || '').trim() ||
-            t('The local AI runtime did not return a usable annotation draft.')
-        )
+      if (annotationSourceMode !== 'developer') {
+        return
       }
 
-      const aiAnnotation = buildStoredAiAnnotation(
-        parseAiAnnotationResponse(aiText),
-        aiDraftResult
-      )
-
-      setAiDraftRuntimeResolution((current) =>
-        createAiDraftRuntimeResolution({
-          ...current,
-          status: 'ready',
-          requestedModel: String(
-            aiDraftResult?.requestedModel || requestedRuntimeModel
-          ).trim(),
-          activeModel: String(
-            aiDraftResult?.activeModel ||
-              aiDraftResult?.model ||
-              requestedRuntimeModel
-          ).trim(),
-          fallbackModel: '',
-          fallbackUsed: false,
-          fallbackReason: '',
-          availableModels: current.availableModels,
-          installHint: `ollama pull ${requestedRuntimeModel}`,
-          lastError: '',
-        })
-      )
-
-      setAnnotationDraft((current) =>
-        applyAiAnnotationToDraft(current, aiAnnotation)
-      )
-      setShowAdvancedFields(
-        Boolean(aiAnnotation.option_a_summary || aiAnnotation.option_b_summary)
-      )
-      toast({
-        render: () => (
-          <Toast title={t('AI draft applied')}>
-            {t(
-              'The local AI filled a draft for this flip with {{model}}. Review it, edit it, and tell the AI what it got wrong if needed.',
-              {
-                model:
-                  aiDraftResult?.activeModel ||
-                  aiDraftResult?.model ||
-                  requestedRuntimeModel,
-              }
-            )}
-          </Toast>
-        ),
-      })
-    } catch (draftError) {
-      const detail = String(
-        (draftError && draftError.message) || draftError || ''
-      ).trim()
-      toast({
-        render: () => (
-          <Toast title={t('AI draft failed')}>
-            {detail ||
-              t(
-                'The local AI runtime could not produce a draft for this flip.'
+      if (localAi?.enabled !== true) {
+        toast({
+          render: () => (
+            <Toast title={t('Enable local AI first')}>
+              {t(
+                'The AI draft button uses the local runtime. Turn on Local AI in AI settings, then try again.'
               )}
-          </Toast>
-        ),
-      })
-    } finally {
-      setIsGeneratingAiDraft(false)
+            </Toast>
+          ),
+        })
+        return
+      }
+
+      if (!global.localAi || typeof global.localAi.chat !== 'function') {
+        toast({
+          render: () => (
+            <Toast title={t('Local AI chat bridge missing')}>
+              {t(
+                'This build does not expose the Local AI chat bridge yet. Fully restart idena.vibe and try again.'
+              )}
+            </Toast>
+          ),
+        })
+        return
+      }
+
+      if (aiDraftRuntimeResolution.status === 'unsupported_backend') {
+        toast({
+          render: () => (
+            <Toast title={t('Unsupported local runtime backend')}>
+              {aiDraftRuntimeResolution.lastError ||
+                t(
+                  'The current Local AI backend is not Ollama, so the requested Qwen runtime family cannot be used for AI drafting here.'
+                )}
+            </Toast>
+          ),
+        })
+        return
+      }
+
+      const requestedRuntimeModel =
+        developerRequestedRuntimeVisionModel || developerRequestedRuntimeModel
+      if (!requestedRuntimeModel) {
+        toast({
+          render: () => (
+            <Toast title={t('No runtime model selected')}>
+              {t(
+                'The fixed local Qwen training lane is not configured yet on this desktop profile.'
+              )}
+            </Toast>
+          ),
+        })
+        return
+      }
+
+      if (
+        !aiDraftRuntimeResolution.activeModel &&
+        aiDraftRuntimeResolution.status !== 'loading'
+      ) {
+        toast({
+          render: () => (
+            <Toast title={t('Requested runtime model is unavailable')}>
+              {aiDraftRuntimeResolution.fallbackReason ||
+                t(
+                  'The requested runtime model is not installed yet. Install it locally, then try again.'
+                )}{' '}
+              {aiDraftRuntimeResolution.installHint || ''}
+            </Toast>
+          ),
+        })
+        return
+      }
+
+      const orderedImages = [...leftPanels, ...rightPanels]
+        .map((panel) => panel?.dataUrl)
+        .filter(Boolean)
+
+      if (orderedImages.length !== 8) {
+        toast({
+          render: () => (
+            <Toast title={t('Current flip is missing panel images')}>
+              {t(
+                'The current flip only exposed {{count}} of 8 ordered panel images, so the local AI draft could not start.',
+                {
+                  count: orderedImages.length,
+                }
+              )}
+            </Toast>
+          ),
+        })
+        return
+      }
+
+      setIsGeneratingAiDraft(true)
+      setError('')
+
+      try {
+        const bridge = ensureBridge()
+        const runtimeStart = await bridge.start({
+          baseUrl: localAi?.baseUrl,
+          runtimeBackend: localAi?.runtimeBackend,
+          runtimeType: localAi?.runtimeType,
+          model: requestedRuntimeModel,
+          visionModel: requestedRuntimeModel,
+          timeoutMs: 10000,
+        })
+
+        if (!runtimeStart?.ok) {
+          throw new Error(
+            String(runtimeStart?.lastError || '').trim() ||
+              t(
+                'The local AI runtime could not be started for AI draft generation.'
+              )
+          )
+        }
+
+        const modelListResult = await bridge.listModels({
+          baseUrl: localAi?.baseUrl,
+          runtimeBackend: localAi?.runtimeBackend,
+          runtimeType: localAi?.runtimeType,
+          timeoutMs: 10000,
+        })
+
+        if (modelListResult?.ok) {
+          const runtimeResolution = resolveAiDraftRuntimeResolution({
+            requestedModel: requestedRuntimeModel,
+            availableModels: modelListResult.models,
+          })
+
+          setAiDraftRuntimeResolution(runtimeResolution)
+
+          if (!runtimeResolution.activeModel) {
+            throw new Error(
+              runtimeResolution.fallbackReason ||
+                t(
+                  'The requested runtime model is not installed yet. Install it locally, then try again.'
+                )
+            )
+          }
+        }
+
+        const aiDraftResult = await bridge.chat({
+          baseUrl: localAi?.baseUrl,
+          runtimeBackend: localAi?.runtimeBackend,
+          runtimeType: localAi?.runtimeType,
+          model: requestedRuntimeModel,
+          visionModel: requestedRuntimeModel,
+          timeoutMs: 45000,
+          responseFormat: 'json',
+          generationOptions: {
+            temperature: 0,
+            numPredict: 768,
+          },
+          messages: [
+            {
+              role: 'system',
+              content: buildAiAnnotationSystemPrompt(effectiveDeveloperPrompt),
+            },
+            {
+              role: 'user',
+              content: buildAiAnnotationUserPrompt(),
+              images: orderedImages,
+            },
+          ],
+        })
+
+        const aiText = String(
+          aiDraftResult?.text || aiDraftResult?.content || ''
+        ).trim()
+
+        if (!aiDraftResult?.ok || !aiText) {
+          throw new Error(
+            String(aiDraftResult?.lastError || '').trim() ||
+              t(
+                'The local AI runtime did not return a usable annotation draft.'
+              )
+          )
+        }
+
+        const aiAnnotation = buildStoredAiAnnotation(
+          parseAiAnnotationResponse(aiText),
+          aiDraftResult
+        )
+
+        setAiDraftRuntimeResolution((current) =>
+          createAiDraftRuntimeResolution({
+            ...current,
+            status: 'ready',
+            requestedModel: String(
+              aiDraftResult?.requestedModel || requestedRuntimeModel
+            ).trim(),
+            activeModel: String(
+              aiDraftResult?.activeModel ||
+                aiDraftResult?.model ||
+                requestedRuntimeModel
+            ).trim(),
+            fallbackModel: '',
+            fallbackUsed: false,
+            fallbackReason: '',
+            availableModels: current.availableModels,
+            installHint: `ollama pull ${requestedRuntimeModel}`,
+            lastError: '',
+          })
+        )
+
+        setAnnotationDraft((current) =>
+          applyAiAnnotationToDraft(current, aiAnnotation)
+        )
+        setShowAdvancedFields(
+          Boolean(
+            aiAnnotation.option_a_summary || aiAnnotation.option_b_summary
+          )
+        )
+        if (!isAutomaticTrigger) {
+          toast({
+            render: () => (
+              <Toast title={t('AI draft applied')}>
+                {t(
+                  'The local AI filled a draft for this flip with {{model}}. Review it, edit it, and tell the AI what it got wrong if needed.',
+                  {
+                    model:
+                      aiDraftResult?.activeModel ||
+                      aiDraftResult?.model ||
+                      requestedRuntimeModel,
+                  }
+                )}
+              </Toast>
+            ),
+          })
+        }
+      } catch (draftError) {
+        const detail = String(
+          (draftError && draftError.message) || draftError || ''
+        ).trim()
+        toast({
+          render: () => (
+            <Toast
+              title={
+                isAutomaticTrigger
+                  ? t('Automatic AI draft failed')
+                  : t('AI draft failed')
+              }
+            >
+              {detail ||
+                t(
+                  'The local AI runtime could not produce a draft for this flip.'
+                )}
+            </Toast>
+          ),
+        })
+      } finally {
+        setIsGeneratingAiDraft(false)
+      }
+    },
+    [
+      annotationSourceMode,
+      effectiveDeveloperPrompt,
+      ensureBridge,
+      aiDraftRuntimeResolution.fallbackReason,
+      aiDraftRuntimeResolution.installHint,
+      aiDraftRuntimeResolution.lastError,
+      aiDraftRuntimeResolution.activeModel,
+      aiDraftRuntimeResolution.status,
+      developerRequestedRuntimeModel,
+      developerRequestedRuntimeVisionModel,
+      leftPanels,
+      localAi?.baseUrl,
+      localAi?.enabled,
+      localAi?.runtimeBackend,
+      localAi?.runtimeType,
+      rightPanels,
+      t,
+      toast,
+    ]
+  )
+
+  React.useEffect(() => {
+    lastAutoDraftTaskIdRef.current = ''
+  }, [selectedTaskId])
+
+  React.useEffect(() => {
+    const activeTaskId = String(taskDetail?.taskId || '').trim()
+    const selectedId = String(selectedTaskId || '').trim()
+    const loadedTaskDraft = normalizeAnnotationDraft(
+      taskDetail?.annotation || {}
+    )
+
+    if (
+      !isDeveloperMode ||
+      !autoTriggerAiDraft ||
+      !activeTaskId ||
+      activeTaskId !== selectedId ||
+      isTaskLoading ||
+      isGeneratingAiDraft ||
+      lastAutoDraftTaskIdRef.current === activeTaskId ||
+      hasDraftContent(loadedTaskDraft) ||
+      hasDraftContent(annotationDraft)
+    ) {
+      return
     }
+
+    lastAutoDraftTaskIdRef.current = activeTaskId
+    requestAiAnnotationDraft({triggerMode: 'automatic'})
   }, [
-    annotationSourceMode,
-    effectiveDeveloperPrompt,
-    ensureBridge,
-    aiDraftRuntimeResolution.fallbackReason,
-    aiDraftRuntimeResolution.installHint,
-    aiDraftRuntimeResolution.lastError,
-    aiDraftRuntimeResolution.activeModel,
-    aiDraftRuntimeResolution.status,
-    developerRequestedRuntimeModel,
-    developerRequestedRuntimeVisionModel,
-    leftPanels,
-    localAi?.baseUrl,
-    localAi?.enabled,
-    localAi?.runtimeBackend,
-    localAi?.runtimeType,
-    rightPanels,
-    t,
-    toast,
+    annotationDraft,
+    autoTriggerAiDraft,
+    isDeveloperMode,
+    isGeneratingAiDraft,
+    isTaskLoading,
+    requestAiAnnotationDraft,
+    selectedTaskId,
+    taskDetail?.annotation,
+    taskDetail?.taskId,
   ])
+
   const currentDraftSnapshot = React.useMemo(
     () => JSON.stringify(normalizedDraft),
     [normalizedDraft]
@@ -2896,36 +3014,41 @@ export default function AiHumanTeacherPage() {
           savedAt: new Date().toISOString(),
           error: '',
         })
+        const willOpenChunkDecisionDialog =
+          promptOnChunkComplete &&
+          !nextTaskId &&
+          completionState.allComplete &&
+          (annotationSourceMode === 'developer' ||
+            annotationSourceMode === 'demo')
 
         if (!quiet) {
-          if (isCompleteDraft(annotationDraft)) {
+          if (
+            isCompleteDraft(annotationDraft) &&
+            !willOpenChunkDecisionDialog
+          ) {
             rewardWithConfetti({particleCount: 70})
           }
-          toast({
-            title: isCompleteDraft(annotationDraft)
-              ? t('Flip saved')
-              : t('Flip draft saved'),
-            description:
-              advance && nextTaskId
-                ? t('Saved. Moving to the next flip.')
-                : t('Your annotation was saved locally.'),
-            status: 'success',
-            duration: 2500,
-            isClosable: true,
-          })
+          if (!willOpenChunkDecisionDialog) {
+            toast({
+              title: isCompleteDraft(annotationDraft)
+                ? t('Flip saved')
+                : t('Flip draft saved'),
+              description:
+                advance && nextTaskId
+                  ? t('Saved. Moving to the next flip.')
+                  : t('Your annotation was saved locally.'),
+              status: 'success',
+              duration: 2500,
+              isClosable: true,
+            })
+          }
         }
 
         if (advance && nextTaskId) {
           setSelectedTaskId(nextTaskId)
         }
 
-        if (
-          promptOnChunkComplete &&
-          !nextTaskId &&
-          completionState.allComplete &&
-          (annotationSourceMode === 'developer' ||
-            annotationSourceMode === 'demo')
-        ) {
+        if (willOpenChunkDecisionDialog) {
           openChunkDecisionDialog(annotationSourceMode)
         }
 
@@ -4186,7 +4309,7 @@ export default function AiHumanTeacherPage() {
                       : t('Start training your AI')}
                   </PrimaryButton>
                   <SecondaryButton onClick={() => router.push('/ai-chat')}>
-                    {t('Back to IdenaAI-GPT')}
+                    {t('Back to idena.vibe')}
                   </SecondaryButton>
                 </Stack>
 
@@ -5153,7 +5276,32 @@ export default function AiHumanTeacherPage() {
 
                           {!nextTaskId && totalTaskCount > 0 ? (
                             <Alert status="info" borderRadius="lg">
-                              <Text fontSize="sm">{finalFlipHint}</Text>
+                              <Stack spacing={3} w="full">
+                                <Text fontSize="sm">{finalFlipHint}</Text>
+                                {isDeveloperMode || isDemoMode ? (
+                                  <Stack
+                                    direction={['column', 'row']}
+                                    spacing={2}
+                                    flexWrap="wrap"
+                                  >
+                                    <PrimaryButton
+                                      isLoading={isSavingTask}
+                                      onClick={() => saveTaskDraft()}
+                                    >
+                                      {finishButtonLabel}
+                                    </PrimaryButton>
+                                    <SecondaryButton
+                                      isDisabled={
+                                        isSavingTask ||
+                                        isFinalizingDeveloperChunk
+                                      }
+                                      onClick={handleSaveAndExit}
+                                    >
+                                      {t('Save and exit')}
+                                    </SecondaryButton>
+                                  </Stack>
+                                ) : null}
+                              </Stack>
                             </Alert>
                           ) : null}
 
@@ -5466,9 +5614,45 @@ export default function AiHumanTeacherPage() {
                                         }
                                       )}
                                     </Text>
+                                    <Box mt={3} maxW="320px">
+                                      <Text
+                                        color="muted"
+                                        fontSize="xs"
+                                        fontWeight={600}
+                                        mb={1}
+                                      >
+                                        {t('AI draft trigger')}
+                                      </Text>
+                                      <Select
+                                        size="sm"
+                                        value={developerAiDraftTriggerMode}
+                                        onChange={(e) =>
+                                          updateLocalAiSettings({
+                                            developerAiDraftTriggerMode:
+                                              e.target.value,
+                                          })
+                                        }
+                                      >
+                                        <option value="manual">
+                                          {t('Trigger AI draft manually')}
+                                        </option>
+                                        <option value="automatic">
+                                          {t('Trigger AI draft automatically')}
+                                        </option>
+                                      </Select>
+                                      <Text color="muted" fontSize="xs" mt={1}>
+                                        {autoTriggerAiDraft
+                                          ? t(
+                                              'Each fresh empty flip will clear first, then request a new AI draft automatically.'
+                                            )
+                                          : t(
+                                              'Each new flip starts empty. Use the draft button only when you want a fresh AI draft.'
+                                            )}
+                                      </Text>
+                                    </Box>
                                   </Box>
                                   <PrimaryButton
-                                    onClick={requestAiAnnotationDraft}
+                                    onClick={() => requestAiAnnotationDraft()}
                                     isLoading={isGeneratingAiDraft}
                                     loadingText={t('Drafting')}
                                   >
