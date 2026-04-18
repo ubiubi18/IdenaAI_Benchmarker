@@ -517,12 +517,7 @@ function hasAiAnnotationContent(annotation = {}) {
   }
 
   return Boolean(
-    next.generated_at ||
-      next.runtime_backend ||
-      next.runtime_type ||
-      next.model ||
-      next.vision_model ||
-      hasAiAnnotationListContent(next.ordered_panel_descriptions) ||
+    hasAiAnnotationListContent(next.ordered_panel_descriptions) ||
       hasAiAnnotationListContent(next.ordered_panel_text) ||
       next.option_a_story_analysis ||
       next.option_b_story_analysis ||
@@ -530,12 +525,7 @@ function hasAiAnnotationContent(annotation = {}) {
       next.why_answer ||
       next.option_a_summary ||
       next.option_b_summary ||
-      next.rating ||
-      next.report_reason ||
-      next.text_required !== null ||
-      next.sequence_markers_present !== null ||
-      next.report_required !== null ||
-      next.confidence !== ''
+      next.report_reason
   )
 }
 
@@ -1563,7 +1553,7 @@ function describeDeveloperThermalTelemetry(system, t) {
   }
 }
 
-function describeDeveloperComputeTelemetry(system, t) {
+function describeDeveloperCpuTelemetry(system, t) {
   const cpuUsagePercent = Number(system?.cpuUsagePercent)
   const loadAveragePerCore1m = Number(system?.loadAveragePerCore1m)
   const loadAverage5m = Number(system?.loadAverage5m)
@@ -1631,11 +1621,62 @@ function describeDeveloperComputeTelemetry(system, t) {
   }
 
   return {
-    title: t('Compute load'),
+    title: t('CPU load'),
     value,
     detail:
       detailParts.join(' · ') ||
       t('CPU telemetry will appear after the next sample.'),
+    tone,
+  }
+}
+
+function describeDeveloperGpuTelemetry(system, t) {
+  const gpuUsagePercent = Number(system?.gpuUsagePercent)
+  const gpu =
+    system && typeof system.gpu === 'object' && !Array.isArray(system.gpu)
+      ? system.gpu
+      : {}
+  const rendererUtilizationPercent = Number(gpu.rendererUtilizationPercent)
+  const tilerUtilizationPercent = Number(gpu.tilerUtilizationPercent)
+  const detailParts = []
+  let tone = 'gray'
+
+  if (Number.isFinite(gpuUsagePercent) && gpuUsagePercent >= 85) {
+    tone = 'red'
+  } else if (Number.isFinite(gpuUsagePercent) && gpuUsagePercent >= 65) {
+    tone = 'orange'
+  } else if (Number.isFinite(gpuUsagePercent) && gpuUsagePercent >= 35) {
+    tone = 'yellow'
+  } else if (Number.isFinite(gpuUsagePercent)) {
+    tone = 'green'
+  }
+
+  if (Number.isFinite(rendererUtilizationPercent)) {
+    detailParts.push(
+      t('Renderer {{value}}', {
+        value: formatPercentMetric(rendererUtilizationPercent),
+      })
+    )
+  }
+
+  if (Number.isFinite(tilerUtilizationPercent)) {
+    detailParts.push(
+      t('Tiler {{value}}', {
+        value: formatPercentMetric(tilerUtilizationPercent),
+      })
+    )
+  }
+
+  return {
+    title: t('GPU load'),
+    value: Number.isFinite(gpuUsagePercent)
+      ? t('{{value}} GPU', {
+          value: formatPercentMetric(gpuUsagePercent),
+        })
+      : t('Unavailable'),
+    detail:
+      detailParts.join(' · ') ||
+      t('macOS GPU telemetry will appear after the next sample.'),
     tone,
   }
 }
@@ -2277,7 +2318,8 @@ function LocalTrainingImpactPanel({
       : {}
   const stats = [
     describeDeveloperThermalTelemetry(system, t),
-    describeDeveloperComputeTelemetry(system, t),
+    describeDeveloperCpuTelemetry(system, t),
+    describeDeveloperGpuTelemetry(system, t),
     describeDeveloperMemoryTelemetry(system, t),
     describeDeveloperPowerTelemetry(system, t),
   ]
@@ -2369,7 +2411,7 @@ function LocalTrainingImpactPanel({
                 ) : null}
               </Stack>
             </Box>
-            <SimpleGrid columns={[1, 2, 4]} spacing={3}>
+            <SimpleGrid columns={[1, 2, 5]} spacing={3}>
               {stats.map((stat) => (
                 <LocalTrainingImpactStatCard
                   key={stat.title}
@@ -2420,6 +2462,284 @@ function LocalTrainingImpactPanel({
             </Text>
           </Box>
         )}
+      </Stack>
+    </Box>
+  )
+}
+
+function describeDeveloperActiveRun(activeRun, t) {
+  if (!activeRun || typeof activeRun !== 'object' || Array.isArray(activeRun)) {
+    return null
+  }
+
+  const kind = String(activeRun.kind || '')
+    .trim()
+    .toLowerCase()
+  const status = String(activeRun.status || '')
+    .trim()
+    .toLowerCase()
+  const stage = String(activeRun.stage || '')
+    .trim()
+    .toLowerCase()
+  const stageIndex = Number(activeRun.stageIndex)
+  const stageCount = Number(activeRun.stageCount)
+  const progressPercent = Number(activeRun.progressPercent)
+  const currentEpoch = Number(activeRun.currentEpoch)
+  const totalEpochs = Number(activeRun.totalEpochs)
+  const currentStep = Number(activeRun.currentStep)
+  const stepsPerEpoch = Number(activeRun.stepsPerEpoch)
+  const totalSteps = Number(activeRun.totalSteps)
+  const latestLoss = Number(activeRun.latestLoss)
+  const benchmarkCurrent = Number(activeRun.benchmarkCurrent)
+  const benchmarkTotal = Number(activeRun.benchmarkTotal)
+  const chunkOffset = Number(activeRun.chunkOffset)
+  const chunkSize = Number(activeRun.chunkSize)
+  const evaluationFlips = Number(activeRun.evaluationFlips)
+  const currentFlipHash = String(activeRun.currentFlipHash || '').trim()
+  const benchmarkPhase = String(activeRun.benchmarkPhase || '')
+    .trim()
+    .toLowerCase()
+  const message = String(activeRun.message || '').trim()
+
+  let badgeLabel =
+    kind === 'comparison' ? t('Benchmark live') : t('Training live')
+  let badgeScheme = kind === 'comparison' ? 'purple' : 'blue'
+  let title =
+    kind === 'comparison' ? t('Local benchmark run') : t('Local training run')
+  let detail =
+    message ||
+    (kind === 'comparison'
+      ? t('Running the unseen-flip benchmark now.')
+      : t('Training and checking the local model now.'))
+
+  if (stage === 'prepare_training_dataset') {
+    title = t('Building the 5-flip training pack')
+    detail =
+      message ||
+      t(
+        'The app is turning your saved flip answers into a local training dataset.'
+      )
+  } else if (stage === 'train_adapter') {
+    title = t('Training the local adapter')
+    detail =
+      message ||
+      t(
+        'The computer is practicing on this 5-flip pack before the benchmark starts.'
+      )
+  } else if (stage === 'prepare_holdout') {
+    title = t('Preparing the unseen benchmark flips')
+    detail =
+      message ||
+      t(
+        'The app is loading the unseen holdout that will be used for the score check.'
+      )
+  } else if (stage === 'benchmark_baseline') {
+    title = t('Benchmarking the baseline model')
+    detail =
+      message ||
+      t('The same unseen flips are being scored with the baseline model first.')
+    badgeLabel = t('Baseline benchmark')
+    badgeScheme = 'purple'
+  } else if (stage === 'benchmark_adapter') {
+    title = t('Benchmarking the trained adapter')
+    detail =
+      message ||
+      t(
+        'The same unseen flips are now being scored with the freshly trained adapter.'
+      )
+    badgeLabel = t('Adapter benchmark')
+    badgeScheme = kind === 'comparison' ? 'purple' : 'green'
+  }
+
+  const summaryParts = []
+
+  if (
+    Number.isFinite(stageIndex) &&
+    Number.isFinite(stageCount) &&
+    stageCount > 0
+  ) {
+    summaryParts.push(
+      t('Stage {{current}} of {{total}}', {
+        current: stageIndex,
+        total: stageCount,
+      })
+    )
+  }
+
+  if (Number.isFinite(currentEpoch) && Number.isFinite(totalEpochs)) {
+    summaryParts.push(
+      t('Epoch {{current}} of {{total}}', {
+        current: currentEpoch,
+        total: totalEpochs,
+      })
+    )
+  }
+
+  if (Number.isFinite(currentStep) && Number.isFinite(stepsPerEpoch)) {
+    summaryParts.push(
+      t('Step {{current}} of {{total}}', {
+        current: currentStep,
+        total: stepsPerEpoch,
+      })
+    )
+  }
+
+  if (Number.isFinite(totalSteps) && totalSteps > 0) {
+    summaryParts.push(
+      t('{{count}} total updates', {
+        count: formatCountMetric(totalSteps),
+      })
+    )
+  }
+
+  let benchmarkSummary = t(
+    'This benchmark reuses the same unseen holdout for baseline and trained scoring so the score stays comparable.'
+  )
+
+  if (Number.isFinite(benchmarkCurrent) && Number.isFinite(benchmarkTotal)) {
+    benchmarkSummary = t(
+      '{{phase}}: unseen flip {{current}} of {{total}}{{hash}}',
+      {
+        phase:
+          benchmarkPhase === 'adapter' ? t('Adapter pass') : t('Baseline pass'),
+        current: benchmarkCurrent,
+        total: benchmarkTotal,
+        hash: currentFlipHash ? ` · ${currentFlipHash}` : '',
+      }
+    )
+  } else if (Number.isFinite(evaluationFlips)) {
+    benchmarkSummary = t(
+      'This benchmark reuses the same {{count}} unseen flips for baseline and trained scoring so the score stays comparable.',
+      {
+        count: evaluationFlips,
+      }
+    )
+  }
+
+  const chunkSummary =
+    Number.isFinite(chunkOffset) && Number.isFinite(chunkSize) && chunkSize > 0
+      ? t('Teaching chunk: flips {{from}}-{{to}}', {
+          from: chunkOffset + 1,
+          to: chunkOffset + chunkSize,
+        })
+      : null
+
+  return {
+    badgeLabel,
+    badgeScheme,
+    title,
+    detail,
+    progressPercent:
+      Number.isFinite(progressPercent) && progressPercent >= 0
+        ? Math.min(100, Math.max(0, progressPercent))
+        : null,
+    summary: summaryParts.join(' · ') || null,
+    benchmarkSummary,
+    chunkSummary,
+    lossLabel:
+      Number.isFinite(latestLoss) && latestLoss >= 0
+        ? t('Latest loss {{value}}', {
+            value: latestLoss.toFixed(4),
+          })
+        : null,
+    updatedAt: activeRun.updatedAt || null,
+    status,
+  }
+}
+
+function LocalTrainingRunPanel({activeRun, totalAvailableTasks = 0, t}) {
+  const run = describeDeveloperActiveRun(activeRun, t)
+
+  if (!run) {
+    return null
+  }
+
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor="blue.100"
+      borderRadius="md"
+      p={4}
+      bg="blue.50"
+    >
+      <Stack spacing={3}>
+        <Flex
+          justify="space-between"
+          align={['flex-start', 'center']}
+          direction={['column', 'row']}
+          gap={2}
+        >
+          <Box>
+            <Text fontWeight={700}>{run.title}</Text>
+            <Text color="muted" fontSize="sm">
+              {run.detail}
+            </Text>
+          </Box>
+          <Badge colorScheme={run.badgeScheme} borderRadius="full" px={2}>
+            {run.badgeLabel}
+          </Badge>
+        </Flex>
+
+        <Progress
+          size="sm"
+          value={run.progressPercent ?? undefined}
+          isIndeterminate={!Number.isFinite(run.progressPercent)}
+          colorScheme={run.badgeScheme}
+          borderRadius="full"
+        />
+
+        {run.summary ? <Text fontSize="sm">{run.summary}</Text> : null}
+
+        <SimpleGrid columns={[1, 2, 2]} spacing={3}>
+          <Box
+            borderWidth="1px"
+            borderColor="blue.100"
+            borderRadius="md"
+            px={3}
+            py={2}
+            bg="white"
+          >
+            <Text color="muted" fontSize="xs">
+              {t('Current benchmark view')}
+            </Text>
+            <Text fontSize="sm" fontWeight={600}>
+              {run.benchmarkSummary}
+            </Text>
+          </Box>
+          <Box
+            borderWidth="1px"
+            borderColor="blue.100"
+            borderRadius="md"
+            px={3}
+            py={2}
+            bg="white"
+          >
+            <Text color="muted" fontSize="xs">
+              {t('Current teaching chunk')}
+            </Text>
+            <Text fontSize="sm" fontWeight={600}>
+              {run.chunkSummary ||
+                t('The page will show the next 5-flip chunk when one is open.')}
+            </Text>
+            {totalAvailableTasks > 0 && run.chunkSummary ? (
+              <Text color="muted" fontSize="xs">
+                {t('Total bundled flips in this sample: {{count}}', {
+                  count: totalAvailableTasks,
+                })}
+              </Text>
+            ) : null}
+          </Box>
+        </SimpleGrid>
+
+        <Text color="muted" fontSize="xs">
+          {t(
+            'Benchmark method: the same unseen holdout is scored twice, first with baseline weights and then with the trained adapter.'
+          )}
+          {run.lossLabel ? ` · ${run.lossLabel}` : ''}
+          {run.updatedAt
+            ? ` · ${t('Updated')}: ${formatTimestamp(run.updatedAt)}`
+            : ''}
+        </Text>
       </Stack>
     </Box>
   )
@@ -3132,6 +3452,9 @@ export default function AiHumanTeacherPage() {
   const autoStartKeyRef = React.useRef('')
   const shouldFlushAutosaveRef = React.useRef(false)
   const localPilotTrainingRef = React.useRef(null)
+  const developerSessionContextVersionRef = React.useRef(0)
+  const developerSessionLoadRequestIdRef = React.useRef(0)
+  const developerSessionStatusRequestIdRef = React.useRef(0)
 
   const [epoch, setEpoch] = React.useState(queryEpoch || fallbackEpoch)
   const [result, setResult] = React.useState(null)
@@ -3273,6 +3596,41 @@ export default function AiHumanTeacherPage() {
       return null
     }
   }, [isDeveloperMode])
+
+  const refreshDeveloperSessionState = React.useCallback(async () => {
+    if (
+      !isDeveloperMode ||
+      !global.localAi ||
+      typeof global.localAi.loadHumanTeacherDeveloperSessionState !== 'function'
+    ) {
+      return null
+    }
+
+    try {
+      const requestContextVersion = developerSessionContextVersionRef.current
+      const requestId = developerSessionStatusRequestIdRef.current + 1
+      developerSessionStatusRequestIdRef.current = requestId
+      const nextResult =
+        await global.localAi.loadHumanTeacherDeveloperSessionState({
+          sampleName: demoSampleName,
+          currentPeriod,
+        })
+
+      if (
+        developerSessionContextVersionRef.current !== requestContextVersion ||
+        developerSessionStatusRequestIdRef.current !== requestId
+      ) {
+        return null
+      }
+
+      if (nextResult?.state) {
+        setDeveloperSessionState(nextResult.state)
+      }
+      return nextResult
+    } catch {
+      return null
+    }
+  }, [currentPeriod, demoSampleName, isDeveloperMode])
 
   const savedDeveloperPromptOverride = React.useMemo(
     () => String(localAi?.developerHumanTeacherSystemPrompt || '').trim(),
@@ -3502,8 +3860,23 @@ export default function AiHumanTeacherPage() {
         }
     }
   }, [developerLocalTrainingBudgetTone, t])
+  const developerActiveRun = React.useMemo(() => {
+    const source =
+      developerSessionState &&
+      typeof developerSessionState.activeRun === 'object' &&
+      !Array.isArray(developerSessionState.activeRun)
+        ? developerSessionState.activeRun
+        : null
+
+    return source || null
+  }, [developerSessionState])
+  const developerActiveRunStatus = String(
+    developerActiveRun?.status || ''
+  ).trim()
   const developerTelemetryIsBusy =
-    isFinalizingDeveloperChunk || isRunningDeveloperComparison
+    isFinalizingDeveloperChunk ||
+    isRunningDeveloperComparison ||
+    developerActiveRunStatus === 'running'
   const developerTrainingReadiness = React.useMemo(
     () => normalizeDeveloperTrainingReadiness(developerTelemetry, t),
     [developerTelemetry, t]
@@ -3555,6 +3928,41 @@ export default function AiHumanTeacherPage() {
     isFinalizingDeveloperChunk,
     isRunningDeveloperComparison,
     refreshDeveloperTelemetry,
+  ])
+
+  React.useEffect(() => {
+    if (!isDeveloperMode) {
+      return undefined
+    }
+
+    const activeRunStatus = String(
+      developerSessionState?.activeRun?.status || ''
+    ).trim()
+    const shouldPoll =
+      isFinalizingDeveloperChunk ||
+      isRunningDeveloperComparison ||
+      activeRunStatus === 'running'
+
+    if (!shouldPoll) {
+      return undefined
+    }
+
+    const refreshNow = async () => {
+      await refreshDeveloperSessionState()
+    }
+
+    refreshNow()
+    const intervalId = window.setInterval(refreshNow, 2500)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [
+    developerSessionState?.activeRun?.status,
+    isDeveloperMode,
+    isFinalizingDeveloperChunk,
+    isRunningDeveloperComparison,
+    refreshDeveloperSessionState,
   ])
 
   React.useEffect(() => {
@@ -4183,6 +4591,15 @@ export default function AiHumanTeacherPage() {
 
   const loadDeveloperSession = React.useCallback(
     async ({offsetOverride} = {}) => {
+      const requestId = developerSessionLoadRequestIdRef.current + 1
+      developerSessionLoadRequestIdRef.current = requestId
+      const requestContextVersion =
+        developerSessionContextVersionRef.current + 1
+      developerSessionContextVersionRef.current = requestContextVersion
+      const isCurrentRequest = () =>
+        developerSessionLoadRequestIdRef.current === requestId &&
+        developerSessionContextVersionRef.current === requestContextVersion
+
       setIsWorkspaceLoading(true)
       setError('')
       setImportResult(null)
@@ -4194,6 +4611,11 @@ export default function AiHumanTeacherPage() {
             offset: offsetOverride,
             currentPeriod,
           })
+
+        if (!isCurrentRequest()) {
+          return nextResult
+        }
+
         const nextWorkspace = nextResult.workspace || null
         setAnnotationSourceMode('developer')
         setWorkspace(nextWorkspace)
@@ -4209,7 +4631,13 @@ export default function AiHumanTeacherPage() {
         if (queryAction === 'start') {
           router.replace('/settings/ai-human-teacher?developer=1')
         }
+
+        return nextResult
       } catch (nextError) {
+        if (!isCurrentRequest()) {
+          return null
+        }
+
         setWorkspace(null)
         setSelectedTaskId('')
         setTaskDetail(null)
@@ -4218,7 +4646,9 @@ export default function AiHumanTeacherPage() {
         setDeveloperActionResult(null)
         setError(formatErrorMessage(nextError))
       } finally {
-        setIsWorkspaceLoading(false)
+        if (isCurrentRequest()) {
+          setIsWorkspaceLoading(false)
+        }
       }
     },
     [
@@ -5553,7 +5983,7 @@ export default function AiHumanTeacherPage() {
             const latestCorrect = nextResult?.state?.comparison100?.correct
             const latestTotal = nextResult?.state?.comparison100?.totalFlips
             toast({
-              title: t('Training started'),
+              title: t('Training finished'),
               description:
                 typeof latestAccuracy === 'number'
                   ? t(
@@ -6216,7 +6646,14 @@ export default function AiHumanTeacherPage() {
       developerLocalBenchmarkSize
         ? developerComparison?.status
         : '') ||
-      (isRunningDeveloperComparison ? 'running' : 'not_loaded')
+      (isRunningDeveloperComparison ||
+      developerActiveRun?.kind === 'comparison' ||
+      (developerActiveRun?.kind === 'training' &&
+        String(developerActiveRun?.stage || '')
+          .trim()
+          .startsWith('benchmark_'))
+        ? 'running'
+        : 'not_loaded')
   ).trim()
   const developerAccuracyDelta =
     latestDeveloperComparison &&
@@ -6230,7 +6667,16 @@ export default function AiHumanTeacherPage() {
     isDeveloperMode &&
     developerSupportsLocalTraining &&
     (developerTrainedCount > 0 || developerPendingCount > 0) &&
-    !isRunningDeveloperComparison
+    !isRunningDeveloperComparison &&
+    developerActiveRunStatus !== 'running'
+  const developerTrainingRunActive =
+    isFinalizingDeveloperChunk ||
+    (developerActiveRunStatus === 'running' &&
+      developerActiveRun?.kind === 'training')
+  const developerComparisonRunActive =
+    isRunningDeveloperComparison ||
+    (developerActiveRunStatus === 'running' &&
+      developerActiveRun?.kind === 'comparison')
   const developerCanAdvance =
     isDeveloperMode &&
     totalTaskCount > 0 &&
@@ -6351,6 +6797,41 @@ export default function AiHumanTeacherPage() {
     isDeveloperSourceMode,
     isDemoMode,
     t,
+  ])
+  const developerPrimaryDashboardActionLabel = React.useMemo(() => {
+    if (developerTrainingRunActive) {
+      return t('Local training in progress')
+    }
+
+    if (developerComparisonRunActive) {
+      return t('Benchmark in progress')
+    }
+
+    if (!workspace || !isDeveloperSourceMode) {
+      return t('Open teaching chunk')
+    }
+
+    if (!completionPreview.allComplete) {
+      return t('Continue teaching this 5-flip chunk')
+    }
+
+    if (
+      developerTrainingBlockedBySystemPressure &&
+      developerTrainingRequiresOverride
+    ) {
+      return t('Review local training block')
+    }
+
+    return t('Start local training now')
+  }, [
+    completionPreview.allComplete,
+    developerComparisonRunActive,
+    developerTrainingBlockedBySystemPressure,
+    developerTrainingRequiresOverride,
+    developerTrainingRunActive,
+    isDeveloperSourceMode,
+    t,
+    workspace,
   ])
 
   React.useEffect(() => {
@@ -6518,6 +6999,54 @@ export default function AiHumanTeacherPage() {
     router,
     saveTaskDraft,
   ])
+
+  const handlePrimaryLocalTrainingDashboardAction =
+    React.useCallback(async () => {
+      if (developerTrainingRunActive || developerComparisonRunActive) {
+        return
+      }
+
+      if (!workspace || !isDeveloperSourceMode) {
+        await loadDeveloperSession()
+        if (typeof window !== 'undefined') {
+          window.setTimeout(() => {
+            scrollToLocalPilotTraining()
+          }, 120)
+        }
+        return
+      }
+
+      if (!completionPreview.allComplete) {
+        scrollToLocalPilotTraining()
+        return
+      }
+
+      if (
+        developerTrainingBlockedBySystemPressure &&
+        developerTrainingRequiresOverride
+      ) {
+        openLocalPilotTrainingDialog()
+        return
+      }
+
+      await finalizeDeveloperChunk({
+        trainNow: true,
+        allowSystemPressureOverride: developerTrainingPressureOverride,
+      })
+    }, [
+      completionPreview.allComplete,
+      developerComparisonRunActive,
+      developerTrainingBlockedBySystemPressure,
+      developerTrainingPressureOverride,
+      developerTrainingRequiresOverride,
+      developerTrainingRunActive,
+      finalizeDeveloperChunk,
+      isDeveloperSourceMode,
+      loadDeveloperSession,
+      openLocalPilotTrainingDialog,
+      scrollToLocalPilotTraining,
+      workspace,
+    ])
 
   const handleChunkDecisionAction = React.useCallback(
     async (action) => {
@@ -6727,16 +7256,12 @@ export default function AiHumanTeacherPage() {
                         </option>
                       ))}
                     </Select>
+                    <Text color="muted" fontSize="xs" mt={2}>
+                      {t(
+                        'Choose the bundled sample here. Open or resume the 5-flip teaching chunk in the local pilot section below.'
+                      )}
+                    </Text>
                   </Box>
-                  <PrimaryButton
-                    isDisabled={isWorkspaceLoading}
-                    isLoading={isWorkspaceLoading}
-                    onClick={() => loadDeveloperSession()}
-                  >
-                    {workspace && isDeveloperSourceMode
-                      ? t('Resume current 5 flips')
-                      : t('Start training your AI')}
-                  </PrimaryButton>
                   <SecondaryButton onClick={() => router.push('/ai-chat')}>
                     {t('Back to IdenaAI')}
                   </SecondaryButton>
@@ -6891,6 +7416,13 @@ export default function AiHumanTeacherPage() {
                   isBusy={developerTelemetryIsBusy}
                   t={t}
                 />
+                <LocalTrainingRunPanel
+                  activeRun={developerActiveRun}
+                  totalAvailableTasks={
+                    Number(developerSessionState?.totalAvailableTasks) || 0
+                  }
+                  t={t}
+                />
                 <LocalTrainingJourneyPanel
                   title={t('Local training at a glance')}
                   subtitle={t(
@@ -6904,8 +7436,8 @@ export default function AiHumanTeacherPage() {
                   latestComparison={latestDeveloperComparison}
                   benchmarkSize={developerLocalBenchmarkSize}
                   canRunLocalTraining={developerSupportsLocalTraining}
-                  isTrainingActive={isFinalizingDeveloperChunk}
-                  isComparisonActive={isRunningDeveloperComparison}
+                  isTrainingActive={developerTrainingRunActive}
+                  isComparisonActive={developerComparisonRunActive}
                   lastTraining={developerLastTraining}
                   totalUpdates={developerLocalTrainingTotalUpdates}
                   coolingFloorMs={developerLocalTrainingCoolingFloorMs}
@@ -6949,9 +7481,33 @@ export default function AiHumanTeacherPage() {
                             }
                           )
                         : t(
-                            'Click "Start training your AI" to open the next 5 flips from the bundled FLIP developer sample.'
+                            'Use the button here to open or resume the 5-flip teaching chunk from the bundled FLIP developer sample.'
                           )}
                     </Text>
+                    <Stack isInline spacing={2} flexWrap="wrap">
+                      <PrimaryButton
+                        isDisabled={
+                          isWorkspaceLoading ||
+                          developerTrainingRunActive ||
+                          developerComparisonRunActive
+                        }
+                        isLoading={
+                          isWorkspaceLoading || developerTrainingRunActive
+                        }
+                        onClick={handlePrimaryLocalTrainingDashboardAction}
+                      >
+                        {developerPrimaryDashboardActionLabel}
+                      </PrimaryButton>
+                      <SecondaryButton
+                        isDisabled={!developerCanRunComparison}
+                        isLoading={developerComparisonRunActive}
+                        onClick={runDeveloperComparison}
+                      >
+                        {t('Run {{count}}-flip comparison now', {
+                          count: developerLocalBenchmarkSize,
+                        })}
+                      </SecondaryButton>
+                    </Stack>
                     <SimpleGrid columns={[1, 2, 4]} spacing={3}>
                       <Box
                         borderWidth="1px"
@@ -7020,7 +7576,7 @@ export default function AiHumanTeacherPage() {
                         </Text>
                       </Box>
                     </SimpleGrid>
-                    {isFinalizingDeveloperChunk ? (
+                    {developerTrainingRunActive ? (
                       <Box
                         borderWidth="1px"
                         borderColor="blue.100"
@@ -7040,13 +7596,13 @@ export default function AiHumanTeacherPage() {
                           />
                           <Text color="muted" fontSize="sm">
                             {t(
-                              'The app is trying to train this 5-flip chunk locally. The active model stays unchanged until this finishes successfully.'
+                              'The app is running local training and the follow-up benchmark right now. Watch the live run panel above for the current stage.'
                             )}
                           </Text>
                         </Stack>
                       </Box>
                     ) : null}
-                    {isRunningDeveloperComparison ? (
+                    {developerComparisonRunActive ? (
                       <Box
                         borderWidth="1px"
                         borderColor="purple.100"
@@ -7068,7 +7624,7 @@ export default function AiHumanTeacherPage() {
                           />
                           <Text color="muted" fontSize="sm">
                             {t(
-                              'The app is checking the latest local model against the same {{count}}-flip validation holdout used for earlier runs at this size.',
+                              'The app is checking the latest local model against the same {{count}}-flip validation holdout used for earlier runs at this size. The live run panel shows which unseen flip is being scored now.',
                               {
                                 count: developerLocalBenchmarkSize,
                               }
@@ -7319,17 +7875,6 @@ export default function AiHumanTeacherPage() {
                             )}
                       </Text>
                     )}
-                    <Stack isInline spacing={2} flexWrap="wrap">
-                      <PrimaryButton
-                        isDisabled={!developerCanRunComparison}
-                        isLoading={isRunningDeveloperComparison}
-                        onClick={runDeveloperComparison}
-                      >
-                        {t('Run {{count}}-flip comparison now', {
-                          count: developerLocalBenchmarkSize,
-                        })}
-                      </PrimaryButton>
-                    </Stack>
                     {developerComparisonHistoryForSelectedBenchmark.length ? (
                       <SuccessRateHistoryChart
                         entries={developerComparisonHistoryForSelectedBenchmark}
@@ -9927,7 +10472,7 @@ export default function AiHumanTeacherPage() {
                           isDisabled={!developerSupportsLocalTraining}
                           onClick={continueWithLocalPilotTraining}
                         >
-                          {t('Continue with local pilot training')}
+                          {t('Open local pilot dashboard')}
                         </PrimaryButton>
                         <SecondaryButton onClick={closeContributionDialog}>
                           {t('Close')}

@@ -396,13 +396,13 @@ export const theme = {
             _disabled: {
               bg: 'gray.50',
               color: 'muted',
-              '-webkit-text-fill-color': '#96999E',
+              WebkitTextFillColor: '#96999E',
               opacity: 1,
             },
             _readOnly: {
               bg: 'gray.50',
               color: 'muted',
-              '-webkit-text-fill-color': '#96999E',
+              WebkitTextFillColor: '#96999E',
             },
           },
         },
@@ -430,7 +430,7 @@ export const theme = {
             _disabled: {
               bg: 'gray.50',
               color: 'muted',
-              '-webkit-text-fill-color': '#96999E',
+              WebkitTextFillColor: '#96999E',
               opacity: 1,
             },
           },
