@@ -9,9 +9,6 @@ const DEFAULT_TRAINING_BATCH_SIZE = 1
 const DEFAULT_TRAINING_LEARNING_RATE = 1e-4
 const DEFAULT_TRAINING_LORA_RANK = 10
 const DEFAULT_TRAINING_MODEL_PATH = 'mlx-community/Qwen3.5-9B-MLX-4bit'
-const STRONG_FALLBACK_TRAINING_MODEL_PATH =
-  'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
-const FALLBACK_TRAINING_MODEL_PATH = 'mlx-community/Qwen2-VL-2B-Instruct-4bit'
 const DEFAULT_LOCAL_TRAINING_THERMAL_MODE = 'balanced'
 const ALLOWED_LOCAL_TRAINING_PROFILES = new Set(['safe', 'balanced', 'strong'])
 const LOCAL_TRAINING_THERMAL_MODE_CONFIG = {
@@ -290,36 +287,9 @@ function resolveTrainingModelPath() {
   return explicit || DEFAULT_TRAINING_MODEL_PATH
 }
 
-function resolveTrainingFallbackModelPath() {
-  const explicit = String(
-    process.env.IDENAAI_LOCAL_TRAINING_FALLBACK_MODEL_PATH ||
-      process.env.IDENAAI_LOCAL_TRAINING_FALLBACK_MODEL ||
-      ''
-  ).trim()
-
-  return explicit || FALLBACK_TRAINING_MODEL_PATH
-}
-
-function resolveTrainingStrongFallbackModelPath() {
-  const explicit = String(
-    process.env.IDENAAI_LOCAL_TRAINING_STRONG_FALLBACK_MODEL_PATH ||
-      process.env.IDENAAI_LOCAL_TRAINING_STRONG_FALLBACK_MODEL ||
-      ''
-  ).trim()
-
-  return explicit || STRONG_FALLBACK_TRAINING_MODEL_PATH
-}
-
 function resolveApprovedTrainingModelPaths() {
   return new Set(
-    [
-      resolveTrainingModelPath(),
-      resolveTrainingStrongFallbackModelPath(),
-      resolveTrainingFallbackModelPath(),
-      DEFAULT_TRAINING_MODEL_PATH,
-      STRONG_FALLBACK_TRAINING_MODEL_PATH,
-      FALLBACK_TRAINING_MODEL_PATH,
-    ]
+    [resolveTrainingModelPath(), DEFAULT_TRAINING_MODEL_PATH]
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   )
@@ -1270,8 +1240,6 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         localTrainingLoraRank: training.localTrainingLoraRank,
         stepCooldownMs: training.stepCooldownMs,
         epochCooldownMs: training.epochCooldownMs,
-        strongFallbackModelPath: resolveTrainingStrongFallbackModelPath(),
-        fallbackModelPath: resolveTrainingFallbackModelPath(),
         latestPreparedDatasetPath: prepared.datasetPath,
         latestPreparedManifestPath: prepared.manifestPath,
         latestAdapterPath: training.adapterPath,
@@ -1363,7 +1331,5 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
 module.exports = {
   DEFAULT_EVALUATION_FLIPS,
   DEFAULT_TRAINING_MODEL_PATH,
-  STRONG_FALLBACK_TRAINING_MODEL_PATH,
-  FALLBACK_TRAINING_MODEL_PATH,
   createDeveloperTrainingRunner,
 }

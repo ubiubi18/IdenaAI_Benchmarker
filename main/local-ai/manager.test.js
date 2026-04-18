@@ -4,7 +4,11 @@ const fs = require('fs-extra')
 const {encode} = require('rlp')
 
 const {createLocalAiStorage} = require('./storage')
-const {createLocalAiManager} = require('./manager')
+const {
+  createLocalAiManager,
+  getTelemetryTrainingReadiness,
+  parsePmsetBatteryOutput,
+} = require('./manager')
 const {
   LOCAL_AI_BASE_MODEL_ID,
   LOCAL_AI_CONTRACT_VERSION,
@@ -1689,13 +1693,10 @@ describe('local-ai manager', () => {
         sampleName: 'flip-challenge-test-20-decoded-labeled',
         offset: 0,
         taskId: task.taskId,
-        annotation: {
-          annotator: 'developer-test',
-          final_answer: 'left',
-          why_answer: `export ${task.taskId} for external training`,
-          report_required: false,
-          confidence: 5,
-        },
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `export ${task.taskId} for external training`
+        ),
       })
     }
 
@@ -1733,13 +1734,11 @@ describe('local-ai manager', () => {
       }),
       runtime: expect.objectContaining({
         runtimeBackend: 'ollama-direct',
-        model: 'llama3.1:8b',
-        visionModel: 'qwen2.5vl:7b',
+        model: 'qwen3.5:9b',
+        visionModel: 'qwen3.5:9b',
       }),
       training: expect.objectContaining({
         recommendedModel: 'mlx-community/Qwen3.5-9B-MLX-4bit',
-        strongerFallbackModel: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
-        safeFallbackModel: 'mlx-community/Qwen2-VL-2B-Instruct-4bit',
       }),
       files: expect.objectContaining({
         annotations: expect.objectContaining({
@@ -1827,7 +1826,7 @@ describe('local-ai manager', () => {
         input: expect.objectContaining({
           developerHumanTeacher: true,
           sampleName: 'flip-challenge-test-20-decoded-labeled',
-          trainingModelPath: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
+          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
           localTrainingProfile: 'balanced',
           localTrainingThermalMode: 'cool',
           localTrainingEpochs: 3,
@@ -1952,7 +1951,9 @@ describe('local-ai manager', () => {
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
     const forwarded = sidecar.trainEpoch.mock.calls[0][0].input
 
-    expect(forwarded.trainingModelPath).toBeUndefined()
+    expect(forwarded.trainingModelPath).toBe(
+      'mlx-community/Qwen3.5-9B-MLX-4bit'
+    )
     expect(forwarded.localTrainingProfile).toBe('strong')
     expect(forwarded.localTrainingThermalMode).toBe('balanced')
     expect(forwarded.localTrainingEpochs).toBe(6)
@@ -1994,8 +1995,10 @@ describe('local-ai manager', () => {
 
     const forwarded = sidecar.trainEpoch.mock.calls[0][0]
 
-    expect(forwarded.trainingModelPath).toBeUndefined()
-    expect(forwarded.modelPath).toBeUndefined()
+    expect(forwarded.trainingModelPath).toBe(
+      'mlx-community/Qwen3.5-9B-MLX-4bit'
+    )
+    expect(forwarded.modelPath).toBe('mlx-community/Qwen3.5-9B-MLX-4bit')
     expect(forwarded.localTrainingProfile).toBe('strong')
     expect(forwarded.localTrainingThermalMode).toBe('balanced')
     expect(forwarded.localTrainingEpochs).toBe(6)
@@ -2052,6 +2055,45 @@ describe('local-ai manager', () => {
     })
     expect(result.lastError).toMatch(/CPU speed|override/i)
     expect(sidecar.trainEpoch).not.toHaveBeenCalled()
+  })
+
+  it('blocks local training readiness when memory is nearly exhausted', () => {
+    expect(
+      getTelemetryTrainingReadiness({
+        system: {
+          memoryUsagePercent: 99,
+          memoryFreeGiB: 0.4,
+          battery: {
+            available: true,
+            isCharging: true,
+            percent: 95,
+          },
+          thermal: {
+            available: true,
+            pressure: 'nominal',
+          },
+        },
+      })
+    ).toMatchObject({
+      status: 'blocked',
+      label: 'Blocked by memory pressure',
+      requiresExplicitOverride: true,
+      canStartWithoutOverride: false,
+    })
+  })
+
+  it('parses plugged-in but discharging pmset battery output correctly', () => {
+    expect(
+      parsePmsetBatteryOutput(`Now drawing from 'AC Power'
+ -InternalBattery-0\t95%; discharging; 12:45 remaining present: true`)
+    ).toMatchObject({
+      available: true,
+      source: 'AC Power',
+      percent: 95,
+      state: 'discharging',
+      isCharging: false,
+      timeRemainingMinutes: 765,
+    })
   })
 
   it('allows an explicit system-pressure override for developer chunk training', async () => {
@@ -2869,6 +2911,116 @@ describe('local-ai manager', () => {
         path.join(exportResult.outputDir, 'annotations.normalized.jsonl')
       )
     ).resolves.toBe(true)
+  })
+
+  it('imports human-teacher annotations when optional detail fields are left blank', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+          annotationStatus: 'pending',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const exportResult = await manager.exportHumanTeacherTasks({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+
+    await fs.writeFile(
+      path.join(exportResult.outputDir, 'annotations.filled.jsonl'),
+      `${JSON.stringify({
+        task_id: 'flip-a::human-teacher',
+        sample_id: 'flip-a::human-teacher',
+        flip_hash: 'flip-a',
+        epoch: 12,
+        annotator: 'tester',
+        text_required: false,
+        sequence_markers_present: false,
+        report_required: false,
+        report_reason: '',
+        final_answer: 'left',
+        why_answer: 'left keeps the same actor and chronology across panels.',
+        confidence: 0.8,
+      })}\n`,
+      'utf8'
+    )
+
+    const importResult = await manager.importHumanTeacherAnnotations({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+    const normalizedRows = (
+      await fs.readFile(
+        path.join(exportResult.outputDir, 'annotations.normalized.jsonl'),
+        'utf8'
+      )
+    )
+      .trim()
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+
+    expect(importResult).toMatchObject({
+      import: expect.objectContaining({
+        normalizedRows: 1,
+        missingAnnotations: 0,
+        invalidAnnotations: 0,
+      }),
+    })
+    expect(normalizedRows).toEqual([
+      expect.objectContaining({
+        frame_captions: ['', '', '', ''],
+        option_a_summary: '',
+        option_b_summary: '',
+        final_answer: 'left',
+        why_answer: expect.stringContaining('chronology'),
+      }),
+    ])
   })
 
   it('rejects importing a tampered human-teacher task manifest', async () => {

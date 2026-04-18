@@ -45,19 +45,15 @@ const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
 const ACTIVE_VALIDATION_PERIODS = new Set(['ShortSession', 'LongSession'])
 const MAX_DEVELOPER_COMPARISON_HISTORY = 30
 const EXTERNAL_DEVELOPER_TRAINING_BUNDLE_VERSION = 1
+const EXTERNAL_DEVELOPER_RUNTIME_MODEL = 'qwen3.5:9b'
+const EXTERNAL_DEVELOPER_RUNTIME_VISION_MODEL = 'qwen3.5:9b'
 const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL =
   'mlx-community/Qwen3.5-9B-MLX-4bit'
-const EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL =
-  'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
-const EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL =
-  'mlx-community/Qwen2-VL-2B-Instruct-4bit'
 const EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE = 200
 const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
 const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [50, 100, 200]
 const DEVELOPER_LOCAL_TRAINING_MODEL_OPTIONS = new Set([
   EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
-  EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
-  EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
 ])
 const DEVELOPER_LOCAL_TRAINING_PROFILE_OPTIONS = new Set([
   'safe',
@@ -210,9 +206,17 @@ function parsePmsetBatteryOutput(stdout) {
   const percent = percentMatch ? Number.parseInt(percentMatch[1], 10) : null
   const state = stateMatch ? String(stateMatch[1] || '').trim() : ''
   const source = sourceMatch ? String(sourceMatch[1] || '').trim() : ''
-  const isCharging =
-    /AC Power/i.test(source) ||
-    /charged|charging|finishing charge/i.test(detailLine)
+  let isCharging = null
+
+  if (/discharging/i.test(state)) {
+    isCharging = false
+  } else if (/charged|charging|finishing charge/i.test(state)) {
+    isCharging = true
+  } else if (/AC Power/i.test(source)) {
+    isCharging = true
+  } else if (/Battery Power/i.test(source)) {
+    isCharging = false
+  }
 
   return {
     available: Boolean(source || percent !== null),
@@ -406,6 +410,7 @@ function getTelemetryTrainingReadiness(telemetry) {
   const batteryPercent = Number(battery.percent)
   const cpuUsagePercent = Number(system.cpuUsagePercent)
   const memoryUsagePercent = Number(system.memoryUsagePercent)
+  const memoryFreeGiB = Number(system.memoryFreeGiB)
 
   if (!Object.keys(system).length) {
     return {
@@ -445,6 +450,48 @@ function getTelemetryTrainingReadiness(telemetry) {
       message: `Battery is at ${batteryPercent}% and not charging. Plug in before local training, or explicitly override this warning for one run.`,
       requiresExplicitOverride: true,
       canStartWithoutOverride: false,
+    }
+  }
+
+  if (
+    (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 95) ||
+    (Number.isFinite(memoryFreeGiB) && memoryFreeGiB <= 1.5)
+  ) {
+    const memoryPercentLabel = Number.isFinite(memoryUsagePercent)
+      ? `${memoryUsagePercent}%`
+      : 'an unknown percentage'
+    const memoryFreeLabel = Number.isFinite(memoryFreeGiB)
+      ? `${memoryFreeGiB} GiB free`
+      : 'free memory unavailable'
+
+    return {
+      status: 'blocked',
+      tone: 'red',
+      label: 'Blocked by memory pressure',
+      message: `System memory is already at ${memoryPercentLabel} used (${memoryFreeLabel}). Close heavy apps first, or explicitly override this warning for one run.`,
+      requiresExplicitOverride: true,
+      canStartWithoutOverride: false,
+    }
+  }
+
+  if (
+    (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 90) ||
+    (Number.isFinite(memoryFreeGiB) && memoryFreeGiB <= 3)
+  ) {
+    const memoryPercentLabel = Number.isFinite(memoryUsagePercent)
+      ? `${memoryUsagePercent}%`
+      : 'a high level'
+    const memoryFreeLabel = Number.isFinite(memoryFreeGiB)
+      ? `${memoryFreeGiB} GiB free`
+      : 'free memory unavailable'
+
+    return {
+      status: 'caution',
+      tone: 'orange',
+      label: 'Caution: memory already tight',
+      message: `System memory is already tight at ${memoryPercentLabel} used (${memoryFreeLabel}). Local training can still run, but it is more likely to slow down, swap, or compete with the rest of the desktop.`,
+      requiresExplicitOverride: false,
+      canStartWithoutOverride: true,
     }
   }
 
@@ -1175,13 +1222,9 @@ function normalizeDeveloperTrainingInteger(value, fallback, min, max) {
 function normalizeDeveloperTrainingModelPath(value) {
   const modelPath = String(value || '').trim()
 
-  if (!modelPath) {
-    return null
-  }
-
   return DEVELOPER_LOCAL_TRAINING_MODEL_OPTIONS.has(modelPath)
     ? modelPath
-    : null
+    : EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL
 }
 
 function normalizeDeveloperTrainingProfile(value) {
@@ -3427,9 +3470,8 @@ function createLocalAiManager({
       '2. Upload this whole folder to that machine.',
       '3. Start with a benchmark-only smoke run before doing a longer training run.',
       `4. For serious training, use the recommended MLX base ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}.`,
-      `5. If that is too heavy, fall back to ${EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL} or ${EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL}.`,
-      `6. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
-      '7. Import only the result files you intend to trust back into IdenaAI later.',
+      `5. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
+      '6. Import only the result files you intend to trust back into IdenaAI later.',
       '',
       'Safety notes:',
       '- this bundle should contain training data only, not wallet secrets or your whole desktop profile',
@@ -5553,6 +5595,14 @@ function createLocalAiManager({
     const developerPrompt = String(
       next.developerHumanTeacherSystemPrompt || ''
     ).trim()
+    const runtimeModel =
+      next.runtimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+        ? EXTERNAL_DEVELOPER_RUNTIME_MODEL
+        : String(next.model || '').trim() || null
+    const runtimeVisionModel =
+      next.runtimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+        ? EXTERNAL_DEVELOPER_RUNTIME_VISION_MODEL
+        : String(next.visionModel || '').trim() || null
 
     await localAiStorage.ensureDir(outputDir)
     await writeJsonlRows(annotationsPath, annotatedRows)
@@ -5580,14 +5630,11 @@ function createLocalAiManager({
         runtimeBackend: String(next.runtimeBackend || '').trim() || null,
         runtimeType: String(next.runtimeType || '').trim() || null,
         baseUrl: String(next.baseUrl || '').trim() || null,
-        model: String(next.model || '').trim() || null,
-        visionModel: String(next.visionModel || '').trim() || null,
+        model: runtimeModel,
+        visionModel: runtimeVisionModel,
       },
       training: {
         recommendedModel: EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
-        strongerFallbackModel:
-          EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
-        safeFallbackModel: EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
         humanTeacherSystemPrompt: developerPrompt || null,
       },
       benchmark: {
@@ -5648,10 +5695,6 @@ function createLocalAiManager({
       pendingCount: pendingRows.length,
       trainedCount: trainedRows.length,
       recommendedTrainingModel: EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
-      strongerFallbackTrainingModel:
-        EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
-      safeFallbackTrainingModel:
-        EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
       recommendedBenchmarkFlips: EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE,
       supportsLocalTraining:
         summarizeDeveloperHumanTeacherState(developerState)
@@ -6606,4 +6649,6 @@ function createLocalAiManager({
 module.exports = {
   createLocalAiManager,
   defaultCaptureIndex,
+  getTelemetryTrainingReadiness,
+  parsePmsetBatteryOutput,
 }

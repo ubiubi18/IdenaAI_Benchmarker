@@ -6,8 +6,6 @@ const {
   RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
   RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-  STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
-  FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
   DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
@@ -202,7 +200,7 @@ describe('local-ai settings schema', () => {
     })
   })
 
-  it('builds a recommended Mac Ollama preset with qwen3.5:9b while keeping stronger and safe MLX fallbacks documented', () => {
+  it('builds a recommended Mac Ollama preset for the fixed Qwen3.5-9B lane', () => {
     expect(buildRecommendedLocalAiMacPreset()).toMatchObject({
       runtimeBackend: 'ollama-direct',
       baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
@@ -215,15 +213,20 @@ describe('local-ai settings schema', () => {
     expect(RECOMMENDED_LOCAL_AI_TRAINING_MODEL).toBe(
       'mlx-community/Qwen3.5-9B-MLX-4bit'
     )
-    expect(STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL).toBe(
-      'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
-    )
-    expect(FALLBACK_LOCAL_AI_TRAINING_MODEL).toBe(
-      'mlx-community/Qwen2-VL-2B-Instruct-4bit'
-    )
     expect(DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT).toMatch(
       /left-only or right-only bias/i
     )
+  })
+
+  it('migrates persisted legacy qwen runtime picks back onto the fixed Qwen3.5 lane', () => {
+    const settings = buildLocalAiSettings({
+      runtimeBackend: 'ollama-direct',
+      model: 'qwen2.5vl:7b',
+      visionModel: 'qwen2.5vl:7b',
+    })
+
+    expect(settings.model).toBe(DEFAULT_LOCAL_AI_OLLAMA_MODEL)
+    expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
   })
 
   it('keeps a persisted custom developer human-teacher system prompt', () => {

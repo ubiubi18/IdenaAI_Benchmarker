@@ -103,9 +103,6 @@ bound to the intended flip task.
 
 Required reasoning fields:
 
-- `frame_captions[4]`
-- `option_a_summary`
-- `option_b_summary`
 - `text_required`
 - `sequence_markers_present`
 - `report_required`
@@ -113,6 +110,12 @@ Required reasoning fields:
 - `final_answer`
 - `why_answer`
 - `report_reason` when `report_required = true`
+
+Optional detail fields:
+
+- `frame_captions[4]`
+- `option_a_summary`
+- `option_b_summary`
 
 ### 4. Normalize imports
 

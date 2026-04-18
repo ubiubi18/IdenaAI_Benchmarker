@@ -157,15 +157,34 @@ function normalizeTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
 }
 
 function normalizeResponseFormat(value) {
-  const format = String(value || '')
-    .trim()
-    .toLowerCase()
+  if (typeof value === 'string') {
+    const format = String(value || '')
+      .trim()
+      .toLowerCase()
 
-  if (!format) {
+    if (!format) {
+      return null
+    }
+
+    return ALLOWED_RESPONSE_FORMATS.has(format) ? format : null
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }
 
-  return ALLOWED_RESPONSE_FORMATS.has(format) ? format : null
+  const normalized = sanitizeCloneableTrainValue(value)
+
+  if (
+    normalized &&
+    typeof normalized === 'object' &&
+    !Array.isArray(normalized) &&
+    Object.keys(normalized).length > 0
+  ) {
+    return normalized
+  }
+
+  return null
 }
 
 function normalizeGenerationOptions(input) {

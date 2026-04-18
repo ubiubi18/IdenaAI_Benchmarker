@@ -601,6 +601,24 @@ function sanitizeLocalAiGenerationOptions(value) {
   }
 }
 
+function sanitizeLocalAiResponseFormat(value) {
+  if (typeof value === 'string') {
+    return sanitizeOptionalBoundedString(value, 32)
+  }
+
+  if (!isPlainObject(value)) {
+    return null
+  }
+
+  return sanitizeBoundedCloneable(value, {
+    maxDepth: 6,
+    maxArrayLength: 64,
+    maxObjectKeys: 64,
+    maxStringLength: 512,
+    maxDataUrlLength: 2048,
+  })
+}
+
 function sanitizeLocalAiRuntimePayload(payload = {}) {
   const source = isPlainObject(payload) ? payload : {}
   const rawInput = source.input
@@ -625,7 +643,7 @@ function sanitizeLocalAiRuntimePayload(payload = {}) {
     endpoint: sanitizeOptionalBoundedString(source.endpoint, 2048),
     baseUrl: sanitizeOptionalBoundedString(source.baseUrl, 2048),
     timeoutMs: sanitizeInteger(source.timeoutMs, 15000, 1000, 120000),
-    responseFormat: sanitizeOptionalBoundedString(source.responseFormat, 32),
+    responseFormat: sanitizeLocalAiResponseFormat(source.responseFormat),
     prompt: sanitizeOptionalBoundedString(source.prompt, 10000),
     message: sanitizeOptionalBoundedString(source.message, 10000),
     messages: sanitizeLocalAiMessages(source.messages),

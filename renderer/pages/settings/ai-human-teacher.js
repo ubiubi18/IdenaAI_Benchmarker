@@ -821,9 +821,10 @@ function getAnnotationCompletionState(annotation = {}) {
     hasSequenceDecision,
     hasReportDecision && hasReportReason,
     hasConfidence,
-    hasFrameCaptions,
-    hasStorySummaries,
   ]
+  const hasOptionalDetailContent =
+    filledFrameCaptions > 0 || hasOptionASummary || hasOptionBSummary
+  const optionalDetailComplete = hasFrameCaptions && hasStorySummaries
 
   return {
     filledFrameCaptions,
@@ -838,10 +839,15 @@ function getAnnotationCompletionState(annotation = {}) {
     hasOptionBSummary,
     hasStorySummaries,
     hasFrameCaptions,
+    hasOptionalDetailContent,
+    optionalDetailComplete,
+    completedOptionalChecks: [hasFrameCaptions, hasStorySummaries].filter(
+      Boolean
+    ).length,
+    totalOptionalChecks: 2,
     completedChecks: checks.filter(Boolean).length,
     totalChecks: checks.length,
     remainingChecks: checks.filter((item) => !item).length,
-    requiredDetailComplete: hasFrameCaptions && hasStorySummaries,
     isComplete: checks.every(Boolean),
   }
 }
@@ -885,6 +891,68 @@ function getOrderedPanels(task = {}, order = []) {
     .filter(Boolean)
 }
 
+function extractBalancedJsonSlice(text = '', startIndex = 0) {
+  const raw = String(text || '')
+  const startChar = raw[startIndex]
+
+  if (startChar !== '{' && startChar !== '[') {
+    return null
+  }
+
+  const closingChar = startChar === '{' ? '}' : ']'
+  let depth = 0
+  let inString = false
+  let isEscaped = false
+
+  for (let index = startIndex; index < raw.length; index += 1) {
+    const char = raw[index]
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false
+      } else if (char === '\\') {
+        isEscaped = true
+      } else if (char === '"') {
+        inString = false
+      }
+    } else if (char === '"') {
+      inString = true
+    } else if (char === startChar) {
+      depth += 1
+    } else if (char === closingChar) {
+      depth -= 1
+
+      if (depth === 0) {
+        return raw.slice(startIndex, index + 1)
+      }
+    }
+  }
+
+  return null
+}
+
+function extractJsonFromMixedText(text = '') {
+  const raw = String(text || '')
+  const openers = new Set(['{', '['])
+
+  for (let index = 0; index < raw.length; index += 1) {
+    if (openers.has(raw[index])) {
+      const candidate = extractBalancedJsonSlice(raw, index)
+
+      if (candidate) {
+        try {
+          return JSON.parse(candidate)
+        } catch {
+          // Keep scanning. Local models sometimes emit one malformed object
+          // before the usable JSON body.
+        }
+      }
+    }
+  }
+
+  return null
+}
+
 function parseAiAnnotationResponse(text = '') {
   const raw = String(text || '').trim()
 
@@ -896,16 +964,90 @@ function parseAiAnnotationResponse(text = '') {
   const fromFence = () => {
     const match = raw.match(/```(?:json)?\s*([\s\S]+?)\s*```/iu)
     if (!match) {
-      throw new Error('No JSON object found in the Local AI draft response.')
+      return null
     }
     return JSON.parse(String(match[1] || '').trim())
   }
+  const fromMixedText = () => extractJsonFromMixedText(raw)
+  const preview = raw.replace(/\s+/gu, ' ').trim().slice(0, 220)
 
   try {
     return direct()
   } catch {
-    return fromFence()
+    try {
+      const fenced = fromFence()
+      if (fenced) {
+        return fenced
+      }
+    } catch {
+      // Fall through to mixed-text extraction.
+    }
   }
+
+  const embedded = fromMixedText()
+
+  if (embedded) {
+    return embedded
+  }
+
+  throw new Error(
+    `No JSON object found in the Local AI draft response. Preview: ${
+      preview || 'empty response'
+    }`
+  )
+}
+
+const AI_ANNOTATION_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'ordered_panel_descriptions',
+    'ordered_panel_text',
+    'option_a_story_analysis',
+    'option_b_story_analysis',
+    'final_answer',
+    'why_answer',
+    'confidence',
+    'text_required',
+    'sequence_markers_present',
+    'report_required',
+    'report_reason',
+    'option_a_summary',
+    'option_b_summary',
+  ],
+  properties: {
+    ordered_panel_descriptions: {
+      type: 'array',
+      minItems: 8,
+      maxItems: 8,
+      items: {type: 'string'},
+    },
+    ordered_panel_text: {
+      type: 'array',
+      minItems: 8,
+      maxItems: 8,
+      items: {type: 'string'},
+    },
+    option_a_story_analysis: {type: 'string'},
+    option_b_story_analysis: {type: 'string'},
+    final_answer: {
+      type: 'string',
+      enum: ['left', 'right', 'skip'],
+    },
+    why_answer: {type: 'string'},
+    confidence: {
+      anyOf: [
+        {type: 'integer', minimum: 1, maximum: 5},
+        {type: 'number', minimum: 1, maximum: 5},
+      ],
+    },
+    text_required: {type: 'boolean'},
+    sequence_markers_present: {type: 'boolean'},
+    report_required: {type: 'boolean'},
+    report_reason: {type: 'string'},
+    option_a_summary: {type: 'string'},
+    option_b_summary: {type: 'string'},
+  },
 }
 
 function buildAiAnnotationSystemPrompt(basePrompt = '') {
@@ -933,6 +1075,7 @@ function buildAiAnnotationUserPrompt() {
     'Then compare the LEFT and RIGHT stories and decide which side forms the better chronology.',
     'Use skip if the flip is ambiguous, report-worthy, or lacks a clear better story.',
     'Keep every field concrete and fairly short. Do not invent hidden details or unreadable text.',
+    'Do not add explanations before or after the JSON. Do not wrap the JSON in markdown.',
     'Return JSON only with this exact schema:',
     '{"ordered_panel_descriptions":["panel 1","panel 2","panel 3","panel 4","panel 5","panel 6","panel 7","panel 8"],"ordered_panel_text":["text in panel 1 or empty","text in panel 2 or empty","text in panel 3 or empty","text in panel 4 or empty","text in panel 5 or empty","text in panel 6 or empty","text in panel 7 or empty","text in panel 8 or empty"],"option_a_story_analysis":"short LEFT story analysis","option_b_story_analysis":"short RIGHT story analysis","final_answer":"left|right|skip","why_answer":"...","confidence":1|2|3|4|5,"text_required":true|false,"sequence_markers_present":true|false,"report_required":true|false,"report_reason":"...","option_a_summary":"short LEFT story summary","option_b_summary":"short RIGHT story summary"}',
     'ordered_panel_descriptions must contain exactly 8 entries and ordered_panel_text must contain exactly 8 entries.',
@@ -2582,6 +2725,13 @@ function AiAssistantDraftMessage({
     {value: 'bad', label: t('Bad')},
     {value: 'wrong', label: t('Wrong')},
   ]
+  const currentRuntimeModelLabel =
+    runtimeModelLabel || annotation.model || t('unknown')
+  const savedDraftModelLabel = String(annotation.model || '').trim()
+  const showsLegacyDraftModelHint =
+    Boolean(savedDraftModelLabel) &&
+    Boolean(runtimeModelLabel) &&
+    savedDraftModelLabel !== runtimeModelLabel
 
   return (
     <AiChatBubble
@@ -2600,13 +2750,24 @@ function AiAssistantDraftMessage({
 
         <Text color="muted" fontSize="xs" wordBreak="break-all">
           {t(
-            'Runtime model {{draftModel}} · Local training model {{trainingModel}}',
+            'Current local Qwen3.5-9B lane: runtime {{draftModel}} · local training {{trainingModel}}',
             {
-              draftModel: annotation.model || runtimeModelLabel || t('unknown'),
+              draftModel: currentRuntimeModelLabel,
               trainingModel: trainingModelLabel || t('unknown'),
             }
           )}
         </Text>
+
+        {showsLegacyDraftModelHint ? (
+          <Text color="muted" fontSize="xs" wordBreak="break-all">
+            {t(
+              'This saved draft was generated earlier with {{savedModel}}. Re-run it to refresh the answer in the current Qwen3.5-9B lane.',
+              {
+                savedModel: savedDraftModelLabel,
+              }
+            )}
+          </Text>
+        ) : null}
 
         {annotation.why_answer ? (
           <Text fontSize="sm" whiteSpace="pre-wrap">
@@ -4408,33 +4569,14 @@ export default function AiHumanTeacherPage() {
             })
           : t('Choose one level'),
       },
-      {
-        key: 'captions',
-        label: t('Frame notes'),
-        done: annotationCompletionState.hasFrameCaptions,
-        detail: t('{{count}} / 4 written', {
-          count: annotationCompletionState.filledFrameCaptions,
-        }),
-      },
-      {
-        key: 'summaries',
-        label: t('Story summaries'),
-        done: annotationCompletionState.hasStorySummaries,
-        detail: annotationCompletionState.hasStorySummaries
-          ? t('LEFT and RIGHT written')
-          : t('Write both LEFT and RIGHT'),
-      },
     ],
     [
-      annotationCompletionState.filledFrameCaptions,
       annotationCompletionState.hasConfidence,
       annotationCompletionState.hasDecision,
-      annotationCompletionState.hasFrameCaptions,
       annotationCompletionState.hasReason,
       annotationCompletionState.hasReportDecision,
       annotationCompletionState.hasReportReason,
       annotationCompletionState.hasSequenceDecision,
-      annotationCompletionState.hasStorySummaries,
       annotationCompletionState.hasTextDecision,
       annotationDraft.confidence,
       annotationDraft.final_answer,
@@ -4452,8 +4594,23 @@ export default function AiHumanTeacherPage() {
 
     return 'gray'
   }, [annotationCompletionState.isComplete, annotationDraft])
-  const showRequiredDetailSection =
-    showAdvancedFields || !annotationCompletionState.requiredDetailComplete
+  const showOptionalDetailSection =
+    showAdvancedFields || annotationCompletionState.hasOptionalDetailContent
+  const optionalDetailToggleLabel = React.useMemo(() => {
+    if (showOptionalDetailSection) {
+      return t('Hide optional detail')
+    }
+
+    if (annotationCompletionState.hasOptionalDetailContent) {
+      return t('Review optional detail')
+    }
+
+    return t('Add optional detail')
+  }, [
+    annotationCompletionState.hasOptionalDetailContent,
+    showOptionalDetailSection,
+    t,
+  ])
   const currentAiAnnotation = React.useMemo(() => {
     const nextAiAnnotation = normalizeAiAnnotationDraft(
       annotationDraft.ai_annotation
@@ -4707,7 +4864,7 @@ export default function AiHumanTeacherPage() {
           model: requestedRuntimeModel,
           visionModel: requestedRuntimeModel,
           timeoutMs: 45000,
-          responseFormat: 'json',
+          responseFormat: AI_ANNOTATION_RESPONSE_SCHEMA,
           generationOptions: {
             temperature: 0,
             num_ctx:
@@ -7536,7 +7693,7 @@ export default function AiHumanTeacherPage() {
                   {isDeveloperMode ? (
                     <Text color="muted" fontSize="sm">
                       {t(
-                        'Requested draft runtime: {{draftModel}}. Active runtime: {{activeModel}}. Local training model: {{trainingModel}}.',
+                        'Current local Qwen3.5-9B lane: requested runtime {{draftModel}}. Active runtime on this Mac: {{activeModel}}. Local training base: {{trainingModel}}.',
                         {
                           draftModel: localDraftRequestedRuntimeModelLabel,
                           activeModel: localDraftActiveRuntimeModelLabel,
@@ -8102,7 +8259,7 @@ export default function AiHumanTeacherPage() {
                                     </Text>
                                     <Text color="muted" fontSize="xs" mt={1}>
                                       {t(
-                                        'This draft is locked to the same local Qwen lane as training. Runtime model: {{draftModel}}. Local training model: {{trainingModel}}.',
+                                        'This draft chat stays on the same local Qwen3.5-9B lane as training. Runtime: {{draftModel}}. Local training base: {{trainingModel}}.',
                                         {
                                           draftModel:
                                             localDraftRequestedRuntimeModelLabel,
@@ -8720,23 +8877,36 @@ export default function AiHumanTeacherPage() {
                               >
                                 <Box>
                                   <Text fontWeight={600}>
-                                    {annotationCompletionState.requiredDetailComplete
-                                      ? t('Required detail is complete')
-                                      : t(
-                                          'Required detail for a complete flip'
-                                        )}
+                                    {annotationCompletionState.optionalDetailComplete
+                                      ? t('Optional detail added')
+                                      : t('Optional detail')}
                                   </Text>
                                   <Text color="muted" fontSize="sm">
-                                    {annotationCompletionState.requiredDetailComplete
+                                    {annotationCompletionState.optionalDetailComplete
                                       ? t(
-                                          'You already filled the required frame notes and both story summaries. You can review them here before saving.'
+                                          'You already added frame notes and both story summaries. You can review or edit them here.'
                                         )
                                       : t(
-                                          'Frame notes and both short story summaries are part of the required human-teacher record for this flip.'
+                                          'Frame notes and both short story summaries can help later review and training, but they are optional for saving this flip.'
                                         )}
                                   </Text>
                                 </Box>
-                                {annotationCompletionState.requiredDetailComplete ? (
+                                <Stack
+                                  direction={['column', 'row']}
+                                  spacing={2}
+                                  align={['stretch', 'center']}
+                                >
+                                  <Badge colorScheme="gray" borderRadius="full">
+                                    {t(
+                                      '{{count}} / {{total}} optional items added',
+                                      {
+                                        count:
+                                          annotationCompletionState.completedOptionalChecks,
+                                        total:
+                                          annotationCompletionState.totalOptionalChecks,
+                                      }
+                                    )}
+                                  </Badge>
                                   <SecondaryButton
                                     onClick={() =>
                                       setShowAdvancedFields(
@@ -8744,26 +8914,12 @@ export default function AiHumanTeacherPage() {
                                       )
                                     }
                                   >
-                                    {showRequiredDetailSection
-                                      ? t('Hide detail')
-                                      : t('Review detail')}
+                                    {optionalDetailToggleLabel}
                                   </SecondaryButton>
-                                ) : (
-                                  <Badge
-                                    colorScheme="orange"
-                                    borderRadius="full"
-                                  >
-                                    {t('{{count}} item(s) left', {
-                                      count: [
-                                        !annotationCompletionState.hasFrameCaptions,
-                                        !annotationCompletionState.hasStorySummaries,
-                                      ].filter(Boolean).length,
-                                    })}
-                                  </Badge>
-                                )}
+                                </Stack>
                               </Flex>
 
-                              {showRequiredDetailSection ? (
+                              {showOptionalDetailSection ? (
                                 <Stack spacing={3} mt={3}>
                                   <InterviewPrompt
                                     title={t(
@@ -9289,22 +9445,16 @@ export default function AiHumanTeacherPage() {
                             </Text>
                             <Text fontSize="sm">
                               {t(
-                                '5. If that is too heavy, fall back to {{strongFallback}} or {{safeFallback}}.',
+                                '5. After training, run the fixed held-out comparison on {{count}} unseen flips and keep the result JSON plus the adapter artifact together.',
                                 {
-                                  strongFallback:
-                                    externalContributionBundle.strongerFallbackTrainingModel,
-                                  safeFallback:
-                                    externalContributionBundle.safeFallbackTrainingModel,
+                                  count:
+                                    externalContributionBundle.recommendedBenchmarkFlips,
                                 }
                               )}
                             </Text>
                             <Text fontSize="sm">
                               {t(
-                                '6. After training, run the fixed held-out comparison on {{count}} unseen flips and keep the result JSON plus the adapter artifact together.',
-                                {
-                                  count:
-                                    externalContributionBundle.recommendedBenchmarkFlips,
-                                }
+                                '6. Import only the result files you intend to trust back into IdenaAI later.'
                               )}
                             </Text>
                           </Stack>
