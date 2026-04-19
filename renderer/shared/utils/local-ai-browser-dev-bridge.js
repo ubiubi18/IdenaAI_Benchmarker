@@ -13,6 +13,9 @@ function canUseBrowserDevLocalAiBridge() {
   )
 }
 
+const DEV_LOCAL_AI_BRIDGE_HEADER = 'X-Idena-Local-AI-Dev-Bridge'
+const DEV_LOCAL_AI_BRIDGE_HEADER_VALUE = '1'
+
 async function invokeBrowserDevLocalAi(method, payload) {
   let nextPayload = {value: payload}
 
@@ -24,8 +27,10 @@ async function invokeBrowserDevLocalAi(method, payload) {
 
   const response = await fetch(`/api/local-ai/${encodeURIComponent(method)}`, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
+      [DEV_LOCAL_AI_BRIDGE_HEADER]: DEV_LOCAL_AI_BRIDGE_HEADER_VALUE,
     },
     body: JSON.stringify(nextPayload),
   })

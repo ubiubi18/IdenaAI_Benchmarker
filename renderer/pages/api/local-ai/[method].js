@@ -1,7 +1,9 @@
 const {
   DEV_LOCAL_AI_ALLOWED_METHODS,
+  assertDevBridgeMethodAllowed,
   getDevLocalAiManager,
   isDevBrowserRequest,
+  isTrustedDevBridgeRequest,
   sanitizeBridgeValue,
 } = require('../../../server/local-ai-dev-bridge')
 
@@ -29,11 +31,45 @@ export default async function handler(req, res) {
     return
   }
 
+  if (!isTrustedDevBridgeRequest(req)) {
+    res.status(403).json({
+      error:
+        'Local AI dev bridge requires a trusted same-origin localhost request',
+    })
+    return
+  }
+
+  const contentType = String(req.headers?.['content-type'] || '')
+    .trim()
+    .toLowerCase()
+
+  if (!contentType.startsWith('application/json')) {
+    res.status(415).json({
+      error: 'Local AI dev bridge expects application/json',
+    })
+    return
+  }
+
   const method = String(req.query?.method || '').trim()
 
   if (!DEV_LOCAL_AI_ALLOWED_METHODS.has(method)) {
     res.status(404).json({
       error: `Unsupported Local AI dev bridge method: ${method}`,
+    })
+    return
+  }
+
+  try {
+    assertDevBridgeMethodAllowed(method)
+  } catch (error) {
+    const message = String(
+      error && error.message ? error.message : error || ''
+    ).trim()
+    res.status(403).json({
+      error: message || `Local AI dev bridge request is disabled for ${method}`,
+      lastError:
+        message || `Local AI dev bridge request is disabled for ${method}`,
+      method,
     })
     return
   }

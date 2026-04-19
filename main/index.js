@@ -504,6 +504,14 @@ function normalizeLocalAiPayload(payload = {}) {
   const MAX_LOCAL_AI_DATA_URL_CHARS = 8 * 1024 * 1024
   const MAX_LOCAL_AI_BINARY_DATA_CHARS = 128 * 1024 * 1024
 
+  function normalizeSafeLocalAiPayloadKey(key) {
+    const normalizedKey = String(key || '').slice(0, 128)
+
+    return ['__proto__', 'constructor', 'prototype'].includes(normalizedKey)
+      ? `_${normalizedKey}`
+      : normalizedKey
+  }
+
   function sanitizeLocalAiValue(value, depth = 0, key = '') {
     if (depth > MAX_LOCAL_AI_PAYLOAD_DEPTH) {
       return null
@@ -556,28 +564,30 @@ function normalizeLocalAiPayload(payload = {}) {
             return result
           }
 
+          const safeEntryKey = normalizeSafeLocalAiPayloadKey(entryKey)
+
           const sanitized = sanitizeLocalAiValue(
             entryValue,
             depth + 1,
-            entryKey
+            safeEntryKey
           )
 
           if (typeof sanitized !== 'undefined') {
-            result[entryKey] = sanitized
+            result[safeEntryKey] = sanitized
           }
 
           return result
-        }, {})
+        }, Object.create(null))
     }
 
     return undefined
   }
 
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return {}
+    return Object.create(null)
   }
 
-  return sanitizeLocalAiValue(payload) || {}
+  return sanitizeLocalAiValue(payload) || Object.create(null)
 }
 
 function pickLocalAiInput(nextPayload) {
