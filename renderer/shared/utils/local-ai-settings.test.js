@@ -6,10 +6,9 @@ const {
   RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
   RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-  STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
-  FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE,
   DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
@@ -31,6 +30,7 @@ const {
   mergeLocalAiSettings,
   normalizeDeveloperLocalTrainingProfile,
   normalizeDeveloperLocalTrainingThermalMode,
+  normalizeDeveloperLocalBenchmarkThermalMode,
   normalizeDeveloperLocalBenchmarkSize,
   normalizeDeveloperAiDraftTriggerMode,
   normalizeDeveloperLocalTrainingEpochs,
@@ -44,6 +44,7 @@ const {
   resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
   resolveDeveloperLocalTrainingProfileRuntimeModel,
   resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
+  resolveDeveloperLocalBenchmarkThermalModeCooldowns,
   resolveDeveloperLocalTrainingThermalModeCooldowns,
   resolveLocalAiWireRuntimeType,
 } = require('./local-ai-settings')
@@ -70,6 +71,9 @@ describe('local-ai settings schema', () => {
     expect(settings.developerLocalTrainingThermalMode).toBe(
       DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
     )
+    expect(settings.developerLocalBenchmarkThermalMode).toBe(
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+    )
     expect(settings.developerLocalBenchmarkSize).toBe(
       DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
     )
@@ -95,6 +99,7 @@ describe('local-ai settings schema', () => {
       DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS
     )
     expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(false)
+    expect(settings.trainEnabled).toBe(false)
   })
 
   it('migrates legacy phi contract defaults into the Ollama setup', () => {
@@ -202,12 +207,13 @@ describe('local-ai settings schema', () => {
     })
   })
 
-  it('builds a recommended Mac Ollama preset with qwen3.5:9b while keeping stronger and safe MLX fallbacks documented', () => {
+  it('builds a recommended Mac Ollama preset for the fixed Qwen3.5-9B lane', () => {
     expect(buildRecommendedLocalAiMacPreset()).toMatchObject({
       runtimeBackend: 'ollama-direct',
       baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       runtimeType: 'ollama',
+      trainEnabled: true,
       model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
       visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
     })
@@ -215,15 +221,30 @@ describe('local-ai settings schema', () => {
     expect(RECOMMENDED_LOCAL_AI_TRAINING_MODEL).toBe(
       'mlx-community/Qwen3.5-9B-MLX-4bit'
     )
-    expect(STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL).toBe(
-      'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
-    )
-    expect(FALLBACK_LOCAL_AI_TRAINING_MODEL).toBe(
-      'mlx-community/Qwen2-VL-2B-Instruct-4bit'
-    )
     expect(DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT).toMatch(
       /left-only or right-only bias/i
     )
+  })
+
+  it('enables local training automatically when the local runtime is enabled', () => {
+    const settings = buildLocalAiSettings({
+      enabled: true,
+      trainEnabled: false,
+    })
+
+    expect(settings.enabled).toBe(true)
+    expect(settings.trainEnabled).toBe(true)
+  })
+
+  it('migrates persisted legacy qwen runtime picks back onto the fixed Qwen3.5 lane', () => {
+    const settings = buildLocalAiSettings({
+      runtimeBackend: 'ollama-direct',
+      model: 'qwen2.5vl:7b',
+      visionModel: 'qwen2.5vl:7b',
+    })
+
+    expect(settings.model).toBe(DEFAULT_LOCAL_AI_OLLAMA_MODEL)
+    expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
   })
 
   it('keeps a persisted custom developer human-teacher system prompt', () => {
@@ -318,6 +339,31 @@ describe('local-ai settings schema', () => {
     expect(resolveDeveloperLocalTrainingThermalModeCooldowns('cool')).toEqual(
       expect.objectContaining(DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG.cool)
     )
+  })
+
+  it('keeps a persisted developer local benchmark thermal mode', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalBenchmarkThermalMode: 'cool',
+    })
+
+    expect(settings.developerLocalBenchmarkThermalMode).toBe('cool')
+    expect(normalizeDeveloperLocalBenchmarkThermalMode('full_speed')).toBe(
+      'full_speed'
+    )
+    expect(normalizeDeveloperLocalBenchmarkThermalMode('balanced')).toBe(
+      'balanced'
+    )
+    expect(normalizeDeveloperLocalBenchmarkThermalMode('cool')).toBe('cool')
+    expect(normalizeDeveloperLocalBenchmarkThermalMode('unknown')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+    )
+    expect(
+      resolveDeveloperLocalBenchmarkThermalModeCooldowns('cool')
+    ).toMatchObject({
+      mode: 'cool',
+      benchmarkCooldownMs:
+        DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG.cool.benchmarkCooldownMs,
+    })
   })
 
   it('keeps a persisted developer local benchmark size', () => {

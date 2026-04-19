@@ -45,11 +45,9 @@ import {
   DEFAULT_LOCAL_AI_SETTINGS,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
-  FALLBACK_LOCAL_AI_TRAINING_MODEL,
   RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
   RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-  STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
   buildRecommendedLocalAiMacPreset,
   buildLocalAiRuntimePreset,
   buildLocalAiSettings,
@@ -728,7 +726,7 @@ export default function AiSettingsPage() {
     notify(
       t('Recommended Mac local AI setup applied'),
       t(
-        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen3.5:9b as the default local runtime for both text and image work. Local MLX training stays in the same Qwen3.5 family: Qwen3.5-9B MLX 4-bit is the recommended strong-Mac target, Qwen2.5-VL-7B 4-bit is the stronger fallback, and Qwen2-VL-2B 4-bit remains the safe minimum fallback.'
+        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen3.5:9b for both local text and image work. Local MLX training stays on the same Qwen3.5-9B lane with mlx-community/Qwen3.5-9B-MLX-4bit.'
       ),
       'success'
     )
@@ -3040,13 +3038,10 @@ export default function AiSettingsPage() {
                 <Text color="muted" fontSize="sm" mt={1}>
                   {localAi.runtimeBackend === 'ollama-direct'
                     ? t(
-                        'Recommended local runtime endpoint: http://127.0.0.1:11434. Default local text and image model: {{runtimeModel}}. Local MLX training stays in the same Qwen family: {{trainingModel}} is the recommended strong-Mac target, {{strongFallbackModel}} is the stronger fallback, and {{fallbackModel}} remains the safe minimum fallback.',
+                        'Recommended local runtime endpoint: http://127.0.0.1:11434. Local text and image runtime: {{runtimeModel}}. Matching local MLX training base: {{trainingModel}}.',
                         {
                           runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
                           trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-                          strongFallbackModel:
-                            STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
-                          fallbackModel: FALLBACK_LOCAL_AI_TRAINING_MODEL,
                         }
                       )
                     : t(
@@ -3067,13 +3062,10 @@ export default function AiSettingsPage() {
               </Stack>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'Runtime model: Ollama at http://127.0.0.1:11434 with {{visionModel}}. Training model: {{trainingModel}}. Benchmark and matrix runs use that MLX base by default. Stronger fallback: {{strongFallbackModel}}. Safe fallback: {{fallbackModel}}.',
+                  'Runtime model: Ollama at http://127.0.0.1:11434 with {{visionModel}}. Training model: {{trainingModel}}. Benchmark and matrix runs use that same Qwen3.5-9B lane by default.',
                   {
                     visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
                     trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-                    strongFallbackModel:
-                      STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
-                    fallbackModel: FALLBACK_LOCAL_AI_TRAINING_MODEL,
                   }
                 )}
               </Text>

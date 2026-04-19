@@ -137,9 +137,6 @@ def validate_task_binding(task_row: Dict[str, Any], annotation_row: Dict[str, An
 
 def assert_complete_annotation(
     *,
-    captions: List[str],
-    option_a_summary: str,
-    option_b_summary: str,
     text_required: Optional[bool],
     sequence_markers_present: Optional[bool],
     report_required: Optional[bool],
@@ -147,12 +144,6 @@ def assert_complete_annotation(
     why_answer: str,
     confidence: Optional[float],
 ) -> None:
-    if count_filled_entries(captions) < 4:
-        raise ValueError("frame_captions must contain 4 non-empty entries")
-    if not option_a_summary:
-        raise ValueError("option_a_summary is required")
-    if not option_b_summary:
-        raise ValueError("option_b_summary is required")
     if text_required is None:
         raise ValueError("text_required is required")
     if sequence_markers_present is None:
@@ -272,9 +263,6 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
     why_answer = normalize_text(annotation_row.get("why_answer"))
     confidence = normalize_confidence(annotation_row.get("confidence"))
     assert_complete_annotation(
-        captions=captions,
-        option_a_summary=option_a_summary,
-        option_b_summary=option_b_summary,
         text_required=text_required,
         sequence_markers_present=sequence_markers_present,
         report_required=report_required,

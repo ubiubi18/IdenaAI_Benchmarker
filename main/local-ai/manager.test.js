@@ -4,7 +4,12 @@ const fs = require('fs-extra')
 const {encode} = require('rlp')
 
 const {createLocalAiStorage} = require('./storage')
-const {createLocalAiManager} = require('./manager')
+const {
+  createLocalAiManager,
+  getTelemetryTrainingReadiness,
+  parseIoregGpuOutput,
+  parsePmsetBatteryOutput,
+} = require('./manager')
 const {
   LOCAL_AI_BASE_MODEL_ID,
   LOCAL_AI_CONTRACT_VERSION,
@@ -45,6 +50,31 @@ function createCompleteDeveloperAnnotation(taskId, whyAnswer) {
     why_answer: whyAnswer || `human reason for ${taskId}`,
     confidence: 5,
   }
+}
+
+function createReadySystemTelemetry() {
+  return {
+    collectedAt: '2026-04-18T10:00:00.000Z',
+    system: {
+      cpuUsagePercent: 24,
+      memoryUsagePercent: 68,
+      memoryFreeGiB: 9.5,
+      thermal: {
+        available: true,
+        pressure: 'nominal',
+        cpuSpeedLimit: 0,
+      },
+      battery: {
+        available: true,
+        isCharging: true,
+        percent: 95,
+      },
+    },
+  }
+}
+
+function createReadySystemTelemetryProvider() {
+  return async () => createReadySystemTelemetry()
 }
 
 describe('local-ai manager', () => {
@@ -1672,9 +1702,52 @@ describe('local-ai manager', () => {
         remainingTaskCount: 495,
       }),
     })
+    expect(session).not.toHaveProperty('statePath')
+    expect(session).not.toHaveProperty('outputDir')
+    expect(session.comparison100).not.toHaveProperty('lastResultPath')
+    expect(session.comparison100).not.toHaveProperty('holdoutPath')
     expect(session.workspace.tasks[0].taskId).toBe(
       'demo:flip-challenge-test-20-decoded-labeled:6'
     )
+  })
+
+  it('treats developer annotations with blank optional detail as complete', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+    })
+    const firstTask = session.workspace.tasks[0]
+
+    await manager.saveHumanTeacherDeveloperDraft({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      taskId: firstTask.taskId,
+      annotation: {
+        ...createCompleteDeveloperAnnotation(
+          firstTask.taskId,
+          `plain reason for ${firstTask.taskId}`
+        ),
+        frame_captions: ['', '', '', ''],
+        option_a_summary: '',
+        option_b_summary: '',
+      },
+    })
+
+    const reloadedSession = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+    })
+
+    expect(reloadedSession.workspace.completedCount).toBe(1)
+    expect(reloadedSession.workspace.tasks[0]).toMatchObject({
+      taskId: firstTask.taskId,
+      hasDraft: true,
+      isComplete: true,
+      annotationStatus: 'complete',
+      missingRequiredFields: [],
+    })
   })
 
   it('exports a provider-neutral external training bundle from developer annotations', async () => {
@@ -1689,13 +1762,10 @@ describe('local-ai manager', () => {
         sampleName: 'flip-challenge-test-20-decoded-labeled',
         offset: 0,
         taskId: task.taskId,
-        annotation: {
-          annotator: 'developer-test',
-          final_answer: 'left',
-          why_answer: `export ${task.taskId} for external training`,
-          report_required: false,
-          confidence: 5,
-        },
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `export ${task.taskId} for external training`
+        ),
       })
     }
 
@@ -1733,13 +1803,11 @@ describe('local-ai manager', () => {
       }),
       runtime: expect.objectContaining({
         runtimeBackend: 'ollama-direct',
-        model: 'llama3.1:8b',
-        visionModel: 'qwen2.5vl:7b',
+        model: 'qwen3.5:9b',
+        visionModel: 'qwen3.5:9b',
       }),
       training: expect.objectContaining({
         recommendedModel: 'mlx-community/Qwen3.5-9B-MLX-4bit',
-        strongerFallbackModel: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
-        safeFallbackModel: 'mlx-community/Qwen2-VL-2B-Instruct-4bit',
       }),
       files: expect.objectContaining({
         annotations: expect.objectContaining({
@@ -1773,6 +1841,9 @@ describe('local-ai manager', () => {
           ok: true,
           status: 'trained',
           acceptedRows: 5,
+          adapterPath: '/tmp/adapter.safetensors',
+          comparisonPath: '/tmp/comparison.json',
+          holdoutPath: '/tmp/holdout',
         }
       }),
     }
@@ -1780,6 +1851,7 @@ describe('local-ai manager', () => {
       logger: mockLogger(),
       storage,
       sidecar,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
     })
 
     const session = await manager.loadHumanTeacherDeveloperSession({
@@ -1827,7 +1899,7 @@ describe('local-ai manager', () => {
         input: expect.objectContaining({
           developerHumanTeacher: true,
           sampleName: 'flip-challenge-test-20-decoded-labeled',
-          trainingModelPath: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
+          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
           localTrainingProfile: 'balanced',
           localTrainingThermalMode: 'cool',
           localTrainingEpochs: 3,
@@ -1870,6 +1942,9 @@ describe('local-ai manager', () => {
         }),
       }),
     })
+    expect(committed.training).not.toHaveProperty('adapterPath')
+    expect(committed.training).not.toHaveProperty('comparisonPath')
+    expect(committed.training).not.toHaveProperty('holdoutPath')
 
     const reloadedSession = await manager.loadHumanTeacherDeveloperSession({
       sampleName: 'flip-challenge-test-20-decoded-labeled',
@@ -1891,6 +1966,7 @@ describe('local-ai manager', () => {
         ],
       }),
     })
+    expect(reloadedSession.state.lastTraining?.result ?? null).toBeNull()
   })
 
   it('sanitizes developer local training knobs before forwarding them to the backend', async () => {
@@ -1919,6 +1995,7 @@ describe('local-ai manager', () => {
       logger: mockLogger(),
       storage,
       sidecar,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
     })
 
     const session = await manager.loadHumanTeacherDeveloperSession({
@@ -1952,7 +2029,9 @@ describe('local-ai manager', () => {
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
     const forwarded = sidecar.trainEpoch.mock.calls[0][0].input
 
-    expect(forwarded.trainingModelPath).toBeUndefined()
+    expect(forwarded.trainingModelPath).toBe(
+      'mlx-community/Qwen3.5-9B-MLX-4bit'
+    )
     expect(forwarded.localTrainingProfile).toBe('strong')
     expect(forwarded.localTrainingThermalMode).toBe('balanced')
     expect(forwarded.localTrainingEpochs).toBe(6)
@@ -1976,6 +2055,7 @@ describe('local-ai manager', () => {
       logger: mockLogger(),
       storage,
       sidecar,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
     })
 
     await manager.trainEpoch({
@@ -1994,8 +2074,10 @@ describe('local-ai manager', () => {
 
     const forwarded = sidecar.trainEpoch.mock.calls[0][0]
 
-    expect(forwarded.trainingModelPath).toBeUndefined()
-    expect(forwarded.modelPath).toBeUndefined()
+    expect(forwarded.trainingModelPath).toBe(
+      'mlx-community/Qwen3.5-9B-MLX-4bit'
+    )
+    expect(forwarded.modelPath).toBe('mlx-community/Qwen3.5-9B-MLX-4bit')
     expect(forwarded.localTrainingProfile).toBe('strong')
     expect(forwarded.localTrainingThermalMode).toBe('balanced')
     expect(forwarded.localTrainingEpochs).toBe(6)
@@ -2052,6 +2134,59 @@ describe('local-ai manager', () => {
     })
     expect(result.lastError).toMatch(/CPU speed|override/i)
     expect(sidecar.trainEpoch).not.toHaveBeenCalled()
+  })
+
+  it('blocks local training readiness when memory is nearly exhausted', () => {
+    expect(
+      getTelemetryTrainingReadiness({
+        system: {
+          memoryUsagePercent: 99,
+          memoryFreeGiB: 0.4,
+          battery: {
+            available: true,
+            isCharging: true,
+            percent: 95,
+          },
+          thermal: {
+            available: true,
+            pressure: 'nominal',
+          },
+        },
+      })
+    ).toMatchObject({
+      status: 'blocked',
+      label: 'Blocked by memory pressure',
+      requiresExplicitOverride: true,
+      canStartWithoutOverride: false,
+    })
+  })
+
+  it('parses plugged-in but discharging pmset battery output correctly', () => {
+    expect(
+      parsePmsetBatteryOutput(`Now drawing from 'AC Power'
+ -InternalBattery-0\t95%; discharging; 12:45 remaining present: true`)
+    ).toMatchObject({
+      available: true,
+      source: 'AC Power',
+      percent: 95,
+      state: 'discharging',
+      isCharging: false,
+      timeRemainingMinutes: 765,
+    })
+  })
+
+  it('parses macOS IOAccelerator GPU utilization output', () => {
+    expect(
+      parseIoregGpuOutput(`
+| |   "PerformanceStatistics" = {"Device Utilization %"=58,"Renderer Utilization %"=56,"Tiler Utilization %"=57}
+| |   "PerformanceStatistics" = {"Device Utilization %"=62,"Renderer Utilization %"=60,"Tiler Utilization %"=59}
+`)
+    ).toMatchObject({
+      available: true,
+      deviceUtilizationPercent: 60,
+      rendererUtilizationPercent: 58,
+      tilerUtilizationPercent: 58,
+    })
   })
 
   it('allows an explicit system-pressure override for developer chunk training', async () => {
@@ -2176,6 +2311,7 @@ describe('local-ai manager', () => {
       storage,
       sidecar,
       developerTrainingRunner,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
     })
 
     const session = await manager.loadHumanTeacherDeveloperSession({
@@ -2265,6 +2401,7 @@ describe('local-ai manager', () => {
       logger: mockLogger(),
       storage,
       sidecar,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
     })
 
     const session = await manager.loadHumanTeacherDeveloperSession({
@@ -2276,13 +2413,10 @@ describe('local-ai manager', () => {
         sampleName: 'flip-challenge-test-20-decoded-labeled',
         offset: 0,
         taskId: task.taskId,
-        annotation: {
-          annotator: 'developer-test',
-          final_answer: 'left',
-          why_answer: `human reason for ${task.taskId}`,
-          report_required: false,
-          confidence: 5,
-        },
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `human reason for ${task.taskId}`
+        ),
       })
     }
 
@@ -2318,6 +2452,7 @@ describe('local-ai manager', () => {
       failureReason:
         'Training backend is unavailable in the current local runtime',
     })
+    expect(reloadedSession.state.lastTraining?.result ?? null).toBeNull()
   })
 
   it('runs the explicit 50-flip developer comparison and stores the updated success history', async () => {
@@ -2338,6 +2473,8 @@ describe('local-ai manager', () => {
         return {
           ok: true,
           status: 'evaluated',
+          comparisonPath: '/tmp/comparison-50flips.json',
+          holdoutPath: '/tmp/holdout-50',
         }
       }),
     }
@@ -2345,6 +2482,7 @@ describe('local-ai manager', () => {
       logger: mockLogger(),
       storage,
       sidecar,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
     })
 
     await storage.writeJsonAtomic(
@@ -2409,6 +2547,734 @@ describe('local-ai manager', () => {
         }),
       }),
     })
+    expect(result.comparison).not.toHaveProperty('comparisonPath')
+    expect(result.comparison).not.toHaveProperty('holdoutPath')
+  })
+
+  it('marks a running developer local run as stopping and delegates the stop request to the training runner', async () => {
+    const developerTrainingRunner = {
+      runEpoch: jest.fn(),
+      stopCurrentRun: jest.fn(async () => ({
+        stopped: true,
+        status: 'stopping',
+        kind: 'training',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      developerTrainingRunner,
+    })
+    const statePath = storage.resolveLocalAiPath(
+      'human-teacher-developer',
+      'flip-challenge-test-20-decoded-labeled',
+      'state.json'
+    )
+
+    await storage.writeJsonAtomic(statePath, {
+      schemaVersion: 1,
+      mode: 'developer-human-teacher',
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      chunkSize: 5,
+      totalAvailableTasks: 500,
+      currentOffset: 5,
+      annotatedTaskIds: [
+        'demo:flip-challenge-test-20-decoded-labeled:1',
+        'demo:flip-challenge-test-20-decoded-labeled:2',
+        'demo:flip-challenge-test-20-decoded-labeled:3',
+        'demo:flip-challenge-test-20-decoded-labeled:4',
+        'demo:flip-challenge-test-20-decoded-labeled:5',
+      ],
+      pendingTrainingTaskIds: [
+        'demo:flip-challenge-test-20-decoded-labeled:1',
+        'demo:flip-challenge-test-20-decoded-labeled:2',
+        'demo:flip-challenge-test-20-decoded-labeled:3',
+        'demo:flip-challenge-test-20-decoded-labeled:4',
+        'demo:flip-challenge-test-20-decoded-labeled:5',
+      ],
+      trainedTaskIds: [],
+      chunks: [],
+      activeRun: {
+        kind: 'training',
+        status: 'running',
+        stage: 'benchmark_baseline',
+        stageIndex: 4,
+        stageCount: 5,
+        progressPercent: 71.1,
+        message: 'Scoring unseen flips with the baseline model',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkOffset: 0,
+        chunkSize: 5,
+        currentEpoch: 1,
+        totalEpochs: 1,
+        currentStep: 5,
+        stepsPerEpoch: 5,
+        totalSteps: 5,
+        latestLoss: 0.238246,
+        benchmarkPhase: 'baseline',
+        benchmarkCurrent: 35,
+        benchmarkTotal: 100,
+        evaluationFlips: 100,
+        currentFlipHash: 'flip-benchmark-hash',
+        startedAt: '2026-04-19T02:32:44.760Z',
+        updatedAt: '2026-04-19T02:44:01.749Z',
+      },
+      comparison100: {
+        status: 'running',
+        benchmarkFlips: 100,
+        history: [],
+      },
+    })
+
+    const result = await manager.stopHumanTeacherDeveloperRun({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(developerTrainingRunner.stopCurrentRun).toHaveBeenCalledWith({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      kind: 'training',
+      stopMode: 'cancel_now',
+    })
+    expect(result).toMatchObject({
+      developer: true,
+      stopped: true,
+      state: expect.objectContaining({
+        activeRun: expect.objectContaining({
+          status: 'stopping',
+          stopMode: 'cancel_now',
+        }),
+      }),
+    })
+  })
+
+  it('can stop a running developer local run after the current unit finishes', async () => {
+    const developerTrainingRunner = {
+      runEpoch: jest.fn(),
+      stopCurrentRun: jest.fn(async () => ({
+        stopped: true,
+        status: 'stopping_after_unit',
+        stopMode: 'after_unit',
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      developerTrainingRunner,
+    })
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkSize: 5,
+        totalAvailableTasks: 20,
+        currentOffset: 5,
+        annotatedTaskIds: [],
+        pendingTrainingTaskIds: [],
+        trainedTaskIds: [],
+        chunks: [],
+        activeRun: {
+          kind: 'comparison',
+          status: 'running',
+          stage: 'benchmark_adapter',
+          stageIndex: 5,
+          stageCount: 5,
+          progressPercent: 88.5,
+          message: 'Scoring unseen flips with the trained adapter',
+          sampleName: 'flip-challenge-test-20-decoded-labeled',
+          evaluationFlips: 100,
+          benchmarkCurrent: 59,
+          benchmarkTotal: 100,
+          benchmarkPhase: 'adapter',
+          startedAt: '2026-04-19T02:32:44.760Z',
+          updatedAt: '2026-04-19T02:44:01.749Z',
+        },
+        comparison100: {
+          status: 'running',
+          benchmarkFlips: 100,
+          history: [],
+        },
+      }
+    )
+
+    const result = await manager.stopHumanTeacherDeveloperRun({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      stopMode: 'after_unit',
+    })
+
+    expect(developerTrainingRunner.stopCurrentRun).toHaveBeenCalledWith({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      kind: 'comparison',
+      stopMode: 'after_unit',
+    })
+    expect(result).toMatchObject({
+      developer: true,
+      stopped: true,
+      state: expect.objectContaining({
+        activeRun: expect.objectContaining({
+          status: 'stopping',
+          stopMode: 'after_unit',
+          message: 'Stopping after the current benchmark flip…',
+        }),
+      }),
+    })
+  })
+
+  it('updates live developer run controls and reflects the new thermal modes in state', async () => {
+    const developerTrainingRunner = {
+      runEpoch: jest.fn(),
+      stopCurrentRun: jest.fn(),
+      updateCurrentRunControls: jest.fn(async () => ({
+        updated: true,
+        status: 'updated',
+        trainingThermalMode: 'cool',
+        benchmarkThermalMode: 'full_speed',
+        trainingStepCooldownMs: 750,
+        trainingEpochCooldownMs: 4000,
+        benchmarkCooldownMs: 0,
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      developerTrainingRunner,
+    })
+    const statePath = storage.resolveLocalAiPath(
+      'human-teacher-developer',
+      'flip-challenge-test-20-decoded-labeled',
+      'state.json'
+    )
+
+    await storage.writeJsonAtomic(statePath, {
+      schemaVersion: 1,
+      mode: 'developer-human-teacher',
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      chunkSize: 5,
+      totalAvailableTasks: 500,
+      currentOffset: 5,
+      annotatedTaskIds: [],
+      pendingTrainingTaskIds: [],
+      trainedTaskIds: [],
+      chunks: [],
+      activeRun: {
+        kind: 'training',
+        status: 'running',
+        stage: 'train_adapter',
+        stageIndex: 2,
+        stageCount: 5,
+        progressPercent: 33.3,
+        message: 'Training the local adapter on this 5-flip pack',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkOffset: 0,
+        chunkSize: 5,
+        trainingThermalMode: 'balanced',
+        benchmarkThermalMode: 'balanced',
+        startedAt: '2026-04-19T03:00:00.000Z',
+        updatedAt: '2026-04-19T03:05:00.000Z',
+      },
+    })
+
+    const result = await manager.updateHumanTeacherDeveloperRunControls({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      localTrainingThermalMode: 'cool',
+      localBenchmarkThermalMode: 'full_speed',
+    })
+
+    expect(
+      developerTrainingRunner.updateCurrentRunControls
+    ).toHaveBeenCalledWith({
+      localTrainingThermalMode: 'cool',
+      localBenchmarkThermalMode: 'full_speed',
+    })
+    expect(result).toMatchObject({
+      developer: true,
+      updated: true,
+      state: expect.objectContaining({
+        activeRun: expect.objectContaining({
+          trainingThermalMode: 'cool',
+          benchmarkThermalMode: 'full_speed',
+        }),
+      }),
+    })
+  })
+
+  it('rejects developer comparison runs before any chunk was trained into the local model', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkSize: 5,
+        totalAvailableTasks: 20,
+        currentOffset: 5,
+        annotatedTaskIds: [
+          'demo:flip-challenge-test-20-decoded-labeled:1',
+          'demo:flip-challenge-test-20-decoded-labeled:2',
+          'demo:flip-challenge-test-20-decoded-labeled:3',
+          'demo:flip-challenge-test-20-decoded-labeled:4',
+          'demo:flip-challenge-test-20-decoded-labeled:5',
+        ],
+        pendingTrainingTaskIds: [
+          'demo:flip-challenge-test-20-decoded-labeled:1',
+          'demo:flip-challenge-test-20-decoded-labeled:2',
+          'demo:flip-challenge-test-20-decoded-labeled:3',
+          'demo:flip-challenge-test-20-decoded-labeled:4',
+          'demo:flip-challenge-test-20-decoded-labeled:5',
+        ],
+        trainedTaskIds: [],
+        chunks: [],
+        comparison100: {
+          status: 'not_loaded',
+          history: [],
+        },
+      }
+    )
+
+    await expect(
+      manager.runHumanTeacherDeveloperComparison({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        evaluationFlips: 100,
+      })
+    ).rejects.toThrow(
+      'Train the saved 5-flip chunk first before running the 100-flip comparison'
+    )
+  })
+
+  it('fails developer comparison runs that return no benchmark metrics', async () => {
+    const sidecar = {
+      getHealth: jest.fn(),
+      listModels: jest.fn(),
+      chat: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(async () => ({
+        ok: true,
+        status: 'trained',
+        trainingBackend: 'local_stub',
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
+    })
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkSize: 5,
+        totalAvailableTasks: 20,
+        currentOffset: 5,
+        annotatedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+        pendingTrainingTaskIds: [],
+        trainedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+        chunks: [],
+        comparison100: {
+          status: 'not_loaded',
+          history: [],
+        },
+      }
+    )
+
+    const result = await manager.runHumanTeacherDeveloperComparison({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      evaluationFlips: 100,
+    })
+
+    expect(result).toMatchObject({
+      developer: true,
+      comparison: expect.objectContaining({
+        ok: false,
+        status: 'failed',
+        failureReason:
+          'The local comparison finished without benchmark metrics.',
+      }),
+      state: expect.objectContaining({
+        comparison100: expect.objectContaining({
+          status: 'failed',
+          benchmarkFlips: 100,
+          accuracy: null,
+          correct: null,
+          totalFlips: null,
+        }),
+      }),
+    })
+  })
+
+  it('loads developer benchmark example flips for the latest and previous run', async () => {
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+    })
+    const sampleName = 'flip-challenge-test-20-decoded-labeled'
+    const developerDir = storage.resolveLocalAiPath(
+      'human-teacher-developer',
+      sampleName
+    )
+    const currentComparisonPath = path.join(
+      developerDir,
+      'runtime-training',
+      'comparison-100flips-current.json'
+    )
+    const previousComparisonPath = path.join(
+      developerDir,
+      'runtime-training',
+      'comparison-100flips-previous.json'
+    )
+    const currentTrainedPath = path.join(
+      developerDir,
+      'runtime-training',
+      'trained-eval-100-current.json'
+    )
+    const previousTrainedPath = path.join(
+      developerDir,
+      'runtime-training',
+      'trained-eval-100-previous.json'
+    )
+    const currentBaselinePath = path.join(
+      developerDir,
+      'runtime-training',
+      'baseline-eval-100-current.json'
+    )
+    const previousBaselinePath = path.join(
+      developerDir,
+      'runtime-training',
+      'baseline-eval-100-previous.json'
+    )
+
+    await fs.ensureDir(path.join(developerDir, 'runtime-training'))
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        sampleName,
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName,
+        chunkSize: 5,
+        totalAvailableTasks: 20,
+        currentOffset: 5,
+        annotatedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+        pendingTrainingTaskIds: [],
+        trainedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+        chunks: [],
+        comparison100: {
+          status: 'evaluated',
+          benchmarkFlips: 100,
+          lastEvaluatedAt: '2026-04-18T19:40:00.000Z',
+          lastResultPath: currentComparisonPath,
+          accuracy: 0.64,
+          correct: 64,
+          totalFlips: 100,
+          history: [
+            {
+              status: 'evaluated',
+              benchmarkFlips: 100,
+              evaluatedAt: '2026-04-18T19:40:00.000Z',
+              resultPath: currentComparisonPath,
+              accuracy: 0.64,
+              correct: 64,
+              totalFlips: 100,
+            },
+            {
+              status: 'evaluated',
+              benchmarkFlips: 100,
+              evaluatedAt: '2026-04-18T18:20:00.000Z',
+              resultPath: previousComparisonPath,
+              accuracy: 0.6,
+              correct: 60,
+              totalFlips: 100,
+            },
+          ],
+        },
+      }
+    )
+
+    await fs.writeJson(currentComparisonPath, {
+      evaluatedAt: '2026-04-18T19:40:00.000Z',
+      accuracy: 0.64,
+      correct: 64,
+      totalFlips: 100,
+      deltaAccuracy: 0.04,
+      baseline: {
+        resultPath: currentBaselinePath,
+      },
+      trained: {
+        resultPath: currentTrainedPath,
+      },
+    })
+    await fs.writeJson(previousComparisonPath, {
+      evaluatedAt: '2026-04-18T18:20:00.000Z',
+      accuracy: 0.6,
+      correct: 60,
+      totalFlips: 100,
+      baseline: {
+        resultPath: previousBaselinePath,
+      },
+      trained: {
+        resultPath: previousTrainedPath,
+      },
+    })
+    await fs.writeJson(currentBaselinePath, {results: []})
+    await fs.writeJson(previousBaselinePath, {results: []})
+    await fs.writeJson(currentTrainedPath, {
+      results: [
+        {
+          index: 1,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:101',
+          flipHash: 'flip-improved',
+          expected: 'left',
+          predicted: 'left',
+          correct: true,
+        },
+        {
+          index: 2,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:102',
+          flipHash: 'flip-regressed',
+          expected: 'right',
+          predicted: 'left',
+          correct: false,
+        },
+        {
+          index: 3,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:103',
+          flipHash: 'flip-stable',
+          expected: 'right',
+          predicted: 'right',
+          correct: true,
+        },
+      ],
+    })
+    await fs.writeJson(previousTrainedPath, {
+      results: [
+        {
+          index: 1,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:101',
+          flipHash: 'flip-improved',
+          expected: 'left',
+          predicted: 'right',
+          correct: false,
+        },
+        {
+          index: 2,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:102',
+          flipHash: 'flip-regressed',
+          expected: 'right',
+          predicted: 'right',
+          correct: true,
+        },
+        {
+          index: 3,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:103',
+          flipHash: 'flip-stable',
+          expected: 'right',
+          predicted: 'right',
+          correct: true,
+        },
+      ],
+    })
+
+    const result = await manager.loadHumanTeacherDeveloperComparisonExamples({
+      sampleName,
+      evaluationFlips: 100,
+    })
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        developer: true,
+        sampleName,
+        benchmarkFlips: 100,
+        hasDetailedResults: true,
+        current: expect.objectContaining({
+          accuracy: 0.64,
+          correct: 64,
+          totalFlips: 100,
+        }),
+        previous: expect.objectContaining({
+          accuracy: 0.6,
+          correct: 60,
+          totalFlips: 100,
+        }),
+        examples: expect.arrayContaining([
+          expect.objectContaining({
+            flipHash: 'flip-improved',
+            changeType: 'improved',
+            current: expect.objectContaining({
+              predicted: 'left',
+              correct: true,
+            }),
+            previous: expect.objectContaining({
+              predicted: 'right',
+              correct: false,
+            }),
+          }),
+          expect.objectContaining({
+            flipHash: 'flip-regressed',
+            changeType: 'regressed',
+            current: expect.objectContaining({
+              predicted: 'left',
+              correct: false,
+            }),
+            previous: expect.objectContaining({
+              predicted: 'right',
+              correct: true,
+            }),
+          }),
+        ]),
+      })
+    )
+    expect(result.current).not.toHaveProperty('resultPath')
+    expect(result.previous).not.toHaveProperty('resultPath')
+    expect(result.examples).toHaveLength(3)
+  })
+
+  it('recovers saved benchmark size from legacy comparison result paths', async () => {
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+    })
+    const sampleName = 'flip-challenge-test-20-decoded-labeled'
+    const developerDir = storage.resolveLocalAiPath(
+      'human-teacher-developer',
+      sampleName
+    )
+    const currentComparisonPath = path.join(
+      developerDir,
+      'comparison-100flips.json'
+    )
+    const currentBaselinePath = path.join(
+      developerDir,
+      'runtime-training',
+      'baseline-eval-100.json'
+    )
+    const currentTrainedPath = path.join(
+      developerDir,
+      'runtime-training',
+      'trained-eval-100.json'
+    )
+
+    await fs.ensureDir(path.dirname(currentBaselinePath))
+
+    await storage.writeJsonAtomic(path.join(developerDir, 'state.json'), {
+      schemaVersion: 1,
+      mode: 'developer-human-teacher',
+      sampleName,
+      chunkSize: 5,
+      totalAvailableTasks: 20,
+      currentOffset: 5,
+      annotatedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+      pendingTrainingTaskIds: [],
+      trainedTaskIds: ['demo:flip-challenge-test-20-decoded-labeled:1'],
+      chunks: [],
+      comparison100: {
+        status: 'evaluated',
+        benchmarkFlips: 86,
+        lastEvaluatedAt: '2026-04-19T03:26:12.987Z',
+        lastResultPath: currentComparisonPath,
+        accuracy: 0.313953,
+        correct: 27,
+        totalFlips: 86,
+        history: [
+          {
+            status: 'evaluated',
+            benchmarkFlips: 86,
+            evaluatedAt: '2026-04-19T03:26:12.987Z',
+            resultPath: currentComparisonPath,
+            accuracy: 0.313953,
+            correct: 27,
+            totalFlips: 86,
+          },
+        ],
+      },
+    })
+
+    await fs.writeJson(currentComparisonPath, {
+      evaluatedAt: '2026-04-19T03:26:12.987Z',
+      accuracy: 0.313953,
+      correct: 27,
+      totalFlips: 86,
+      deltaAccuracy: -0.034884,
+      baseline: {
+        resultPath: currentBaselinePath,
+      },
+      trained: {
+        resultPath: currentTrainedPath,
+      },
+    })
+    await fs.writeJson(currentBaselinePath, {results: []})
+    await fs.writeJson(currentTrainedPath, {
+      results: [
+        {
+          index: 1,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:101',
+          flipHash: 'flip-recovered',
+          expected: 'left',
+          predicted: 'left',
+          correct: true,
+        },
+      ],
+    })
+
+    const sessionState = await manager.loadHumanTeacherDeveloperSessionState({
+      sampleName,
+    })
+    const examples = await manager.loadHumanTeacherDeveloperComparisonExamples({
+      sampleName,
+      evaluationFlips: 100,
+    })
+
+    expect(sessionState.state.comparison100).toEqual(
+      expect.objectContaining({
+        benchmarkFlips: 100,
+        accuracy: 0.313953,
+        totalFlips: 86,
+        history: expect.arrayContaining([
+          expect.objectContaining({
+            benchmarkFlips: 100,
+            totalFlips: 86,
+          }),
+        ]),
+      })
+    )
+    expect(examples).toEqual(
+      expect.objectContaining({
+        benchmarkFlips: 100,
+        current: expect.objectContaining({
+          accuracy: 0.313953,
+          totalFlips: 86,
+        }),
+        examples: expect.arrayContaining([
+          expect.objectContaining({
+            flipHash: 'flip-recovered',
+          }),
+        ]),
+      })
+    )
   })
 
   it('falls back to the local developer training runner for the explicit 200-flip comparison', async () => {
@@ -2434,6 +3300,9 @@ describe('local-ai manager', () => {
         correct: 139,
         totalFlips: 200,
         evaluatedAt: '2026-04-16T18:15:00.000Z',
+        comparisonPath: '/tmp/comparison-200flips.json',
+        holdoutPath: '/tmp/holdout-200',
+        adapterPath: '/tmp/adapter-200.safetensors',
       })),
     }
     const manager = createLocalAiManager({
@@ -2441,6 +3310,7 @@ describe('local-ai manager', () => {
       storage,
       sidecar,
       developerTrainingRunner,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
     })
 
     await storage.writeJsonAtomic(
@@ -2498,6 +3368,9 @@ describe('local-ai manager', () => {
         }),
       }),
     })
+    expect(result.comparison).not.toHaveProperty('comparisonPath')
+    expect(result.comparison).not.toHaveProperty('holdoutPath')
+    expect(result.comparison).not.toHaveProperty('adapterPath')
   })
 
   it('keeps the selected benchmark size on a failed explicit developer comparison', async () => {
@@ -2526,6 +3399,7 @@ describe('local-ai manager', () => {
       storage,
       sidecar,
       developerTrainingRunner,
+      systemTelemetryProvider: createReadySystemTelemetryProvider(),
     })
 
     await storage.writeJsonAtomic(
@@ -2869,6 +3743,116 @@ describe('local-ai manager', () => {
         path.join(exportResult.outputDir, 'annotations.normalized.jsonl')
       )
     ).resolves.toBe(true)
+  })
+
+  it('imports human-teacher annotations when optional detail fields are left blank', async () => {
+    const payloadPath = storage.resolveLocalAiPath(
+      'modern-payloads',
+      'epoch-12',
+      'flip-a.json'
+    )
+    const filePath = storage.resolveLocalAiPath(
+      'human-teacher',
+      'epoch-12-tasks.json'
+    )
+    const publicPayload = encode([
+      [Buffer.from('panel-1'), Buffer.from('panel-2')],
+      [],
+    ])
+    const privatePayload = encode([
+      [Buffer.from('panel-3'), Buffer.from('panel-4')],
+      [
+        [Buffer.alloc(0), Buffer.from([1]), Buffer.from([2]), Buffer.from([3])],
+        [Buffer.from([3]), Buffer.from([2]), Buffer.from([1]), Buffer.alloc(0)],
+      ],
+    ])
+
+    await storage.writeJsonAtomic(payloadPath, {
+      hex: `0x${Buffer.from(publicPayload).toString('hex')}`,
+      privateHex: `0x${Buffer.from(privatePayload).toString('hex')}`,
+    })
+
+    await storage.writeJsonAtomic(filePath, {
+      schemaVersion: 1,
+      packageType: 'local-ai-human-teacher-tasks',
+      epoch: 12,
+      reviewStatus: 'approved',
+      reviewedAt: '2026-01-01T00:00:00.000Z',
+      annotationReady: true,
+      eligibleCount: 1,
+      excludedCount: 0,
+      items: [
+        {
+          taskId: 'flip-a::human-teacher',
+          sampleId: 'flip-a::human-teacher',
+          flipHash: 'flip-a',
+          epoch: 12,
+          finalAnswer: 'left',
+          consensusStrength: 'Strong',
+          payloadPath,
+          words: {},
+          annotationStatus: 'pending',
+        },
+      ],
+      excluded: [],
+    })
+
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const exportResult = await manager.exportHumanTeacherTasks({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+
+    await fs.writeFile(
+      path.join(exportResult.outputDir, 'annotations.filled.jsonl'),
+      `${JSON.stringify({
+        task_id: 'flip-a::human-teacher',
+        sample_id: 'flip-a::human-teacher',
+        flip_hash: 'flip-a',
+        epoch: 12,
+        annotator: 'tester',
+        text_required: false,
+        sequence_markers_present: false,
+        report_required: false,
+        report_reason: '',
+        final_answer: 'left',
+        why_answer: 'left keeps the same actor and chronology across panels.',
+        confidence: 0.8,
+      })}\n`,
+      'utf8'
+    )
+
+    const importResult = await manager.importHumanTeacherAnnotations({
+      epoch: 12,
+      currentEpoch: 13,
+    })
+    const normalizedRows = (
+      await fs.readFile(
+        path.join(exportResult.outputDir, 'annotations.normalized.jsonl'),
+        'utf8'
+      )
+    )
+      .trim()
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+
+    expect(importResult).toMatchObject({
+      import: expect.objectContaining({
+        normalizedRows: 1,
+        missingAnnotations: 0,
+        invalidAnnotations: 0,
+      }),
+    })
+    expect(normalizedRows).toEqual([
+      expect.objectContaining({
+        frame_captions: ['', '', '', ''],
+        option_a_summary: '',
+        option_b_summary: '',
+        final_answer: 'left',
+        why_answer: expect.stringContaining('chronology'),
+      }),
+    ])
   })
 
   it('rejects importing a tampered human-teacher task manifest', async () => {

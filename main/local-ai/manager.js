@@ -45,19 +45,15 @@ const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
 const ACTIVE_VALIDATION_PERIODS = new Set(['ShortSession', 'LongSession'])
 const MAX_DEVELOPER_COMPARISON_HISTORY = 30
 const EXTERNAL_DEVELOPER_TRAINING_BUNDLE_VERSION = 1
+const EXTERNAL_DEVELOPER_RUNTIME_MODEL = 'qwen3.5:9b'
+const EXTERNAL_DEVELOPER_RUNTIME_VISION_MODEL = 'qwen3.5:9b'
 const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL =
   'mlx-community/Qwen3.5-9B-MLX-4bit'
-const EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL =
-  'mlx-community/Qwen2.5-VL-7B-Instruct-4bit'
-const EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL =
-  'mlx-community/Qwen2-VL-2B-Instruct-4bit'
 const EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE = 200
 const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
 const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [50, 100, 200]
 const DEVELOPER_LOCAL_TRAINING_MODEL_OPTIONS = new Set([
   EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
-  EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
-  EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
 ])
 const DEVELOPER_LOCAL_TRAINING_PROFILE_OPTIONS = new Set([
   'safe',
@@ -71,6 +67,7 @@ const DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_OPTIONS = new Set([
   'cool',
 ])
 const DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE = 'balanced'
+const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE = 'balanced'
 const HUMAN_TEACHER_WORKSPACE_METADATA_FILE = 'workspace-metadata.json'
 const HUMAN_TEACHER_WORKSPACE_TYPE =
   'local-ai-human-teacher-annotation-workspace'
@@ -210,9 +207,17 @@ function parsePmsetBatteryOutput(stdout) {
   const percent = percentMatch ? Number.parseInt(percentMatch[1], 10) : null
   const state = stateMatch ? String(stateMatch[1] || '').trim() : ''
   const source = sourceMatch ? String(sourceMatch[1] || '').trim() : ''
-  const isCharging =
-    /AC Power/i.test(source) ||
-    /charged|charging|finishing charge/i.test(detailLine)
+  let isCharging = null
+
+  if (/discharging/i.test(state)) {
+    isCharging = false
+  } else if (/charged|charging|finishing charge/i.test(state)) {
+    isCharging = true
+  } else if (/AC Power/i.test(source)) {
+    isCharging = true
+  } else if (/Battery Power/i.test(source)) {
+    isCharging = false
+  }
 
   return {
     available: Boolean(source || percent !== null),
@@ -288,6 +293,58 @@ function parsePmsetThermalOutput(stdout) {
   }
 }
 
+function parseIoregGpuOutput(stdout) {
+  const raw = String(stdout || '').trim()
+
+  if (!raw) {
+    return {
+      available: false,
+      deviceUtilizationPercent: null,
+      rendererUtilizationPercent: null,
+      tilerUtilizationPercent: null,
+      raw: '',
+    }
+  }
+
+  const readAverageMetric = (label) => {
+    const matches = Array.from(
+      raw.matchAll(new RegExp(`"${label}"\\s*=\\s*(\\d+)`, 'g'))
+    )
+
+    if (!matches.length) {
+      return null
+    }
+
+    const values = matches
+      .map((match) => Number.parseInt(match[1], 10))
+      .filter((value) => Number.isFinite(value) && value >= 0)
+
+    if (!values.length) {
+      return null
+    }
+
+    return roundTelemetryValue(
+      values.reduce((sum, value) => sum + value, 0) / values.length,
+      1
+    )
+  }
+
+  const deviceUtilizationPercent = readAverageMetric('Device Utilization %')
+  const rendererUtilizationPercent = readAverageMetric('Renderer Utilization %')
+  const tilerUtilizationPercent = readAverageMetric('Tiler Utilization %')
+
+  return {
+    available:
+      deviceUtilizationPercent !== null ||
+      rendererUtilizationPercent !== null ||
+      tilerUtilizationPercent !== null,
+    deviceUtilizationPercent,
+    rendererUtilizationPercent,
+    tilerUtilizationPercent,
+    raw,
+  }
+}
+
 function createDefaultSystemTelemetryProvider() {
   let previousCpuSnapshot = captureCpuSnapshot()
 
@@ -324,6 +381,13 @@ function createDefaultSystemTelemetryProvider() {
       notes: [],
       raw: '',
     }
+    let gpu = {
+      available: false,
+      deviceUtilizationPercent: null,
+      rendererUtilizationPercent: null,
+      tilerUtilizationPercent: null,
+      raw: '',
+    }
 
     if (process.platform === 'darwin') {
       const batteryCommand = runBestEffortCommand('pmset', ['-g', 'batt'])
@@ -334,6 +398,19 @@ function createDefaultSystemTelemetryProvider() {
       const thermalCommand = runBestEffortCommand('pmset', ['-g', 'therm'])
       if (thermalCommand.ok) {
         thermal = parsePmsetThermalOutput(thermalCommand.stdout)
+      }
+
+      const gpuCommand = runBestEffortCommand('ioreg', [
+        '-r',
+        '-d',
+        '1',
+        '-w',
+        '0',
+        '-c',
+        'IOAccelerator',
+      ])
+      if (gpuCommand.ok) {
+        gpu = parseIoregGpuOutput(gpuCommand.stdout)
       }
     }
 
@@ -362,6 +439,8 @@ function createDefaultSystemTelemetryProvider() {
           process.memoryUsage().rss / 1024 / 1024,
           0
         ),
+        gpuUsagePercent: roundTelemetryValue(gpu.deviceUtilizationPercent, 1),
+        gpu,
         battery,
         thermal,
       },
@@ -406,6 +485,7 @@ function getTelemetryTrainingReadiness(telemetry) {
   const batteryPercent = Number(battery.percent)
   const cpuUsagePercent = Number(system.cpuUsagePercent)
   const memoryUsagePercent = Number(system.memoryUsagePercent)
+  const memoryFreeGiB = Number(system.memoryFreeGiB)
 
   if (!Object.keys(system).length) {
     return {
@@ -445,6 +525,48 @@ function getTelemetryTrainingReadiness(telemetry) {
       message: `Battery is at ${batteryPercent}% and not charging. Plug in before local training, or explicitly override this warning for one run.`,
       requiresExplicitOverride: true,
       canStartWithoutOverride: false,
+    }
+  }
+
+  if (
+    (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 95) ||
+    (Number.isFinite(memoryFreeGiB) && memoryFreeGiB <= 1.5)
+  ) {
+    const memoryPercentLabel = Number.isFinite(memoryUsagePercent)
+      ? `${memoryUsagePercent}%`
+      : 'an unknown percentage'
+    const memoryFreeLabel = Number.isFinite(memoryFreeGiB)
+      ? `${memoryFreeGiB} GiB free`
+      : 'free memory unavailable'
+
+    return {
+      status: 'blocked',
+      tone: 'red',
+      label: 'Blocked by memory pressure',
+      message: `System memory is already at ${memoryPercentLabel} used (${memoryFreeLabel}). Close heavy apps first, or explicitly override this warning for one run.`,
+      requiresExplicitOverride: true,
+      canStartWithoutOverride: false,
+    }
+  }
+
+  if (
+    (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 90) ||
+    (Number.isFinite(memoryFreeGiB) && memoryFreeGiB <= 3)
+  ) {
+    const memoryPercentLabel = Number.isFinite(memoryUsagePercent)
+      ? `${memoryUsagePercent}%`
+      : 'a high level'
+    const memoryFreeLabel = Number.isFinite(memoryFreeGiB)
+      ? `${memoryFreeGiB} GiB free`
+      : 'free memory unavailable'
+
+    return {
+      status: 'caution',
+      tone: 'orange',
+      label: 'Caution: memory already tight',
+      message: `System memory is already tight at ${memoryPercentLabel} used (${memoryFreeLabel}). Local training can still run, but it is more likely to slow down, swap, or compete with the rest of the desktop.`,
+      requiresExplicitOverride: false,
+      canStartWithoutOverride: true,
     }
   }
 
@@ -1175,13 +1297,9 @@ function normalizeDeveloperTrainingInteger(value, fallback, min, max) {
 function normalizeDeveloperTrainingModelPath(value) {
   const modelPath = String(value || '').trim()
 
-  if (!modelPath) {
-    return null
-  }
-
   return DEVELOPER_LOCAL_TRAINING_MODEL_OPTIONS.has(modelPath)
     ? modelPath
-    : null
+    : EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL
 }
 
 function normalizeDeveloperTrainingProfile(value) {
@@ -1202,6 +1320,14 @@ function normalizeDeveloperTrainingThermalMode(value) {
   return DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_OPTIONS.has(thermalMode)
     ? thermalMode
     : DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+}
+
+function normalizeDeveloperRunStopMode(value) {
+  const stopMode = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return stopMode === 'after_unit' ? 'after_unit' : 'cancel_now'
 }
 
 function readDeveloperHumanTeacherTrainingTarget(value) {
@@ -1261,6 +1387,9 @@ function sanitizeDeveloperHumanTeacherTrainingTarget(value) {
     ),
     localTrainingThermalMode: normalizeDeveloperTrainingThermalMode(
       source.localTrainingThermalMode
+    ),
+    localBenchmarkThermalMode: normalizeDeveloperTrainingThermalMode(
+      source.localBenchmarkThermalMode || source.localTrainingThermalMode
     ),
     localTrainingEpochs: normalizeDeveloperTrainingInteger(
       source.localTrainingEpochs,
@@ -1482,18 +1611,41 @@ function createDefaultDeveloperComparisonState() {
   }
 }
 
+function hasDeveloperComparisonMetrics(source = {}) {
+  const comparison =
+    source && typeof source === 'object' && !Array.isArray(source) ? source : {}
+
+  return (
+    comparison.accuracy !== null ||
+    (comparison.correct !== null && comparison.totalFlips !== null)
+  )
+}
+
+function inferDeveloperComparisonBenchmarkFlips(source = {}) {
+  const resultPath = String(
+    source.resultPath || source.lastResultPath || source.path || ''
+  ).trim()
+  const resultPathMatch = resultPath.match(/comparison-(\d+)flips\.json$/i)
+  const resultPathBenchmarkFlips = resultPathMatch
+    ? normalizeNonNegativeInteger(resultPathMatch[1])
+    : null
+
+  return (
+    resultPathBenchmarkFlips ||
+    normalizeNonNegativeInteger(source.benchmarkFlips) ||
+    normalizeNonNegativeInteger(
+      source.totalFlips || source.total || source.flipCount
+    )
+  )
+}
+
 function normalizeDeveloperComparisonHistoryEntry(entry = {}) {
   const source =
     entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {}
 
   return {
     status: normalizeDeveloperComparisonStatus(source.status, 'evaluated'),
-    benchmarkFlips: normalizeNonNegativeInteger(
-      source.benchmarkFlips ||
-        source.totalFlips ||
-        source.total ||
-        source.flipCount
-    ),
+    benchmarkFlips: inferDeveloperComparisonBenchmarkFlips(source),
     evaluatedAt: normalizeIsoDate(
       source.evaluatedAt || source.lastEvaluatedAt || source.generatedAt
     ),
@@ -1614,6 +1766,88 @@ function normalizeDeveloperComparisonState(value) {
         : normalizeNonNegativeInteger(source.totalFlips),
     bestAccuracy,
     history,
+  }
+}
+
+function sanitizePublicDeveloperComparisonHistoryEntry(entry = {}) {
+  const source = normalizeDeveloperComparisonHistoryEntry(entry)
+
+  return {
+    status: source.status,
+    benchmarkFlips: source.benchmarkFlips,
+    evaluatedAt: source.evaluatedAt,
+    accuracy: source.accuracy,
+    correct: source.correct,
+    totalFlips: source.totalFlips,
+  }
+}
+
+function sanitizePublicDeveloperComparisonState(value) {
+  const source = normalizeDeveloperComparisonState(value)
+
+  return {
+    status: source.status,
+    benchmarkFlips: source.benchmarkFlips,
+    lastEvaluatedAt: source.lastEvaluatedAt,
+    accuracy: source.accuracy,
+    correct: source.correct,
+    totalFlips: source.totalFlips,
+    bestAccuracy: source.bestAccuracy,
+    history: Array.isArray(source.history)
+      ? source.history.map((entry) =>
+          sanitizePublicDeveloperComparisonHistoryEntry(entry)
+        )
+      : [],
+  }
+}
+
+function sanitizePublicDeveloperRunResult(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = value
+  const acceptedRows = normalizeNonNegativeInteger(source.acceptedRows)
+  const localTrainingEpochs = normalizeNonNegativeInteger(
+    source.localTrainingEpochs
+  )
+  const localTrainingBatchSize = normalizeNonNegativeInteger(
+    source.localTrainingBatchSize
+  )
+  const localTrainingLoraRank = normalizeNonNegativeInteger(
+    source.localTrainingLoraRank
+  )
+
+  return {
+    ok: source.ok === true,
+    status: String(source.status || '').trim() || null,
+    partialTrainingCompleted: source.partialTrainingCompleted === true,
+    error: String(source.error || '').trim() || null,
+    lastError: String(source.lastError || '').trim() || null,
+    failureReason:
+      String(
+        source.failureReason || extractDeveloperTrainingFailureReason(source)
+      ).trim() || null,
+    acceptedRows,
+    trainingBackend: String(source.trainingBackend || '').trim() || null,
+    localTrainingProfile:
+      String(source.localTrainingProfile || '').trim() || null,
+    localTrainingThermalMode:
+      String(source.localTrainingThermalMode || '').trim() || null,
+    localTrainingEpochs,
+    localTrainingBatchSize,
+    localTrainingLoraRank,
+    evaluatedAt: normalizeIsoDate(source.evaluatedAt),
+    baselineAccuracy: normalizeAccuracyValue(source.baselineAccuracy),
+    accuracy: normalizeAccuracyValue(source.accuracy),
+    correct: normalizeNonNegativeInteger(source.correct),
+    totalFlips: normalizeNonNegativeInteger(
+      source.totalFlips || source.total || source.flipCount
+    ),
+    deltaAccuracy: normalizeAccuracyValue(source.deltaAccuracy),
+    comparison100: source.comparison100
+      ? sanitizePublicDeveloperComparisonState(source.comparison100)
+      : null,
   }
 }
 
@@ -1766,6 +2000,283 @@ function mergeDeveloperComparisonSnapshot(
   })
 }
 
+function normalizeDeveloperComparisonExampleAnswer(value) {
+  const nextValue = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return ['left', 'right', 'skip'].includes(nextValue) ? nextValue : null
+}
+
+function normalizeDeveloperComparisonExampleEntry(entry = {}) {
+  const source =
+    entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {}
+  const normalizedSampleId = String(
+    source.sampleId || source.sample_id || source.taskId || ''
+  ).trim()
+  let normalizedCorrect = null
+
+  if (typeof source.correct === 'boolean') {
+    normalizedCorrect = source.correct
+  } else if (source.correct !== null && typeof source.correct !== 'undefined') {
+    normalizedCorrect = Boolean(source.correct)
+  }
+
+  return {
+    index: normalizeNonNegativeInteger(source.index),
+    sampleId: normalizedSampleId || null,
+    flipHash:
+      String(source.flipHash || source.flip_hash || source.hash || '').trim() ||
+      null,
+    expected: normalizeDeveloperComparisonExampleAnswer(source.expected),
+    predicted: normalizeDeveloperComparisonExampleAnswer(source.predicted),
+    generatedPrediction: normalizeDeveloperComparisonExampleAnswer(
+      source.generatedPrediction
+    ),
+    scoredPrediction: normalizeDeveloperComparisonExampleAnswer(
+      source.scoredPrediction
+    ),
+    correct: normalizedCorrect,
+    rankingSource: String(source.rankingSource || '').trim() || null,
+  }
+}
+
+async function readJsonFileIfExists(filePath, fallbackValue = null) {
+  const targetPath = String(filePath || '').trim()
+
+  if (!targetPath) {
+    return fallbackValue
+  }
+
+  try {
+    const raw = await fs.promises.readFile(targetPath, 'utf8')
+    return JSON.parse(raw)
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return fallbackValue
+    }
+
+    throw error
+  }
+}
+
+function normalizeDeveloperComparisonSummary(value = {}) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+
+  return {
+    evaluatedAt: normalizeIsoDate(source.evaluatedAt),
+    accuracy: normalizeAccuracyValue(source.accuracy),
+    correct: normalizeNonNegativeInteger(source.correct),
+    totalFlips: normalizeNonNegativeInteger(
+      source.totalFlips || source.total || source.flipCount
+    ),
+    deltaAccuracy: normalizeAccuracyValue(source.deltaAccuracy),
+  }
+}
+
+async function loadDeveloperComparisonArtifact(
+  developerDir,
+  comparisonEntry = {}
+) {
+  const resultPath = String(comparisonEntry.resultPath || '').trim()
+
+  if (!resultPath) {
+    return null
+  }
+
+  const comparisonSummaryPath = resolveWorkspaceChildPath(
+    developerDir,
+    resultPath
+  )
+  const comparisonSummary = await readJsonFileIfExists(
+    comparisonSummaryPath,
+    null
+  )
+
+  if (
+    !comparisonSummary ||
+    typeof comparisonSummary !== 'object' ||
+    Array.isArray(comparisonSummary)
+  ) {
+    return null
+  }
+
+  const baselineResultPath = String(
+    comparisonSummary?.baseline?.resultPath || ''
+  ).trim()
+  const trainedResultPath = String(
+    comparisonSummary?.trained?.resultPath || ''
+  ).trim()
+  const _baselineResult = baselineResultPath
+    ? await readJsonFileIfExists(
+        resolveWorkspaceChildPath(developerDir, baselineResultPath),
+        null
+      )
+    : null
+  const trainedResult = trainedResultPath
+    ? await readJsonFileIfExists(
+        resolveWorkspaceChildPath(developerDir, trainedResultPath),
+        null
+      )
+    : null
+  const trainedResults = Array.isArray(trainedResult?.results)
+    ? trainedResult.results.map((item) =>
+        normalizeDeveloperComparisonExampleEntry(item)
+      )
+    : []
+
+  return {
+    entry: normalizeDeveloperComparisonHistoryEntry(comparisonEntry),
+    summaryPath: comparisonSummaryPath,
+    summary: normalizeDeveloperComparisonSummary(comparisonSummary),
+    trainedResultPath: trainedResultPath
+      ? resolveWorkspaceChildPath(developerDir, trainedResultPath)
+      : null,
+    baselineResultPath: baselineResultPath
+      ? resolveWorkspaceChildPath(developerDir, baselineResultPath)
+      : null,
+    trainedResults,
+    baselineSummary: normalizeDeveloperComparisonSummary(
+      comparisonSummary?.baseline
+    ),
+    trainedSummary: normalizeDeveloperComparisonSummary(
+      comparisonSummary?.trained
+    ),
+    hasDetailedResults: trainedResults.length > 0,
+  }
+}
+
+function classifyDeveloperComparisonExampleChange(currentEntry, previousEntry) {
+  const currentCorrect = currentEntry?.correct === true
+  const previousCorrect = previousEntry?.correct === true
+
+  if (previousEntry) {
+    if (currentCorrect && !previousCorrect) {
+      return 'improved'
+    }
+
+    if (!currentCorrect && previousCorrect) {
+      return 'regressed'
+    }
+
+    if (currentCorrect && previousCorrect) {
+      return 'unchanged_correct'
+    }
+
+    return 'unchanged_wrong'
+  }
+
+  return currentCorrect ? 'current_correct' : 'current_wrong'
+}
+
+function rankDeveloperComparisonExampleChange(changeType) {
+  switch (changeType) {
+    case 'improved':
+      return 0
+    case 'regressed':
+      return 1
+    case 'unchanged_wrong':
+      return 2
+    case 'unchanged_correct':
+      return 3
+    case 'current_wrong':
+      return 4
+    case 'current_correct':
+      return 5
+    default:
+      return 6
+  }
+}
+
+function selectDeveloperComparisonExamples({
+  currentArtifact,
+  previousArtifact = null,
+  maxExamples = 6,
+} = {}) {
+  const currentResults = Array.isArray(currentArtifact?.trainedResults)
+    ? currentArtifact.trainedResults
+    : []
+  const previousResults = Array.isArray(previousArtifact?.trainedResults)
+    ? previousArtifact.trainedResults
+    : []
+  const previousByFlipHash = new Map()
+
+  previousResults.forEach((entry) => {
+    const key =
+      entry.flipHash ||
+      entry.sampleId ||
+      (entry.index !== null ? `${entry.index}` : '')
+
+    if (key && !previousByFlipHash.has(key)) {
+      previousByFlipHash.set(key, entry)
+    }
+  })
+
+  const rankedExamples = currentResults
+    .map((entry) => {
+      const comparisonKey =
+        entry.flipHash ||
+        entry.sampleId ||
+        (entry.index !== null ? `${entry.index}` : '')
+      const previousEntry = comparisonKey
+        ? previousByFlipHash.get(comparisonKey) || null
+        : null
+      const changeType = classifyDeveloperComparisonExampleChange(
+        entry,
+        previousEntry
+      )
+      let exampleIndex = null
+
+      if (entry.index !== null) {
+        exampleIndex = entry.index
+      } else if (previousEntry && previousEntry.index !== null) {
+        exampleIndex = previousEntry.index
+      }
+
+      return {
+        flipHash: entry.flipHash,
+        sampleId: entry.sampleId,
+        expected: entry.expected,
+        current: {
+          predicted: entry.predicted,
+          correct: entry.correct,
+        },
+        previous: previousEntry
+          ? {
+              predicted: previousEntry.predicted,
+              correct: previousEntry.correct,
+            }
+          : null,
+        changeType,
+        order: rankDeveloperComparisonExampleChange(changeType),
+        index: exampleIndex,
+        rankingSource:
+          entry.rankingSource || previousEntry?.rankingSource || null,
+      }
+    })
+    .sort((left, right) => {
+      if (left.order !== right.order) {
+        return left.order - right.order
+      }
+
+      const leftIndex =
+        left.index === null ? Number.MAX_SAFE_INTEGER : left.index
+      const rightIndex =
+        right.index === null ? Number.MAX_SAFE_INTEGER : right.index
+
+      if (leftIndex !== rightIndex) {
+        return leftIndex - rightIndex
+      }
+
+      return String(left.flipHash || left.sampleId || '').localeCompare(
+        String(right.flipHash || right.sampleId || '')
+      )
+    })
+
+  return rankedExamples.slice(0, Math.max(1, maxExamples))
+}
+
 function createDefaultDemoHumanTeacherState({
   sampleName = DEFAULT_DEMO_SAMPLE_NAME,
   totalAvailableTasks = 0,
@@ -1898,12 +2409,120 @@ function normalizeDeveloperLastTrainingState(value) {
               extractDeveloperTrainingFailureReason(source.result)
           ).trim() || null
         : null,
-    result:
-      source.result &&
-      typeof source.result === 'object' &&
-      !Array.isArray(source.result)
-        ? source.result
+    result: null,
+  }
+}
+
+function normalizeDeveloperActiveRunState(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = value
+  const kind = String(source.kind || '')
+    .trim()
+    .toLowerCase()
+  const status = String(source.status || '')
+    .trim()
+    .toLowerCase()
+  const stage =
+    String(source.stage || '')
+      .trim()
+      .toLowerCase() || null
+  const message = String(source.message || '').trim() || null
+  const sampleName = String(source.sampleName || '').trim()
+  const currentEpoch = Number.parseInt(source.currentEpoch, 10)
+  const totalEpochs = Number.parseInt(source.totalEpochs, 10)
+  const currentStep = Number.parseInt(source.currentStep, 10)
+  const stepsPerEpoch = Number.parseInt(source.stepsPerEpoch, 10)
+  const totalSteps = Number.parseInt(source.totalSteps, 10)
+  const stageIndex = Number.parseInt(source.stageIndex, 10)
+  const stageCount = Number.parseInt(source.stageCount, 10)
+  const chunkOffset = Number.parseInt(source.chunkOffset, 10)
+  const chunkSize = Number.parseInt(source.chunkSize, 10)
+  const benchmarkCurrent = Number.parseInt(source.benchmarkCurrent, 10)
+  const benchmarkTotal = Number.parseInt(source.benchmarkTotal, 10)
+  const evaluationFlips = Number.parseInt(source.evaluationFlips, 10)
+  const progressPercent = roundTelemetryValue(source.progressPercent, 1)
+  const latestLoss = roundTelemetryValue(source.latestLoss, 6)
+  const benchmarkPhase =
+    String(source.benchmarkPhase || '')
+      .trim()
+      .toLowerCase() || null
+  const stopMode =
+    String(source.stopMode || '')
+      .trim()
+      .toLowerCase() || null
+  const currentFlipHash = String(source.currentFlipHash || '').trim() || null
+  const trainingThermalMode = normalizeDeveloperTrainingThermalMode(
+    source.trainingThermalMode
+  )
+  const benchmarkThermalMode = normalizeDeveloperTrainingThermalMode(
+    source.benchmarkThermalMode
+  )
+
+  if (!kind || !status) {
+    return null
+  }
+
+  return {
+    kind,
+    status,
+    stage,
+    stageIndex:
+      Number.isFinite(stageIndex) && stageIndex > 0 ? stageIndex : null,
+    stageCount:
+      Number.isFinite(stageCount) && stageCount > 0 ? stageCount : null,
+    progressPercent:
+      Number.isFinite(progressPercent) && progressPercent >= 0
+        ? Math.min(100, Math.max(0, progressPercent))
         : null,
+    message,
+    sampleName: sampleName
+      ? normalizeDeveloperHumanTeacherSampleName(sampleName)
+      : null,
+    chunkOffset:
+      Number.isFinite(chunkOffset) && chunkOffset >= 0
+        ? normalizeDeveloperHumanTeacherOffset(chunkOffset)
+        : null,
+    chunkSize: Number.isFinite(chunkSize) && chunkSize > 0 ? chunkSize : null,
+    currentEpoch:
+      Number.isFinite(currentEpoch) && currentEpoch > 0 ? currentEpoch : null,
+    totalEpochs:
+      Number.isFinite(totalEpochs) && totalEpochs > 0 ? totalEpochs : null,
+    currentStep:
+      Number.isFinite(currentStep) && currentStep > 0 ? currentStep : null,
+    stepsPerEpoch:
+      Number.isFinite(stepsPerEpoch) && stepsPerEpoch > 0
+        ? stepsPerEpoch
+        : null,
+    totalSteps:
+      Number.isFinite(totalSteps) && totalSteps > 0 ? totalSteps : null,
+    latestLoss:
+      Number.isFinite(latestLoss) && latestLoss >= 0 ? latestLoss : null,
+    benchmarkPhase,
+    stopMode,
+    benchmarkCurrent:
+      Number.isFinite(benchmarkCurrent) && benchmarkCurrent > 0
+        ? benchmarkCurrent
+        : null,
+    benchmarkTotal:
+      Number.isFinite(benchmarkTotal) && benchmarkTotal > 0
+        ? benchmarkTotal
+        : null,
+    evaluationFlips:
+      Number.isFinite(evaluationFlips) && evaluationFlips > 0
+        ? evaluationFlips
+        : null,
+    currentFlipHash,
+    trainingThermalMode,
+    benchmarkThermalMode,
+    startedAt: normalizeIsoDate(source.startedAt),
+    stageStartedAt:
+      normalizeIsoDate(source.stageStartedAt) ||
+      normalizeIsoDate(source.startedAt),
+    updatedAt:
+      normalizeIsoDate(source.updatedAt) || normalizeIsoDate(source.startedAt),
   }
 }
 
@@ -1932,6 +2551,7 @@ function createDefaultDeveloperHumanTeacherState({
     activeTrainingBackend: null,
     activeLocalTrainingProfile: null,
     activeLocalTrainingThermalMode: null,
+    activeRun: null,
     comparison100: createDefaultDeveloperComparisonState(),
   }
 }
@@ -1982,6 +2602,7 @@ function normalizeDeveloperHumanTeacherState(
       String(source.activeLocalTrainingProfile || '').trim() || null,
     activeLocalTrainingThermalMode:
       String(source.activeLocalTrainingThermalMode || '').trim() || null,
+    activeRun: normalizeDeveloperActiveRunState(source.activeRun),
     lastTraining: normalizeDeveloperLastTrainingState(source.lastTraining),
     chunks: Array.isArray(source.chunks)
       ? source.chunks
@@ -2696,22 +3317,43 @@ function hasHumanTeacherAnnotationDraft(annotation = {}) {
   )
 }
 
-function isHumanTeacherAnnotationComplete(annotation = {}) {
+function getHumanTeacherAnnotationMissingRequiredFields(annotation = {}) {
   const next = normalizeHumanTeacherAnnotationDraft({}, annotation)
-  const filledFrameCaptions = next.frame_captions.filter(Boolean).length
+  const missingFields = []
 
-  return Boolean(
-    filledFrameCaptions === 4 &&
-      next.option_a_summary &&
-      next.option_b_summary &&
-      next.text_required !== null &&
-      next.sequence_markers_present !== null &&
-      next.report_required !== null &&
-      next.final_answer &&
-      next.why_answer &&
-      next.confidence !== null &&
-      (next.report_required !== true || next.report_reason)
-  )
+  if (!next.final_answer) {
+    missingFields.push('final_answer')
+  }
+
+  if (!next.why_answer) {
+    missingFields.push('why_answer')
+  }
+
+  if (next.text_required === null) {
+    missingFields.push('text_required')
+  }
+
+  if (next.sequence_markers_present === null) {
+    missingFields.push('sequence_markers_present')
+  }
+
+  if (next.report_required === null) {
+    missingFields.push('report_required')
+  }
+
+  if (next.report_required === true && !next.report_reason) {
+    missingFields.push('report_reason')
+  }
+
+  if (next.confidence === null) {
+    missingFields.push('confidence')
+  }
+
+  return missingFields
+}
+
+function isHumanTeacherAnnotationComplete(annotation = {}) {
+  return getHumanTeacherAnnotationMissingRequiredFields(annotation).length === 0
 }
 
 async function readJsonlRows(filePath, fallbackValue = []) {
@@ -2985,6 +3627,8 @@ function buildHumanTeacherWorkspaceTasks(
       rightOrder: Array.isArray(taskRow.right_order) ? taskRow.right_order : [],
       hasDraft: hasHumanTeacherAnnotationDraft(annotation),
       isComplete: isHumanTeacherAnnotationComplete(annotation),
+      missingRequiredFields:
+        getHumanTeacherAnnotationMissingRequiredFields(annotation),
       annotationStatus,
       demo:
         taskRow.demo &&
@@ -3026,6 +3670,7 @@ function createLocalAiManager({
     developerTrainingRunner || createDeveloperTrainingRunner({logger, isDev})
   const localSystemTelemetryProvider =
     systemTelemetryProvider || createDefaultSystemTelemetryProvider()
+  const developerStateMutationQueues = new Map()
   const initialRuntime = resolveLocalAiRuntimeAdapter()
   const state = {
     available: true,
@@ -3358,6 +4003,147 @@ function createLocalAiManager({
     }
   }
 
+  function readDeveloperStatePathInfo(statePath) {
+    const normalizedPath = String(statePath || '').trim()
+
+    return {
+      normalizedPath,
+      sampleName: normalizeDeveloperHumanTeacherSampleName(
+        path.basename(path.dirname(normalizedPath || '.'))
+      ),
+    }
+  }
+
+  function queueDeveloperStateMutation(statePath, mutate) {
+    const {normalizedPath, sampleName} = readDeveloperStatePathInfo(statePath)
+
+    if (!normalizedPath || typeof mutate !== 'function') {
+      return Promise.resolve(null)
+    }
+
+    const previousQueue = developerStateMutationQueues.get(normalizedPath)
+    const nextQueue = Promise.resolve(previousQueue)
+      .catch(() => null)
+      .then(async () => {
+        const currentState = normalizeDeveloperHumanTeacherState(
+          await localAiStorage.readJson(normalizedPath, null),
+          {
+            sampleName,
+          }
+        )
+        const mutatedState = await mutate(currentState)
+        const normalizedState = normalizeDeveloperHumanTeacherState(
+          mutatedState,
+          {
+            sampleName,
+            totalAvailableTasks:
+              mutatedState?.totalAvailableTasks ||
+              currentState.totalAvailableTasks,
+          }
+        )
+
+        await localAiStorage.writeJsonAtomic(normalizedPath, normalizedState)
+        return normalizedState
+      })
+
+    developerStateMutationQueues.set(normalizedPath, nextQueue)
+
+    return nextQueue.finally(() => {
+      if (developerStateMutationQueues.get(normalizedPath) === nextQueue) {
+        developerStateMutationQueues.delete(normalizedPath)
+      }
+    })
+  }
+
+  function flushDeveloperStateMutations(statePath) {
+    const normalizedPath = String(statePath || '').trim()
+    return Promise.resolve(developerStateMutationQueues.get(normalizedPath))
+      .catch(() => null)
+      .then(() => null)
+  }
+
+  function createDeveloperActiveRunProgressHandler({
+    statePath,
+    kind,
+    sampleName,
+    chunkOffset = null,
+    chunkSize = null,
+    evaluationFlips = null,
+    totalEpochs = null,
+  } = {}) {
+    const normalizedStatePath = String(statePath || '').trim()
+
+    if (!normalizedStatePath) {
+      return null
+    }
+
+    return async (progressUpdate = {}) => {
+      const patch =
+        progressUpdate &&
+        typeof progressUpdate === 'object' &&
+        !Array.isArray(progressUpdate)
+          ? progressUpdate
+          : {}
+
+      await queueDeveloperStateMutation(normalizedStatePath, (currentState) => {
+        const currentRun =
+          normalizeDeveloperActiveRunState(currentState.activeRun) || {}
+        const nextStage =
+          String(patch.stage || currentRun.stage || '')
+            .trim()
+            .toLowerCase() || null
+        const stageChanged =
+          nextStage &&
+          String(currentRun.stage || '')
+            .trim()
+            .toLowerCase() !== nextStage
+        const nextRun = normalizeDeveloperActiveRunState({
+          ...currentRun,
+          ...patch,
+          kind: String(patch.kind || kind || currentRun.kind || '')
+            .trim()
+            .toLowerCase(),
+          status:
+            String(patch.status || currentRun.status || 'running')
+              .trim()
+              .toLowerCase() || 'running',
+          sampleName:
+            patch.sampleName ||
+            currentRun.sampleName ||
+            sampleName ||
+            currentState.sampleName,
+          chunkOffset:
+            typeof patch.chunkOffset !== 'undefined'
+              ? patch.chunkOffset
+              : currentRun.chunkOffset ?? chunkOffset,
+          chunkSize:
+            typeof patch.chunkSize !== 'undefined'
+              ? patch.chunkSize
+              : currentRun.chunkSize ?? chunkSize,
+          evaluationFlips:
+            typeof patch.evaluationFlips !== 'undefined'
+              ? patch.evaluationFlips
+              : currentRun.evaluationFlips ?? evaluationFlips,
+          totalEpochs:
+            typeof patch.totalEpochs !== 'undefined'
+              ? patch.totalEpochs
+              : currentRun.totalEpochs ?? totalEpochs,
+          startedAt: currentRun.startedAt || new Date().toISOString(),
+          stageStartedAt:
+            !currentRun.stageStartedAt || stageChanged
+              ? new Date().toISOString()
+              : currentRun.stageStartedAt,
+          updatedAt: new Date().toISOString(),
+        })
+
+        return {
+          ...currentState,
+          activeRun: nextRun,
+        }
+      })
+    }
+  }
+
   function summarizeDeveloperHumanTeacherState(nextState, extra = {}) {
     const normalizedState = normalizeDeveloperHumanTeacherState(nextState, {
       sampleName: nextState?.sampleName,
@@ -3381,6 +4167,18 @@ function createLocalAiManager({
         0
       ),
       ...extra,
+    }
+  }
+
+  function sanitizePublicDeveloperHumanTeacherState(nextState, extra = {}) {
+    const summary = summarizeDeveloperHumanTeacherState(nextState, extra)
+
+    return {
+      ...summary,
+      comparison100: sanitizePublicDeveloperComparisonState(
+        summary.comparison100
+      ),
+      lastTraining: normalizeDeveloperLastTrainingState(summary.lastTraining),
     }
   }
 
@@ -3427,9 +4225,8 @@ function createLocalAiManager({
       '2. Upload this whole folder to that machine.',
       '3. Start with a benchmark-only smoke run before doing a longer training run.',
       `4. For serious training, use the recommended MLX base ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}.`,
-      `5. If that is too heavy, fall back to ${EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL} or ${EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL}.`,
-      `6. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
-      '7. Import only the result files you intend to trust back into IdenaAI later.',
+      `5. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
+      '6. Import only the result files you intend to trust back into IdenaAI later.',
       '',
       'Safety notes:',
       '- this bundle should contain training data only, not wallet secrets or your whole desktop profile',
@@ -3698,6 +4495,7 @@ function createLocalAiManager({
     trainingModelPath = null,
     localTrainingProfile = null,
     localTrainingThermalMode = null,
+    localBenchmarkThermalMode = null,
     localTrainingEpochs = null,
     localTrainingBatchSize = null,
     localTrainingLoraRank = null,
@@ -3713,6 +4511,10 @@ function createLocalAiManager({
       normalizeDeveloperTrainingProfile(localTrainingProfile)
     const normalizedLocalTrainingThermalMode =
       normalizeDeveloperTrainingThermalMode(localTrainingThermalMode)
+    const normalizedLocalBenchmarkThermalMode =
+      normalizeDeveloperTrainingThermalMode(
+        localBenchmarkThermalMode || localTrainingThermalMode
+      )
     const normalizedLocalTrainingEpochs = normalizeDeveloperTrainingInteger(
       localTrainingEpochs,
       1,
@@ -3788,6 +4590,7 @@ function createLocalAiManager({
 
     let trainingResult = null
     let trainingStatus = 'pending'
+    let baseState = existingState
     let trainedTaskIds = uniqueStrings(existingState.trainedTaskIds)
     let pendingTaskIds = uniqueStrings(
       mergeJsonlRowsByTaskId([], pendingRows).map((row) => row && row.task_id)
@@ -3799,6 +4602,42 @@ function createLocalAiManager({
       normalizeDeveloperLocalBenchmarkFlips(evaluationFlips)
 
     if (trainNow) {
+      const activeRunProgress = createDeveloperActiveRunProgressHandler({
+        statePath: chunk.statePath,
+        kind: 'training',
+        sampleName: chunk.sample.sampleName,
+        chunkOffset: chunk.offset,
+        chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+        evaluationFlips: resolvedEvaluationFlips,
+        totalEpochs: normalizedLocalTrainingEpochs,
+      })
+      const runningState = await writeDeveloperHumanTeacherState(
+        chunk.sample.sampleName,
+        {
+          ...existingState,
+          totalAvailableTasks: chunk.sample.totalFlips,
+          activeRun: {
+            kind: 'training',
+            status: 'running',
+            stage: 'prepare_training_dataset',
+            stageIndex: 1,
+            stageCount: 5,
+            progressPercent: 2,
+            message: 'Preparing the 5-flip training pack',
+            sampleName: chunk.sample.sampleName,
+            chunkOffset: chunk.offset,
+            chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+            evaluationFlips: resolvedEvaluationFlips,
+            totalEpochs: normalizedLocalTrainingEpochs,
+            trainingThermalMode: normalizedLocalTrainingThermalMode,
+            benchmarkThermalMode: normalizedLocalBenchmarkThermalMode,
+            startedAt: new Date().toISOString(),
+            stageStartedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        }
+      )
+      baseState = runningState.state
       const comparisonPath = developerHumanTeacherComparisonPath(
         localAiStorage,
         chunk.sample.sampleName,
@@ -3812,6 +4651,7 @@ function createLocalAiManager({
           trainingModelPath: normalizedTrainingModelPath || undefined,
           localTrainingProfile: normalizedLocalTrainingProfile,
           localTrainingThermalMode: normalizedLocalTrainingThermalMode,
+          localBenchmarkThermalMode: normalizedLocalBenchmarkThermalMode,
           localTrainingEpochs: normalizedLocalTrainingEpochs,
           localTrainingBatchSize: normalizedLocalTrainingBatchSize,
           localTrainingLoraRank: normalizedLocalTrainingLoraRank,
@@ -3825,7 +4665,12 @@ function createLocalAiManager({
           comparisonPath,
           evaluationFlips: resolvedEvaluationFlips,
         },
+        onDeveloperHumanTeacherProgress: activeRunProgress,
       })
+      await flushDeveloperStateMutations(chunk.statePath)
+      const partialTrainingCompleted =
+        trainingResult?.status === 'stopped' &&
+        trainingResult?.partialTrainingCompleted === true
 
       if (trainingResult && trainingResult.ok) {
         trainedRows = mergeJsonlRowsByTaskId(trainedRows, pendingRows)
@@ -3844,11 +4689,25 @@ function createLocalAiManager({
           }),
           'trained'
         )
+      } else if (partialTrainingCompleted) {
+        trainedRows = mergeJsonlRowsByTaskId(trainedRows, pendingRows)
+        await writeJsonlRows(trainedPath, trainedRows)
+        pendingRows = []
+        await writeJsonlRows(pendingPath, pendingRows)
+        trainedTaskIds = uniqueStrings(
+          trainedRows.map((row) => row && row.task_id)
+        )
+        pendingTaskIds = []
+        trainingStatus = 'trained'
       } else {
         trainingStatus = 'failed'
       }
 
-      if (await localAiStorage.exists(comparisonPath)) {
+      if (
+        trainingResult &&
+        trainingResult.ok &&
+        (await localAiStorage.exists(comparisonPath))
+      ) {
         const comparisonResult = await localAiStorage.readJson(
           comparisonPath,
           null
@@ -3864,7 +4723,10 @@ function createLocalAiManager({
           }),
           trainingResult && trainingResult.ok ? 'evaluated' : 'result_available'
         )
-      } else if (trainingResult && trainingResult.ok) {
+      } else if (
+        (trainingResult && trainingResult.ok) ||
+        partialTrainingCompleted
+      ) {
         nextComparison = normalizeDeveloperComparisonState({
           ...nextComparison,
           status: 'trained_pending_evaluation',
@@ -3880,8 +4742,8 @@ function createLocalAiManager({
           chunk.sample.totalFlips
         )
       : chunk.offset
-    const chunkEntries = Array.isArray(existingState.chunks)
-      ? existingState.chunks.filter((entry) => entry.offset !== chunk.offset)
+    const chunkEntries = Array.isArray(baseState.chunks)
+      ? baseState.chunks.filter((entry) => entry.offset !== chunk.offset)
       : []
     chunkEntries.push({
       offset: chunk.offset,
@@ -3895,7 +4757,7 @@ function createLocalAiManager({
     })
 
     const nextState = {
-      ...existingState,
+      ...baseState,
       currentOffset: nextOffset,
       annotatedTaskIds: uniqueStrings(
         nextAnnotatedRows.map((row) => row && row.task_id)
@@ -3905,20 +4767,21 @@ function createLocalAiManager({
       activeTrainingModelPath:
         trainingStatus === 'trained'
           ? String(trainingResult?.modelPath || '').trim() || null
-          : existingState.activeTrainingModelPath || null,
+          : baseState.activeTrainingModelPath || null,
       activeTrainingBackend:
         trainingStatus === 'trained'
           ? String(trainingResult?.trainingBackend || '').trim() || null
-          : existingState.activeTrainingBackend || null,
+          : baseState.activeTrainingBackend || null,
       activeLocalTrainingProfile:
         trainingStatus === 'trained'
           ? String(trainingResult?.localTrainingProfile || '').trim() || null
-          : existingState.activeLocalTrainingProfile || null,
+          : baseState.activeLocalTrainingProfile || null,
       activeLocalTrainingThermalMode:
         trainingStatus === 'trained'
           ? String(trainingResult?.localTrainingThermalMode || '').trim() ||
             null
-          : existingState.activeLocalTrainingThermalMode || null,
+          : baseState.activeLocalTrainingThermalMode || null,
+      activeRun: null,
       chunks: chunkEntries,
       lastSavedAt: committedAt,
       comparison100: nextComparison,
@@ -3939,7 +4802,7 @@ function createLocalAiManager({
                 ? trainingResult
                 : null,
           }
-        : existingState.lastTraining,
+        : baseState.lastTraining,
     }
     const persistedState = await writeDeveloperHumanTeacherState(
       chunk.sample.sampleName,
@@ -3966,9 +4829,8 @@ function createLocalAiManager({
         invalidAnnotations: Number(importSummary.invalidAnnotations) || 0,
         duplicateAnnotations: Number(importSummary.duplicateAnnotations) || 0,
       },
-      training: trainingResult,
-      statePath: persistedState.statePath,
-      state: summarizeDeveloperHumanTeacherState(persistedState.state),
+      training: sanitizePublicDeveloperRunResult(trainingResult),
+      state: sanitizePublicDeveloperHumanTeacherState(persistedState.state),
     }
   }
 
@@ -4420,6 +5282,11 @@ function createLocalAiManager({
     const developerHumanTeacher = isDeveloperHumanTeacherTrainingRequest(next)
     const allowSystemPressureOverride =
       developerHumanTeacher && hasDeveloperTrainingSystemPressureOverride(next)
+    const onDeveloperHumanTeacherProgress =
+      developerHumanTeacher &&
+      typeof next.onDeveloperHumanTeacherProgress === 'function'
+        ? next.onDeveloperHumanTeacherProgress
+        : null
 
     applyRuntimeState(next)
 
@@ -4449,10 +5316,13 @@ function createLocalAiManager({
       }
     }
 
-    let result = await localAiSidecar.trainEpoch({
+    const sidecarPayload = {
       ...next,
       baseUrl: state.baseUrl,
-    })
+    }
+    delete sidecarPayload.onDeveloperHumanTeacherProgress
+
+    let result = await localAiSidecar.trainEpoch(sidecarPayload)
 
     updateSidecarState({
       reachable: result.status !== 'error',
@@ -4469,8 +5339,9 @@ function createLocalAiManager({
       typeof localAiDeveloperTrainingRunner.runEpoch === 'function'
     ) {
       result = await localAiDeveloperTrainingRunner.runEpoch({
-        ...next,
+        ...sidecarPayload,
         baseUrl: state.baseUrl,
+        onProgress: onDeveloperHumanTeacherProgress,
       })
 
       updateSidecarState({
@@ -5086,14 +5957,12 @@ function createLocalAiManager({
       annotationInstructions: {
         batchGoal: 'human_explanation_for_consensus_flip',
         requiredFields: [
-          'frameCaptions',
-          'optionASummary',
-          'optionBSummary',
           'textRequired',
           'sequenceMarkersPresent',
           'reportRequired',
           'finalAnswer',
           'whyAnswer',
+          'confidence',
         ],
       },
     }
@@ -5407,7 +6276,7 @@ function createLocalAiManager({
     const next = normalizeRuntimePayload(payload)
     const sampleName = normalizeDemoSampleName(next.sampleName)
     const sample = await loadHumanTeacherDemoSample(sampleName)
-    const {statePath, state: demoState} = await loadDemoHumanTeacherState(
+    const {state: demoState} = await loadDemoHumanTeacherState(
       sample.sampleName,
       sample.totalFlips
     )
@@ -5426,8 +6295,6 @@ function createLocalAiManager({
       samples: listHumanTeacherDemoSamples(),
       chunkSize: DEMO_HUMAN_TEACHER_BATCH_SIZE,
       offset: effectiveOffset,
-      outputDir: session.outputDir,
-      statePath,
       state: summarizeDemoHumanTeacherState(demoState, {
         currentOffset: effectiveOffset,
       }),
@@ -5450,8 +6317,10 @@ function createLocalAiManager({
     const normalizedSampleName =
       normalizeDeveloperHumanTeacherSampleName(sampleName)
     const sample = await loadDeveloperHumanTeacherSample(normalizedSampleName)
-    const {statePath, state: developerState} =
-      await loadDeveloperHumanTeacherState(sample.sampleName, sample.totalFlips)
+    const {state: developerState} = await loadDeveloperHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
     const effectiveOffset = clampDeveloperHumanTeacherOffset(
       typeof next.offset === 'number'
         ? next.offset
@@ -5470,34 +6339,336 @@ function createLocalAiManager({
       samples: listDeveloperHumanTeacherSamples(),
       chunkSize: DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
       offset: effectiveOffset,
-      outputDir: session.outputDir,
-      statePath,
-      state: summarizeDeveloperHumanTeacherState(developerState, {
+      state: sanitizePublicDeveloperHumanTeacherState(developerState, {
         currentOffset: effectiveOffset,
       }),
       summary: session.summary,
       workspace: session.workspace,
-      comparison100: {
-        status: String(
-          developerState.comparison100?.status || 'not_loaded'
-        ).trim(),
-        benchmarkFlips: developerState.comparison100?.benchmarkFlips ?? null,
-        holdoutPath: developerState.comparison100?.holdoutPath || null,
-        lastEvaluatedAt: developerState.comparison100?.lastEvaluatedAt || null,
-        lastResultPath: developerState.comparison100?.lastResultPath || null,
-        accuracy: developerState.comparison100?.accuracy ?? null,
-        correct: developerState.comparison100?.correct ?? null,
-        totalFlips: developerState.comparison100?.totalFlips ?? null,
-        bestAccuracy: developerState.comparison100?.bestAccuracy ?? null,
-        history: Array.isArray(developerState.comparison100?.history)
-          ? developerState.comparison100.history
-          : [],
-        expectedPath: developerHumanTeacherComparisonPath(
-          localAiStorage,
-          sample.sampleName,
-          developerState.comparison100?.benchmarkFlips
-        ),
-      },
+      comparison100: sanitizePublicDeveloperComparisonState(
+        developerState.comparison100
+      ),
+    }
+  }
+
+  async function loadHumanTeacherDeveloperSessionState(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    assertDeveloperHumanTeacherSessionAllowed(
+      next.currentPeriod,
+      'session status'
+    )
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const normalizedSampleName =
+      normalizeDeveloperHumanTeacherSampleName(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(normalizedSampleName)
+    const {state: developerState} = await loadDeveloperHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const effectiveOffset = clampDeveloperHumanTeacherOffset(
+      typeof next.offset === 'number'
+        ? next.offset
+        : developerState.currentOffset,
+      sample.totalFlips
+    )
+
+    return {
+      developer: true,
+      sampleName: sample.sampleName,
+      offset: effectiveOffset,
+      state: sanitizePublicDeveloperHumanTeacherState(developerState, {
+        currentOffset: effectiveOffset,
+      }),
+    }
+  }
+
+  async function stopHumanTeacherDeveloperRun(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    assertDeveloperHumanTeacherSessionAllowed(
+      next.currentPeriod,
+      'stop local training'
+    )
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const normalizedSampleName =
+      normalizeDeveloperHumanTeacherSampleName(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(normalizedSampleName)
+    const {state: developerState} = await loadDeveloperHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const activeRun = normalizeDeveloperActiveRunState(developerState.activeRun)
+    const stopMode = normalizeDeveloperRunStopMode(next.stopMode)
+
+    if (!activeRun || activeRun.status !== 'running') {
+      return {
+        developer: true,
+        stopped: false,
+        state: sanitizePublicDeveloperHumanTeacherState(developerState),
+      }
+    }
+
+    if (
+      !localAiDeveloperTrainingRunner ||
+      typeof localAiDeveloperTrainingRunner.stopCurrentRun !== 'function'
+    ) {
+      return {
+        developer: true,
+        stopped: false,
+        error: 'stop_not_supported',
+        lastError: 'This local training backend does not expose stop control.',
+        state: sanitizePublicDeveloperHumanTeacherState(developerState),
+      }
+    }
+
+    const stopResult = await localAiDeveloperTrainingRunner.stopCurrentRun({
+      sampleName: sample.sampleName,
+      kind: activeRun.kind,
+      stopMode,
+    })
+
+    if (stopResult?.stopped !== true) {
+      return {
+        developer: true,
+        stopped: false,
+        state: sanitizePublicDeveloperHumanTeacherState(developerState),
+      }
+    }
+
+    let stoppingMessage = 'Cancelling this local run now…'
+
+    if (stopMode === 'after_unit') {
+      const benchmarkStage =
+        activeRun.kind === 'comparison' ||
+        String(activeRun.stage || '')
+          .trim()
+          .startsWith('benchmark_')
+
+      stoppingMessage = benchmarkStage
+        ? 'Stopping after the current benchmark flip…'
+        : 'Stopping after the current training step…'
+    }
+
+    const stoppingState = await writeDeveloperHumanTeacherState(
+      sample.sampleName,
+      {
+        ...developerState,
+        totalAvailableTasks: sample.totalFlips,
+        activeRun: {
+          ...activeRun,
+          status: 'stopping',
+          stopMode,
+          message: stoppingMessage,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    )
+
+    return {
+      developer: true,
+      stopped: true,
+      stop: stopResult,
+      state: sanitizePublicDeveloperHumanTeacherState(stoppingState.state),
+    }
+  }
+
+  async function updateHumanTeacherDeveloperRunControls(payload) {
+    await hydrate()
+
+    const next = sanitizeDeveloperHumanTeacherTrainingPayload(
+      normalizeRuntimePayload(payload)
+    )
+    assertDeveloperHumanTeacherSessionAllowed(
+      next.currentPeriod,
+      'update local run controls'
+    )
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const normalizedSampleName =
+      normalizeDeveloperHumanTeacherSampleName(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(normalizedSampleName)
+    const {state: developerState} = await loadDeveloperHumanTeacherState(
+      sample.sampleName,
+      sample.totalFlips
+    )
+    const activeRun = normalizeDeveloperActiveRunState(developerState.activeRun)
+
+    if (!activeRun || activeRun.status !== 'running') {
+      return {
+        developer: true,
+        updated: false,
+        error: 'run_not_active',
+        state: sanitizePublicDeveloperHumanTeacherState(developerState),
+      }
+    }
+
+    if (
+      !localAiDeveloperTrainingRunner ||
+      typeof localAiDeveloperTrainingRunner.updateCurrentRunControls !==
+        'function'
+    ) {
+      return {
+        developer: true,
+        updated: false,
+        error: 'run_control_not_supported',
+        lastError:
+          'This local training backend does not expose live run controls.',
+        state: sanitizePublicDeveloperHumanTeacherState(developerState),
+      }
+    }
+
+    const updateResult =
+      await localAiDeveloperTrainingRunner.updateCurrentRunControls({
+        localTrainingThermalMode:
+          next.localTrainingThermalMode || activeRun.trainingThermalMode,
+        localBenchmarkThermalMode:
+          next.localBenchmarkThermalMode || activeRun.benchmarkThermalMode,
+      })
+
+    if (updateResult?.updated !== true) {
+      return {
+        developer: true,
+        updated: false,
+        state: sanitizePublicDeveloperHumanTeacherState(developerState),
+      }
+    }
+
+    const updatedState = await writeDeveloperHumanTeacherState(
+      sample.sampleName,
+      {
+        ...developerState,
+        totalAvailableTasks: sample.totalFlips,
+        activeRun: {
+          ...activeRun,
+          trainingThermalMode:
+            updateResult.trainingThermalMode || activeRun.trainingThermalMode,
+          benchmarkThermalMode:
+            updateResult.benchmarkThermalMode || activeRun.benchmarkThermalMode,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    )
+
+    return {
+      developer: true,
+      updated: true,
+      controls: updateResult,
+      state: sanitizePublicDeveloperHumanTeacherState(updatedState.state),
+    }
+  }
+
+  async function loadHumanTeacherDeveloperComparisonExamples(payload) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const parsedMaxExamples = Number.parseInt(next.maxExamples, 10)
+    const maxExamples = Number.isFinite(parsedMaxExamples)
+      ? Math.min(8, Math.max(1, parsedMaxExamples))
+      : 6
+    assertDeveloperHumanTeacherSessionAllowed(
+      next.currentPeriod,
+      'comparison examples'
+    )
+    const sampleName = normalizeDemoSampleName(
+      next.sampleName || DEVELOPER_HUMAN_TEACHER_DEFAULT_SAMPLE
+    )
+    const normalizedSampleName =
+      normalizeDeveloperHumanTeacherSampleName(sampleName)
+    const sample = await loadDeveloperHumanTeacherSample(normalizedSampleName)
+    const {statePath, state: developerState} =
+      await loadDeveloperHumanTeacherState(sample.sampleName, sample.totalFlips)
+    const comparison = normalizeDeveloperComparisonState(
+      developerState.comparison100
+    )
+    const benchmarkFlips = normalizeDeveloperLocalBenchmarkFlips(
+      next.evaluationFlips || next.benchmarkFlips
+    )
+    const historyForBenchmark = comparison.history.filter(
+      (entry) => Number.parseInt(entry?.benchmarkFlips, 10) === benchmarkFlips
+    )
+    const latestEntry = historyForBenchmark[0] || null
+    const previousEntry = historyForBenchmark[1] || null
+    const developerDir = path.dirname(statePath)
+
+    if (!latestEntry || !latestEntry.resultPath) {
+      return {
+        developer: true,
+        sampleName: sample.sampleName,
+        benchmarkFlips,
+        current: null,
+        previous: null,
+        examples: [],
+      }
+    }
+
+    const currentArtifact = await loadDeveloperComparisonArtifact(
+      developerDir,
+      latestEntry
+    )
+    const previousArtifact = previousEntry
+      ? await loadDeveloperComparisonArtifact(developerDir, previousEntry)
+      : null
+    const examples = currentArtifact?.hasDetailedResults
+      ? selectDeveloperComparisonExamples({
+          currentArtifact,
+          previousArtifact,
+          maxExamples,
+        })
+      : []
+
+    return {
+      developer: true,
+      sampleName: sample.sampleName,
+      benchmarkFlips,
+      current: currentArtifact
+        ? {
+            evaluatedAt:
+              currentArtifact.summary.evaluatedAt ||
+              currentArtifact.entry.evaluatedAt,
+            accuracy:
+              currentArtifact.summary.accuracy !== null
+                ? currentArtifact.summary.accuracy
+                : currentArtifact.entry.accuracy,
+            correct:
+              currentArtifact.summary.correct !== null
+                ? currentArtifact.summary.correct
+                : currentArtifact.entry.correct,
+            totalFlips:
+              currentArtifact.summary.totalFlips !== null
+                ? currentArtifact.summary.totalFlips
+                : currentArtifact.entry.totalFlips,
+            deltaAccuracy: currentArtifact.summary.deltaAccuracy,
+          }
+        : null,
+      previous: previousArtifact
+        ? {
+            evaluatedAt:
+              previousArtifact.summary.evaluatedAt ||
+              previousArtifact.entry.evaluatedAt,
+            accuracy:
+              previousArtifact.summary.accuracy !== null
+                ? previousArtifact.summary.accuracy
+                : previousArtifact.entry.accuracy,
+            correct:
+              previousArtifact.summary.correct !== null
+                ? previousArtifact.summary.correct
+                : previousArtifact.entry.correct,
+            totalFlips:
+              previousArtifact.summary.totalFlips !== null
+                ? previousArtifact.summary.totalFlips
+                : previousArtifact.entry.totalFlips,
+            deltaAccuracy: previousArtifact.summary.deltaAccuracy,
+          }
+        : null,
+      examples,
+      hasDetailedResults: Boolean(currentArtifact?.hasDetailedResults),
     }
   }
 
@@ -5553,6 +6724,14 @@ function createLocalAiManager({
     const developerPrompt = String(
       next.developerHumanTeacherSystemPrompt || ''
     ).trim()
+    const runtimeModel =
+      next.runtimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+        ? EXTERNAL_DEVELOPER_RUNTIME_MODEL
+        : String(next.model || '').trim() || null
+    const runtimeVisionModel =
+      next.runtimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+        ? EXTERNAL_DEVELOPER_RUNTIME_VISION_MODEL
+        : String(next.visionModel || '').trim() || null
 
     await localAiStorage.ensureDir(outputDir)
     await writeJsonlRows(annotationsPath, annotatedRows)
@@ -5580,14 +6759,11 @@ function createLocalAiManager({
         runtimeBackend: String(next.runtimeBackend || '').trim() || null,
         runtimeType: String(next.runtimeType || '').trim() || null,
         baseUrl: String(next.baseUrl || '').trim() || null,
-        model: String(next.model || '').trim() || null,
-        visionModel: String(next.visionModel || '').trim() || null,
+        model: runtimeModel,
+        visionModel: runtimeVisionModel,
       },
       training: {
         recommendedModel: EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
-        strongerFallbackModel:
-          EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
-        safeFallbackModel: EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
         humanTeacherSystemPrompt: developerPrompt || null,
       },
       benchmark: {
@@ -5648,10 +6824,6 @@ function createLocalAiManager({
       pendingCount: pendingRows.length,
       trainedCount: trainedRows.length,
       recommendedTrainingModel: EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
-      strongerFallbackTrainingModel:
-        EXTERNAL_DEVELOPER_STRONG_FALLBACK_TRAINING_MODEL,
-      safeFallbackTrainingModel:
-        EXTERNAL_DEVELOPER_SAFE_FALLBACK_TRAINING_MODEL,
       recommendedBenchmarkFlips: EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE,
       supportsLocalTraining:
         summarizeDeveloperHumanTeacherState(developerState)
@@ -6164,7 +7336,6 @@ function createLocalAiManager({
               simulated: true,
             }
           : null,
-      statePath: persistedState.statePath,
       state: summarizeDemoHumanTeacherState(persistedState.state),
     }
   }
@@ -6235,6 +7406,10 @@ function createLocalAiManager({
         String(next.localTrainingThermalMode || '')
           .trim()
           .toLowerCase() || null,
+      localBenchmarkThermalMode:
+        String(next.localBenchmarkThermalMode || '')
+          .trim()
+          .toLowerCase() || null,
       localTrainingEpochs:
         typeof next.localTrainingEpochs === 'number'
           ? next.localTrainingEpochs
@@ -6272,12 +7447,15 @@ function createLocalAiManager({
       next.evaluationFlips
     )
 
-    if (
-      existingState.trainedTaskIds.length === 0 &&
-      existingState.pendingTrainingTaskIds.length === 0
-    ) {
+    if (existingState.trainedTaskIds.length === 0) {
+      if (existingState.pendingTrainingTaskIds.length > 0) {
+        throw new Error(
+          `Train the saved 5-flip chunk first before running the ${evaluationFlips}-flip comparison`
+        )
+      }
+
       throw new Error(
-        `Annotate and train at least one 5-flip chunk before running the ${evaluationFlips}-flip comparison`
+        `Train at least one 5-flip chunk before running the ${evaluationFlips}-flip comparison`
       )
     }
 
@@ -6304,6 +7482,25 @@ function createLocalAiManager({
       {
         ...existingState,
         totalAvailableTasks: sample.totalFlips,
+        activeRun: {
+          kind: 'comparison',
+          status: 'running',
+          stage: 'prepare_holdout',
+          stageIndex: 1,
+          stageCount: 3,
+          progressPercent: 5,
+          message: 'Preparing the unseen benchmark flips',
+          sampleName: sample.sampleName,
+          evaluationFlips,
+          trainingThermalMode: DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+          benchmarkThermalMode: normalizeDeveloperTrainingThermalMode(
+            next.localBenchmarkThermalMode ||
+              DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+          ),
+          startedAt: new Date().toISOString(),
+          stageStartedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
         comparison100: normalizeDeveloperComparisonState({
           ...existingState.comparison100,
           status: 'running',
@@ -6321,14 +7518,27 @@ function createLocalAiManager({
         comparisonOnly: true,
         compareOnly: true,
         evaluationFlips,
+        localBenchmarkThermalMode: normalizeDeveloperTrainingThermalMode(
+          next.localBenchmarkThermalMode ||
+            DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+        ),
         annotatedAnnotationsPath: annotatedPath,
         pendingAnnotationsPath: pendingPath,
         trainedAnnotationsPath: trainedPath,
         developerStatePath: statePath,
         comparisonPath,
       },
+      onDeveloperHumanTeacherProgress: createDeveloperActiveRunProgressHandler({
+        statePath,
+        kind: 'comparison',
+        sampleName: sample.sampleName,
+        evaluationFlips,
+      }),
     })
+    await flushDeveloperStateMutations(statePath)
 
+    const comparisonMissingMetricsMessage =
+      'The local comparison finished without benchmark metrics.'
     let nextComparison = normalizeDeveloperComparisonState(
       runningState.state.comparison100
     )
@@ -6368,43 +7578,64 @@ function createLocalAiManager({
       })
     }
 
+    const comparisonCompletedWithMetrics =
+      comparisonResult?.ok === true &&
+      hasDeveloperComparisonMetrics(nextComparison)
+    const publicComparisonResult =
+      comparisonResult?.ok === true && !comparisonCompletedWithMetrics
+        ? {
+            ...comparisonResult,
+            ok: false,
+            status: 'failed',
+            failureReason: comparisonMissingMetricsMessage,
+            lastError: comparisonMissingMetricsMessage,
+            error: 'comparison_metrics_missing',
+          }
+        : comparisonResult
+
+    if (!comparisonCompletedWithMetrics) {
+      nextComparison = normalizeDeveloperComparisonState({
+        ...nextComparison,
+        status: 'failed',
+        benchmarkFlips: evaluationFlips,
+        lastResultPath: nextComparison.lastResultPath || comparisonPath,
+      })
+    }
+
     const persistedState = await writeDeveloperHumanTeacherState(
       sample.sampleName,
       {
         ...existingState,
         totalAvailableTasks: sample.totalFlips,
-        activeTrainingModelPath:
-          comparisonResult?.ok === true
-            ? String(
-                comparisonResult?.modelPath ||
-                  existingState.activeTrainingModelPath ||
-                  ''
-              ).trim() || null
-            : existingState.activeTrainingModelPath || null,
-        activeTrainingBackend:
-          comparisonResult?.ok === true
-            ? String(
-                comparisonResult?.trainingBackend ||
-                  existingState.activeTrainingBackend ||
-                  ''
-              ).trim() || null
-            : existingState.activeTrainingBackend || null,
-        activeLocalTrainingProfile:
-          comparisonResult?.ok === true
-            ? String(
-                comparisonResult?.localTrainingProfile ||
-                  existingState.activeLocalTrainingProfile ||
-                  ''
-              ).trim() || null
-            : existingState.activeLocalTrainingProfile || null,
-        activeLocalTrainingThermalMode:
-          comparisonResult?.ok === true
-            ? String(
-                comparisonResult?.localTrainingThermalMode ||
-                  existingState.activeLocalTrainingThermalMode ||
-                  ''
-              ).trim() || null
-            : existingState.activeLocalTrainingThermalMode || null,
+        activeTrainingModelPath: comparisonCompletedWithMetrics
+          ? String(
+              publicComparisonResult?.modelPath ||
+                existingState.activeTrainingModelPath ||
+                ''
+            ).trim() || null
+          : existingState.activeTrainingModelPath || null,
+        activeTrainingBackend: comparisonCompletedWithMetrics
+          ? String(
+              publicComparisonResult?.trainingBackend ||
+                existingState.activeTrainingBackend ||
+                ''
+            ).trim() || null
+          : existingState.activeTrainingBackend || null,
+        activeLocalTrainingProfile: comparisonCompletedWithMetrics
+          ? String(
+              publicComparisonResult?.localTrainingProfile ||
+                existingState.activeLocalTrainingProfile ||
+                ''
+            ).trim() || null
+          : existingState.activeLocalTrainingProfile || null,
+        activeLocalTrainingThermalMode: comparisonCompletedWithMetrics
+          ? String(
+              publicComparisonResult?.localTrainingThermalMode ||
+                existingState.activeLocalTrainingThermalMode ||
+                ''
+            ).trim() || null
+          : existingState.activeLocalTrainingThermalMode || null,
+        activeRun: null,
         comparison100: nextComparison,
       }
     )
@@ -6412,12 +7643,11 @@ function createLocalAiManager({
     return {
       developer: true,
       sampleName: sample.sampleName,
-      comparison100: {
-        expectedPath: comparisonPath,
-      },
-      statePath: persistedState.statePath,
-      state: summarizeDeveloperHumanTeacherState(persistedState.state),
-      comparison: comparisonResult,
+      comparison100: sanitizePublicDeveloperComparisonState(
+        persistedState.state.comparison100
+      ),
+      state: sanitizePublicDeveloperHumanTeacherState(persistedState.state),
+      comparison: sanitizePublicDeveloperRunResult(publicComparisonResult),
     }
   }
 
@@ -6588,6 +7818,10 @@ function createLocalAiManager({
     loadHumanTeacherDemoWorkspace,
     loadHumanTeacherDemoTask,
     loadHumanTeacherDeveloperSession,
+    loadHumanTeacherDeveloperSessionState,
+    stopHumanTeacherDeveloperRun,
+    updateHumanTeacherDeveloperRunControls,
+    loadHumanTeacherDeveloperComparisonExamples,
     loadHumanTeacherDeveloperTask,
     exportHumanTeacherDeveloperBundle,
     updateTrainingCandidatePackageReview,
@@ -6606,4 +7840,7 @@ function createLocalAiManager({
 module.exports = {
   createLocalAiManager,
   defaultCaptureIndex,
+  getTelemetryTrainingReadiness,
+  parseIoregGpuOutput,
+  parsePmsetBatteryOutput,
 }

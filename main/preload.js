@@ -43,6 +43,34 @@ const persistenceStoreNames = {
   validationNotification: 'validationNotification',
 }
 
+const HUMAN_TEACHER_MANAGED_WORKSPACE_LABEL = 'managed local workspace'
+const HUMAN_TEACHER_MANAGED_BUNDLE_LABEL = 'managed local bundle'
+const HUMAN_TEACHER_RESULT_PATH_KEYS = new Set([
+  'packagePath',
+  'payloadPath',
+  'outputDir',
+  'taskManifestPath',
+  'annotationsPath',
+  'manifestPath',
+  'templatePath',
+  'filledPath',
+  'metadataPath',
+  'normalizedPath',
+  'summaryPath',
+  'readmePath',
+  'pendingPath',
+  'trainedPath',
+  'sourceAnnotationsPath',
+  'sourcePath',
+  'statePath',
+  'comparisonPath',
+  'holdoutPath',
+  'adapterPath',
+  'trainingSummaryPath',
+  'preparedDatasetPath',
+  'preparedManifestPath',
+])
+
 function isPlainObject(value) {
   if (!value || Object.prototype.toString.call(value) !== '[object Object]') {
     return false
@@ -529,6 +557,147 @@ function sanitizeOptionalBoundedString(value, maxLength = 4096) {
   return next || undefined
 }
 
+function sanitizePathDisplayName(value, fallback = undefined, maxLength = 256) {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+
+  const normalized = value
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const leaf = normalized[normalized.length - 1]
+
+  if (!leaf) {
+    return fallback
+  }
+
+  return leaf.slice(0, maxLength)
+}
+
+function sanitizeHumanTeacherExportResult(value) {
+  const source = isPlainObject(value) ? value : {}
+
+  return {
+    ...source,
+    packagePath: sanitizePathDisplayName(source.packagePath),
+    outputDir: sanitizePathDisplayName(
+      source.outputDir,
+      HUMAN_TEACHER_MANAGED_WORKSPACE_LABEL
+    ),
+    export: isPlainObject(source.export)
+      ? {
+          ...source.export,
+          outputDir: sanitizePathDisplayName(
+            source.export.outputDir,
+            HUMAN_TEACHER_MANAGED_WORKSPACE_LABEL
+          ),
+          manifestPath: sanitizePathDisplayName(source.export.manifestPath),
+          templatePath: sanitizePathDisplayName(source.export.templatePath),
+          filledPath: sanitizePathDisplayName(source.export.filledPath),
+          metadataPath: sanitizePathDisplayName(source.export.metadataPath),
+        }
+      : source.export,
+  }
+}
+
+function sanitizeHumanTeacherWorkspaceResult(value) {
+  const source = isPlainObject(value) ? value : {}
+  const workspace = isPlainObject(source.workspace) ? source.workspace : null
+
+  return {
+    ...source,
+    packagePath: sanitizePathDisplayName(source.packagePath),
+    outputDir: sanitizePathDisplayName(
+      source.outputDir,
+      HUMAN_TEACHER_MANAGED_WORKSPACE_LABEL
+    ),
+    workspace: workspace
+      ? {
+          ...workspace,
+          outputDir: sanitizePathDisplayName(
+            workspace.outputDir,
+            HUMAN_TEACHER_MANAGED_WORKSPACE_LABEL
+          ),
+          taskManifestPath: sanitizePathDisplayName(workspace.taskManifestPath),
+          annotationsPath: sanitizePathDisplayName(workspace.annotationsPath),
+        }
+      : source.workspace,
+  }
+}
+
+function sanitizeHumanTeacherImportResult(value) {
+  const source = isPlainObject(value) ? value : {}
+
+  return {
+    ...source,
+    packagePath: sanitizePathDisplayName(source.packagePath),
+    outputDir: sanitizePathDisplayName(
+      source.outputDir,
+      HUMAN_TEACHER_MANAGED_WORKSPACE_LABEL
+    ),
+    import: isPlainObject(source.import)
+      ? {
+          ...source.import,
+          normalizedPath: sanitizePathDisplayName(source.import.normalizedPath),
+          summaryPath: sanitizePathDisplayName(source.import.summaryPath),
+          annotationsPath: sanitizePathDisplayName(
+            source.import.annotationsPath
+          ),
+        }
+      : source.import,
+  }
+}
+
+function sanitizeHumanTeacherDeveloperBundleResult(value) {
+  const source = isPlainObject(value) ? value : {}
+
+  return {
+    ...source,
+    outputDir: sanitizePathDisplayName(
+      source.outputDir,
+      HUMAN_TEACHER_MANAGED_BUNDLE_LABEL
+    ),
+    manifestPath: sanitizePathDisplayName(source.manifestPath),
+    readmePath: sanitizePathDisplayName(source.readmePath),
+    annotationsPath: sanitizePathDisplayName(source.annotationsPath),
+    pendingPath: sanitizePathDisplayName(source.pendingPath),
+    trainedPath: sanitizePathDisplayName(source.trainedPath),
+  }
+}
+
+function sanitizeHumanTeacherBridgeResult(value, parentKey = '') {
+  if (Array.isArray(value)) {
+    return value.map((entry) =>
+      sanitizeHumanTeacherBridgeResult(entry, parentKey)
+    )
+  }
+
+  if (!isPlainObject(value)) {
+    if (
+      typeof value === 'string' &&
+      HUMAN_TEACHER_RESULT_PATH_KEYS.has(parentKey)
+    ) {
+      if (parentKey === 'outputDir') {
+        return sanitizePathDisplayName(
+          value,
+          HUMAN_TEACHER_MANAGED_WORKSPACE_LABEL
+        )
+      }
+
+      return sanitizePathDisplayName(value)
+    }
+
+    return value
+  }
+
+  return Object.entries(value).reduce((result, [key, entryValue]) => {
+    result[key] = sanitizeHumanTeacherBridgeResult(entryValue, key)
+    return result
+  }, {})
+}
+
 function sanitizeBoolean(value, fallback = false) {
   return typeof value === 'boolean' ? value : fallback
 }
@@ -601,6 +770,24 @@ function sanitizeLocalAiGenerationOptions(value) {
   }
 }
 
+function sanitizeLocalAiResponseFormat(value) {
+  if (typeof value === 'string') {
+    return sanitizeOptionalBoundedString(value, 32)
+  }
+
+  if (!isPlainObject(value)) {
+    return null
+  }
+
+  return sanitizeBoundedCloneable(value, {
+    maxDepth: 6,
+    maxArrayLength: 64,
+    maxObjectKeys: 64,
+    maxStringLength: 512,
+    maxDataUrlLength: 2048,
+  })
+}
+
 function sanitizeLocalAiRuntimePayload(payload = {}) {
   const source = isPlainObject(payload) ? payload : {}
   const rawInput = source.input
@@ -625,7 +812,7 @@ function sanitizeLocalAiRuntimePayload(payload = {}) {
     endpoint: sanitizeOptionalBoundedString(source.endpoint, 2048),
     baseUrl: sanitizeOptionalBoundedString(source.baseUrl, 2048),
     timeoutMs: sanitizeInteger(source.timeoutMs, 15000, 1000, 120000),
-    responseFormat: sanitizeOptionalBoundedString(source.responseFormat, 32),
+    responseFormat: sanitizeLocalAiResponseFormat(source.responseFormat),
     prompt: sanitizeOptionalBoundedString(source.prompt, 10000),
     message: sanitizeOptionalBoundedString(source.message, 10000),
     messages: sanitizeLocalAiMessages(source.messages),
@@ -650,11 +837,16 @@ function sanitizeLocalAiEpochPayload(payload = {}) {
     epoch: sanitizeInteger(source.epoch, null, 0),
     currentEpoch: sanitizeInteger(source.currentEpoch, null, 0),
     currentPeriod: sanitizeOptionalBoundedString(source.currentPeriod, 64),
+    stopMode: sanitizeOptionalBoundedString(source.stopMode, 32),
     offset: sanitizeInteger(source.offset, 0, 0),
     sampleName: sanitizeOptionalBoundedString(source.sampleName, 128),
     batchSize: sanitizeInteger(source.batchSize, null, 1, 50),
     localTrainingThermalMode: sanitizeOptionalBoundedString(
       source.localTrainingThermalMode,
+      32
+    ),
+    localBenchmarkThermalMode: sanitizeOptionalBoundedString(
+      source.localBenchmarkThermalMode,
       32
     ),
     localTrainingEpochs: sanitizeInteger(
@@ -1190,7 +1382,7 @@ const localAiBridge = Object.freeze({
     invokeCloneable(
       'localAi.loadHumanTeacherPackage',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   buildTrainingCandidatePackage: (payload) =>
     invokeCloneable(
       'localAi.buildTrainingCandidatePackage',
@@ -1200,21 +1392,45 @@ const localAiBridge = Object.freeze({
     invokeCloneable(
       'localAi.buildHumanTeacherPackage',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   loadHumanTeacherDemoWorkspace: (payload) =>
     invokeCloneable(
       'localAi.loadHumanTeacherDemoWorkspace',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   loadHumanTeacherDeveloperSession: (payload) =>
     invokeCloneable(
       'localAi.loadHumanTeacherDeveloperSession',
+      sanitizeLocalAiEpochPayload(payload)
+    ).then(sanitizeHumanTeacherBridgeResult),
+  loadHumanTeacherDeveloperSessionState: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherDeveloperSessionState',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  stopHumanTeacherDeveloperRun: (payload) =>
+    invokeCloneable(
+      'localAi.stopHumanTeacherDeveloperRun',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  updateHumanTeacherDeveloperRunControls: (payload) =>
+    invokeCloneable(
+      'localAi.updateHumanTeacherDeveloperRunControls',
+      sanitizeLocalAiEpochPayload(payload)
+    ),
+  loadHumanTeacherDeveloperComparisonExamples: (payload) =>
+    invokeCloneable(
+      'localAi.loadHumanTeacherDeveloperComparisonExamples',
       sanitizeLocalAiEpochPayload(payload)
     ),
   exportHumanTeacherDeveloperBundle: (payload) =>
     invokeCloneable(
       'localAi.exportHumanTeacherDeveloperBundle',
       sanitizeLocalAiEpochPayload(payload)
+    ).then((result) =>
+      sanitizeHumanTeacherBridgeResult(
+        sanitizeHumanTeacherDeveloperBundleResult(result)
+      )
     ),
   loadHumanTeacherDemoTask: (payload) =>
     invokeCloneable(
@@ -1230,6 +1446,10 @@ const localAiBridge = Object.freeze({
     invokeCloneable(
       'localAi.loadHumanTeacherAnnotationWorkspace',
       sanitizeLocalAiEpochPayload(payload)
+    ).then((result) =>
+      sanitizeHumanTeacherBridgeResult(
+        sanitizeHumanTeacherWorkspaceResult(result)
+      )
     ),
   loadHumanTeacherAnnotationTask: (payload) =>
     invokeCloneable(
@@ -1240,41 +1460,45 @@ const localAiBridge = Object.freeze({
     invokeCloneable(
       'localAi.exportHumanTeacherTasks',
       sanitizeLocalAiEpochPayload(payload)
+    ).then((result) =>
+      sanitizeHumanTeacherBridgeResult(sanitizeHumanTeacherExportResult(result))
     ),
   saveHumanTeacherAnnotationDraft: (payload) =>
     invokeCloneable(
       'localAi.saveHumanTeacherAnnotationDraft',
       sanitizeLocalAiAnnotationPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   saveHumanTeacherDemoDraft: (payload) =>
     invokeCloneable(
       'localAi.saveHumanTeacherDemoDraft',
       sanitizeLocalAiAnnotationPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   saveHumanTeacherDeveloperDraft: (payload) =>
     invokeCloneable(
       'localAi.saveHumanTeacherDeveloperDraft',
       sanitizeLocalAiAnnotationPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   finalizeHumanTeacherDemoChunk: (payload) =>
     invokeCloneable(
       'localAi.finalizeHumanTeacherDemoChunk',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   finalizeHumanTeacherDeveloperChunk: (payload) =>
     invokeCloneable(
       'localAi.finalizeHumanTeacherDeveloperChunk',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   runHumanTeacherDeveloperComparison: (payload) =>
     invokeCloneable(
       'localAi.runHumanTeacherDeveloperComparison',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   importHumanTeacherAnnotations: (payload) =>
     invokeCloneable(
       'localAi.importHumanTeacherAnnotations',
       sanitizeLocalAiEpochPayload(payload)
+    ).then((result) =>
+      sanitizeHumanTeacherBridgeResult(sanitizeHumanTeacherImportResult(result))
     ),
   updateTrainingCandidatePackageReview: (payload) =>
     invokeCloneable('localAi.updateTrainingCandidatePackageReview', {
@@ -1292,7 +1516,7 @@ const localAiBridge = Object.freeze({
         payload && payload.reviewStatus,
         64
       ),
-    }),
+    }).then(sanitizeHumanTeacherBridgeResult),
   buildBundle: (epoch) =>
     invokeCloneable('localAi.buildBundle', sanitizeInteger(epoch, null, 0)),
   importBundle: (filePath) =>

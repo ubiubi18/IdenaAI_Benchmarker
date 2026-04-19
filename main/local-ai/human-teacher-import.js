@@ -65,12 +65,6 @@ function normalizeCaptions(value) {
   return captions
 }
 
-function countFilledEntries(value) {
-  return Array.isArray(value)
-    ? value.reduce((count, item) => (trimText(item) ? count + 1 : count), 0)
-    : 0
-}
-
 function normalizeOptionalEpoch(value) {
   if (value === null || typeof value === 'undefined' || value === '') {
     return null
@@ -328,9 +322,6 @@ function validateAnnotationTaskBinding(taskRow, annotationRow) {
 }
 
 function assertCompleteHumanTeacherAnnotation({
-  frameCaptions,
-  optionASummary,
-  optionBSummary,
   textRequired,
   sequenceMarkersPresent,
   reportRequired,
@@ -338,18 +329,6 @@ function assertCompleteHumanTeacherAnnotation({
   whyAnswer,
   confidence,
 }) {
-  if (countFilledEntries(frameCaptions) < 4) {
-    throw new Error('frame_captions must contain 4 non-empty entries')
-  }
-
-  if (!optionASummary) {
-    throw new Error('option_a_summary is required')
-  }
-
-  if (!optionBSummary) {
-    throw new Error('option_b_summary is required')
-  }
-
   if (textRequired === null) {
     throw new Error('text_required is required')
   }
@@ -391,9 +370,6 @@ function normalizeAnnotation(taskRow, annotationRow) {
   const finalAnswer = validateFinalAnswer(annotationRow.final_answer)
 
   assertCompleteHumanTeacherAnnotation({
-    frameCaptions,
-    optionASummary,
-    optionBSummary,
     textRequired,
     sequenceMarkersPresent,
     reportRequired,

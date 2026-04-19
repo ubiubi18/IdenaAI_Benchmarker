@@ -6,6 +6,7 @@ import {
   Box,
   Checkbox,
   Flex,
+  HStack,
   Image,
   Modal,
   ModalBody,
@@ -13,6 +14,11 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Popover,
+  PopoverArrow,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
   Progress,
   SimpleGrid,
   Stack,
@@ -23,7 +29,11 @@ import {useRouter} from 'next/router'
 import {useTranslation} from 'react-i18next'
 import SettingsLayout from '../../screens/settings/layout'
 import {SettingsSection} from '../../screens/settings/components'
-import {PrimaryButton, SecondaryButton} from '../../shared/components/button'
+import {
+  InfoButton,
+  PrimaryButton,
+  SecondaryButton,
+} from '../../shared/components/button'
 import {rewardWithConfetti} from '../../shared/utils/onboarding'
 import {
   useSettingsDispatch,
@@ -38,6 +48,7 @@ import {
   DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
   DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
@@ -50,11 +61,13 @@ import {
   normalizeDeveloperLocalTrainingEpochs,
   normalizeDeveloperLocalTrainingLoraRank,
   normalizeDeveloperLocalBenchmarkSize,
+  normalizeDeveloperLocalBenchmarkThermalMode,
   normalizeDeveloperLocalTrainingProfile,
   normalizeDeveloperLocalTrainingThermalMode,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeModel,
   resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
+  resolveDeveloperLocalBenchmarkThermalModeCooldowns,
   resolveDeveloperLocalTrainingThermalModeCooldowns,
 } from '../../shared/utils/local-ai-settings'
 import {
@@ -71,6 +84,77 @@ const AUTO_SAVE_DELAY_MS = 2500
 const PANEL_REFERENCE_CODES = ['A', 'B', 'C']
 const AI_ANNOTATION_RATINGS = ['good', 'bad', 'wrong']
 const AI_DRAFT_PANEL_COUNT = 8
+
+function HelpPopover({label, children, placement = 'top-end'}) {
+  let body = children
+
+  if (Array.isArray(children)) {
+    body = (
+      <Stack spacing={2}>
+        {children.map((item, index) => (
+          <Text key={`${label}-${index}`} fontSize="sm">
+            {item}
+          </Text>
+        ))}
+      </Stack>
+    )
+  } else if (typeof children === 'string') {
+    body = <Text fontSize="sm">{children}</Text>
+  }
+
+  return (
+    <Popover trigger="click" placement={placement} isLazy>
+      <PopoverTrigger>
+        <Box as="span">
+          <InfoButton
+            aria-label={label}
+            display="inline-flex"
+            alignSelf="center"
+          />
+        </Box>
+      </PopoverTrigger>
+      <PopoverContent
+        border="none"
+        bg="graphite.500"
+        color="white"
+        borderRadius="md"
+        boxShadow="lg"
+        maxW="320px"
+      >
+        <PopoverArrow bg="graphite.500" />
+        <PopoverBody p={3}>{body}</PopoverBody>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function HeadingWithHelp({
+  title,
+  helpLabel = '',
+  helpContent = null,
+  titleProps = {},
+  spacing = 2,
+}) {
+  return (
+    <HStack spacing={spacing} align="center">
+      <Text {...titleProps}>{title}</Text>
+      {helpContent ? (
+        <HelpPopover label={helpLabel || title}>{helpContent}</HelpPopover>
+      ) : null}
+    </HStack>
+  )
+}
+
+function formatChunkRangeLabel(offset, {chunkSize = 5, totalCount = 0} = {}) {
+  const start = Math.max(1, Number(offset) + 1)
+  const cappedTotal = Math.max(start, Number(totalCount) || start)
+  const end = Math.min(
+    start + Math.max(1, Number(chunkSize) || 1) - 1,
+    cappedTotal
+  )
+
+  return `${start}-${end}`
+}
 
 function describeDeveloperLocalTrainingProfile(profile, t) {
   return {
@@ -119,6 +203,42 @@ function describeDeveloperLocalTrainingThermalMode(mode, t) {
         ),
         stepCooldownMs,
         epochCooldownMs,
+      }
+  }
+}
+
+function describeDeveloperLocalBenchmarkThermalMode(mode, t) {
+  const {mode: normalizedMode, benchmarkCooldownMs} =
+    resolveDeveloperLocalBenchmarkThermalModeCooldowns(mode)
+
+  switch (normalizedMode) {
+    case 'full_speed':
+      return {
+        mode: normalizedMode,
+        label: t('Fast benchmark'),
+        detail: t(
+          'Runs unseen-flip checks back to back. Fastest, hottest benchmark option.'
+        ),
+        benchmarkCooldownMs,
+      }
+    case 'cool':
+      return {
+        mode: normalizedMode,
+        label: t('Cooler benchmark'),
+        detail: t(
+          'Adds longer pauses between unseen flips to reduce sustained benchmark heat.'
+        ),
+        benchmarkCooldownMs,
+      }
+    case 'balanced':
+    default:
+      return {
+        mode: 'balanced',
+        label: t('Balanced benchmark'),
+        detail: t(
+          'Adds short pauses between unseen flips so the benchmark runs cooler without becoming extremely slow.'
+        ),
+        benchmarkCooldownMs,
       }
   }
 }
@@ -517,12 +637,7 @@ function hasAiAnnotationContent(annotation = {}) {
   }
 
   return Boolean(
-    next.generated_at ||
-      next.runtime_backend ||
-      next.runtime_type ||
-      next.model ||
-      next.vision_model ||
-      hasAiAnnotationListContent(next.ordered_panel_descriptions) ||
+    hasAiAnnotationListContent(next.ordered_panel_descriptions) ||
       hasAiAnnotationListContent(next.ordered_panel_text) ||
       next.option_a_story_analysis ||
       next.option_b_story_analysis ||
@@ -530,12 +645,7 @@ function hasAiAnnotationContent(annotation = {}) {
       next.why_answer ||
       next.option_a_summary ||
       next.option_b_summary ||
-      next.rating ||
-      next.report_reason ||
-      next.text_required !== null ||
-      next.sequence_markers_present !== null ||
-      next.report_required !== null ||
-      next.confidence !== ''
+      next.report_reason
   )
 }
 
@@ -821,9 +931,37 @@ function getAnnotationCompletionState(annotation = {}) {
     hasSequenceDecision,
     hasReportDecision && hasReportReason,
     hasConfidence,
-    hasFrameCaptions,
-    hasStorySummaries,
   ]
+  const missingRequiredFields = []
+
+  if (!hasDecision) {
+    missingRequiredFields.push('final_answer')
+  }
+
+  if (!hasReason) {
+    missingRequiredFields.push('why_answer')
+  }
+
+  if (!hasTextDecision) {
+    missingRequiredFields.push('text_required')
+  }
+
+  if (!hasSequenceDecision) {
+    missingRequiredFields.push('sequence_markers_present')
+  }
+
+  if (!hasReportDecision) {
+    missingRequiredFields.push('report_required')
+  } else if (!hasReportReason) {
+    missingRequiredFields.push('report_reason')
+  }
+
+  if (!hasConfidence) {
+    missingRequiredFields.push('confidence')
+  }
+  const hasOptionalDetailContent =
+    filledFrameCaptions > 0 || hasOptionASummary || hasOptionBSummary
+  const optionalDetailComplete = hasFrameCaptions && hasStorySummaries
 
   return {
     filledFrameCaptions,
@@ -838,12 +976,51 @@ function getAnnotationCompletionState(annotation = {}) {
     hasOptionBSummary,
     hasStorySummaries,
     hasFrameCaptions,
+    hasOptionalDetailContent,
+    optionalDetailComplete,
+    missingRequiredFields,
+    completedOptionalChecks: [hasFrameCaptions, hasStorySummaries].filter(
+      Boolean
+    ).length,
+    totalOptionalChecks: 2,
     completedChecks: checks.filter(Boolean).length,
     totalChecks: checks.length,
     remainingChecks: checks.filter((item) => !item).length,
-    requiredDetailComplete: hasFrameCaptions && hasStorySummaries,
     isComplete: checks.every(Boolean),
   }
+}
+
+function getRequiredFieldLabel(fieldKey, t) {
+  switch (String(fieldKey || '').trim()) {
+    case 'final_answer':
+      return t('answer')
+    case 'why_answer':
+      return t('reason')
+    case 'text_required':
+      return t('text check')
+    case 'sequence_markers_present':
+      return t('sequence check')
+    case 'report_required':
+      return t('report check')
+    case 'report_reason':
+      return t('report reason')
+    case 'confidence':
+      return t('confidence')
+    default:
+      return String(fieldKey || '').trim()
+  }
+}
+
+function formatMissingRequiredFields(t, fieldKeys = []) {
+  const labels = Array.from(
+    new Set(
+      (Array.isArray(fieldKeys) ? fieldKeys : [])
+        .map((fieldKey) => getRequiredFieldLabel(fieldKey, t))
+        .filter(Boolean)
+    )
+  )
+
+  return labels.join(', ')
 }
 
 function isCompleteDraft(annotation = {}) {
@@ -885,6 +1062,68 @@ function getOrderedPanels(task = {}, order = []) {
     .filter(Boolean)
 }
 
+function extractBalancedJsonSlice(text = '', startIndex = 0) {
+  const raw = String(text || '')
+  const startChar = raw[startIndex]
+
+  if (startChar !== '{' && startChar !== '[') {
+    return null
+  }
+
+  const closingChar = startChar === '{' ? '}' : ']'
+  let depth = 0
+  let inString = false
+  let isEscaped = false
+
+  for (let index = startIndex; index < raw.length; index += 1) {
+    const char = raw[index]
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false
+      } else if (char === '\\') {
+        isEscaped = true
+      } else if (char === '"') {
+        inString = false
+      }
+    } else if (char === '"') {
+      inString = true
+    } else if (char === startChar) {
+      depth += 1
+    } else if (char === closingChar) {
+      depth -= 1
+
+      if (depth === 0) {
+        return raw.slice(startIndex, index + 1)
+      }
+    }
+  }
+
+  return null
+}
+
+function extractJsonFromMixedText(text = '') {
+  const raw = String(text || '')
+  const openers = new Set(['{', '['])
+
+  for (let index = 0; index < raw.length; index += 1) {
+    if (openers.has(raw[index])) {
+      const candidate = extractBalancedJsonSlice(raw, index)
+
+      if (candidate) {
+        try {
+          return JSON.parse(candidate)
+        } catch {
+          // Keep scanning. Local models sometimes emit one malformed object
+          // before the usable JSON body.
+        }
+      }
+    }
+  }
+
+  return null
+}
+
 function parseAiAnnotationResponse(text = '') {
   const raw = String(text || '').trim()
 
@@ -896,16 +1135,90 @@ function parseAiAnnotationResponse(text = '') {
   const fromFence = () => {
     const match = raw.match(/```(?:json)?\s*([\s\S]+?)\s*```/iu)
     if (!match) {
-      throw new Error('No JSON object found in the Local AI draft response.')
+      return null
     }
     return JSON.parse(String(match[1] || '').trim())
   }
+  const fromMixedText = () => extractJsonFromMixedText(raw)
+  const preview = raw.replace(/\s+/gu, ' ').trim().slice(0, 220)
 
   try {
     return direct()
   } catch {
-    return fromFence()
+    try {
+      const fenced = fromFence()
+      if (fenced) {
+        return fenced
+      }
+    } catch {
+      // Fall through to mixed-text extraction.
+    }
   }
+
+  const embedded = fromMixedText()
+
+  if (embedded) {
+    return embedded
+  }
+
+  throw new Error(
+    `No JSON object found in the Local AI draft response. Preview: ${
+      preview || 'empty response'
+    }`
+  )
+}
+
+const AI_ANNOTATION_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'ordered_panel_descriptions',
+    'ordered_panel_text',
+    'option_a_story_analysis',
+    'option_b_story_analysis',
+    'final_answer',
+    'why_answer',
+    'confidence',
+    'text_required',
+    'sequence_markers_present',
+    'report_required',
+    'report_reason',
+    'option_a_summary',
+    'option_b_summary',
+  ],
+  properties: {
+    ordered_panel_descriptions: {
+      type: 'array',
+      minItems: 8,
+      maxItems: 8,
+      items: {type: 'string'},
+    },
+    ordered_panel_text: {
+      type: 'array',
+      minItems: 8,
+      maxItems: 8,
+      items: {type: 'string'},
+    },
+    option_a_story_analysis: {type: 'string'},
+    option_b_story_analysis: {type: 'string'},
+    final_answer: {
+      type: 'string',
+      enum: ['left', 'right', 'skip'],
+    },
+    why_answer: {type: 'string'},
+    confidence: {
+      anyOf: [
+        {type: 'integer', minimum: 1, maximum: 5},
+        {type: 'number', minimum: 1, maximum: 5},
+      ],
+    },
+    text_required: {type: 'boolean'},
+    sequence_markers_present: {type: 'boolean'},
+    report_required: {type: 'boolean'},
+    report_reason: {type: 'string'},
+    option_a_summary: {type: 'string'},
+    option_b_summary: {type: 'string'},
+  },
 }
 
 function buildAiAnnotationSystemPrompt(basePrompt = '') {
@@ -933,6 +1246,7 @@ function buildAiAnnotationUserPrompt() {
     'Then compare the LEFT and RIGHT stories and decide which side forms the better chronology.',
     'Use skip if the flip is ambiguous, report-worthy, or lacks a clear better story.',
     'Keep every field concrete and fairly short. Do not invent hidden details or unreadable text.',
+    'Do not add explanations before or after the JSON. Do not wrap the JSON in markdown.',
     'Return JSON only with this exact schema:',
     '{"ordered_panel_descriptions":["panel 1","panel 2","panel 3","panel 4","panel 5","panel 6","panel 7","panel 8"],"ordered_panel_text":["text in panel 1 or empty","text in panel 2 or empty","text in panel 3 or empty","text in panel 4 or empty","text in panel 5 or empty","text in panel 6 or empty","text in panel 7 or empty","text in panel 8 or empty"],"option_a_story_analysis":"short LEFT story analysis","option_b_story_analysis":"short RIGHT story analysis","final_answer":"left|right|skip","why_answer":"...","confidence":1|2|3|4|5,"text_required":true|false,"sequence_markers_present":true|false,"report_required":true|false,"report_reason":"...","option_a_summary":"short LEFT story summary","option_b_summary":"short RIGHT story summary"}',
     'ordered_panel_descriptions must contain exactly 8 entries and ordered_panel_text must contain exactly 8 entries.',
@@ -1180,6 +1494,102 @@ function pickPreferredTaskId(workspace, preferredTaskId = '') {
   return nextIncompleteTask ? nextIncompleteTask.taskId : tasks[0].taskId
 }
 
+function getHumanTeacherTaskNumberLabel(taskId = '') {
+  const raw = String(taskId || '').trim()
+
+  if (!raw) {
+    return ''
+  }
+
+  const lastSegment = raw.split(':').pop()
+  const parsed = Number.parseInt(lastSegment, 10)
+
+  return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : raw
+}
+
+function describeIncompleteWorkspaceTasks(workspace, t) {
+  const incompleteTasks =
+    workspace && Array.isArray(workspace.tasks)
+      ? workspace.tasks.filter((task) => !task.isComplete)
+      : []
+
+  if (!incompleteTasks.length) {
+    return t('The saved chunk still has unfinished flips.')
+  }
+
+  const labels = incompleteTasks
+    .slice(0, 5)
+    .map((task) => getHumanTeacherTaskNumberLabel(task.taskId))
+    .filter(Boolean)
+  const detailedItems = incompleteTasks
+    .slice(0, 3)
+    .map((task) => {
+      const taskLabel = getHumanTeacherTaskNumberLabel(task.taskId)
+      const missingLabel = formatMissingRequiredFields(
+        t,
+        task.missingRequiredFields
+      )
+
+      if (!taskLabel || !missingLabel) {
+        return ''
+      }
+
+      return t('Flip {{label}}: {{fields}}', {
+        label: taskLabel,
+        fields: missingLabel,
+      })
+    })
+    .filter(Boolean)
+
+  if (incompleteTasks.length === 1 && labels[0]) {
+    const detailedLabel =
+      formatMissingRequiredFields(
+        t,
+        incompleteTasks[0]?.missingRequiredFields
+      ) || t('one or more required answer fields')
+
+    return t(
+      'Flip {{label}} still needs {{fields}} before this chunk can train.',
+      {
+        label: labels[0],
+        fields: detailedLabel,
+      }
+    )
+  }
+
+  if (detailedItems.length) {
+    return detailedItems.join(' · ')
+  }
+
+  if (labels.length && incompleteTasks.length <= 5) {
+    return t(
+      'Flips {{labels}} still miss one or more required answer fields before this chunk can train.',
+      {
+        labels: labels.join(', '),
+      }
+    )
+  }
+
+  return t(
+    '{{count}} flips in this chunk still miss one or more required answer fields before training can start.',
+    {
+      count: incompleteTasks.length,
+    }
+  )
+}
+
+function isIncompleteDeveloperChunkError(message = '') {
+  return /Complete all 5 developer training flips before committing this chunk/i.test(
+    String(message || '')
+  )
+}
+
+function isIncompleteDemoChunkError(message = '') {
+  return /Complete all 5 demo flips before finishing this chunk/i.test(
+    String(message || '')
+  )
+}
+
 function formatOrder(order = []) {
   return Array.isArray(order) && order.length
     ? order.map((item) => Number(item) + 1).join(', ')
@@ -1347,11 +1757,22 @@ function describeDeveloperThermalTelemetry(system, t) {
     !Array.isArray(system.thermal)
       ? system.thermal
       : {}
+  const cpuUsagePercent = Number(system?.cpuUsagePercent)
+  const gpuUsagePercent = Number(system?.gpuUsagePercent)
+  const memoryUsagePercent = Number(system?.memoryUsagePercent)
+  const battery =
+    system &&
+    typeof system.battery === 'object' &&
+    !Array.isArray(system.battery)
+      ? system.battery
+      : {}
+  const batteryPercent = Number(battery.percent)
   const pressure = String(thermal.pressure || 'unavailable').trim()
   const cpuSpeedLimit = Number(thermal.cpuSpeedLimit)
   const schedulerLimit = Number(thermal.schedulerLimit)
   const thermalLevel = Number(thermal.thermalLevel)
   const detailParts = []
+  const inferredHeatSignals = []
 
   if (Number.isFinite(cpuSpeedLimit)) {
     detailParts.push(
@@ -1377,12 +1798,58 @@ function describeDeveloperThermalTelemetry(system, t) {
     )
   }
 
+  if (Number.isFinite(gpuUsagePercent) && gpuUsagePercent >= 85) {
+    inferredHeatSignals.push(
+      t('GPU {{value}}', {
+        value: formatPercentMetric(gpuUsagePercent),
+      })
+    )
+  }
+
+  if (Number.isFinite(cpuUsagePercent) && cpuUsagePercent >= 70) {
+    inferredHeatSignals.push(
+      t('CPU {{value}}', {
+        value: formatPercentMetric(cpuUsagePercent),
+      })
+    )
+  }
+
+  if (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 90) {
+    inferredHeatSignals.push(
+      t('Memory {{value}}', {
+        value: formatPercentMetric(memoryUsagePercent),
+      })
+    )
+  }
+
+  if (
+    battery.available &&
+    battery.isCharging === false &&
+    Number.isFinite(batteryPercent) &&
+    batteryPercent <= 20
+  ) {
+    inferredHeatSignals.push(
+      t('Battery {{value}}', {
+        value: `${batteryPercent}%`,
+      })
+    )
+  }
+
   if (!thermal.available) {
     return {
       title: t('Thermal pressure'),
-      value: t('Unavailable'),
-      detail: t('macOS thermal telemetry has not been reported yet.'),
-      tone: 'gray',
+      value: inferredHeatSignals.length
+        ? t('Hot under load')
+        : t('Unavailable'),
+      detail: inferredHeatSignals.length
+        ? t(
+            'macOS did not expose a thermal flag, but this run still looks hot: {{signals}}.',
+            {
+              signals: inferredHeatSignals.join(' · '),
+            }
+          )
+        : t('macOS thermal telemetry has not been reported yet.'),
+      tone: inferredHeatSignals.length ? 'orange' : 'gray',
     }
   }
 
@@ -1410,6 +1877,34 @@ function describeDeveloperThermalTelemetry(system, t) {
     }
   }
 
+  if (inferredHeatSignals.length >= 2) {
+    return {
+      title: t('Thermal pressure'),
+      value: t('Hot under load'),
+      detail: t(
+        'macOS has not raised a throttle flag yet, but this run already looks heat-heavy: {{signals}}.',
+        {
+          signals: inferredHeatSignals.join(' · '),
+        }
+      ),
+      tone: 'orange',
+    }
+  }
+
+  if (inferredHeatSignals.length === 1) {
+    return {
+      title: t('Thermal pressure'),
+      value: t('Heating up'),
+      detail: t(
+        'No macOS throttle flag yet, but this signal already points to a hotter run: {{signals}}.',
+        {
+          signals: inferredHeatSignals.join(' · '),
+        }
+      ),
+      tone: 'yellow',
+    }
+  }
+
   return {
     title: t('Thermal pressure'),
     value: t('Nominal'),
@@ -1420,7 +1915,7 @@ function describeDeveloperThermalTelemetry(system, t) {
   }
 }
 
-function describeDeveloperComputeTelemetry(system, t) {
+function describeDeveloperCpuTelemetry(system, t) {
   const cpuUsagePercent = Number(system?.cpuUsagePercent)
   const loadAveragePerCore1m = Number(system?.loadAveragePerCore1m)
   const loadAverage5m = Number(system?.loadAverage5m)
@@ -1488,11 +1983,62 @@ function describeDeveloperComputeTelemetry(system, t) {
   }
 
   return {
-    title: t('Compute load'),
+    title: t('CPU load'),
     value,
     detail:
       detailParts.join(' · ') ||
       t('CPU telemetry will appear after the next sample.'),
+    tone,
+  }
+}
+
+function describeDeveloperGpuTelemetry(system, t) {
+  const gpuUsagePercent = Number(system?.gpuUsagePercent)
+  const gpu =
+    system && typeof system.gpu === 'object' && !Array.isArray(system.gpu)
+      ? system.gpu
+      : {}
+  const rendererUtilizationPercent = Number(gpu.rendererUtilizationPercent)
+  const tilerUtilizationPercent = Number(gpu.tilerUtilizationPercent)
+  const detailParts = []
+  let tone = 'gray'
+
+  if (Number.isFinite(gpuUsagePercent) && gpuUsagePercent >= 85) {
+    tone = 'red'
+  } else if (Number.isFinite(gpuUsagePercent) && gpuUsagePercent >= 65) {
+    tone = 'orange'
+  } else if (Number.isFinite(gpuUsagePercent) && gpuUsagePercent >= 35) {
+    tone = 'yellow'
+  } else if (Number.isFinite(gpuUsagePercent)) {
+    tone = 'green'
+  }
+
+  if (Number.isFinite(rendererUtilizationPercent)) {
+    detailParts.push(
+      t('Renderer {{value}}', {
+        value: formatPercentMetric(rendererUtilizationPercent),
+      })
+    )
+  }
+
+  if (Number.isFinite(tilerUtilizationPercent)) {
+    detailParts.push(
+      t('Tiler {{value}}', {
+        value: formatPercentMetric(tilerUtilizationPercent),
+      })
+    )
+  }
+
+  return {
+    title: t('GPU load'),
+    value: Number.isFinite(gpuUsagePercent)
+      ? t('{{value}} GPU', {
+          value: formatPercentMetric(gpuUsagePercent),
+        })
+      : t('Unavailable'),
+    detail:
+      detailParts.join(' · ') ||
+      t('macOS GPU telemetry will appear after the next sample.'),
     tone,
   }
 }
@@ -2035,6 +2581,11 @@ function LocalTrainingJourneyPanel({
   }
 
   const steps = [teachStep, trainingStep, testStep]
+  const keyHelpContent = [
+    t('Saved answers: flips you already labeled.'),
+    t('Waiting to learn: saved flips not inside the model yet.'),
+    t('Already learned: flips already trained into the active model.'),
+  ]
 
   return (
     <Box borderWidth="1px" borderColor="gray.100" borderRadius="2xl" p={4}>
@@ -2046,9 +2597,14 @@ function LocalTrainingJourneyPanel({
           gap={2}
         >
           <Box>
-            <Text fontWeight={600}>{title}</Text>
+            <HeadingWithHelp
+              title={title}
+              titleProps={{fontWeight: 600}}
+              helpLabel={t('Local training flow')}
+              helpContent={subtitle}
+            />
             <Text color="muted" fontSize="sm">
-              {subtitle}
+              {t('Teach 5 flips, train, then test.')}
             </Text>
           </Box>
           <Badge colorScheme={overallBadgeScheme} borderRadius="full" px={2}>
@@ -2104,13 +2660,14 @@ function LocalTrainingJourneyPanel({
           bg="gray.50"
         >
           <Stack spacing={1}>
-            <Text fontSize="sm" fontWeight={600}>
-              {t('Plain-language key')}
-            </Text>
+            <HeadingWithHelp
+              title={t('Plain-language key')}
+              titleProps={{fontSize: 'sm', fontWeight: 600}}
+              helpLabel={t('Local training counters')}
+              helpContent={keyHelpContent}
+            />
             <Text color="muted" fontSize="xs">
-              {t(
-                'Saved answers = flips you already labeled. Waiting to learn = saved flips not inside the model yet. Already learned = flips already trained into the active model.'
-              )}
+              {t('Tap the help icon if the counters feel unclear.')}
             </Text>
           </Stack>
         </Box>
@@ -2134,7 +2691,8 @@ function LocalTrainingImpactPanel({
       : {}
   const stats = [
     describeDeveloperThermalTelemetry(system, t),
-    describeDeveloperComputeTelemetry(system, t),
+    describeDeveloperCpuTelemetry(system, t),
+    describeDeveloperGpuTelemetry(system, t),
     describeDeveloperMemoryTelemetry(system, t),
     describeDeveloperPowerTelemetry(system, t),
   ]
@@ -2226,7 +2784,7 @@ function LocalTrainingImpactPanel({
                 ) : null}
               </Stack>
             </Box>
-            <SimpleGrid columns={[1, 2, 4]} spacing={3}>
+            <SimpleGrid columns={[1, 2, 5]} spacing={3}>
               {stats.map((stat) => (
                 <LocalTrainingImpactStatCard
                   key={stat.title}
@@ -2277,6 +2835,921 @@ function LocalTrainingImpactPanel({
             </Text>
           </Box>
         )}
+      </Stack>
+    </Box>
+  )
+}
+
+function describeDeveloperActiveRun(activeRun, t) {
+  if (!activeRun || typeof activeRun !== 'object' || Array.isArray(activeRun)) {
+    return null
+  }
+
+  const kind = String(activeRun.kind || '')
+    .trim()
+    .toLowerCase()
+  const status = String(activeRun.status || '')
+    .trim()
+    .toLowerCase()
+  const stage = String(activeRun.stage || '')
+    .trim()
+    .toLowerCase()
+  const stageIndex = Number(activeRun.stageIndex)
+  const stageCount = Number(activeRun.stageCount)
+  const progressPercent = Number(activeRun.progressPercent)
+  const currentEpoch = Number(activeRun.currentEpoch)
+  const totalEpochs = Number(activeRun.totalEpochs)
+  const currentStep = Number(activeRun.currentStep)
+  const stepsPerEpoch = Number(activeRun.stepsPerEpoch)
+  const totalSteps = Number(activeRun.totalSteps)
+  const latestLoss = Number(activeRun.latestLoss)
+  const benchmarkCurrent = Number(activeRun.benchmarkCurrent)
+  const benchmarkTotal = Number(activeRun.benchmarkTotal)
+  const chunkOffset = Number(activeRun.chunkOffset)
+  const chunkSize = Number(activeRun.chunkSize)
+  const evaluationFlips = Number(activeRun.evaluationFlips)
+  const currentFlipHash = String(activeRun.currentFlipHash || '').trim()
+  const benchmarkPhase = String(activeRun.benchmarkPhase || '')
+    .trim()
+    .toLowerCase()
+  const message = String(activeRun.message || '').trim()
+  const startedAt = String(activeRun.startedAt || '').trim() || null
+  const stageStartedAt = String(activeRun.stageStartedAt || '').trim() || null
+
+  let badgeLabel =
+    kind === 'comparison' ? t('Benchmark live') : t('Training live')
+  let badgeScheme = kind === 'comparison' ? 'purple' : 'blue'
+  let title =
+    kind === 'comparison' ? t('Local benchmark run') : t('Local training run')
+  let detail =
+    message ||
+    (kind === 'comparison'
+      ? t('Running the unseen-flip benchmark now.')
+      : t('Training and checking the local model now.'))
+
+  if (status === 'stopping') {
+    badgeLabel = t('Stopping')
+    badgeScheme = 'red'
+    detail = message || t('The app is stopping this local run now.')
+  }
+
+  if (stage === 'prepare_training_dataset') {
+    title = t('Building the 5-flip training pack')
+    detail =
+      message ||
+      t(
+        'The app is turning your saved flip answers into a local training dataset.'
+      )
+  } else if (stage === 'train_adapter') {
+    title = t('Training the local adapter')
+    detail =
+      message ||
+      t(
+        'The computer is practicing on this 5-flip pack before the benchmark starts.'
+      )
+  } else if (stage === 'prepare_holdout') {
+    title = t('Preparing the unseen benchmark flips')
+    detail =
+      message ||
+      t(
+        'The app is loading the unseen holdout that will be used for the score check.'
+      )
+  } else if (stage === 'benchmark_baseline') {
+    title = t('Benchmarking the baseline model')
+    detail =
+      message ||
+      t('The same unseen flips are being scored with the baseline model first.')
+    badgeLabel = t('Baseline benchmark')
+    badgeScheme = 'purple'
+  } else if (stage === 'benchmark_adapter') {
+    title = t('Benchmarking the trained adapter')
+    detail =
+      message ||
+      t(
+        'The same unseen flips are now being scored with the freshly trained adapter.'
+      )
+    badgeLabel = t('Adapter benchmark')
+    badgeScheme = kind === 'comparison' ? 'purple' : 'green'
+  }
+
+  const summaryParts = []
+
+  if (
+    Number.isFinite(stageIndex) &&
+    Number.isFinite(stageCount) &&
+    stageCount > 0
+  ) {
+    summaryParts.push(
+      t('Stage {{current}} of {{total}}', {
+        current: stageIndex,
+        total: stageCount,
+      })
+    )
+  }
+
+  if (Number.isFinite(currentEpoch) && Number.isFinite(totalEpochs)) {
+    summaryParts.push(
+      t('Epoch {{current}} of {{total}}', {
+        current: currentEpoch,
+        total: totalEpochs,
+      })
+    )
+  }
+
+  if (Number.isFinite(currentStep) && Number.isFinite(stepsPerEpoch)) {
+    summaryParts.push(
+      t('Step {{current}} of {{total}}', {
+        current: currentStep,
+        total: stepsPerEpoch,
+      })
+    )
+  }
+
+  if (Number.isFinite(totalSteps) && totalSteps > 0) {
+    summaryParts.push(
+      t('{{count}} total updates', {
+        count: formatCountMetric(totalSteps),
+      })
+    )
+  }
+
+  let benchmarkSummary = t(
+    'This benchmark reuses the same unseen holdout for baseline and trained scoring so the score stays comparable.'
+  )
+
+  if (Number.isFinite(benchmarkCurrent) && Number.isFinite(benchmarkTotal)) {
+    benchmarkSummary = t(
+      '{{phase}}: unseen flip {{current}} of {{total}}{{hash}}',
+      {
+        phase:
+          benchmarkPhase === 'adapter' ? t('Adapter pass') : t('Baseline pass'),
+        current: benchmarkCurrent,
+        total: benchmarkTotal,
+        hash: currentFlipHash ? ` · ${currentFlipHash}` : '',
+      }
+    )
+  } else if (Number.isFinite(evaluationFlips)) {
+    benchmarkSummary = t(
+      'This benchmark reuses the same {{count}} unseen flips for baseline and trained scoring so the score stays comparable.',
+      {
+        count: evaluationFlips,
+      }
+    )
+  }
+
+  const chunkSummary =
+    Number.isFinite(chunkOffset) && Number.isFinite(chunkSize) && chunkSize > 0
+      ? t('Teaching chunk: flips {{from}}-{{to}}', {
+          from: chunkOffset + 1,
+          to: chunkOffset + chunkSize,
+        })
+      : null
+
+  return {
+    badgeLabel,
+    badgeScheme,
+    title,
+    detail,
+    progressPercent:
+      Number.isFinite(progressPercent) && progressPercent >= 0
+        ? Math.min(100, Math.max(0, progressPercent))
+        : null,
+    summary: summaryParts.join(' · ') || null,
+    benchmarkSummary,
+    chunkSummary,
+    lossLabel:
+      Number.isFinite(latestLoss) && latestLoss >= 0
+        ? t('Latest loss {{value}}', {
+            value: latestLoss.toFixed(4),
+          })
+        : null,
+    startedAt,
+    stageStartedAt,
+    updatedAt: activeRun.updatedAt || null,
+    status,
+  }
+}
+
+function getDeveloperRunAgeMs(activeRun = null) {
+  const updatedAt = String(activeRun?.updatedAt || '').trim()
+
+  if (!updatedAt) {
+    return null
+  }
+
+  const updatedAtMs = new Date(updatedAt).getTime()
+
+  if (!Number.isFinite(updatedAtMs)) {
+    return null
+  }
+
+  const ageMs = Date.now() - updatedAtMs
+  return ageMs >= 0 ? ageMs : null
+}
+
+function getDeveloperRunElapsedMs(activeRun, {preferStage = true} = {}) {
+  const raw = String(
+    preferStage
+      ? activeRun?.stageStartedAt || activeRun?.startedAt || ''
+      : activeRun?.startedAt || activeRun?.stageStartedAt || ''
+  ).trim()
+
+  if (!raw) {
+    return null
+  }
+
+  const startedAtMs = new Date(raw).getTime()
+
+  if (!Number.isFinite(startedAtMs)) {
+    return null
+  }
+
+  const elapsedMs = Date.now() - startedAtMs
+  return elapsedMs >= 0 ? elapsedMs : null
+}
+
+function formatRuntimeCountdownMs(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 'n/a'
+  }
+
+  const totalSeconds = Math.max(1, Math.round(parsed / 1000))
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  if (totalMinutes < 60) {
+    return seconds > 0 ? `${totalMinutes}m ${seconds}s` : `${totalMinutes}m`
+  }
+
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+}
+
+function formatClockTime(value) {
+  const raw = String(value || '').trim()
+
+  if (!raw) {
+    return 'n/a'
+  }
+
+  const parsed = new Date(raw)
+
+  if (!Number.isFinite(parsed.getTime())) {
+    return raw
+  }
+
+  return parsed.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function describeDeveloperRunEta(activeRun, t) {
+  const status = String(activeRun?.status || '')
+    .trim()
+    .toLowerCase()
+  const elapsedMs = getDeveloperRunElapsedMs(activeRun, {preferStage: true})
+
+  if (!elapsedMs || (status !== 'running' && status !== 'stopping')) {
+    return {
+      available: false,
+      title: t('Time estimate'),
+      value: t('Waiting'),
+      detail: t('The app needs more live progress before it can estimate.'),
+      footnote: null,
+      remainingMs: null,
+      finishAt: null,
+    }
+  }
+
+  const benchmarkCurrent = Number(activeRun?.benchmarkCurrent)
+  const benchmarkTotal = Number(activeRun?.benchmarkTotal)
+  const currentEpoch = Number(activeRun?.currentEpoch)
+  const currentStep = Number(activeRun?.currentStep)
+  const stepsPerEpoch = Number(activeRun?.stepsPerEpoch)
+  const totalSteps = Number(activeRun?.totalSteps)
+  const progressPercent = Number(activeRun?.progressPercent)
+
+  let fractionComplete = null
+  let basisLabel = null
+
+  if (
+    Number.isFinite(benchmarkCurrent) &&
+    benchmarkCurrent > 0 &&
+    Number.isFinite(benchmarkTotal) &&
+    benchmarkTotal > 0
+  ) {
+    fractionComplete = Math.min(1, benchmarkCurrent / benchmarkTotal)
+    basisLabel = t(
+      'Based on {{current}} of {{total}} benchmark flips so far.',
+      {
+        current: benchmarkCurrent,
+        total: benchmarkTotal,
+      }
+    )
+  } else if (
+    Number.isFinite(currentEpoch) &&
+    currentEpoch > 0 &&
+    Number.isFinite(currentStep) &&
+    currentStep > 0 &&
+    Number.isFinite(totalSteps) &&
+    totalSteps > 0
+  ) {
+    const normalizedStepsPerEpoch =
+      Number.isFinite(stepsPerEpoch) && stepsPerEpoch > 0
+        ? stepsPerEpoch
+        : totalSteps
+    const completedSteps =
+      (currentEpoch - 1) * normalizedStepsPerEpoch +
+      Math.min(currentStep, normalizedStepsPerEpoch)
+    fractionComplete = Math.min(1, completedSteps / totalSteps)
+    basisLabel = t('Based on {{current}} of {{total}} update steps so far.', {
+      current: completedSteps,
+      total: totalSteps,
+    })
+  } else if (Number.isFinite(progressPercent) && progressPercent > 0) {
+    fractionComplete = Math.min(1, progressPercent / 100)
+    basisLabel = t('Based on {{percent}} of this stage so far.', {
+      percent: formatPercentMetric(progressPercent, 0),
+    })
+  }
+
+  if (!Number.isFinite(fractionComplete) || fractionComplete <= 0.02) {
+    return {
+      available: false,
+      title: t('Time estimate'),
+      value: t('Measuring'),
+      detail: t('Elapsed {{elapsed}}', {
+        elapsed: formatRuntimeCountdownMs(elapsedMs),
+      }),
+      footnote: t('The app will estimate once more of this stage is complete.'),
+      remainingMs: null,
+      finishAt: null,
+    }
+  }
+
+  const remainingMs = Math.max(
+    0,
+    Math.round((elapsedMs / fractionComplete) * (1 - fractionComplete))
+  )
+  const finishAt = new Date(Date.now() + remainingMs).toISOString()
+
+  return {
+    available: true,
+    title: t('Time estimate'),
+    value:
+      remainingMs <= 0
+        ? t('Finishing now')
+        : t('About {{remaining}} left', {
+            remaining: formatRuntimeCountdownMs(remainingMs),
+          }),
+    detail: t('Elapsed {{elapsed}} · finish around {{time}}', {
+      elapsed: formatRuntimeCountdownMs(elapsedMs),
+      time: formatClockTime(finishAt),
+    }),
+    footnote: basisLabel,
+    remainingMs,
+    finishAt,
+  }
+}
+
+function describeDeveloperRunPlainAction(run, t) {
+  if (!run) {
+    return t('Waiting for the next local run.')
+  }
+
+  if (run.status === 'stopping') {
+    return t('The app is stopping the current local run.')
+  }
+
+  if (run.title && run.detail) {
+    return `${run.title} · ${run.detail}`
+  }
+
+  return run.detail || run.title || t('The local run is active.')
+}
+
+function describeDeveloperLiveInterpretation({
+  telemetry = null,
+  activeRun = null,
+  t,
+}) {
+  const system =
+    telemetry &&
+    typeof telemetry.system === 'object' &&
+    !Array.isArray(telemetry.system)
+      ? telemetry.system
+      : {}
+  const thermal =
+    system &&
+    typeof system.thermal === 'object' &&
+    !Array.isArray(system.thermal)
+      ? system.thermal
+      : {}
+  const battery =
+    system &&
+    typeof system.battery === 'object' &&
+    !Array.isArray(system.battery)
+      ? system.battery
+      : {}
+  const cpuUsagePercent = Number(system.cpuUsagePercent)
+  const gpuUsagePercent = Number(system.gpuUsagePercent)
+  const memoryUsagePercent = Number(system.memoryUsagePercent)
+  const cpuSpeedLimit = Number(thermal.cpuSpeedLimit)
+  const batteryPercent = Number(battery.percent)
+  const runAgeMs = getDeveloperRunAgeMs(activeRun)
+
+  if (
+    String(activeRun?.status || '')
+      .trim()
+      .toLowerCase() === 'stopping'
+  ) {
+    return {
+      tone: 'red',
+      message: t(
+        'Stop requested. The current Python job is being terminated now.'
+      ),
+    }
+  }
+
+  if (runAgeMs !== null && runAgeMs >= 3 * 60 * 1000) {
+    return {
+      tone: 'orange',
+      message: t(
+        'No new progress arrived for {{minutes}} min. This run may be slow or stuck on one flip.',
+        {
+          minutes: Math.max(1, Math.round(runAgeMs / (60 * 1000))),
+        }
+      ),
+    }
+  }
+
+  if (
+    String(thermal.pressure || '').trim() === 'limited' ||
+    (Number.isFinite(cpuSpeedLimit) && cpuSpeedLimit < 100)
+  ) {
+    return {
+      tone: 'red',
+      message: Number.isFinite(cpuSpeedLimit)
+        ? t(
+            'macOS is heat-limiting the CPU to {{value}}%. Fan noise and slowdown are expected right now.',
+            {
+              value: cpuSpeedLimit,
+            }
+          )
+        : t(
+            'macOS is heat-limiting this Mac right now. Fan noise and slowdown are expected.'
+          ),
+    }
+  }
+
+  if (Number.isFinite(memoryUsagePercent) && memoryUsagePercent >= 90) {
+    return {
+      tone: 'orange',
+      message: t(
+        'RAM is almost full. This run may stall or become much slower until memory pressure drops.'
+      ),
+    }
+  }
+
+  if (
+    (Number.isFinite(cpuUsagePercent) && cpuUsagePercent >= 70) ||
+    (Number.isFinite(gpuUsagePercent) && gpuUsagePercent >= 70)
+  ) {
+    return {
+      tone: 'blue',
+      message: t(
+        'Heavy compute load is normal here. Heat and fan noise usually rise during this part of the run.'
+      ),
+    }
+  }
+
+  if (battery.available && battery.isCharging === false) {
+    return {
+      tone: 'orange',
+      message: Number.isFinite(batteryPercent)
+        ? t(
+            'The run is on battery at {{value}}. Expect drain and extra heat until you plug in or stop it.',
+            {
+              value: `${batteryPercent}%`,
+            }
+          )
+        : t(
+            'The run is on battery. Expect drain and extra heat until it stops.'
+          ),
+    }
+  }
+
+  return {
+    tone: 'green',
+    message: t(
+      'The run still looks stable from the latest sample. Watch the progress and heat cards together.'
+    ),
+  }
+}
+
+function LocalTrainingStickyRunConsole({
+  activeRun = null,
+  telemetry = null,
+  totalAvailableTasks = 0,
+  onStopNow,
+  onStopAfterUnit,
+  onUpdateRunControls,
+  pendingRunControl = null,
+  isStopping = false,
+  isUpdatingRunControls = false,
+  t,
+}) {
+  const run = describeDeveloperActiveRun(activeRun, t)
+
+  if (!run) {
+    return null
+  }
+
+  const system =
+    telemetry &&
+    typeof telemetry.system === 'object' &&
+    !Array.isArray(telemetry.system)
+      ? telemetry.system
+      : {}
+  const stats = [
+    describeDeveloperThermalTelemetry(system, t),
+    describeDeveloperCpuTelemetry(system, t),
+    describeDeveloperGpuTelemetry(system, t),
+    describeDeveloperMemoryTelemetry(system, t),
+    describeDeveloperPowerTelemetry(system, t),
+  ]
+  const interpretation = describeDeveloperLiveInterpretation({
+    telemetry,
+    activeRun,
+    t,
+  })
+  const activeStage = String(activeRun?.stage || '')
+    .trim()
+    .toLowerCase()
+  const activeKind = String(activeRun?.kind || '')
+    .trim()
+    .toLowerCase()
+  const benchmarkPhase =
+    activeKind === 'comparison' || activeStage.startsWith('benchmark_')
+  const currentRunThermalMode = benchmarkPhase
+    ? String(
+        activeRun?.benchmarkThermalMode ||
+          DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+      ).trim()
+    : String(
+        activeRun?.trainingThermalMode ||
+          DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+      ).trim()
+  const selectedRunThermalMode =
+    pendingRunControl &&
+    pendingRunControl.benchmarkPhase === benchmarkPhase &&
+    String(pendingRunControl.mode || '').trim()
+      ? String(pendingRunControl.mode || '').trim()
+      : currentRunThermalMode
+  const eta = describeDeveloperRunEta(activeRun, t)
+  const interpretationTone = getTelemetryToneProps(interpretation.tone)
+  const runAgeMs = getDeveloperRunAgeMs(activeRun)
+  const staleMinutes =
+    runAgeMs !== null ? Math.max(1, Math.round(runAgeMs / (60 * 1000))) : null
+  const stopAfterUnitLabel = benchmarkPhase
+    ? t('Stop after current flip')
+    : t('Stop after current step')
+  const stopControlsDisabled =
+    isStopping ||
+    String(activeRun?.status || '')
+      .trim()
+      .toLowerCase() === 'stopping'
+
+  return (
+    <Box position="sticky" top={0} zIndex={3}>
+      <Box
+        borderWidth="1px"
+        borderColor="blue.100"
+        borderRadius="2xl"
+        p={4}
+        bg="white"
+        boxShadow="0 8px 24px rgba(15, 23, 42, 0.08)"
+      >
+        <Stack spacing={3}>
+          <Flex
+            justify="space-between"
+            align={['flex-start', 'center']}
+            direction={['column', 'row']}
+            gap={3}
+          >
+            <Box>
+              <Text fontWeight={700}>{run.title}</Text>
+              <Text color="muted" fontSize="sm">
+                {describeDeveloperRunPlainAction(run, t)}
+              </Text>
+            </Box>
+            <Stack direction={['column', 'row']} spacing={2} align="center">
+              {staleMinutes !== null && staleMinutes >= 3 ? (
+                <Badge colorScheme="orange" borderRadius="full" px={2}>
+                  {t('No update for {{count}} min', {count: staleMinutes})}
+                </Badge>
+              ) : null}
+              <Badge colorScheme={run.badgeScheme} borderRadius="full" px={2}>
+                {run.badgeLabel}
+              </Badge>
+              <SecondaryButton
+                onClick={onStopAfterUnit}
+                isLoading={isStopping}
+                isDisabled={
+                  stopControlsDisabled || typeof onStopAfterUnit !== 'function'
+                }
+                borderColor="orange.200"
+                color="orange.700"
+                _hover={{bg: 'orange.50'}}
+              >
+                {isStopping ? t('Stopping…') : stopAfterUnitLabel}
+              </SecondaryButton>
+              <SecondaryButton
+                onClick={onStopNow}
+                isLoading={isStopping}
+                isDisabled={
+                  stopControlsDisabled || typeof onStopNow !== 'function'
+                }
+                borderColor="red.200"
+                color="red.600"
+                _hover={{bg: 'red.50'}}
+              >
+                {isStopping ? t('Stopping…') : t('Cancel now')}
+              </SecondaryButton>
+            </Stack>
+          </Flex>
+
+          <Progress
+            size="sm"
+            value={run.progressPercent ?? undefined}
+            isIndeterminate={!Number.isFinite(run.progressPercent)}
+            colorScheme={run.badgeScheme}
+            borderRadius="full"
+          />
+
+          {typeof onUpdateRunControls === 'function' ? (
+            <Flex
+              justify="space-between"
+              align={['flex-start', 'center']}
+              direction={['column', 'row']}
+              gap={3}
+            >
+              <Box>
+                <Text color="muted" fontSize="xs">
+                  {benchmarkPhase
+                    ? t('Benchmark speed now')
+                    : t('Training speed now')}
+                </Text>
+                <Text color="muted" fontSize="xs">
+                  {benchmarkPhase
+                    ? t('Applies on the next unseen flip.')
+                    : t('Applies on the next training step or epoch pause.')}
+                </Text>
+              </Box>
+              <Box minW={['100%', '220px']}>
+                <Select
+                  size="sm"
+                  value={selectedRunThermalMode}
+                  onChange={(e) => onUpdateRunControls(e.target.value)}
+                  isDisabled={isStopping || isUpdatingRunControls}
+                >
+                  <option value="full_speed">{t('Full speed')}</option>
+                  <option value="balanced">{t('Balanced cooling')}</option>
+                  <option value="cool">{t('Cool and slower')}</option>
+                </Select>
+                {isUpdatingRunControls ? (
+                  <Text color="muted" fontSize="xs" mt={1}>
+                    {t('Updating live run speed…')}
+                  </Text>
+                ) : null}
+              </Box>
+            </Flex>
+          ) : null}
+
+          <Text color="muted" fontSize="xs">
+            {t(
+              'Stopping ends this run. It does not pause it for resume later.'
+            )}
+          </Text>
+
+          {run.summary ? <Text fontSize="sm">{run.summary}</Text> : null}
+
+          <SimpleGrid columns={[1, 1, 2, 4]} spacing={3}>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="xl"
+              px={3}
+              py={3}
+              bg="gray.50"
+            >
+              <Text color="muted" fontSize="xs">
+                {t('What is happening now')}
+              </Text>
+              <Text fontSize="sm" fontWeight={700}>
+                {run.benchmarkSummary || run.detail}
+              </Text>
+            </Box>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="xl"
+              px={3}
+              py={3}
+              bg="gray.50"
+            >
+              <Text color="muted" fontSize="xs">
+                {t('Current teaching chunk')}
+              </Text>
+              <Text fontSize="sm" fontWeight={700}>
+                {run.chunkSummary || t('No 5-flip chunk is attached here.')}
+              </Text>
+              {totalAvailableTasks > 0 ? (
+                <Text color="muted" fontSize="xs">
+                  {t('Bundled sample size {{count}}', {
+                    count: totalAvailableTasks,
+                  })}
+                </Text>
+              ) : null}
+            </Box>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="xl"
+              px={3}
+              py={3}
+              bg="gray.50"
+            >
+              <Text color="muted" fontSize="xs">
+                {eta.title}
+              </Text>
+              <Text fontSize="sm" fontWeight={700}>
+                {eta.value}
+              </Text>
+              <Text color="muted" fontSize="xs">
+                {eta.detail}
+              </Text>
+              {eta.footnote ? (
+                <Text color="muted" fontSize="xs" mt={1}>
+                  {eta.footnote}
+                </Text>
+              ) : null}
+            </Box>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="xl"
+              px={3}
+              py={3}
+              bg="gray.50"
+            >
+              <Text color="muted" fontSize="xs">
+                {t('Latest live detail')}
+              </Text>
+              <Text fontSize="sm" fontWeight={700}>
+                {run.lossLabel || t('Waiting for the next loss sample')}
+              </Text>
+              <Text color="muted" fontSize="xs">
+                {run.updatedAt
+                  ? `${t('Updated')}: ${formatTimestamp(run.updatedAt)}`
+                  : t('Waiting for the first live update.')}
+              </Text>
+            </Box>
+          </SimpleGrid>
+
+          <SimpleGrid columns={[1, 2, 5]} spacing={3}>
+            {stats.map((stat) => (
+              <LocalTrainingImpactStatCard
+                key={`sticky-${stat.title}`}
+                title={stat.title}
+                value={stat.value}
+                detail={stat.detail}
+                tone={stat.tone}
+              />
+            ))}
+          </SimpleGrid>
+
+          <Box
+            borderWidth="1px"
+            borderColor={interpretationTone.borderColor}
+            borderRadius="xl"
+            px={3}
+            py={3}
+            bg={interpretationTone.bg}
+          >
+            <Text fontSize="sm" fontWeight={600}>
+              {interpretation.message}
+            </Text>
+          </Box>
+        </Stack>
+      </Box>
+    </Box>
+  )
+}
+
+function LocalTrainingRunPanel({activeRun, totalAvailableTasks = 0, t}) {
+  const run = describeDeveloperActiveRun(activeRun, t)
+
+  if (!run) {
+    return null
+  }
+
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor="blue.100"
+      borderRadius="md"
+      p={4}
+      bg="blue.50"
+    >
+      <Stack spacing={3}>
+        <Flex
+          justify="space-between"
+          align={['flex-start', 'center']}
+          direction={['column', 'row']}
+          gap={2}
+        >
+          <Box>
+            <Text fontWeight={700}>{run.title}</Text>
+            <Text color="muted" fontSize="sm">
+              {run.detail}
+            </Text>
+          </Box>
+          <Badge colorScheme={run.badgeScheme} borderRadius="full" px={2}>
+            {run.badgeLabel}
+          </Badge>
+        </Flex>
+
+        <Progress
+          size="sm"
+          value={run.progressPercent ?? undefined}
+          isIndeterminate={!Number.isFinite(run.progressPercent)}
+          colorScheme={run.badgeScheme}
+          borderRadius="full"
+        />
+
+        {run.summary ? <Text fontSize="sm">{run.summary}</Text> : null}
+
+        <SimpleGrid columns={[1, 2, 2]} spacing={3}>
+          <Box
+            borderWidth="1px"
+            borderColor="blue.100"
+            borderRadius="md"
+            px={3}
+            py={2}
+            bg="white"
+          >
+            <Text color="muted" fontSize="xs">
+              {t('Current benchmark view')}
+            </Text>
+            <Text fontSize="sm" fontWeight={600}>
+              {run.benchmarkSummary}
+            </Text>
+          </Box>
+          <Box
+            borderWidth="1px"
+            borderColor="blue.100"
+            borderRadius="md"
+            px={3}
+            py={2}
+            bg="white"
+          >
+            <Text color="muted" fontSize="xs">
+              {t('Current teaching chunk')}
+            </Text>
+            <Text fontSize="sm" fontWeight={600}>
+              {run.chunkSummary ||
+                t('The page will show the next 5-flip chunk when one is open.')}
+            </Text>
+            {totalAvailableTasks > 0 && run.chunkSummary ? (
+              <Text color="muted" fontSize="xs">
+                {t('Total bundled flips in this sample: {{count}}', {
+                  count: totalAvailableTasks,
+                })}
+              </Text>
+            ) : null}
+          </Box>
+        </SimpleGrid>
+
+        <Text color="muted" fontSize="xs">
+          {t(
+            'Benchmark method: the same unseen holdout is scored twice, first with baseline weights and then with the trained adapter.'
+          )}
+          {run.lossLabel ? ` · ${run.lossLabel}` : ''}
+          {run.updatedAt
+            ? ` · ${t('Updated')}: ${formatTimestamp(run.updatedAt)}`
+            : ''}
+        </Text>
       </Stack>
     </Box>
   )
@@ -2374,13 +3847,15 @@ function getWorkspaceCountsAfterSave(
   }
 
   const hasDraft = hasDraftContent(annotation)
-  const isComplete = isCompleteDraft(annotation)
+  const completion = getAnnotationCompletionState(annotation)
+  const {isComplete, missingRequiredFields} = completion
   const nextTasks = tasks.map((task) =>
     task.taskId === selectedTaskId
       ? {
           ...task,
           hasDraft,
           isComplete,
+          missingRequiredFields,
         }
       : task
   )
@@ -2397,24 +3872,98 @@ function getWorkspaceCountsAfterSave(
   }
 }
 
-function InterviewPrompt({title, children}) {
+function getWorkspacePreviewAfterSave(
+  workspace,
+  selectedTaskId,
+  annotation = {}
+) {
+  const tasks =
+    workspace && Array.isArray(workspace.tasks) ? workspace.tasks : []
+
+  if (!tasks.length || !selectedTaskId) {
+    return {
+      tasks: [],
+      firstIncompleteTaskId: '',
+      completionState: {
+        total: 0,
+        draftedCount: 0,
+        completedCount: 0,
+        remainingCount: 0,
+        allComplete: false,
+      },
+    }
+  }
+
+  const hasDraft = hasDraftContent(annotation)
+  const isComplete = isCompleteDraft(annotation)
+  const nextTasks = tasks.map((task) =>
+    task.taskId === selectedTaskId
+      ? {
+          ...task,
+          hasDraft,
+          isComplete,
+        }
+      : task
+  )
+  const draftedCount = nextTasks.filter((task) => task.hasDraft).length
+  const completedCount = nextTasks.filter((task) => task.isComplete).length
+  const total = nextTasks.length
+  const firstIncompleteTask = nextTasks.find((task) => !task.isComplete)
+
+  return {
+    tasks: nextTasks,
+    firstIncompleteTaskId: firstIncompleteTask?.taskId || '',
+    completionState: {
+      total,
+      draftedCount,
+      completedCount,
+      remainingCount: Math.max(total - completedCount, 0),
+      allComplete: total > 0 && completedCount === total,
+    },
+  }
+}
+
+function InterviewPrompt({
+  title,
+  children,
+  isMissing = false,
+  missingHint = '',
+  sectionRef = null,
+}) {
   return (
-    <Box borderWidth="1px" borderColor="gray.100" borderRadius="xl" p={4}>
+    <Box
+      ref={sectionRef}
+      borderWidth="1px"
+      borderColor={isMissing ? 'orange.200' : 'gray.100'}
+      borderRadius="xl"
+      p={4}
+      bg={isMissing ? 'orange.50' : 'white'}
+      scrollMarginTop="120px"
+    >
       <Box
-        bg="blue.50"
+        bg={isMissing ? 'orange.100' : 'blue.50'}
         borderWidth="1px"
-        borderColor="blue.100"
+        borderColor={isMissing ? 'orange.200' : 'blue.100'}
         borderRadius="lg"
         px={3}
         py={2}
         mb={3}
       >
-        <Text fontSize="sm" fontWeight={600} color="blue.500">
+        <Text
+          fontSize="sm"
+          fontWeight={600}
+          color={isMissing ? 'orange.600' : 'blue.500'}
+        >
           IdenaAI
         </Text>
         <Text mt={1}>{title}</Text>
       </Box>
       <Box>{children}</Box>
+      {isMissing && missingHint ? (
+        <Text color="orange.700" fontSize="sm" fontWeight={600} mt={3}>
+          {missingHint}
+        </Text>
+      ) : null}
     </Box>
   )
 }
@@ -2459,6 +4008,9 @@ function BooleanChoiceField({
   trueLabel,
   falseLabel,
   t,
+  isMissing = false,
+  missingHint = '',
+  sectionRef = null,
 }) {
   let statusText = t('Choose one answer.')
 
@@ -2467,15 +4019,27 @@ function BooleanChoiceField({
   } else if (value === false) {
     statusText = t('Saved as: no')
   }
+  let borderColor = 'gray.100'
+  let backgroundColor = 'white'
+
+  if (isMissing) {
+    borderColor = 'orange.200'
+    backgroundColor = 'orange.50'
+  } else if (value !== null) {
+    borderColor = 'blue.100'
+    backgroundColor = 'blue.50'
+  }
 
   return (
     <Box
+      ref={sectionRef}
       borderWidth="1px"
-      borderColor={value === null ? 'gray.100' : 'blue.100'}
+      borderColor={borderColor}
       borderRadius="lg"
       px={3}
       py={3}
-      bg={value === null ? 'white' : 'blue.50'}
+      bg={backgroundColor}
+      scrollMarginTop="120px"
     >
       <Stack spacing={2}>
         <Box>
@@ -2509,6 +4073,11 @@ function BooleanChoiceField({
         <Text color="muted" fontSize="xs">
           {statusText}
         </Text>
+        {isMissing && missingHint ? (
+          <Text color="orange.700" fontSize="sm" fontWeight={600}>
+            {missingHint}
+          </Text>
+        ) : null}
       </Stack>
     </Box>
   )
@@ -2582,6 +4151,13 @@ function AiAssistantDraftMessage({
     {value: 'bad', label: t('Bad')},
     {value: 'wrong', label: t('Wrong')},
   ]
+  const currentRuntimeModelLabel =
+    runtimeModelLabel || annotation.model || t('unknown')
+  const savedDraftModelLabel = String(annotation.model || '').trim()
+  const showsLegacyDraftModelHint =
+    Boolean(savedDraftModelLabel) &&
+    Boolean(runtimeModelLabel) &&
+    savedDraftModelLabel !== runtimeModelLabel
 
   return (
     <AiChatBubble
@@ -2600,13 +4176,24 @@ function AiAssistantDraftMessage({
 
         <Text color="muted" fontSize="xs" wordBreak="break-all">
           {t(
-            'Runtime model {{draftModel}} · Local training model {{trainingModel}}',
+            'Current local Qwen3.5-9B lane: runtime {{draftModel}} · local training {{trainingModel}}',
             {
-              draftModel: annotation.model || runtimeModelLabel || t('unknown'),
+              draftModel: currentRuntimeModelLabel,
               trainingModel: trainingModelLabel || t('unknown'),
             }
           )}
         </Text>
+
+        {showsLegacyDraftModelHint ? (
+          <Text color="muted" fontSize="xs" wordBreak="break-all">
+            {t(
+              'This saved draft was generated earlier with {{savedModel}}. Re-run it to refresh the answer in the current Qwen3.5-9B lane.',
+              {
+                savedModel: savedDraftModelLabel,
+              }
+            )}
+          </Text>
+        ) : null}
 
         {annotation.why_answer ? (
           <Text fontSize="sm" whiteSpace="pre-wrap">
@@ -2872,7 +4459,7 @@ function SuccessRateHistoryChart({entries = [], t}) {
             ) : null}
 
             {points.map((point, index) => (
-              <g key={`${point.evaluatedAt || point.resultPath || index}`}>
+              <g key={`${point.evaluatedAt || point.runNumber || index}`}>
                 <circle
                   cx={point.x}
                   cy={point.y}
@@ -2936,6 +4523,780 @@ function SuccessRateHistoryChart({entries = [], t}) {
   )
 }
 
+function formatBenchmarkAnswerLabel(value, t) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  if (normalized === 'left') {
+    return t('LEFT')
+  }
+
+  if (normalized === 'right') {
+    return t('RIGHT')
+  }
+
+  if (normalized === 'skip') {
+    return t('SKIP')
+  }
+
+  return t('Unknown')
+}
+
+function describeBenchmarkExampleChange(changeType, t) {
+  switch (
+    String(changeType || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case 'improved':
+      return {
+        label: t('Improved'),
+        scheme: 'green',
+        borderColor: 'green.100',
+        background: 'green.50',
+      }
+    case 'regressed':
+      return {
+        label: t('Regressed'),
+        scheme: 'red',
+        borderColor: 'red.100',
+        background: 'red.50',
+      }
+    case 'unchanged_wrong':
+      return {
+        label: t('Still wrong'),
+        scheme: 'orange',
+        borderColor: 'orange.100',
+        background: 'orange.50',
+      }
+    case 'unchanged_correct':
+      return {
+        label: t('Still correct'),
+        scheme: 'blue',
+        borderColor: 'blue.100',
+        background: 'blue.50',
+      }
+    case 'current_wrong':
+      return {
+        label: t('Wrong in this run'),
+        scheme: 'orange',
+        borderColor: 'orange.100',
+        background: 'orange.50',
+      }
+    default:
+      return {
+        label: t('Current example'),
+        scheme: 'gray',
+        borderColor: 'gray.100',
+        background: 'gray.50',
+      }
+  }
+}
+
+function describeBenchmarkRunExampleResult(entry, t) {
+  if (!entry) {
+    return {
+      label: t('No previous run'),
+      detail: t(
+        'This example was not loaded from an earlier saved comparison.'
+      ),
+      scheme: 'gray',
+    }
+  }
+
+  if (entry.correct === true) {
+    return {
+      label: t('Correct'),
+      detail: t('Predicted {{answer}}', {
+        answer: formatBenchmarkAnswerLabel(entry.predicted, t),
+      }),
+      scheme: 'green',
+    }
+  }
+
+  if (entry.correct === false) {
+    return {
+      label: t('Wrong'),
+      detail: t('Predicted {{answer}}', {
+        answer: formatBenchmarkAnswerLabel(entry.predicted, t),
+      }),
+      scheme: 'red',
+    }
+  }
+
+  return {
+    label: t('No clear answer'),
+    detail: t('Predicted {{answer}}', {
+      answer: formatBenchmarkAnswerLabel(entry.predicted, t),
+    }),
+    scheme: 'yellow',
+  }
+}
+
+function summarizeBenchmarkExamples(examples = []) {
+  return examples.reduce(
+    (summary, example) => {
+      const changeType = String(example?.changeType || '')
+        .trim()
+        .toLowerCase()
+
+      if (example?.current?.correct === true) {
+        summary.currentCorrectCount += 1
+      }
+
+      if (example?.previous?.correct === true) {
+        summary.previousCorrectCount += 1
+      }
+
+      if (changeType === 'improved') {
+        summary.improvedCount += 1
+      } else if (changeType === 'regressed') {
+        summary.regressedCount += 1
+      } else if (changeType === 'unchanged_correct') {
+        summary.unchangedCorrectCount += 1
+      } else if (changeType === 'unchanged_wrong') {
+        summary.unchangedWrongCount += 1
+      }
+
+      return summary
+    },
+    {
+      total: examples.length,
+      currentCorrectCount: 0,
+      previousCorrectCount: 0,
+      improvedCount: 0,
+      regressedCount: 0,
+      unchangedCorrectCount: 0,
+      unchangedWrongCount: 0,
+    }
+  )
+}
+
+function BenchmarkExamplesComparisonGraph({examples = [], t}) {
+  const summary = summarizeBenchmarkExamples(examples)
+
+  if (!summary.total) {
+    return null
+  }
+
+  const currentPercent = (summary.currentCorrectCount / summary.total) * 100
+  const previousExampleAvailable = examples.some((example) => example?.previous)
+  const previousPercent =
+    summary.previousCorrectCount > 0 || previousExampleAvailable
+      ? (summary.previousCorrectCount / summary.total) * 100
+      : null
+  const selectedDelta =
+    previousPercent === null ? null : currentPercent - previousPercent
+  const selectedDeltaLabel =
+    selectedDelta === null
+      ? t('No earlier saved example set was available for this comparison.')
+      : t('Change across these shown examples: {{value}} pts', {
+          value: `${selectedDelta >= 0 ? '+' : ''}${selectedDelta.toFixed(1)}`,
+        })
+  const changeStats = [
+    {
+      key: 'improved',
+      label: t('Improved'),
+      count: summary.improvedCount,
+      scheme: 'green',
+    },
+    {
+      key: 'regressed',
+      label: t('Regressed'),
+      count: summary.regressedCount,
+      scheme: 'red',
+    },
+    {
+      key: 'still-correct',
+      label: t('Still correct'),
+      count: summary.unchangedCorrectCount,
+      scheme: 'blue',
+    },
+    {
+      key: 'still-wrong',
+      label: t('Still wrong'),
+      count: summary.unchangedWrongCount,
+      scheme: 'orange',
+    },
+  ]
+
+  return (
+    <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+      <Stack spacing={3}>
+        <Box>
+          <Text fontSize="sm" fontWeight={600}>
+            {t('Selected example graph')}
+          </Text>
+          <Text color="muted" fontSize="xs">
+            {t(
+              'This graph only compares the example flips shown below, not the whole unseen holdout.'
+            )}
+          </Text>
+        </Box>
+
+        <Stack spacing={3}>
+          <Box>
+            <Flex justify="space-between" align="center" mb={1} gap={2}>
+              <Text fontSize="sm" fontWeight={600}>
+                {t('Current run')}
+              </Text>
+              <Text fontSize="sm" fontWeight={700}>
+                {summary.currentCorrectCount} / {summary.total} ·{' '}
+                {formatPercentMetric(currentPercent, 1)}
+              </Text>
+            </Flex>
+            <Progress
+              value={currentPercent}
+              size="sm"
+              colorScheme="blue"
+              borderRadius="full"
+            />
+          </Box>
+
+          {previousPercent !== null ? (
+            <Box>
+              <Flex justify="space-between" align="center" mb={1} gap={2}>
+                <Text fontSize="sm" fontWeight={600}>
+                  {t('Last run')}
+                </Text>
+                <Text fontSize="sm" fontWeight={700}>
+                  {summary.previousCorrectCount} / {summary.total} ·{' '}
+                  {formatPercentMetric(previousPercent, 1)}
+                </Text>
+              </Flex>
+              <Progress
+                value={previousPercent}
+                size="sm"
+                colorScheme="gray"
+                borderRadius="full"
+              />
+            </Box>
+          ) : null}
+        </Stack>
+
+        <SimpleGrid columns={[2, 2, 4]} spacing={3}>
+          {changeStats.map((stat) => (
+            <Box
+              key={stat.key}
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              px={3}
+              py={2}
+              bg="gray.50"
+            >
+              <Stack spacing={1}>
+                <Text color="muted" fontSize="xs">
+                  {stat.label}
+                </Text>
+                <Badge
+                  alignSelf="flex-start"
+                  colorScheme={stat.scheme}
+                  borderRadius="full"
+                >
+                  {stat.count}
+                </Badge>
+              </Stack>
+            </Box>
+          ))}
+        </SimpleGrid>
+
+        <Text color="muted" fontSize="xs">
+          {selectedDeltaLabel}
+        </Text>
+      </Stack>
+    </Box>
+  )
+}
+
+function BenchmarkLiveStatsPanel({
+  activeRun = null,
+  telemetry = null,
+  current = null,
+  previous = null,
+  t,
+}) {
+  const run = describeDeveloperActiveRun(activeRun, t)
+  const activeRunStatus = String(activeRun?.status || '')
+    .trim()
+    .toLowerCase()
+  const activeRunKind = String(activeRun?.kind || '')
+    .trim()
+    .toLowerCase()
+  const activeRunStage = String(activeRun?.stage || '')
+    .trim()
+    .toLowerCase()
+  const isBenchmarkLive =
+    activeRunStatus === 'running' &&
+    (activeRunKind === 'comparison' || activeRunStage.startsWith('benchmark_'))
+  const system =
+    telemetry &&
+    typeof telemetry.system === 'object' &&
+    !Array.isArray(telemetry.system)
+      ? telemetry.system
+      : {}
+  const deltaAccuracy =
+    typeof current?.accuracy === 'number' &&
+    typeof previous?.accuracy === 'number'
+      ? current.accuracy - previous.accuracy
+      : null
+  let benchmarkStateDetail = t(
+    'Run a benchmark to start collecting live comparison stats.'
+  )
+  let benchmarkProgressValue = current
+    ? formatSuccessRate(current.accuracy)
+    : 'n/a'
+  let benchmarkProgressDetail = t('No earlier saved run at this size yet.')
+  let benchmarkProgressTone = 'gray'
+
+  if (deltaAccuracy !== null) {
+    benchmarkProgressTone = deltaAccuracy >= 0 ? 'green' : 'orange'
+  }
+
+  if (isBenchmarkLive) {
+    benchmarkStateDetail =
+      run?.benchmarkSummary ||
+      t('The benchmark is scoring unseen flips right now.')
+    benchmarkProgressValue =
+      typeof run?.progressPercent === 'number'
+        ? formatPercentMetric(run.progressPercent, 0)
+        : 'n/a'
+    benchmarkProgressDetail =
+      run?.summary || run?.detail || t('Waiting for the next live update.')
+    benchmarkProgressTone = 'blue'
+  } else if (current?.evaluatedAt) {
+    benchmarkStateDetail = t('Last saved benchmark: {{time}}', {
+      time: formatTimestamp(current.evaluatedAt),
+    })
+  }
+
+  if (deltaAccuracy !== null && !isBenchmarkLive) {
+    benchmarkProgressDetail = t('Saved change vs last run: {{value}} pts', {
+      value: `${deltaAccuracy >= 0 ? '+' : ''}${(deltaAccuracy * 100).toFixed(
+        1
+      )}`,
+    })
+  }
+
+  const benchmarkStateCard = {
+    title: t('Benchmark state'),
+    value: isBenchmarkLive ? t('Live now') : t('Standby'),
+    detail: benchmarkStateDetail,
+    tone: isBenchmarkLive ? 'purple' : 'gray',
+  }
+  const benchmarkProgressCard = {
+    title: t('Benchmark progress'),
+    value: benchmarkProgressValue,
+    detail: benchmarkProgressDetail,
+    tone: benchmarkProgressTone,
+  }
+  const stats = [
+    benchmarkStateCard,
+    benchmarkProgressCard,
+    describeDeveloperThermalTelemetry(system, t),
+    describeDeveloperCpuTelemetry(system, t),
+    describeDeveloperGpuTelemetry(system, t),
+  ]
+
+  return (
+    <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+      <Stack spacing={3}>
+        <Flex
+          justify="space-between"
+          align={['flex-start', 'center']}
+          direction={['column', 'row']}
+          gap={2}
+        >
+          <Box>
+            <Text fontSize="sm" fontWeight={600}>
+              {t('Benchmark live stats')}
+            </Text>
+            <Text color="muted" fontSize="xs">
+              {isBenchmarkLive
+                ? t(
+                    'These stats refresh while the benchmark is running so you can watch the run and the machine together.'
+                  )
+                : t(
+                    'These standby stats show the last machine sample and the latest saved benchmark result.'
+                  )}
+            </Text>
+          </Box>
+          <Badge
+            colorScheme={isBenchmarkLive ? 'purple' : 'gray'}
+            borderRadius="full"
+            px={2}
+          >
+            {isBenchmarkLive ? t('Live') : t('Standby')}
+          </Badge>
+        </Flex>
+
+        <SimpleGrid columns={[1, 2, 5]} spacing={3}>
+          {stats.map((stat) => (
+            <LocalTrainingImpactStatCard
+              key={stat.title}
+              title={stat.title}
+              value={stat.value}
+              detail={stat.detail}
+              tone={stat.tone}
+            />
+          ))}
+        </SimpleGrid>
+
+        {isBenchmarkLive && typeof run?.progressPercent === 'number' ? (
+          <Progress
+            value={run.progressPercent}
+            size="sm"
+            colorScheme="purple"
+            borderRadius="full"
+          />
+        ) : null}
+
+        <Text color="muted" fontSize="xs">
+          {telemetry?.collectedAt
+            ? `${t('Last machine sample')}: ${formatTimestamp(
+                telemetry.collectedAt
+              )}`
+            : t('Machine sampling is waiting for the next telemetry update.')}
+        </Text>
+      </Stack>
+    </Box>
+  )
+}
+
+function BenchmarkExamplesEmptyState({activeRun = null, telemetry = null, t}) {
+  return (
+    <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+      <Stack spacing={3}>
+        <Box>
+          <Text fontSize="sm" fontWeight={600}>
+            {t('Benchmark example flips')}
+          </Text>
+          <Text color="muted" fontSize="xs">
+            {t(
+              'This area stays visible before the first saved benchmark so you know where the example graph and live comparison stats will appear.'
+            )}
+          </Text>
+        </Box>
+
+        <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+          <Stack spacing={2}>
+            <Text fontSize="sm" fontWeight={600}>
+              {t('Selected example graph')}
+            </Text>
+            <Text color="muted" fontSize="sm">
+              {t(
+                'After the first saved benchmark, this graph will compare the shown example flips from the current run against the last run.'
+              )}
+            </Text>
+            <Progress
+              size="sm"
+              value={0}
+              colorScheme="gray"
+              borderRadius="full"
+            />
+            <Text color="muted" fontSize="xs">
+              {t(
+                'Nothing is missing here. The app simply does not have a saved benchmark example set yet.'
+              )}
+            </Text>
+          </Stack>
+        </Box>
+
+        <BenchmarkLiveStatsPanel
+          activeRun={activeRun}
+          telemetry={telemetry}
+          current={null}
+          previous={null}
+          t={t}
+        />
+      </Stack>
+    </Box>
+  )
+}
+
+function DeveloperBenchmarkExamplesPanel({
+  data = null,
+  benchmarkSize = 100,
+  isLoading = false,
+  error = '',
+  activeRun = null,
+  telemetry = null,
+  t,
+}) {
+  if (isLoading) {
+    return (
+      <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+        <Stack spacing={2}>
+          <Text fontSize="sm" fontWeight={600}>
+            {t('Benchmark example flips')}
+          </Text>
+          <Progress size="sm" isIndeterminate colorScheme="blue" />
+          <Text color="muted" fontSize="sm">
+            {t(
+              'Loading example flips from the saved benchmark run so you can inspect what changed.'
+            )}
+          </Text>
+        </Stack>
+      </Box>
+    )
+  }
+
+  if (error) {
+    return (
+      <Box
+        borderWidth="1px"
+        borderColor="red.100"
+        borderRadius="md"
+        p={3}
+        bg="red.50"
+      >
+        <Stack spacing={1}>
+          <Text fontSize="sm" fontWeight={700}>
+            {t('Benchmark example flips unavailable')}
+          </Text>
+          <Text fontSize="sm">{error}</Text>
+        </Stack>
+      </Box>
+    )
+  }
+
+  if (!data?.current) {
+    return (
+      <BenchmarkExamplesEmptyState
+        activeRun={activeRun}
+        telemetry={telemetry}
+        t={t}
+      />
+    )
+  }
+
+  if (!data?.hasDetailedResults) {
+    return (
+      <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+        <Stack spacing={1}>
+          <Text fontSize="sm" fontWeight={600}>
+            {t('Benchmark example flips')}
+          </Text>
+          <Text color="muted" fontSize="sm">
+            {t(
+              'This saved benchmark only kept aggregate accuracy. Example-by-example flips become visible when the detailed local comparison files are available.'
+            )}
+          </Text>
+        </Stack>
+      </Box>
+    )
+  }
+
+  const examples = Array.isArray(data.examples) ? data.examples : []
+
+  return (
+    <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
+      <Stack spacing={3}>
+        <Flex
+          justify="space-between"
+          align={['flex-start', 'center']}
+          direction={['column', 'row']}
+          gap={2}
+        >
+          <Box>
+            <Text fontSize="sm" fontWeight={600}>
+              {t('Benchmark example flips')}
+            </Text>
+            <Text color="muted" fontSize="xs">
+              {data.previous
+                ? t(
+                    'These example flips come from the same unseen {{count}}-flip holdout used by the current and previous run.',
+                    {count: benchmarkSize}
+                  )
+                : t(
+                    'These example flips come from the latest unseen {{count}}-flip holdout run.',
+                    {count: benchmarkSize}
+                  )}
+            </Text>
+          </Box>
+          <HStack spacing={2} flexWrap="wrap">
+            <Badge colorScheme="blue" borderRadius="full" px={2}>
+              {t('Current')}: {formatSuccessRate(data.current.accuracy)}
+            </Badge>
+            {data.previous ? (
+              <Badge colorScheme="gray" borderRadius="full" px={2}>
+                {t('Last run')}: {formatSuccessRate(data.previous.accuracy)}
+              </Badge>
+            ) : null}
+          </HStack>
+        </Flex>
+
+        <SimpleGrid columns={[1, 1, 2]} spacing={3}>
+          <Box
+            borderWidth="1px"
+            borderColor="gray.100"
+            borderRadius="md"
+            px={3}
+            py={2}
+            bg="gray.50"
+          >
+            <Text color="muted" fontSize="xs">
+              {t('Current run')}
+            </Text>
+            <Text fontWeight={700}>
+              {Number(data.current.correct) || 0} /{' '}
+              {Number(data.current.totalFlips) || 0}
+            </Text>
+            <Text color="muted" fontSize="xs">
+              {formatTimestamp(data.current.evaluatedAt)}
+            </Text>
+          </Box>
+          <Box
+            borderWidth="1px"
+            borderColor="gray.100"
+            borderRadius="md"
+            px={3}
+            py={2}
+            bg="gray.50"
+          >
+            <Text color="muted" fontSize="xs">
+              {t('Last run')}
+            </Text>
+            <Text fontWeight={700}>
+              {data.previous
+                ? `${Number(data.previous.correct) || 0} / ${
+                    Number(data.previous.totalFlips) || 0
+                  }`
+                : t('No earlier run')}
+            </Text>
+            <Text color="muted" fontSize="xs">
+              {data.previous
+                ? formatTimestamp(data.previous.evaluatedAt)
+                : t('Run this benchmark again after another local update.')}
+            </Text>
+          </Box>
+        </SimpleGrid>
+
+        <BenchmarkExamplesComparisonGraph examples={examples} t={t} />
+        <BenchmarkLiveStatsPanel
+          activeRun={activeRun}
+          telemetry={telemetry}
+          current={data.current}
+          previous={data.previous}
+          t={t}
+        />
+
+        {examples.length ? (
+          <SimpleGrid columns={[1, 1, 2]} spacing={3}>
+            {examples.map((example, index) => {
+              const styles = describeBenchmarkExampleChange(
+                example.changeType,
+                t
+              )
+              const currentResult = describeBenchmarkRunExampleResult(
+                example.current,
+                t
+              )
+              const previousResult = describeBenchmarkRunExampleResult(
+                example.previous,
+                t
+              )
+              const title =
+                example.sampleId || example.flipHash || `#${index + 1}`
+
+              return (
+                <Box
+                  key={`${title}-${index}`}
+                  borderWidth="1px"
+                  borderColor={styles.borderColor}
+                  borderRadius="md"
+                  px={3}
+                  py={3}
+                  bg={styles.background}
+                >
+                  <Stack spacing={3}>
+                    <Flex justify="space-between" align="center" gap={2}>
+                      <Box minW={0}>
+                        <Text fontSize="sm" fontWeight={700} noOfLines={1}>
+                          {title}
+                        </Text>
+                        <Text color="muted" fontSize="xs">
+                          {t('Expected')}:{' '}
+                          {formatBenchmarkAnswerLabel(example.expected, t)}
+                        </Text>
+                      </Box>
+                      <Badge
+                        colorScheme={styles.scheme}
+                        borderRadius="full"
+                        px={2}
+                      >
+                        {styles.label}
+                      </Badge>
+                    </Flex>
+
+                    <SimpleGrid columns={[1, 2]} spacing={2}>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="whiteAlpha.700"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                        bg="white"
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Current run')}
+                        </Text>
+                        <Badge
+                          colorScheme={currentResult.scheme}
+                          borderRadius="full"
+                        >
+                          {currentResult.label}
+                        </Badge>
+                        <Text fontSize="sm" mt={2}>
+                          {currentResult.detail}
+                        </Text>
+                      </Box>
+                      <Box
+                        borderWidth="1px"
+                        borderColor="whiteAlpha.700"
+                        borderRadius="md"
+                        px={3}
+                        py={2}
+                        bg="white"
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {t('Last run')}
+                        </Text>
+                        <Badge
+                          colorScheme={previousResult.scheme}
+                          borderRadius="full"
+                        >
+                          {previousResult.label}
+                        </Badge>
+                        <Text fontSize="sm" mt={2}>
+                          {previousResult.detail}
+                        </Text>
+                      </Box>
+                    </SimpleGrid>
+
+                    {example.flipHash ? (
+                      <Text color="muted" fontSize="xs">
+                        {t('Flip hash')}: {example.flipHash}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                </Box>
+              )
+            })}
+          </SimpleGrid>
+        ) : (
+          <Text color="muted" fontSize="sm">
+            {t(
+              'No detailed example flips were selected from the saved benchmark output yet.'
+            )}
+          </Text>
+        )}
+      </Stack>
+    </Box>
+  )
+}
+
 export default function AiHumanTeacherPage() {
   const {t} = useTranslation()
   const router = useRouter()
@@ -2971,6 +5332,12 @@ export default function AiHumanTeacherPage() {
   const autoStartKeyRef = React.useRef('')
   const shouldFlushAutosaveRef = React.useRef(false)
   const localPilotTrainingRef = React.useRef(null)
+  const developerSessionContextVersionRef = React.useRef(0)
+  const developerSessionLoadRequestIdRef = React.useRef(0)
+  const developerSessionStatusRequestIdRef = React.useRef(0)
+  const developerComparisonExamplesRequestIdRef = React.useRef(0)
+  const missingFieldSectionRefs = React.useRef({})
+  const lastMissingFieldScrollKeyRef = React.useRef('')
 
   const [epoch, setEpoch] = React.useState(queryEpoch || fallbackEpoch)
   const [result, setResult] = React.useState(null)
@@ -3012,6 +5379,22 @@ export default function AiHumanTeacherPage() {
   const [developerTelemetry, setDeveloperTelemetry] = React.useState(null)
   const [developerTelemetryError, setDeveloperTelemetryError] =
     React.useState('')
+  const [developerComparisonExamples, setDeveloperComparisonExamples] =
+    React.useState(null)
+  const [
+    developerComparisonExamplesError,
+    setDeveloperComparisonExamplesError,
+  ] = React.useState('')
+  const [
+    isLoadingDeveloperComparisonExamples,
+    setIsLoadingDeveloperComparisonExamples,
+  ] = React.useState(false)
+  const [isStoppingDeveloperRun, setIsStoppingDeveloperRun] =
+    React.useState(false)
+  const [isUpdatingDeveloperRunControls, setIsUpdatingDeveloperRunControls] =
+    React.useState(false)
+  const [developerPendingRunControl, setDeveloperPendingRunControl] =
+    React.useState(null)
   const [isPromptToolsOpen, setIsPromptToolsOpen] = React.useState(false)
   const [isPromptEditingUnlocked, setIsPromptEditingUnlocked] =
     React.useState(false)
@@ -3052,6 +5435,10 @@ export default function AiHumanTeacherPage() {
     savedAt: null,
     error: '',
   })
+  const [highlightedMissingFields, setHighlightedMissingFields] =
+    React.useState([])
+  const [highlightedMissingFieldTaskId, setHighlightedMissingFieldTaskId] =
+    React.useState('')
   const lastAutoDraftTaskIdRef = React.useRef('')
 
   React.useEffect(() => {
@@ -3113,6 +5500,266 @@ export default function AiHumanTeacherPage() {
     }
   }, [isDeveloperMode])
 
+  const refreshDeveloperSessionState = React.useCallback(async () => {
+    if (
+      !isDeveloperMode ||
+      !global.localAi ||
+      typeof global.localAi.loadHumanTeacherDeveloperSessionState !== 'function'
+    ) {
+      return null
+    }
+
+    try {
+      const requestContextVersion = developerSessionContextVersionRef.current
+      const requestId = developerSessionStatusRequestIdRef.current + 1
+      developerSessionStatusRequestIdRef.current = requestId
+      const nextResult =
+        await global.localAi.loadHumanTeacherDeveloperSessionState({
+          sampleName: demoSampleName,
+          currentPeriod,
+        })
+
+      if (
+        developerSessionContextVersionRef.current !== requestContextVersion ||
+        developerSessionStatusRequestIdRef.current !== requestId
+      ) {
+        return null
+      }
+
+      if (nextResult?.state) {
+        setDeveloperSessionState(nextResult.state)
+      }
+      return nextResult
+    } catch {
+      return null
+    }
+  }, [currentPeriod, demoSampleName, isDeveloperMode])
+
+  const stopDeveloperActiveRun = React.useCallback(
+    async (stopMode = 'cancel_now') => {
+      if (
+        !isDeveloperMode ||
+        !global.localAi ||
+        typeof global.localAi.stopHumanTeacherDeveloperRun !== 'function'
+      ) {
+        return null
+      }
+
+      setIsStoppingDeveloperRun(true)
+
+      try {
+        const nextResult = await ensureBridge().stopHumanTeacherDeveloperRun({
+          sampleName: demoSampleName,
+          currentPeriod,
+          stopMode,
+        })
+
+        if (nextResult?.state) {
+          setDeveloperSessionState(nextResult.state)
+        }
+
+        if (nextResult?.stopped === true) {
+          toast({
+            title:
+              stopMode === 'after_unit'
+                ? t('Graceful stop requested')
+                : t('Cancel requested'),
+            description:
+              stopMode === 'after_unit'
+                ? t(
+                    'This run will stop after the current step or benchmark flip finishes. It will not pause for resume later.'
+                  )
+                : t(
+                    'The current local run is being cancelled now. The sticky run console will stay visible until the process exits.'
+                  ),
+            status: 'info',
+            duration: 4000,
+            isClosable: true,
+          })
+        } else {
+          toast({
+            title: t('No live local run to stop'),
+            description: t(
+              'The app did not find a running local training or benchmark process.'
+            ),
+            status: 'info',
+            duration: 3500,
+            isClosable: true,
+          })
+        }
+
+        return nextResult
+      } catch (nextError) {
+        const message = formatErrorMessage(nextError)
+        setError(message)
+        toast({
+          title: t('Could not stop the local run'),
+          description: message,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        })
+        return null
+      } finally {
+        setIsStoppingDeveloperRun(false)
+      }
+    },
+    [currentPeriod, demoSampleName, ensureBridge, isDeveloperMode, t, toast]
+  )
+
+  const updateDeveloperActiveRunControls = React.useCallback(
+    async (nextMode) => {
+      const bridge = ensureBridge()
+
+      if (
+        !isDeveloperMode ||
+        !bridge ||
+        typeof bridge.updateHumanTeacherDeveloperRunControls !== 'function'
+      ) {
+        return null
+      }
+
+      const activeRun =
+        developerSessionState &&
+        typeof developerSessionState.activeRun === 'object' &&
+        !Array.isArray(developerSessionState.activeRun)
+          ? developerSessionState.activeRun
+          : null
+      const activeStage = String(activeRun?.stage || '')
+        .trim()
+        .toLowerCase()
+      const activeKind = String(activeRun?.kind || '')
+        .trim()
+        .toLowerCase()
+      const benchmarkPhase =
+        activeKind === 'comparison' || activeStage.startsWith('benchmark_')
+      const nextPayload = benchmarkPhase
+        ? {localBenchmarkThermalMode: nextMode}
+        : {localTrainingThermalMode: nextMode}
+
+      setDeveloperPendingRunControl({mode: nextMode, benchmarkPhase})
+      setIsUpdatingDeveloperRunControls(true)
+
+      try {
+        const nextResult = await bridge.updateHumanTeacherDeveloperRunControls({
+          sampleName: demoSampleName,
+          currentPeriod,
+          ...nextPayload,
+        })
+
+        if (nextResult?.state) {
+          setDeveloperSessionState(nextResult.state)
+        }
+
+        if (nextResult?.updated === true) {
+          toast({
+            title: benchmarkPhase
+              ? t('Benchmark speed updated')
+              : t('Training speed updated'),
+            description: benchmarkPhase
+              ? t('The next unseen flips will use the new benchmark heat mode.')
+              : t(
+                  'The next training steps will use the new training heat mode.'
+                ),
+            status: 'success',
+            duration: 3000,
+            isClosable: true,
+          })
+        } else {
+          const message = String(
+            nextResult?.lastError ||
+              nextResult?.error ||
+              t('The live run did not accept a new speed setting right now.')
+          ).trim()
+
+          setDeveloperPendingRunControl(null)
+          setError(message)
+          toast({
+            title: t('Could not update run speed'),
+            description: message,
+            status: 'warning',
+            duration: 5000,
+            isClosable: true,
+          })
+        }
+
+        return nextResult
+      } catch (nextError) {
+        const message = formatErrorMessage(nextError)
+        setDeveloperPendingRunControl(null)
+        setError(message)
+        toast({
+          title: t('Could not update run speed'),
+          description: message,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        })
+        return null
+      } finally {
+        setIsUpdatingDeveloperRunControls(false)
+      }
+    },
+    [
+      currentPeriod,
+      demoSampleName,
+      developerSessionState,
+      ensureBridge,
+      isDeveloperMode,
+      setDeveloperPendingRunControl,
+      t,
+      toast,
+    ]
+  )
+
+  const loadDeveloperComparisonExamples = React.useCallback(
+    async ({sampleName = demoSampleName, benchmarkFlips} = {}) => {
+      if (
+        !isDeveloperMode ||
+        !global.localAi ||
+        typeof global.localAi.loadHumanTeacherDeveloperComparisonExamples !==
+          'function'
+      ) {
+        return null
+      }
+
+      const requestId = developerComparisonExamplesRequestIdRef.current + 1
+      developerComparisonExamplesRequestIdRef.current = requestId
+      setIsLoadingDeveloperComparisonExamples(true)
+      setDeveloperComparisonExamplesError('')
+
+      try {
+        const nextResult =
+          await ensureBridge().loadHumanTeacherDeveloperComparisonExamples({
+            sampleName,
+            evaluationFlips: benchmarkFlips,
+            currentPeriod,
+            maxExamples: 6,
+          })
+
+        if (developerComparisonExamplesRequestIdRef.current !== requestId) {
+          return null
+        }
+
+        setDeveloperComparisonExamples(nextResult || null)
+        return nextResult
+      } catch (nextError) {
+        if (developerComparisonExamplesRequestIdRef.current !== requestId) {
+          return null
+        }
+
+        setDeveloperComparisonExamples(null)
+        setDeveloperComparisonExamplesError(formatErrorMessage(nextError))
+        return null
+      } finally {
+        if (developerComparisonExamplesRequestIdRef.current === requestId) {
+          setIsLoadingDeveloperComparisonExamples(false)
+        }
+      }
+    },
+    [currentPeriod, demoSampleName, ensureBridge, isDeveloperMode]
+  )
+
   const savedDeveloperPromptOverride = React.useMemo(
     () => String(localAi?.developerHumanTeacherSystemPrompt || '').trim(),
     [localAi?.developerHumanTeacherSystemPrompt]
@@ -3130,6 +5777,11 @@ export default function AiHumanTeacherPage() {
     normalizeDeveloperLocalTrainingThermalMode(
       localAi?.developerLocalTrainingThermalMode ||
         DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+    )
+  const developerLocalBenchmarkThermalMode =
+    normalizeDeveloperLocalBenchmarkThermalMode(
+      localAi?.developerLocalBenchmarkThermalMode ||
+        DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
     )
   const developerLocalBenchmarkSize = normalizeDeveloperLocalBenchmarkSize(
     localAi?.developerLocalBenchmarkSize ||
@@ -3190,6 +5842,14 @@ export default function AiHumanTeacherPage() {
         t
       ),
     [developerLocalTrainingThermalMode, t]
+  )
+  const developerLocalBenchmarkThermalSummary = React.useMemo(
+    () =>
+      describeDeveloperLocalBenchmarkThermalMode(
+        developerLocalBenchmarkThermalMode,
+        t
+      ),
+    [developerLocalBenchmarkThermalMode, t]
   )
   const localDraftRequestedRuntimeModelLabel = React.useMemo(
     () =>
@@ -3341,8 +6001,26 @@ export default function AiHumanTeacherPage() {
         }
     }
   }, [developerLocalTrainingBudgetTone, t])
+  const developerActiveRun = React.useMemo(() => {
+    const source =
+      developerSessionState &&
+      typeof developerSessionState.activeRun === 'object' &&
+      !Array.isArray(developerSessionState.activeRun)
+        ? developerSessionState.activeRun
+        : null
+
+    return source || null
+  }, [developerSessionState])
+  const developerActiveRunStatus = String(
+    developerActiveRun?.status || ''
+  ).trim()
+  const developerActiveRunIsBusy =
+    developerActiveRunStatus === 'running' ||
+    developerActiveRunStatus === 'stopping'
   const developerTelemetryIsBusy =
-    isFinalizingDeveloperChunk || isRunningDeveloperComparison
+    isFinalizingDeveloperChunk ||
+    isRunningDeveloperComparison ||
+    developerActiveRunIsBusy
   const developerTrainingReadiness = React.useMemo(
     () => normalizeDeveloperTrainingReadiness(developerTelemetry, t),
     [developerTelemetry, t]
@@ -3354,6 +6032,29 @@ export default function AiHumanTeacherPage() {
   const developerTrainingReadyToStart =
     !developerTrainingBlockedBySystemPressure ||
     developerTrainingPressureOverride === true
+  React.useEffect(() => {
+    if (!developerPendingRunControl) {
+      return
+    }
+
+    const activeMode = developerPendingRunControl.benchmarkPhase
+      ? String(developerActiveRun?.benchmarkThermalMode || '').trim()
+      : String(developerActiveRun?.trainingThermalMode || '').trim()
+
+    if (
+      !developerActiveRun ||
+      developerActiveRun.status !== 'running' ||
+      activeMode === String(developerPendingRunControl.mode || '').trim()
+    ) {
+      setDeveloperPendingRunControl(null)
+    }
+  }, [
+    developerActiveRun,
+    developerPendingRunControl,
+    developerActiveRun?.benchmarkThermalMode,
+    developerActiveRun?.status,
+    developerActiveRun?.trainingThermalMode,
+  ])
   const developerTrainingReadinessAlertStatus = React.useMemo(() => {
     if (developerTrainingReadiness.tone === 'red') {
       return 'error'
@@ -3377,7 +6078,11 @@ export default function AiHumanTeacherPage() {
     }
 
     const refreshIntervalMs =
-      isFinalizingDeveloperChunk || isRunningDeveloperComparison ? 3000 : 10000
+      isFinalizingDeveloperChunk ||
+      isRunningDeveloperComparison ||
+      developerActiveRunIsBusy
+        ? 3000
+        : 10000
 
     const refreshNow = async () => {
       await refreshDeveloperTelemetry()
@@ -3390,10 +6095,47 @@ export default function AiHumanTeacherPage() {
       window.clearInterval(intervalId)
     }
   }, [
+    developerActiveRunIsBusy,
     isDeveloperMode,
     isFinalizingDeveloperChunk,
     isRunningDeveloperComparison,
     refreshDeveloperTelemetry,
+  ])
+
+  React.useEffect(() => {
+    if (!isDeveloperMode) {
+      return undefined
+    }
+
+    const activeRunStatus = String(
+      developerSessionState?.activeRun?.status || ''
+    ).trim()
+    const shouldPoll =
+      isFinalizingDeveloperChunk ||
+      isRunningDeveloperComparison ||
+      activeRunStatus === 'running' ||
+      activeRunStatus === 'stopping'
+
+    if (!shouldPoll) {
+      return undefined
+    }
+
+    const refreshNow = async () => {
+      await refreshDeveloperSessionState()
+    }
+
+    refreshNow()
+    const intervalId = window.setInterval(refreshNow, 2500)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [
+    developerSessionState?.activeRun?.status,
+    isDeveloperMode,
+    isFinalizingDeveloperChunk,
+    isRunningDeveloperComparison,
+    refreshDeveloperSessionState,
   ])
 
   React.useEffect(() => {
@@ -4022,6 +6764,15 @@ export default function AiHumanTeacherPage() {
 
   const loadDeveloperSession = React.useCallback(
     async ({offsetOverride} = {}) => {
+      const requestId = developerSessionLoadRequestIdRef.current + 1
+      developerSessionLoadRequestIdRef.current = requestId
+      const requestContextVersion =
+        developerSessionContextVersionRef.current + 1
+      developerSessionContextVersionRef.current = requestContextVersion
+      const isCurrentRequest = () =>
+        developerSessionLoadRequestIdRef.current === requestId &&
+        developerSessionContextVersionRef.current === requestContextVersion
+
       setIsWorkspaceLoading(true)
       setError('')
       setImportResult(null)
@@ -4033,6 +6784,11 @@ export default function AiHumanTeacherPage() {
             offset: offsetOverride,
             currentPeriod,
           })
+
+        if (!isCurrentRequest()) {
+          return nextResult
+        }
+
         const nextWorkspace = nextResult.workspace || null
         setAnnotationSourceMode('developer')
         setWorkspace(nextWorkspace)
@@ -4048,7 +6804,13 @@ export default function AiHumanTeacherPage() {
         if (queryAction === 'start') {
           router.replace('/settings/ai-human-teacher?developer=1')
         }
+
+        return nextResult
       } catch (nextError) {
+        if (!isCurrentRequest()) {
+          return null
+        }
+
         setWorkspace(null)
         setSelectedTaskId('')
         setTaskDetail(null)
@@ -4057,7 +6819,9 @@ export default function AiHumanTeacherPage() {
         setDeveloperActionResult(null)
         setError(formatErrorMessage(nextError))
       } finally {
-        setIsWorkspaceLoading(false)
+        if (isCurrentRequest()) {
+          setIsWorkspaceLoading(false)
+        }
       }
     },
     [
@@ -4408,37 +7172,81 @@ export default function AiHumanTeacherPage() {
             })
           : t('Choose one level'),
       },
-      {
-        key: 'captions',
-        label: t('Frame notes'),
-        done: annotationCompletionState.hasFrameCaptions,
-        detail: t('{{count}} / 4 written', {
-          count: annotationCompletionState.filledFrameCaptions,
-        }),
-      },
-      {
-        key: 'summaries',
-        label: t('Story summaries'),
-        done: annotationCompletionState.hasStorySummaries,
-        detail: annotationCompletionState.hasStorySummaries
-          ? t('LEFT and RIGHT written')
-          : t('Write both LEFT and RIGHT'),
-      },
     ],
     [
-      annotationCompletionState.filledFrameCaptions,
       annotationCompletionState.hasConfidence,
       annotationCompletionState.hasDecision,
-      annotationCompletionState.hasFrameCaptions,
       annotationCompletionState.hasReason,
       annotationCompletionState.hasReportDecision,
       annotationCompletionState.hasReportReason,
       annotationCompletionState.hasSequenceDecision,
-      annotationCompletionState.hasStorySummaries,
       annotationCompletionState.hasTextDecision,
       annotationDraft.confidence,
       annotationDraft.final_answer,
       t,
+    ]
+  )
+  const currentMissingRequiredFieldLabels = React.useMemo(
+    () =>
+      formatMissingRequiredFields(
+        t,
+        annotationCompletionState.missingRequiredFields
+      ),
+    [annotationCompletionState.missingRequiredFields, t]
+  )
+  const activeHighlightedMissingFields = React.useMemo(() => {
+    const activeTaskId = String(selectedTaskId || '').trim()
+
+    if (
+      !activeTaskId ||
+      activeTaskId !== String(highlightedMissingFieldTaskId || '').trim()
+    ) {
+      return []
+    }
+
+    return annotationCompletionState.missingRequiredFields.filter((fieldKey) =>
+      highlightedMissingFields.includes(fieldKey)
+    )
+  }, [
+    annotationCompletionState.missingRequiredFields,
+    highlightedMissingFieldTaskId,
+    highlightedMissingFields,
+    selectedTaskId,
+  ])
+  const highlightedMissingFieldSet = React.useMemo(
+    () => new Set(activeHighlightedMissingFields),
+    [activeHighlightedMissingFields]
+  )
+  const canMoveForwardFromCurrentFlip = annotationCompletionState.isComplete
+  const highlightMissingFields = React.useCallback(
+    (fieldKeys = [], taskId = selectedTaskId) => {
+      const targetTaskId = String(taskId || '').trim()
+      const normalizedFieldKeys = Array.from(
+        new Set(
+          (Array.isArray(fieldKeys) ? fieldKeys : [])
+            .map((fieldKey) => String(fieldKey || '').trim())
+            .filter(Boolean)
+        )
+      )
+
+      if (!targetTaskId || !normalizedFieldKeys.length) {
+        return
+      }
+
+      setHighlightedMissingFieldTaskId(targetTaskId)
+      setHighlightedMissingFields(normalizedFieldKeys)
+      lastMissingFieldScrollKeyRef.current = ''
+    },
+    [selectedTaskId]
+  )
+  const revealCurrentMissingFields = React.useCallback(
+    (fieldKeys = annotationCompletionState.missingRequiredFields) => {
+      highlightMissingFields(fieldKeys, selectedTaskId)
+    },
+    [
+      annotationCompletionState.missingRequiredFields,
+      highlightMissingFields,
+      selectedTaskId,
     ]
   )
   const taskDetailStatusTone = React.useMemo(() => {
@@ -4452,8 +7260,23 @@ export default function AiHumanTeacherPage() {
 
     return 'gray'
   }, [annotationCompletionState.isComplete, annotationDraft])
-  const showRequiredDetailSection =
-    showAdvancedFields || !annotationCompletionState.requiredDetailComplete
+  const showOptionalDetailSection =
+    showAdvancedFields || annotationCompletionState.hasOptionalDetailContent
+  const optionalDetailToggleLabel = React.useMemo(() => {
+    if (showOptionalDetailSection) {
+      return t('Hide optional detail')
+    }
+
+    if (annotationCompletionState.hasOptionalDetailContent) {
+      return t('Review optional detail')
+    }
+
+    return t('Add optional detail')
+  }, [
+    annotationCompletionState.hasOptionalDetailContent,
+    showOptionalDetailSection,
+    t,
+  ])
   const currentAiAnnotation = React.useMemo(() => {
     const nextAiAnnotation = normalizeAiAnnotationDraft(
       annotationDraft.ai_annotation
@@ -4480,6 +7303,20 @@ export default function AiHumanTeacherPage() {
   const currentAiFeedbackText = String(
     annotationDraft.ai_annotation_feedback || ''
   ).trim()
+  const isFinalAnswerFieldHighlighted =
+    highlightedMissingFieldSet.has('final_answer')
+  const isReasonFieldHighlighted = highlightedMissingFieldSet.has('why_answer')
+  const isTextDecisionFieldHighlighted =
+    highlightedMissingFieldSet.has('text_required')
+  const isSequenceDecisionFieldHighlighted = highlightedMissingFieldSet.has(
+    'sequence_markers_present'
+  )
+  const isReportDecisionFieldHighlighted =
+    highlightedMissingFieldSet.has('report_required')
+  const isReportReasonFieldHighlighted =
+    highlightedMissingFieldSet.has('report_reason')
+  const isConfidenceFieldHighlighted =
+    highlightedMissingFieldSet.has('confidence')
   const currentAiReplyDraft = String(
     aiReplyDraftByTaskId[selectedTaskId] || ''
   ).slice(0, developerAiDraftQuestionWindowChars)
@@ -4707,7 +7544,7 @@ export default function AiHumanTeacherPage() {
           model: requestedRuntimeModel,
           visionModel: requestedRuntimeModel,
           timeoutMs: 45000,
-          responseFormat: 'json',
+          responseFormat: AI_ANNOTATION_RESPONSE_SCHEMA,
           generationOptions: {
             temperature: 0,
             num_ctx:
@@ -4900,6 +7737,73 @@ export default function AiHumanTeacherPage() {
   React.useEffect(() => {
     lastAutoDraftTaskIdRef.current = ''
   }, [selectedTaskId])
+
+  React.useEffect(() => {
+    const activeTaskId = String(taskDetail?.taskId || '').trim()
+    const selectedId = String(selectedTaskId || '').trim()
+
+    if (
+      !activeTaskId ||
+      !selectedId ||
+      activeTaskId !== selectedId ||
+      activeTaskId !== String(highlightedMissingFieldTaskId || '').trim() ||
+      !activeHighlightedMissingFields.length
+    ) {
+      return
+    }
+
+    const firstFieldKey = activeHighlightedMissingFields.find(
+      (fieldKey) => missingFieldSectionRefs.current[fieldKey]
+    )
+
+    if (!firstFieldKey) {
+      return
+    }
+
+    const scrollKey = `${activeTaskId}:${activeHighlightedMissingFields.join(
+      ','
+    )}`
+
+    if (lastMissingFieldScrollKeyRef.current === scrollKey) {
+      return
+    }
+
+    lastMissingFieldScrollKeyRef.current = scrollKey
+
+    const sectionNode = missingFieldSectionRefs.current[firstFieldKey]
+
+    if (sectionNode && typeof sectionNode.scrollIntoView === 'function') {
+      window.requestAnimationFrame(() => {
+        sectionNode.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        })
+      })
+    }
+  }, [
+    activeHighlightedMissingFields,
+    highlightedMissingFieldTaskId,
+    selectedTaskId,
+    taskDetail?.taskId,
+  ])
+
+  React.useEffect(() => {
+    if (
+      annotationCompletionState.isComplete &&
+      String(highlightedMissingFieldTaskId || '').trim() ===
+        String(selectedTaskId || '').trim() &&
+      highlightedMissingFields.length
+    ) {
+      setHighlightedMissingFields([])
+      setHighlightedMissingFieldTaskId('')
+      lastMissingFieldScrollKeyRef.current = ''
+    }
+  }, [
+    annotationCompletionState.isComplete,
+    highlightedMissingFieldTaskId,
+    highlightedMissingFields.length,
+    selectedTaskId,
+  ])
 
   React.useEffect(() => {
     const activeTaskId = String(taskDetail?.taskId || '').trim()
@@ -5148,6 +8052,11 @@ export default function AiHumanTeacherPage() {
           nextResult?.task?.annotationStatus || 'pending'
         )
         const nextNormalizedDraft = normalizeAnnotationDraft(annotationDraft)
+        const draftCompletion = getAnnotationCompletionState(annotationDraft)
+        const draftMissingRequiredFields = formatMissingRequiredFields(
+          t,
+          draftCompletion.missingRequiredFields
+        )
         const nextDraftKey = buildAnnotationDraftKey({
           annotationSourceMode,
           epoch: nextEpoch,
@@ -5156,11 +8065,12 @@ export default function AiHumanTeacherPage() {
           developerOffset,
           selectedTaskId,
         })
-        const completionState = getWorkspaceCountsAfterSave(
+        const workspacePreview = getWorkspacePreviewAfterSave(
           workspace,
           selectedTaskId,
           annotationDraft
         )
+        const {completionState, firstIncompleteTaskId} = workspacePreview
         setTaskDetail((current) =>
           current
             ? {
@@ -5175,12 +8085,10 @@ export default function AiHumanTeacherPage() {
                 ...current,
                 draftedCount: completionState.draftedCount,
                 completedCount: completionState.completedCount,
-                tasks: current.tasks.map((task) =>
+                tasks: workspacePreview.tasks.map((task) =>
                   task.taskId === selectedTaskId
                     ? {
                         ...task,
-                        hasDraft: hasDraftContent(annotationDraft),
-                        isComplete: isCompleteDraft(annotationDraft),
                         annotationStatus: nextStatus,
                       }
                     : task
@@ -5208,14 +8116,133 @@ export default function AiHumanTeacherPage() {
           savedAt: new Date().toISOString(),
           error: '',
         })
-        const willOpenChunkDecisionDialog =
+        const shouldVerifyChunkCompletion =
           promptOnChunkComplete &&
           !nextTaskId &&
           completionState.allComplete &&
           (annotationSourceMode === 'developer' ||
             annotationSourceMode === 'demo')
+        let willOpenChunkDecisionDialog = shouldVerifyChunkCompletion
+
+        if (shouldVerifyChunkCompletion) {
+          if (annotationSourceMode === 'developer') {
+            const authoritativeResult =
+              await ensureBridge().loadHumanTeacherDeveloperSession({
+                sampleName: demoSampleName,
+                offset: developerOffset,
+                currentPeriod,
+              })
+            const authoritativeWorkspace =
+              authoritativeResult?.workspace || null
+
+            setAnnotationSourceMode('developer')
+            setWorkspace(authoritativeWorkspace)
+            setResult(authoritativeResult)
+            setDemoSessionState(null)
+            setDemoOffset(0)
+            setDeveloperSessionState(authoritativeResult?.state || null)
+            setDeveloperOffset(Number(authoritativeResult?.offset) || 0)
+            setSelectedTaskId(
+              pickPreferredTaskId(authoritativeWorkspace, selectedTaskId)
+            )
+
+            const authoritativeTaskCount = Number(
+              authoritativeWorkspace?.taskCount
+            )
+            const authoritativeCompletedCount = Number(
+              authoritativeWorkspace?.completedCount
+            )
+
+            willOpenChunkDecisionDialog =
+              authoritativeTaskCount > 0 &&
+              authoritativeCompletedCount >= authoritativeTaskCount
+
+            if (!willOpenChunkDecisionDialog) {
+              toast({
+                title: t('This 5-flip chunk is not finished yet'),
+                description: describeIncompleteWorkspaceTasks(
+                  authoritativeWorkspace,
+                  t
+                ),
+                status: 'info',
+                duration: 4500,
+                isClosable: true,
+              })
+            }
+          } else if (annotationSourceMode === 'demo') {
+            const authoritativeResult =
+              await ensureBridge().loadHumanTeacherDemoWorkspace({
+                sampleName: demoSampleName,
+                offset: demoOffset,
+              })
+            const authoritativeWorkspace =
+              authoritativeResult?.workspace || null
+
+            setAnnotationSourceMode('demo')
+            setWorkspace(authoritativeWorkspace)
+            setResult(authoritativeResult)
+            setDemoSessionState(authoritativeResult?.state || null)
+            setDemoOffset(Number(authoritativeResult?.offset) || 0)
+            setSelectedTaskId(
+              pickPreferredTaskId(authoritativeWorkspace, selectedTaskId)
+            )
+
+            const authoritativeTaskCount = Number(
+              authoritativeWorkspace?.taskCount
+            )
+            const authoritativeCompletedCount = Number(
+              authoritativeWorkspace?.completedCount
+            )
+
+            willOpenChunkDecisionDialog =
+              authoritativeTaskCount > 0 &&
+              authoritativeCompletedCount >= authoritativeTaskCount
+
+            if (!willOpenChunkDecisionDialog) {
+              toast({
+                title: t('This 5-flip demo chunk is not finished yet'),
+                description: describeIncompleteWorkspaceTasks(
+                  authoritativeWorkspace,
+                  t
+                ),
+                status: 'info',
+                duration: 4500,
+                isClosable: true,
+              })
+            }
+          }
+        }
 
         if (!quiet) {
+          let saveDescription = t('Your annotation was saved locally.')
+
+          if (advance && nextTaskId) {
+            if (draftCompletion.isComplete) {
+              saveDescription = t('Saved. Moving to the next flip.')
+            } else if (draftMissingRequiredFields) {
+              saveDescription = t(
+                'Saved. Finish this flip before moving on: {{fields}}.',
+                {
+                  fields: draftMissingRequiredFields,
+                }
+              )
+            } else {
+              saveDescription = t(
+                'Saved. Finish the remaining required fields on this flip before moving on.'
+              )
+            }
+          } else if (
+            advance &&
+            !nextTaskId &&
+            !completionState.allComplete &&
+            (annotationSourceMode === 'developer' ||
+              annotationSourceMode === 'demo')
+          ) {
+            saveDescription = t(
+              'Saved. This chunk is not complete yet, so the next unfinished flip will open instead.'
+            )
+          }
+
           if (
             isCompleteDraft(annotationDraft) &&
             !willOpenChunkDecisionDialog
@@ -5227,10 +8254,7 @@ export default function AiHumanTeacherPage() {
               title: isCompleteDraft(annotationDraft)
                 ? t('Flip saved')
                 : t('Flip draft saved'),
-              description:
-                advance && nextTaskId
-                  ? t('Saved. Moving to the next flip.')
-                  : t('Your annotation was saved locally.'),
+              description: saveDescription,
               status: 'success',
               duration: 2500,
               isClosable: true,
@@ -5238,8 +8262,34 @@ export default function AiHumanTeacherPage() {
           }
         }
 
-        if (advance && nextTaskId) {
+        if (advance && !autosave && !draftCompletion.isComplete) {
+          if (nextTaskId) {
+            highlightMissingFields(
+              draftCompletion.missingRequiredFields,
+              selectedTaskId
+            )
+          } else if (!completionState.allComplete && firstIncompleteTaskId) {
+            const firstIncompleteTask = workspacePreview.tasks.find(
+              (task) => task.taskId === firstIncompleteTaskId
+            )
+
+            highlightMissingFields(
+              firstIncompleteTask?.missingRequiredFields ||
+                draftCompletion.missingRequiredFields,
+              firstIncompleteTaskId
+            )
+          }
+        }
+
+        if (advance && nextTaskId && draftCompletion.isComplete) {
           setSelectedTaskId(nextTaskId)
+        } else if (
+          advance &&
+          !nextTaskId &&
+          !completionState.allComplete &&
+          firstIncompleteTaskId
+        ) {
+          setSelectedTaskId(firstIncompleteTaskId)
         }
 
         if (willOpenChunkDecisionDialog) {
@@ -5283,6 +8333,7 @@ export default function AiHumanTeacherPage() {
       t,
       toast,
       workspace,
+      highlightMissingFields,
     ]
   )
 
@@ -5291,6 +8342,27 @@ export default function AiHumanTeacherPage() {
       const nextTargetTaskId = String(taskId || '').trim()
 
       if (!nextTargetTaskId || nextTargetTaskId === selectedTaskId) {
+        return
+      }
+
+      const nextTargetTaskIndex = taskIds.indexOf(nextTargetTaskId)
+
+      if (
+        nextTargetTaskIndex > selectedTaskIndex &&
+        !canMoveForwardFromCurrentFlip
+      ) {
+        revealCurrentMissingFields()
+        toast({
+          title: t('Finish this flip first'),
+          description: currentMissingRequiredFieldLabels
+            ? t('Still missing: {{fields}}.', {
+                fields: currentMissingRequiredFieldLabels,
+              })
+            : t('This flip still has required fields missing.'),
+          status: 'info',
+          duration: 4000,
+          isClosable: true,
+        })
         return
       }
 
@@ -5308,7 +8380,18 @@ export default function AiHumanTeacherPage() {
 
       setSelectedTaskId(nextTargetTaskId)
     },
-    [hasUnsavedDraftChanges, saveTaskDraft, selectedTaskId]
+    [
+      canMoveForwardFromCurrentFlip,
+      currentMissingRequiredFieldLabels,
+      hasUnsavedDraftChanges,
+      revealCurrentMissingFields,
+      saveTaskDraft,
+      selectedTaskId,
+      selectedTaskIndex,
+      t,
+      taskIds,
+      toast,
+    ]
   )
 
   const finalizeDeveloperChunk = React.useCallback(
@@ -5317,7 +8400,16 @@ export default function AiHumanTeacherPage() {
       advance = false,
       exitAfter = false,
       allowSystemPressureOverride = false,
+      offsetOverride = null,
+      skipCurrentChunkCompletionCheck = false,
+      restoreOffsetOverride = null,
     } = {}) => {
+      const targetOffset =
+        typeof offsetOverride === 'number' ? offsetOverride : developerOffset
+      const trainingSavedChunkOnly = targetOffset !== developerOffset
+      const targetChunkRangeLabel = formatChunkRangeLabel(targetOffset, {
+        totalCount: Number(developerSessionState?.totalAvailableTasks) || 0,
+      })
       const saved = await saveTaskDraft({
         quiet: true,
         promptOnChunkComplete: false,
@@ -5327,7 +8419,10 @@ export default function AiHumanTeacherPage() {
         return null
       }
 
-      if (!saved.completionState.allComplete) {
+      if (
+        !skipCurrentChunkCompletionCheck &&
+        !saved.completionState.allComplete
+      ) {
         toast({
           title: t('Flip saved'),
           description: exitAfter
@@ -5356,7 +8451,7 @@ export default function AiHumanTeacherPage() {
         const nextResult =
           await ensureBridge().finalizeHumanTeacherDeveloperChunk({
             sampleName: demoSampleName,
-            offset: developerOffset,
+            offset: targetOffset,
             currentPeriod,
             trainNow,
             advance,
@@ -5364,6 +8459,7 @@ export default function AiHumanTeacherPage() {
             trainingModelPath: developerLocalTrainingModelPath,
             localTrainingProfile: developerLocalTrainingProfile,
             localTrainingThermalMode: developerLocalTrainingThermalMode,
+            localBenchmarkThermalMode: developerLocalBenchmarkThermalMode,
             localTrainingEpochs: developerLocalTrainingEpochs,
             localTrainingBatchSize: developerLocalTrainingBatchSize,
             localTrainingLoraRank: developerLocalTrainingLoraRank,
@@ -5390,43 +8486,106 @@ export default function AiHumanTeacherPage() {
           const trainingFailureReason =
             nextResult?.state?.lastTraining?.failureReason ||
             extractTrainingFailureReason(nextResult?.training)
+          const trainingStoppedAfterAdapterFinished =
+            nextResult?.training?.status === 'stopped' &&
+            nextResult?.training?.partialTrainingCompleted === true
 
-          if (nextResult?.training?.ok) {
+          if (nextResult?.training?.ok || trainingStoppedAfterAdapterFinished) {
             const latestAccuracy = nextResult?.state?.comparison100?.accuracy
             const latestCorrect = nextResult?.state?.comparison100?.correct
             const latestTotal = nextResult?.state?.comparison100?.totalFlips
+            let successDescription = t(
+              'This 5-flip chunk is now part of the active local model.'
+            )
+
+            if (trainingSavedChunkOnly) {
+              successDescription = t(
+                'Saved flips {{range}} are now part of the active local adapter.',
+                {
+                  range: targetChunkRangeLabel,
+                }
+              )
+            }
+
+            if (typeof latestAccuracy === 'number') {
+              successDescription = trainingSavedChunkOnly
+                ? t(
+                    'Saved flips {{range}} were trained into the local adapter. Latest success rate: {{accuracy}} ({{correct}} / {{total}}).',
+                    {
+                      range: targetChunkRangeLabel,
+                      accuracy: formatSuccessRate(latestAccuracy),
+                      correct: Number(latestCorrect) || 0,
+                      total: Number(latestTotal) || 0,
+                    }
+                  )
+                : t(
+                    'This 5-flip chunk was trained locally and is now part of the active model. Latest success rate: {{accuracy}} ({{correct}} / {{total}}).',
+                    {
+                      accuracy: formatSuccessRate(latestAccuracy),
+                      correct: Number(latestCorrect) || 0,
+                      total: Number(latestTotal) || 0,
+                    }
+                  )
+            }
+
+            if (trainingStoppedAfterAdapterFinished) {
+              successDescription = trainingSavedChunkOnly
+                ? t(
+                    'Saved flips {{range}} were trained into the local adapter. The benchmark was stopped before it finished, so you can rerun the comparison later.',
+                    {
+                      range: targetChunkRangeLabel,
+                    }
+                  )
+                : t(
+                    'This 5-flip chunk was trained into the local model. The benchmark was stopped before it finished, so you can rerun the comparison later.'
+                  )
+            }
+
             toast({
-              title: t('Training started'),
-              description:
-                typeof latestAccuracy === 'number'
-                  ? t(
-                      'This 5-flip chunk was trained locally and is now part of the active model. Latest success rate: {{accuracy}} ({{correct}} / {{total}}).',
-                      {
-                        accuracy: formatSuccessRate(latestAccuracy),
-                        correct: Number(latestCorrect) || 0,
-                        total: Number(latestTotal) || 0,
-                      }
-                    )
-                  : t(
-                      'This 5-flip chunk is now part of the active local model.'
-                    ),
+              title: trainingSavedChunkOnly
+                ? t('Saved adapter chunk trained')
+                : t('Training finished'),
+              description: successDescription,
               status: 'success',
               duration: 4500,
               isClosable: true,
             })
           } else {
-            toast({
-              title: t('Chunk saved for training'),
-              description: trainingFailureReason
+            let failedTrainingDescription = t(
+              'Your 5 annotated flips were stored locally, but the active local model is unchanged right now because training did not complete yet.'
+            )
+
+            if (trainingSavedChunkOnly) {
+              failedTrainingDescription = t(
+                'Saved flips {{range}} are still queued locally because adapter training did not complete yet.',
+                {
+                  range: targetChunkRangeLabel,
+                }
+              )
+            }
+
+            if (trainingFailureReason) {
+              failedTrainingDescription = trainingSavedChunkOnly
                 ? t(
+                    'Saved flips {{range}} are still queued locally because adapter training failed. Reason: {{reason}}',
+                    {
+                      range: targetChunkRangeLabel,
+                      reason: trainingFailureReason,
+                    }
+                  )
+                : t(
                     'Your 5 annotated flips were stored locally, but the active local model is unchanged because training failed. Reason: {{reason}}',
                     {
                       reason: trainingFailureReason,
                     }
                   )
-                : t(
-                    'Your 5 annotated flips were stored locally, but the active local model is unchanged right now because training did not complete yet.'
-                  ),
+            }
+
+            toast({
+              title: trainingSavedChunkOnly
+                ? t('Saved adapter chunk still pending')
+                : t('Chunk saved for training'),
+              description: failedTrainingDescription,
               status: 'warning',
               duration: 5000,
               isClosable: true,
@@ -5444,7 +8603,12 @@ export default function AiHumanTeacherPage() {
           })
         }
 
-        await loadDeveloperSession({offsetOverride: nextResult.nextOffset})
+        const nextLoadOffset =
+          typeof restoreOffsetOverride === 'number'
+            ? restoreOffsetOverride
+            : nextResult.nextOffset
+
+        await loadDeveloperSession({offsetOverride: nextLoadOffset})
 
         if (exitAfter) {
           router.push('/ai-chat')
@@ -5452,7 +8616,48 @@ export default function AiHumanTeacherPage() {
 
         return nextResult
       } catch (nextError) {
-        setError(formatErrorMessage(nextError))
+        const message = formatErrorMessage(nextError)
+
+        if (isIncompleteDeveloperChunkError(message)) {
+          const authoritativeResult = await loadDeveloperSession({
+            offsetOverride: developerOffset,
+          })
+          const authoritativeWorkspace = authoritativeResult?.workspace || null
+
+          toast({
+            title: t('This 5-flip chunk is not finished yet'),
+            description: describeIncompleteWorkspaceTasks(
+              authoritativeWorkspace,
+              t
+            ),
+            status: 'info',
+            duration: 4500,
+            isClosable: true,
+          })
+          return {
+            recovered: true,
+            incomplete: true,
+          }
+        }
+
+        let failureTitle = t('Could not finish this chunk')
+
+        if (trainNow) {
+          failureTitle = trainingSavedChunkOnly
+            ? t('Saved adapter chunk did not start')
+            : t('Local training did not start')
+        } else if (advance) {
+          failureTitle = t('Could not open the next 5 flips')
+        }
+
+        setError(message)
+        toast({
+          title: failureTitle,
+          description: message,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        })
         return null
       } finally {
         setIsFinalizingDeveloperChunk(false)
@@ -5466,6 +8671,8 @@ export default function AiHumanTeacherPage() {
       developerLocalTrainingLoraRank,
       developerLocalTrainingModelPath,
       developerOffset,
+      developerLocalBenchmarkThermalMode,
+      developerSessionState,
       developerLocalTrainingProfile,
       developerLocalTrainingThermalMode,
       ensureBridge,
@@ -5580,7 +8787,46 @@ export default function AiHumanTeacherPage() {
 
         return nextResult
       } catch (nextError) {
-        setError(formatErrorMessage(nextError))
+        const message = formatErrorMessage(nextError)
+
+        if (isIncompleteDemoChunkError(message)) {
+          const authoritativeResult = await loadOfflineDemoWorkspace({
+            offsetOverride: demoOffset,
+          })
+          const authoritativeWorkspace = authoritativeResult?.workspace || null
+
+          toast({
+            title: t('This 5-flip demo chunk is not finished yet'),
+            description: describeIncompleteWorkspaceTasks(
+              authoritativeWorkspace,
+              t
+            ),
+            status: 'info',
+            duration: 4500,
+            isClosable: true,
+          })
+          return {
+            recovered: true,
+            incomplete: true,
+          }
+        }
+
+        let failureTitle = t('Could not finish this demo chunk')
+
+        if (trainNow) {
+          failureTitle = t('Demo training did not start')
+        } else if (advance) {
+          failureTitle = t('Could not open the next 5 demo flips')
+        }
+
+        setError(message)
+        toast({
+          title: failureTitle,
+          description: message,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        })
         return null
       } finally {
         setIsFinalizingDeveloperChunk(false)
@@ -5599,6 +8845,24 @@ export default function AiHumanTeacherPage() {
   )
 
   const runDeveloperComparison = React.useCallback(async () => {
+    const trainedCount = Number(developerSessionState?.trainedCount) || 0
+
+    if (trainedCount < 1) {
+      toast({
+        title: t('Train one chunk first'),
+        description: t(
+          'The {{count}}-flip comparison unlocks after at least one 5-flip chunk was trained into the local model.',
+          {
+            count: developerLocalBenchmarkSize,
+          }
+        ),
+        status: 'info',
+        duration: 4500,
+        isClosable: true,
+      })
+      return null
+    }
+
     setIsRunningDeveloperComparison(true)
     setError('')
 
@@ -5608,13 +8872,44 @@ export default function AiHumanTeacherPage() {
           sampleName: demoSampleName,
           currentPeriod,
           evaluationFlips: developerLocalBenchmarkSize,
+          localBenchmarkThermalMode: developerLocalBenchmarkThermalMode,
         })
       setDeveloperActionResult(nextResult)
       setDeveloperSessionState(nextResult.state || null)
 
+      const comparisonOk = nextResult?.comparison?.ok === true
+      const comparisonFailureReason = String(
+        nextResult?.comparison?.failureReason ||
+          nextResult?.comparison?.lastError ||
+          nextResult?.comparison?.error ||
+          ''
+      ).trim()
       const latestAccuracy = nextResult?.state?.comparison100?.accuracy
       const latestCorrect = nextResult?.state?.comparison100?.correct
       const latestTotal = nextResult?.state?.comparison100?.totalFlips
+      const comparisonHasMetrics =
+        typeof latestAccuracy === 'number' ||
+        (typeof latestCorrect === 'number' && typeof latestTotal === 'number')
+
+      if (!comparisonOk || !comparisonHasMetrics) {
+        const message =
+          comparisonFailureReason ||
+          (comparisonHasMetrics
+            ? t('The local comparison did not finish successfully.')
+            : t('The local comparison finished without benchmark metrics.'))
+
+        setError(message)
+        toast({
+          title: t('{{count}}-flip comparison failed', {
+            count: developerLocalBenchmarkSize,
+          }),
+          description: message,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        })
+        return null
+      }
 
       toast({
         title: t('{{count}}-flip comparison finished', {
@@ -5657,7 +8952,9 @@ export default function AiHumanTeacherPage() {
     }
   }, [
     currentPeriod,
+    developerSessionState,
     demoSampleName,
+    developerLocalBenchmarkThermalMode,
     developerLocalBenchmarkSize,
     ensureBridge,
     t,
@@ -5797,6 +9094,38 @@ export default function AiHumanTeacherPage() {
     Number(developerSessionState?.annotatedCount) || 0
   const developerCanExportContributionBundle = developerAnnotatedCount > 0
   const developerTrainedCount = Number(developerSessionState?.trainedCount) || 0
+  const developerHasTrainedModel = developerTrainedCount > 0
+  const developerSavedPendingChunk = React.useMemo(() => {
+    const chunks = Array.isArray(developerSessionState?.chunks)
+      ? developerSessionState.chunks
+      : []
+
+    return (
+      chunks.find((chunk) => {
+        const status = String(chunk?.trainingStatus || '')
+          .trim()
+          .toLowerCase()
+
+        return (
+          Number(chunk?.rowCount) > 0 &&
+          status !== 'trained' &&
+          status !== 'demo_trained'
+        )
+      }) || null
+    )
+  }, [developerSessionState?.chunks])
+  const developerSavedPendingChunkOffset =
+    typeof developerSavedPendingChunk?.offset === 'number'
+      ? developerSavedPendingChunk.offset
+      : null
+  const developerHasSavedPendingChunk =
+    developerSavedPendingChunkOffset !== null && developerPendingCount > 0
+  const developerSavedPendingChunkRangeLabel =
+    developerHasSavedPendingChunk && developerSavedPendingChunkOffset !== null
+      ? formatChunkRangeLabel(developerSavedPendingChunkOffset, {
+          totalCount: Number(developerSessionState?.totalAvailableTasks) || 0,
+        })
+      : ''
   const developerRemainingCount =
     Number(developerSessionState?.remainingTaskCount) || 0
   const developerComparison = developerSessionState?.comparison100 || null
@@ -6035,7 +9364,8 @@ export default function AiHumanTeacherPage() {
   const developerComparisonHistoryForSelectedBenchmark =
     developerComparisonHistory.filter(
       (entry) =>
-        Number.parseInt(entry?.totalFlips, 10) === developerLocalBenchmarkSize
+        Number.parseInt(entry?.benchmarkFlips, 10) ===
+        developerLocalBenchmarkSize
     )
   const latestDeveloperComparison =
     developerComparisonHistoryForSelectedBenchmark[0] || null
@@ -6059,7 +9389,14 @@ export default function AiHumanTeacherPage() {
       developerLocalBenchmarkSize
         ? developerComparison?.status
         : '') ||
-      (isRunningDeveloperComparison ? 'running' : 'not_loaded')
+      (isRunningDeveloperComparison ||
+      developerActiveRun?.kind === 'comparison' ||
+      (developerActiveRun?.kind === 'training' &&
+        String(developerActiveRun?.stage || '')
+          .trim()
+          .startsWith('benchmark_'))
+        ? 'running'
+        : 'not_loaded')
   ).trim()
   const developerAccuracyDelta =
     latestDeveloperComparison &&
@@ -6069,11 +9406,100 @@ export default function AiHumanTeacherPage() {
       ? latestDeveloperComparison.accuracy -
         previousDeveloperComparison.accuracy
       : null
+  const latestDeveloperComparisonSignature = React.useMemo(
+    () =>
+      [
+        latestDeveloperComparison?.status || '',
+        latestDeveloperComparison?.lastEvaluatedAt || '',
+        latestDeveloperComparison?.accuracy ?? '',
+        latestDeveloperComparison?.correct ?? '',
+        latestDeveloperComparison?.totalFlips ?? '',
+        latestDeveloperComparison?.benchmarkFlips ?? '',
+      ].join('::'),
+    [
+      latestDeveloperComparison?.accuracy,
+      latestDeveloperComparison?.benchmarkFlips,
+      latestDeveloperComparison?.correct,
+      latestDeveloperComparison?.lastEvaluatedAt,
+      latestDeveloperComparison?.status,
+      latestDeveloperComparison?.totalFlips,
+    ]
+  )
+  const previousDeveloperComparisonSignature = React.useMemo(
+    () =>
+      [
+        previousDeveloperComparison?.status || '',
+        previousDeveloperComparison?.lastEvaluatedAt || '',
+        previousDeveloperComparison?.accuracy ?? '',
+        previousDeveloperComparison?.correct ?? '',
+        previousDeveloperComparison?.totalFlips ?? '',
+        previousDeveloperComparison?.benchmarkFlips ?? '',
+      ].join('::'),
+    [
+      previousDeveloperComparison?.accuracy,
+      previousDeveloperComparison?.benchmarkFlips,
+      previousDeveloperComparison?.correct,
+      previousDeveloperComparison?.lastEvaluatedAt,
+      previousDeveloperComparison?.status,
+      previousDeveloperComparison?.totalFlips,
+    ]
+  )
+  const hasSavedDeveloperComparison = React.useMemo(
+    () =>
+      Boolean(
+        latestDeveloperComparison &&
+          (latestDeveloperComparison.lastEvaluatedAt ||
+            typeof latestDeveloperComparison.accuracy === 'number' ||
+            typeof latestDeveloperComparison.correct === 'number' ||
+            typeof latestDeveloperComparison.totalFlips === 'number')
+      ),
+    [latestDeveloperComparison]
+  )
+
   const developerCanRunComparison =
     isDeveloperMode &&
+    developerHasTrainedModel &&
     developerSupportsLocalTraining &&
-    (developerTrainedCount > 0 || developerPendingCount > 0) &&
-    !isRunningDeveloperComparison
+    !isRunningDeveloperComparison &&
+    !developerActiveRunIsBusy
+  const developerComparisonBlockedReason = React.useMemo(() => {
+    if (!isDeveloperMode) {
+      return ''
+    }
+
+    if (!developerSupportsLocalTraining) {
+      return t('Local comparison needs a trainable local backend.')
+    }
+
+    if (!developerHasTrainedModel) {
+      return t(
+        'Run local training once first. Comparison needs at least one learned chunk.'
+      )
+    }
+
+    return ''
+  }, [
+    developerHasTrainedModel,
+    developerSupportsLocalTraining,
+    isDeveloperMode,
+    t,
+  ])
+  const developerTrainingRunActive =
+    isFinalizingDeveloperChunk ||
+    ((developerActiveRunStatus === 'running' ||
+      developerActiveRunStatus === 'stopping') &&
+      developerActiveRun?.kind === 'training')
+  const developerComparisonRunActive =
+    isRunningDeveloperComparison ||
+    ((developerActiveRunStatus === 'running' ||
+      developerActiveRunStatus === 'stopping') &&
+      developerActiveRun?.kind === 'comparison')
+  const developerStickyRunConsoleVisible =
+    isDeveloperMode &&
+    (developerActiveRunIsBusy ||
+      isStoppingDeveloperRun ||
+      developerTrainingRunActive ||
+      developerComparisonRunActive)
   const developerCanAdvance =
     isDeveloperMode &&
     totalTaskCount > 0 &&
@@ -6081,6 +9507,43 @@ export default function AiHumanTeacherPage() {
     developerRemainingCount > 0 &&
     developerOffset + DEVELOPER_TRAINING_CHUNK_SIZE <
       Number(developerSessionState?.totalAvailableTasks || 0)
+
+  React.useEffect(() => {
+    if (
+      !isDeveloperMode ||
+      developerTrainingRunActive ||
+      developerComparisonRunActive
+    ) {
+      return undefined
+    }
+
+    if (!hasSavedDeveloperComparison) {
+      setDeveloperComparisonExamples(null)
+      setDeveloperComparisonExamplesError('')
+      setIsLoadingDeveloperComparisonExamples(false)
+      return undefined
+    }
+
+    const loadExamples = async () => {
+      await loadDeveloperComparisonExamples({
+        sampleName: demoSampleName,
+        benchmarkFlips: developerLocalBenchmarkSize,
+      })
+    }
+
+    loadExamples()
+    return undefined
+  }, [
+    demoSampleName,
+    developerComparisonRunActive,
+    developerLocalBenchmarkSize,
+    developerTrainingRunActive,
+    hasSavedDeveloperComparison,
+    isDeveloperMode,
+    loadDeveloperComparisonExamples,
+    latestDeveloperComparisonSignature,
+    previousDeveloperComparisonSignature,
+  ])
   const developerModelStatusBorderColor = React.useMemo(() => {
     switch (developerModelStatus?.tone) {
       case 'success':
@@ -6195,7 +9658,47 @@ export default function AiHumanTeacherPage() {
     isDemoMode,
     t,
   ])
+  const developerPrimaryDashboardActionLabel = React.useMemo(() => {
+    if (developerTrainingRunActive) {
+      return t('Local training in progress')
+    }
 
+    if (developerComparisonRunActive) {
+      return t('Benchmark in progress')
+    }
+
+    if (!workspace || !isDeveloperSourceMode) {
+      return t('Open teaching chunk')
+    }
+
+    if (
+      developerTrainingBlockedBySystemPressure &&
+      developerTrainingRequiresOverride &&
+      (completionPreview.allComplete || developerHasSavedPendingChunk)
+    ) {
+      return t('Review local training block')
+    }
+
+    if (developerHasSavedPendingChunk && !completionPreview.allComplete) {
+      return t('Train saved adapter chunk now')
+    }
+
+    if (!completionPreview.allComplete) {
+      return t('Continue teaching this 5-flip chunk')
+    }
+
+    return t('Start local adapter training now')
+  }, [
+    completionPreview.allComplete,
+    developerComparisonRunActive,
+    developerHasSavedPendingChunk,
+    developerTrainingBlockedBySystemPressure,
+    developerTrainingRequiresOverride,
+    developerTrainingRunActive,
+    isDeveloperSourceMode,
+    t,
+    workspace,
+  ])
   React.useEffect(() => {
     if (selectedTaskId) {
       loadTask(selectedTaskId)
@@ -6362,6 +9865,76 @@ export default function AiHumanTeacherPage() {
     saveTaskDraft,
   ])
 
+  const handlePrimaryLocalTrainingDashboardAction =
+    React.useCallback(async () => {
+      if (developerTrainingRunActive || developerComparisonRunActive) {
+        return
+      }
+
+      if (!workspace || !isDeveloperSourceMode) {
+        await loadDeveloperSession()
+        if (typeof window !== 'undefined') {
+          window.setTimeout(() => {
+            scrollToLocalPilotTraining()
+          }, 120)
+        }
+        return
+      }
+
+      if (developerHasSavedPendingChunk && !completionPreview.allComplete) {
+        if (
+          developerTrainingBlockedBySystemPressure &&
+          developerTrainingRequiresOverride
+        ) {
+          openLocalPilotTrainingDialog()
+          return
+        }
+
+        await finalizeDeveloperChunk({
+          trainNow: true,
+          allowSystemPressureOverride: developerTrainingPressureOverride,
+          offsetOverride: developerSavedPendingChunkOffset,
+          skipCurrentChunkCompletionCheck: true,
+          restoreOffsetOverride: developerOffset,
+        })
+        return
+      }
+
+      if (!completionPreview.allComplete) {
+        scrollToLocalPilotTraining()
+        return
+      }
+
+      if (
+        developerTrainingBlockedBySystemPressure &&
+        developerTrainingRequiresOverride
+      ) {
+        openLocalPilotTrainingDialog()
+        return
+      }
+
+      await finalizeDeveloperChunk({
+        trainNow: true,
+        allowSystemPressureOverride: developerTrainingPressureOverride,
+      })
+    }, [
+      completionPreview.allComplete,
+      developerComparisonRunActive,
+      developerHasSavedPendingChunk,
+      developerSavedPendingChunkOffset,
+      developerTrainingBlockedBySystemPressure,
+      developerTrainingPressureOverride,
+      developerTrainingRequiresOverride,
+      developerTrainingRunActive,
+      developerOffset,
+      finalizeDeveloperChunk,
+      isDeveloperSourceMode,
+      loadDeveloperSession,
+      openLocalPilotTrainingDialog,
+      scrollToLocalPilotTraining,
+      workspace,
+    ])
+
   const handleChunkDecisionAction = React.useCallback(
     async (action) => {
       const mode = chunkDecisionMode
@@ -6414,6 +9987,22 @@ export default function AiHumanTeacherPage() {
           <Stack spacing={4}>
             {isDeveloperMode ? (
               <>
+                {developerStickyRunConsoleVisible ? (
+                  <LocalTrainingStickyRunConsole
+                    activeRun={developerActiveRun}
+                    telemetry={developerTelemetry}
+                    totalAvailableTasks={
+                      Number(developerSessionState?.totalAvailableTasks) || 0
+                    }
+                    onStopNow={() => stopDeveloperActiveRun('cancel_now')}
+                    onStopAfterUnit={() => stopDeveloperActiveRun('after_unit')}
+                    onUpdateRunControls={updateDeveloperActiveRunControls}
+                    pendingRunControl={developerPendingRunControl}
+                    isStopping={isStoppingDeveloperRun}
+                    isUpdatingRunControls={isUpdatingDeveloperRunControls}
+                    t={t}
+                  />
+                ) : null}
                 <Alert status="info" borderRadius="md">
                   <Stack spacing={2}>
                     <Text fontWeight={600}>{t('Developer flip training')}</Text>
@@ -6570,16 +10159,12 @@ export default function AiHumanTeacherPage() {
                         </option>
                       ))}
                     </Select>
+                    <Text color="muted" fontSize="xs" mt={2}>
+                      {t(
+                        'Choose the bundled sample here. Open or resume the 5-flip teaching chunk in the local pilot section below.'
+                      )}
+                    </Text>
                   </Box>
-                  <PrimaryButton
-                    isDisabled={isWorkspaceLoading}
-                    isLoading={isWorkspaceLoading}
-                    onClick={() => loadDeveloperSession()}
-                  >
-                    {workspace && isDeveloperSourceMode
-                      ? t('Resume current 5 flips')
-                      : t('Start training your AI')}
-                  </PrimaryButton>
                   <SecondaryButton onClick={() => router.push('/ai-chat')}>
                     {t('Back to IdenaAI')}
                   </SecondaryButton>
@@ -6727,13 +10312,24 @@ export default function AiHumanTeacherPage() {
                   </Stack>
                 </Box>
 
-                <LocalTrainingImpactPanel
-                  telemetry={developerTelemetry}
-                  telemetryError={developerTelemetryError}
-                  thermalSummary={developerLocalTrainingThermalSummary}
-                  isBusy={developerTelemetryIsBusy}
-                  t={t}
-                />
+                {!developerStickyRunConsoleVisible ? (
+                  <LocalTrainingImpactPanel
+                    telemetry={developerTelemetry}
+                    telemetryError={developerTelemetryError}
+                    thermalSummary={developerLocalTrainingThermalSummary}
+                    isBusy={developerTelemetryIsBusy}
+                    t={t}
+                  />
+                ) : null}
+                {!developerStickyRunConsoleVisible ? (
+                  <LocalTrainingRunPanel
+                    activeRun={developerActiveRun}
+                    totalAvailableTasks={
+                      Number(developerSessionState?.totalAvailableTasks) || 0
+                    }
+                    t={t}
+                  />
+                ) : null}
                 <LocalTrainingJourneyPanel
                   title={t('Local training at a glance')}
                   subtitle={t(
@@ -6747,8 +10343,8 @@ export default function AiHumanTeacherPage() {
                   latestComparison={latestDeveloperComparison}
                   benchmarkSize={developerLocalBenchmarkSize}
                   canRunLocalTraining={developerSupportsLocalTraining}
-                  isTrainingActive={isFinalizingDeveloperChunk}
-                  isComparisonActive={isRunningDeveloperComparison}
+                  isTrainingActive={developerTrainingRunActive}
+                  isComparisonActive={developerComparisonRunActive}
                   lastTraining={developerLastTraining}
                   totalUpdates={developerLocalTrainingTotalUpdates}
                   coolingFloorMs={developerLocalTrainingCoolingFloorMs}
@@ -6792,9 +10388,50 @@ export default function AiHumanTeacherPage() {
                             }
                           )
                         : t(
-                            'Click "Start training your AI" to open the next 5 flips from the bundled FLIP developer sample.'
+                            'Use the button here to open or resume the 5-flip teaching chunk from the bundled FLIP developer sample.'
                           )}
                     </Text>
+                    <Stack isInline spacing={2} flexWrap="wrap">
+                      <PrimaryButton
+                        isDisabled={
+                          isWorkspaceLoading ||
+                          developerTrainingRunActive ||
+                          developerComparisonRunActive
+                        }
+                        isLoading={
+                          isWorkspaceLoading || developerTrainingRunActive
+                        }
+                        onClick={handlePrimaryLocalTrainingDashboardAction}
+                      >
+                        {developerPrimaryDashboardActionLabel}
+                      </PrimaryButton>
+                      <SecondaryButton
+                        isDisabled={!developerCanRunComparison}
+                        isLoading={developerComparisonRunActive}
+                        onClick={runDeveloperComparison}
+                      >
+                        {t('Run {{count}}-flip comparison now', {
+                          count: developerLocalBenchmarkSize,
+                        })}
+                      </SecondaryButton>
+                    </Stack>
+                    {!developerCanRunComparison &&
+                    developerComparisonBlockedReason ? (
+                      <Text color="muted" fontSize="xs">
+                        {developerComparisonBlockedReason}
+                      </Text>
+                    ) : null}
+                    {developerHasSavedPendingChunk &&
+                    !completionPreview.allComplete ? (
+                      <Text color="muted" fontSize="xs">
+                        {t(
+                          'Saved flips {{range}} are ready for adapter training now. Your current chunk can stay unfinished while that older saved chunk trains.',
+                          {
+                            range: developerSavedPendingChunkRangeLabel,
+                          }
+                        )}
+                      </Text>
+                    ) : null}
                     <SimpleGrid columns={[1, 2, 4]} spacing={3}>
                       <Box
                         borderWidth="1px"
@@ -6863,7 +10500,7 @@ export default function AiHumanTeacherPage() {
                         </Text>
                       </Box>
                     </SimpleGrid>
-                    {isFinalizingDeveloperChunk ? (
+                    {developerTrainingRunActive ? (
                       <Box
                         borderWidth="1px"
                         borderColor="blue.100"
@@ -6883,13 +10520,13 @@ export default function AiHumanTeacherPage() {
                           />
                           <Text color="muted" fontSize="sm">
                             {t(
-                              'The app is trying to train this 5-flip chunk locally. The active model stays unchanged until this finishes successfully.'
+                              'The app is running local training and the follow-up benchmark right now. Watch the live run panel above for the current stage.'
                             )}
                           </Text>
                         </Stack>
                       </Box>
                     ) : null}
-                    {isRunningDeveloperComparison ? (
+                    {developerComparisonRunActive ? (
                       <Box
                         borderWidth="1px"
                         borderColor="purple.100"
@@ -6911,7 +10548,7 @@ export default function AiHumanTeacherPage() {
                           />
                           <Text color="muted" fontSize="sm">
                             {t(
-                              'The app is checking the latest local model against the same {{count}}-flip validation holdout used for earlier runs at this size.',
+                              'The app is checking the latest local model against the same {{count}}-flip validation holdout used for earlier runs at this size. The live run panel shows which unseen flip is being scored now.',
                               {
                                 count: developerLocalBenchmarkSize,
                               }
@@ -7162,23 +10799,21 @@ export default function AiHumanTeacherPage() {
                             )}
                       </Text>
                     )}
-                    <Stack isInline spacing={2} flexWrap="wrap">
-                      <PrimaryButton
-                        isDisabled={!developerCanRunComparison}
-                        isLoading={isRunningDeveloperComparison}
-                        onClick={runDeveloperComparison}
-                      >
-                        {t('Run {{count}}-flip comparison now', {
-                          count: developerLocalBenchmarkSize,
-                        })}
-                      </PrimaryButton>
-                    </Stack>
                     {developerComparisonHistoryForSelectedBenchmark.length ? (
                       <SuccessRateHistoryChart
                         entries={developerComparisonHistoryForSelectedBenchmark}
                         t={t}
                       />
                     ) : null}
+                    <DeveloperBenchmarkExamplesPanel
+                      data={developerComparisonExamples}
+                      benchmarkSize={developerLocalBenchmarkSize}
+                      isLoading={isLoadingDeveloperComparisonExamples}
+                      error={developerComparisonExamplesError}
+                      activeRun={developerActiveRun}
+                      telemetry={developerTelemetry}
+                      t={t}
+                    />
                     <Text color="muted" fontSize="xs">
                       {t('Current local pilot preset')}:{' '}
                       {developerLocalTrainingProfileSummary.label} ·{' '}
@@ -7332,7 +10967,7 @@ export default function AiHumanTeacherPage() {
                     </Text>
                     {result?.packagePath ? (
                       <Text color="muted" fontSize="xs">
-                        {t('Package path')}: {result.packagePath}
+                        {t('Package file')}: {result.packagePath}
                       </Text>
                     ) : null}
                     <Text color="muted" fontSize="sm">
@@ -7457,13 +11092,13 @@ export default function AiHumanTeacherPage() {
                     {t('Flips')}: {Number(exportResult.tasks) || 0}
                   </Text>
                   <Text color="muted" fontSize="xs">
-                    {t('Output directory')}: {exportResult.outputDir}
+                    {t('Workspace folder')}: {exportResult.outputDir}
                   </Text>
                   <Text color="muted" fontSize="xs">
-                    {t('Task manifest')}: {exportResult.manifestPath}
+                    {t('Manifest file')}: {exportResult.manifestPath}
                   </Text>
                   <Text color="muted" fontSize="xs">
-                    {t('Annotation template')}: {exportResult.templatePath}
+                    {t('Template file')}: {exportResult.templatePath}
                   </Text>
                   <Text color="muted" fontSize="xs">
                     {t('Fill-in file')}: {exportResult.filledPath}
@@ -7499,13 +11134,13 @@ export default function AiHumanTeacherPage() {
                     {Number(importResult.invalidAnnotations) || 0}
                   </Text>
                   <Text color="muted" fontSize="xs">
-                    {t('Imported file')}: {importResult.annotationsPath}
+                    {t('Imported file name')}: {importResult.annotationsPath}
                   </Text>
                   <Text color="muted" fontSize="xs">
-                    {t('Normalized output')}: {importResult.normalizedPath}
+                    {t('Normalized file')}: {importResult.normalizedPath}
                   </Text>
                   <Text color="muted" fontSize="xs">
-                    {t('Import summary')}: {importResult.summaryPath}
+                    {t('Summary file')}: {importResult.summaryPath}
                   </Text>
                 </Stack>
               </Box>
@@ -7536,7 +11171,7 @@ export default function AiHumanTeacherPage() {
                   {isDeveloperMode ? (
                     <Text color="muted" fontSize="sm">
                       {t(
-                        'Requested draft runtime: {{draftModel}}. Active runtime: {{activeModel}}. Local training model: {{trainingModel}}.',
+                        'Current local Qwen3.5-9B lane: requested runtime {{draftModel}}. Active runtime on this Mac: {{activeModel}}. Local training base: {{trainingModel}}.',
                         {
                           draftModel: localDraftRequestedRuntimeModelLabel,
                           activeModel: localDraftActiveRuntimeModelLabel,
@@ -7674,6 +11309,20 @@ export default function AiHumanTeacherPage() {
                                 {t('Consensus')}:{' '}
                                 {task.consensusAnswer || 'n/a'}
                               </Text>
+                              {!task.isComplete &&
+                              formatMissingRequiredFields(
+                                t,
+                                task.missingRequiredFields
+                              ) ? (
+                                <Text color="orange.600" fontSize="xs" mt={1}>
+                                  {t('Missing: {{fields}}', {
+                                    fields: formatMissingRequiredFields(
+                                      t,
+                                      task.missingRequiredFields
+                                    ),
+                                  })}
+                                </Text>
+                              ) : null}
                             </Box>
                           )
                         })}
@@ -7773,6 +11422,14 @@ export default function AiHumanTeacherPage() {
                                   />
                                 ))}
                               </SimpleGrid>
+                              {!annotationCompletionState.isComplete &&
+                              currentMissingRequiredFieldLabels ? (
+                                <Text color="orange.600" fontSize="sm">
+                                  {t('Still missing: {{fields}}.', {
+                                    fields: currentMissingRequiredFieldLabels,
+                                  })}
+                                </Text>
+                              ) : null}
                             </Stack>
                           </Box>
 
@@ -8102,7 +11759,7 @@ export default function AiHumanTeacherPage() {
                                     </Text>
                                     <Text color="muted" fontSize="xs" mt={1}>
                                       {t(
-                                        'This draft is locked to the same local Qwen lane as training. Runtime model: {{draftModel}}. Local training model: {{trainingModel}}.',
+                                        'This draft chat stays on the same local Qwen3.5-9B lane as training. Runtime: {{draftModel}}. Local training base: {{trainingModel}}.',
                                         {
                                           draftModel:
                                             localDraftRequestedRuntimeModelLabel,
@@ -8468,6 +12125,14 @@ export default function AiHumanTeacherPage() {
                               title={t(
                                 'Which side feels more correct to you as a human looking at this flip?'
                               )}
+                              isMissing={isFinalAnswerFieldHighlighted}
+                              missingHint={t(
+                                'Choose LEFT, RIGHT, or SKIP before moving on.'
+                              )}
+                              sectionRef={(node) => {
+                                missingFieldSectionRefs.current.final_answer =
+                                  node
+                              }}
                             >
                               <Stack
                                 direction={['column', 'row']}
@@ -8553,6 +12218,14 @@ export default function AiHumanTeacherPage() {
                                 title={t(
                                   'Why would a normal human choose that answer? Keep it short and concrete.'
                                 )}
+                                isMissing={isReasonFieldHighlighted}
+                                missingHint={t(
+                                  'Add one short reason before moving on.'
+                                )}
+                                sectionRef={(node) => {
+                                  missingFieldSectionRefs.current.why_answer =
+                                    node
+                                }}
                               >
                                 <Textarea
                                   placeholder={t(
@@ -8605,6 +12278,14 @@ export default function AiHumanTeacherPage() {
                                     trueLabel={t('Yes, text mattered')}
                                     falseLabel={t('No, text was not needed')}
                                     t={t}
+                                    isMissing={isTextDecisionFieldHighlighted}
+                                    missingHint={t(
+                                      'Choose yes or no before moving on.'
+                                    )}
+                                    sectionRef={(node) => {
+                                      missingFieldSectionRefs.current.text_required =
+                                        node
+                                    }}
                                   />
                                   <BooleanChoiceField
                                     title={t(
@@ -8625,6 +12306,16 @@ export default function AiHumanTeacherPage() {
                                     trueLabel={t('Yes, markers were present')}
                                     falseLabel={t('No, no markers')}
                                     t={t}
+                                    isMissing={
+                                      isSequenceDecisionFieldHighlighted
+                                    }
+                                    missingHint={t(
+                                      'Choose yes or no before moving on.'
+                                    )}
+                                    sectionRef={(node) => {
+                                      missingFieldSectionRefs.current.sequence_markers_present =
+                                        node
+                                    }}
                                   />
                                 </Stack>
                               </InterviewPrompt>
@@ -8635,6 +12326,25 @@ export default function AiHumanTeacherPage() {
                                 title={t(
                                   'Does this flip need a report because it breaks the rules or depends on disallowed cues?'
                                 )}
+                                isMissing={
+                                  isReportDecisionFieldHighlighted ||
+                                  isReportReasonFieldHighlighted
+                                }
+                                missingHint={
+                                  isReportReasonFieldHighlighted
+                                    ? t(
+                                        'Write a short report reason before moving on.'
+                                      )
+                                    : t(
+                                        'Choose whether this flip should be reported before moving on.'
+                                      )
+                                }
+                                sectionRef={(node) => {
+                                  missingFieldSectionRefs.current.report_required =
+                                    node
+                                  missingFieldSectionRefs.current.report_reason =
+                                    node
+                                }}
                               >
                                 <Stack spacing={3}>
                                   <BooleanChoiceField
@@ -8656,23 +12366,57 @@ export default function AiHumanTeacherPage() {
                                     trueLabel={t('Yes, report this flip')}
                                     falseLabel={t('No, do not report')}
                                     t={t}
+                                    isMissing={isReportDecisionFieldHighlighted}
+                                    missingHint={t(
+                                      'Choose yes or no before moving on.'
+                                    )}
                                   />
 
                                   {annotationDraft.report_required === true ? (
-                                    <Textarea
-                                      placeholder={t(
-                                        'Short reason for why this should be reported.'
-                                      )}
-                                      value={annotationDraft.report_reason}
-                                      onChange={(e) => {
-                                        const nextValue = e?.target?.value || ''
+                                    <Box
+                                      borderWidth="1px"
+                                      borderColor={
+                                        isReportReasonFieldHighlighted
+                                          ? 'orange.200'
+                                          : 'gray.100'
+                                      }
+                                      borderRadius="lg"
+                                      p={3}
+                                      bg={
+                                        isReportReasonFieldHighlighted
+                                          ? 'orange.50'
+                                          : 'white'
+                                      }
+                                      scrollMarginTop="120px"
+                                    >
+                                      <Textarea
+                                        placeholder={t(
+                                          'Short reason for why this should be reported.'
+                                        )}
+                                        value={annotationDraft.report_reason}
+                                        onChange={(e) => {
+                                          const nextValue =
+                                            e?.target?.value || ''
 
-                                        setAnnotationDraft((current) => ({
-                                          ...current,
-                                          report_reason: nextValue,
-                                        }))
-                                      }}
-                                    />
+                                          setAnnotationDraft((current) => ({
+                                            ...current,
+                                            report_reason: nextValue,
+                                          }))
+                                        }}
+                                      />
+                                      {isReportReasonFieldHighlighted ? (
+                                        <Text
+                                          color="orange.700"
+                                          fontSize="sm"
+                                          fontWeight={600}
+                                          mt={3}
+                                        >
+                                          {t(
+                                            'Write a short report reason before moving on.'
+                                          )}
+                                        </Text>
+                                      ) : null}
+                                    </Box>
                                   ) : null}
                                 </Stack>
                               </InterviewPrompt>
@@ -8683,6 +12427,14 @@ export default function AiHumanTeacherPage() {
                                 title={t(
                                   'How confident are you in that judgment? Choose one level before saving this flip.'
                                 )}
+                                isMissing={isConfidenceFieldHighlighted}
+                                missingHint={t(
+                                  'Choose one confidence level before moving on.'
+                                )}
+                                sectionRef={(node) => {
+                                  missingFieldSectionRefs.current.confidence =
+                                    node
+                                }}
                               >
                                 <Select
                                   value={annotationDraft.confidence}
@@ -8720,23 +12472,36 @@ export default function AiHumanTeacherPage() {
                               >
                                 <Box>
                                   <Text fontWeight={600}>
-                                    {annotationCompletionState.requiredDetailComplete
-                                      ? t('Required detail is complete')
-                                      : t(
-                                          'Required detail for a complete flip'
-                                        )}
+                                    {annotationCompletionState.optionalDetailComplete
+                                      ? t('Optional detail added')
+                                      : t('Optional detail')}
                                   </Text>
                                   <Text color="muted" fontSize="sm">
-                                    {annotationCompletionState.requiredDetailComplete
+                                    {annotationCompletionState.optionalDetailComplete
                                       ? t(
-                                          'You already filled the required frame notes and both story summaries. You can review them here before saving.'
+                                          'You already added frame notes and both story summaries. You can review or edit them here.'
                                         )
                                       : t(
-                                          'Frame notes and both short story summaries are part of the required human-teacher record for this flip.'
+                                          'Frame notes and both short story summaries can help later review and training, but they are optional for saving this flip.'
                                         )}
                                   </Text>
                                 </Box>
-                                {annotationCompletionState.requiredDetailComplete ? (
+                                <Stack
+                                  direction={['column', 'row']}
+                                  spacing={2}
+                                  align={['stretch', 'center']}
+                                >
+                                  <Badge colorScheme="gray" borderRadius="full">
+                                    {t(
+                                      '{{count}} / {{total}} optional items added',
+                                      {
+                                        count:
+                                          annotationCompletionState.completedOptionalChecks,
+                                        total:
+                                          annotationCompletionState.totalOptionalChecks,
+                                      }
+                                    )}
+                                  </Badge>
                                   <SecondaryButton
                                     onClick={() =>
                                       setShowAdvancedFields(
@@ -8744,26 +12509,12 @@ export default function AiHumanTeacherPage() {
                                       )
                                     }
                                   >
-                                    {showRequiredDetailSection
-                                      ? t('Hide detail')
-                                      : t('Review detail')}
+                                    {optionalDetailToggleLabel}
                                   </SecondaryButton>
-                                ) : (
-                                  <Badge
-                                    colorScheme="orange"
-                                    borderRadius="full"
-                                  >
-                                    {t('{{count}} item(s) left', {
-                                      count: [
-                                        !annotationCompletionState.hasFrameCaptions,
-                                        !annotationCompletionState.hasStorySummaries,
-                                      ].filter(Boolean).length,
-                                    })}
-                                  </Badge>
-                                )}
+                                </Stack>
                               </Flex>
 
-                              {showRequiredDetailSection ? (
+                              {showOptionalDetailSection ? (
                                 <Stack spacing={3} mt={3}>
                                   <InterviewPrompt
                                     title={t(
@@ -8881,6 +12632,7 @@ export default function AiHumanTeacherPage() {
 
                             <Stack isInline spacing={2} flexWrap="wrap">
                               <PrimaryButton
+                                isDisabled={isSavingTask}
                                 isLoading={isSavingTask}
                                 onClick={() =>
                                   nextTaskId
@@ -8895,7 +12647,11 @@ export default function AiHumanTeacherPage() {
                                   <SecondaryButton
                                     isDisabled={isSavingTask || !selectedTaskId}
                                     isLoading={isFinalizingDeveloperChunk}
-                                    onClick={() => saveTaskDraft()}
+                                    onClick={() =>
+                                      nextTaskId
+                                        ? saveTaskDraft()
+                                        : saveTaskDraft({advance: true})
+                                    }
                                   >
                                     {nextTaskId
                                       ? saveDraftLabel
@@ -8953,6 +12709,18 @@ export default function AiHumanTeacherPage() {
                                 {getDraftHelperText(annotationDraft, t)}
                               </Text>
                             </Stack>
+                            {nextTaskId && !canMoveForwardFromCurrentFlip ? (
+                              <Text color="orange.600" fontSize="sm">
+                                {t(
+                                  'Finish this flip before moving forward: {{fields}}.',
+                                  {
+                                    fields:
+                                      currentMissingRequiredFieldLabels ||
+                                      t('required fields'),
+                                  }
+                                )}
+                              </Text>
+                            ) : null}
                             <Text color="muted" fontSize="xs">
                               {autosaveStatusText}
                             </Text>
@@ -9079,7 +12847,7 @@ export default function AiHumanTeacherPage() {
                     >
                       {chunkDecisionDialog.mode === 'demo'
                         ? t('Start demo training now')
-                        : t('Start training now')}
+                        : t('Start local adapter training now')}
                     </PrimaryButton>
                     {chunkDecisionDialog.mode === 'developer' &&
                     developerTrainingUnsupported ? (
@@ -9246,7 +13014,7 @@ export default function AiHumanTeacherPage() {
                               <Text fontWeight={700}>{t('Bundle ready')}</Text>
                               <Text fontSize="sm">
                                 {t(
-                                  'Upload this whole folder to the machine or provider you want to use.'
+                                  'Upload this bundle folder to the machine or provider you want to use.'
                                 )}
                               </Text>
                               <Text
@@ -9270,7 +13038,7 @@ export default function AiHumanTeacherPage() {
                             </Text>
                             <Text fontSize="sm">
                               {t(
-                                '2. Upload this whole folder to that machine.'
+                                '2. Upload this bundle folder to that machine.'
                               )}
                             </Text>
                             <Text fontSize="sm">
@@ -9289,22 +13057,16 @@ export default function AiHumanTeacherPage() {
                             </Text>
                             <Text fontSize="sm">
                               {t(
-                                '5. If that is too heavy, fall back to {{strongFallback}} or {{safeFallback}}.',
+                                '5. After training, run the fixed held-out comparison on {{count}} unseen flips and keep the result JSON plus the adapter artifact together.',
                                 {
-                                  strongFallback:
-                                    externalContributionBundle.strongerFallbackTrainingModel,
-                                  safeFallback:
-                                    externalContributionBundle.safeFallbackTrainingModel,
+                                  count:
+                                    externalContributionBundle.recommendedBenchmarkFlips,
                                 }
                               )}
                             </Text>
                             <Text fontSize="sm">
                               {t(
-                                '6. After training, run the fixed held-out comparison on {{count}} unseen flips and keep the result JSON plus the adapter artifact together.',
-                                {
-                                  count:
-                                    externalContributionBundle.recommendedBenchmarkFlips,
-                                }
+                                '6. Import only the result files you intend to trust back into IdenaAI later.'
                               )}
                             </Text>
                           </Stack>
@@ -9363,7 +13125,7 @@ export default function AiHumanTeacherPage() {
                                 fontSize="xs"
                                 wordBreak="break-all"
                               >
-                                {t('Bundle folder')}:{' '}
+                                {t('Bundle folder name')}:{' '}
                                 {externalContributionBundle.outputDir}
                               </Text>
                               <Text
@@ -9371,7 +13133,7 @@ export default function AiHumanTeacherPage() {
                                 fontSize="xs"
                                 wordBreak="break-all"
                               >
-                                {t('Manifest')}:{' '}
+                                {t('Manifest file')}:{' '}
                                 {externalContributionBundle.manifestPath}
                               </Text>
                               <Text
@@ -9379,7 +13141,7 @@ export default function AiHumanTeacherPage() {
                                 fontSize="xs"
                                 wordBreak="break-all"
                               >
-                                {t('README')}:{' '}
+                                {t('README file')}:{' '}
                                 {externalContributionBundle.readmePath}
                               </Text>
                               <Text
@@ -9387,7 +13149,7 @@ export default function AiHumanTeacherPage() {
                                 fontSize="xs"
                                 wordBreak="break-all"
                               >
-                                {t('Annotations')}:{' '}
+                                {t('Annotations file')}:{' '}
                                 {externalContributionBundle.annotationsPath}
                               </Text>
                             </Stack>
@@ -9520,6 +13282,43 @@ export default function AiHumanTeacherPage() {
                             <Text color="muted" fontSize="xs" mt={1}>
                               {t(
                                 'This benchmark always uses a separate validation holdout and never reuses the flips you just trained on.'
+                              )}
+                            </Text>
+                          </Box>
+                          <Box maxW="320px">
+                            <FormLabel mb={1}>
+                              {t('Benchmark heat mode')}
+                            </FormLabel>
+                            <Select
+                              size="sm"
+                              value={developerLocalBenchmarkThermalMode}
+                              onChange={(e) =>
+                                updateLocalAiSettings({
+                                  developerLocalBenchmarkThermalMode:
+                                    e.target.value,
+                                })
+                              }
+                            >
+                              <option value="full_speed">
+                                {t('Full speed')}
+                              </option>
+                              <option value="balanced">
+                                {t('Balanced cooling')}
+                              </option>
+                              <option value="cool">
+                                {t('Cool and slower')}
+                              </option>
+                            </Select>
+                            <Text color="muted" fontSize="xs" mt={1}>
+                              {developerLocalBenchmarkThermalSummary.detail}
+                            </Text>
+                            <Text color="muted" fontSize="xs" mt={1}>
+                              {t(
+                                'This inserts {{cooldown}} ms between unseen benchmark flips.',
+                                {
+                                  cooldown:
+                                    developerLocalBenchmarkThermalSummary.benchmarkCooldownMs,
+                                }
                               )}
                             </Text>
                           </Box>
@@ -9777,7 +13576,7 @@ export default function AiHumanTeacherPage() {
                           isDisabled={!developerSupportsLocalTraining}
                           onClick={continueWithLocalPilotTraining}
                         >
-                          {t('Continue with local pilot training')}
+                          {t('Open local pilot dashboard')}
                         </PrimaryButton>
                         <SecondaryButton onClick={closeContributionDialog}>
                           {t('Close')}

@@ -44,13 +44,96 @@ except ImportError:
 SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
 STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
+TRAINING_PROGRESS_STATE = {
+    "global_step": 0,
+    "steps_per_epoch": 0,
+    "total_steps": 0,
+    "epochs": 1,
+    "print_every": 1,
+    "latest_loss": None,
+}
 
 
-def maybe_sleep_for_cooldown(cooldown_ms: int) -> None:
-    if int(cooldown_ms or 0) <= 0:
+def read_run_control(path: str) -> dict:
+    if not path:
+        return {}
+
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def resolve_live_cooldown_ms(default_ms: int, run_control_path: str, key: str) -> int:
+    control = read_run_control(run_control_path)
+    value = control.get(key)
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default_ms or 0)
+
+    return max(0, parsed)
+
+
+def resolve_run_stop_mode(run_control_path: str) -> str:
+    control = read_run_control(run_control_path)
+    return str(control.get("stopMode") or "").strip().lower()
+
+
+def should_stop_after_current_unit(run_control_path: str) -> bool:
+    return resolve_run_stop_mode(run_control_path) == "after_unit"
+
+
+def maybe_sleep_for_cooldown(
+    cooldown_ms: int,
+    *,
+    run_control_path: str = "",
+    key: str = "",
+) -> None:
+    resolved_cooldown_ms = resolve_live_cooldown_ms(
+        cooldown_ms,
+        run_control_path,
+        key,
+    )
+
+    if int(resolved_cooldown_ms or 0) <= 0:
         return
 
-    time.sleep(float(cooldown_ms) / 1000.0)
+    time.sleep(float(resolved_cooldown_ms) / 1000.0)
+
+
+def emit_training_progress(loss, *, force: bool = False) -> None:
+    state = TRAINING_PROGRESS_STATE
+    state["global_step"] += 1
+    global_step = int(state["global_step"] or 0)
+    steps_per_epoch = max(1, int(state.get("steps_per_epoch") or 1))
+    total_steps = max(1, int(state.get("total_steps") or steps_per_epoch))
+    epoch = min(
+        max(1, int(state.get("epochs") or 1)),
+        max(1, math.ceil(global_step / steps_per_epoch)),
+    )
+    step_in_epoch = ((global_step - 1) % steps_per_epoch) + 1
+    print_every = max(1, int(state.get("print_every") or 1))
+
+    if not force and global_step % print_every != 0 and global_step < total_steps:
+        return
+
+    mx.eval(loss)
+    loss_value = float(loss.item())
+    state["latest_loss"] = loss_value
+    print(
+        json.dumps(
+            {
+                "epoch": epoch,
+                "step": step_in_epoch,
+                "global_step": global_step,
+                "loss": round(loss_value, 6),
+            }
+        )
+    )
 
 
 def looks_like_qwen35_model_path(value: str) -> bool:
@@ -213,8 +296,13 @@ def weighted_vision_language_loss_fn(
     train_on_completions: bool = False,
     assistant_id: int = 77091,
     step_cooldown_ms: int = 0,
+    run_control_path: str = "",
 ):
-    maybe_sleep_for_cooldown(step_cooldown_ms)
+    maybe_sleep_for_cooldown(
+        step_cooldown_ms,
+        run_control_path=run_control_path,
+        key="training_step_cooldown_ms",
+    )
 
     pixel_values = batch["pixel_values"]
     input_ids = batch["input_ids"]
@@ -311,6 +399,7 @@ if not MODERN_TRAINER_API:
                 train_on_completions=self.train_on_completions,
                 assistant_id=self.assistant_id,
                 step_cooldown_ms=self.step_cooldown_ms,
+                run_control_path="",
             )
 
 
@@ -375,10 +464,56 @@ def main(args) -> int:
     print(f"Sample weighting: {json.dumps(weight_summary, sort_keys=True)}")
 
     history = []
+    TRAINING_PROGRESS_STATE.update(
+        {
+            "global_step": 0,
+            "steps_per_epoch": steps_per_epoch,
+            "total_steps": total_steps,
+            "epochs": args.epochs,
+            "print_every": max(1, args.print_every),
+            "latest_loss": None,
+        }
+    )
 
     adapter_file = output_dir / "adapters.safetensors"
     print("Setting up optimizer")
     optimizer = optim.Adam(learning_rate=args.learning_rate)
+
+    def modern_loss_fn(*loss_args, **loss_kwargs):
+        loss = weighted_vision_language_loss_fn(
+            *loss_args,
+            **loss_kwargs,
+            step_cooldown_ms=args.step_cooldown_ms,
+            run_control_path=args.run_control_path,
+        )
+        emit_training_progress(loss)
+
+        if TRAINING_PROGRESS_STATE["latest_loss"] is not None:
+            history.append(
+                {
+                    "epoch": min(
+                        args.epochs,
+                        max(
+                            1,
+                            math.ceil(
+                                TRAINING_PROGRESS_STATE["global_step"]
+                                / max(1, steps_per_epoch)
+                            ),
+                        ),
+                    ),
+                    "step": (
+                        (TRAINING_PROGRESS_STATE["global_step"] - 1)
+                        % max(1, steps_per_epoch)
+                    )
+                    + 1,
+                    "loss": round(TRAINING_PROGRESS_STATE["latest_loss"], 6),
+                }
+            )
+
+        if should_stop_after_current_unit(args.run_control_path):
+            raise SystemExit(0)
+
+        return loss
 
     if MODERN_TRAINER_API:
         print("Using mlx_vlm modern trainer API")
@@ -397,11 +532,7 @@ def main(args) -> int:
             train_dataset=dataset,
             val_dataset=None,
             args=training_args,
-            loss_fn=lambda *loss_args, **loss_kwargs: weighted_vision_language_loss_fn(
-                *loss_args,
-                **loss_kwargs,
-                step_cooldown_ms=args.step_cooldown_ms,
-            ),
+            loss_fn=modern_loss_fn,
         )
     else:
         print("Using mlx_vlm legacy trainer API")
@@ -425,22 +556,20 @@ def main(args) -> int:
                     {"epoch": epoch + 1, "step": step + 1, "loss": f"{loss_value:.4f}"}
                 )
 
-                if step % args.print_every == 0:
-                    print(
-                        json.dumps(
-                            {
-                                "epoch": epoch + 1,
-                                "step": step + 1,
-                                "loss": round(loss_value, 6),
-                            }
-                        )
-                    )
+                emit_training_progress(loss, force=(step % args.print_every == 0))
 
                 history.append(
                     {"epoch": epoch + 1, "step": step + 1, "loss": round(loss_value, 6)}
                 )
 
-            maybe_sleep_for_cooldown(args.epoch_cooldown_ms)
+                if should_stop_after_current_unit(args.run_control_path):
+                    raise SystemExit(0)
+
+            maybe_sleep_for_cooldown(
+                args.epoch_cooldown_ms,
+                run_control_path=args.run_control_path,
+                key="training_epoch_cooldown_ms",
+            )
 
         print(f"Saving adapter to {adapter_file}")
         save_adapter(model, adapter_file)
@@ -464,7 +593,7 @@ def main(args) -> int:
         "lora_alpha": args.lora_alpha,
         "lora_dropout": args.lora_dropout,
         "sample_weighting": weight_summary,
-        "final_loss": history[-1]["loss"] if history else None,
+        "final_loss": history[-1]["loss"] if history else TRAINING_PROGRESS_STATE["latest_loss"],
         "history_tail": history[-10:],
     }
     (output_dir / "run-summary.json").write_text(
@@ -543,6 +672,11 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="Optional pause after each epoch to reduce sustained heat",
+    )
+    parser.add_argument(
+        "--run-control-path",
+        default="",
+        help="Optional JSON control file path for live cooldown changes",
     )
     parser.add_argument(
         "--lora-alpha", type=float, default=0.1, help="LoRA alpha parameter"

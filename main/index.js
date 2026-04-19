@@ -741,10 +741,13 @@ function isLocalAiEnabled() {
 function getLocalAiFeatureFlags() {
   try {
     const localAi = loadMainSettings().localAi || {}
+    const localAiEnabled = localAi.enabled === true
 
     return {
       captureEnabled: localAi.captureEnabled === true,
-      trainEnabled: localAi.trainEnabled === true,
+      // Local training now ships as part of the local runtime lane, so old
+      // persisted defaults must not keep the backend gated off.
+      trainEnabled: localAiEnabled,
       federatedEnabled: localAi.federated?.enabled === true,
     }
   } catch {
@@ -2311,6 +2314,48 @@ handleTrusted(
     'loadHumanTeacherDeveloperSession',
     async (_event, payload) =>
       localAiManager.loadHumanTeacherDeveloperSession(
+        buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
+  'localAi.loadHumanTeacherDeveloperSessionState',
+  withLocalAiEnabled(
+    'loadHumanTeacherDeveloperSessionState',
+    async (_event, payload) =>
+      localAiManager.loadHumanTeacherDeveloperSessionState(
+        buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
+  'localAi.stopHumanTeacherDeveloperRun',
+  withLocalAiEnabled('stopHumanTeacherDeveloperRun', async (_event, payload) =>
+    localAiManager.stopHumanTeacherDeveloperRun(
+      buildLocalAiEpochPayload(payload)
+    )
+  )
+)
+
+handleTrusted(
+  'localAi.updateHumanTeacherDeveloperRunControls',
+  withLocalAiEnabled(
+    'updateHumanTeacherDeveloperRunControls',
+    async (_event, payload) =>
+      localAiManager.updateHumanTeacherDeveloperRunControls(
+        buildLocalAiEpochPayload(payload)
+      )
+  )
+)
+
+handleTrusted(
+  'localAi.loadHumanTeacherDeveloperComparisonExamples',
+  withLocalAiEnabled(
+    'loadHumanTeacherDeveloperComparisonExamples',
+    async (_event, payload) =>
+      localAiManager.loadHumanTeacherDeveloperComparisonExamples(
         buildLocalAiEpochPayload(payload)
       )
   )

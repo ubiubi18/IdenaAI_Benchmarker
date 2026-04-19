@@ -13,6 +13,7 @@ import argparse
 import importlib.util
 import json
 import re
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -41,6 +42,57 @@ from prepare_flip_challenge_mlx_vlm import (
 SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
 STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+
+def read_run_control(path: str) -> Dict[str, Any]:
+    if not path:
+        return {}
+
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def resolve_live_cooldown_ms(default_ms: int, run_control_path: str, key: str) -> int:
+    control = read_run_control(run_control_path)
+    value = control.get(key)
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default_ms or 0)
+
+    return max(0, parsed)
+
+
+def resolve_run_stop_mode(run_control_path: str) -> str:
+    control = read_run_control(run_control_path)
+    return str(control.get("stopMode") or "").strip().lower()
+
+
+def should_stop_after_current_unit(run_control_path: str) -> bool:
+    return resolve_run_stop_mode(run_control_path) == "after_unit"
+
+
+def maybe_sleep_for_cooldown(
+    cooldown_ms: int,
+    *,
+    run_control_path: str = "",
+    key: str = "",
+) -> None:
+    resolved_cooldown_ms = resolve_live_cooldown_ms(
+        cooldown_ms,
+        run_control_path,
+        key,
+    )
+
+    if int(resolved_cooldown_ms or 0) <= 0:
+        return
+
+    time.sleep(float(resolved_cooldown_ms) / 1000.0)
 
 
 def looks_like_qwen35_model_path(value: str) -> bool:
@@ -941,6 +993,7 @@ def evaluate(args) -> int:
     swap_consistency_consistent = 0
 
     print(f"Evaluating {len(raw_dataset)} example(s)")
+    example_cooldown_ms = max(0, int(args.example_cooldown_ms or 0))
     for index, example in enumerate(raw_dataset, start=1):
         item = (
             evaluate_candidate_compare_example(
@@ -1026,6 +1079,14 @@ def evaluate(args) -> int:
 
         results.append(item)
         print(json.dumps(item, ensure_ascii=False))
+        if should_stop_after_current_unit(args.run_control_path):
+            return 0
+        if index < len(raw_dataset):
+            maybe_sleep_for_cooldown(
+                example_cooldown_ms,
+                run_control_path=args.run_control_path,
+                key="benchmark_cooldown_ms",
+            )
 
     accuracy = (correct / len(raw_dataset)) if len(raw_dataset) else None
     answered_accuracy = (correct / answered) if answered else None
@@ -1051,6 +1112,7 @@ def evaluate(args) -> int:
         if answered_accuracy is not None
         else None,
         "temperature": args.temperature,
+        "example_cooldown_ms": example_cooldown_ms,
         "max_tokens": args.max_tokens,
         "candidate_compare_margin": args.candidate_compare_margin
         if args.mode == "candidate_compare"
@@ -1134,6 +1196,17 @@ if __name__ == "__main__":
         "--output",
         default="",
         help="Optional JSON report output path",
+    )
+    parser.add_argument(
+        "--example-cooldown-ms",
+        type=int,
+        default=0,
+        help="Optional pause between benchmark examples to reduce sustained system pressure",
+    )
+    parser.add_argument(
+        "--run-control-path",
+        default="",
+        help="Optional JSON control file path for live cooldown changes",
     )
     parser.add_argument(
         "--mode",

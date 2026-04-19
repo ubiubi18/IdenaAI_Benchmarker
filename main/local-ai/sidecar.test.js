@@ -364,6 +364,57 @@ describe('local-ai sidecar', () => {
     expect(httpClient.post).toHaveBeenCalledTimes(1)
   })
 
+  it('passes a structured JSON schema response format through to Ollama chat', async () => {
+    const httpClient = {
+      post: jest.fn(async () => ({
+        data: {
+          model: 'qwen3.5:9b',
+          message: {
+            role: 'assistant',
+            content: '{"final_answer":"left"}',
+          },
+        },
+        config: {
+          url: 'http://127.0.0.1:11434/api/chat',
+        },
+      })),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+    const responseFormat = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['final_answer'],
+      properties: {
+        final_answer: {
+          type: 'string',
+          enum: ['left', 'right', 'skip'],
+        },
+      },
+    }
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'qwen3.5:9b',
+        input: 'Answer with JSON.',
+        responseFormat,
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      text: '{"final_answer":"left"}',
+    })
+
+    expect(httpClient.post).toHaveBeenCalledWith(
+      'http://127.0.0.1:11434/api/chat',
+      expect.objectContaining({
+        model: 'qwen3.5:9b',
+        format: responseFormat,
+      }),
+      expect.any(Object)
+    )
+  })
+
   it('returns a structured config error when the Ollama model is missing', async () => {
     const httpClient = {
       post: jest.fn(),
@@ -646,7 +697,7 @@ describe('local-ai sidecar', () => {
     const httpClient = {
       post: jest.fn(async () => ({
         data: {
-          model: 'qwen2.5vl:7b',
+          model: 'qwen3.5:9b',
           message: {
             role: 'assistant',
             content: 'Image answer.',
@@ -664,7 +715,7 @@ describe('local-ai sidecar', () => {
         runtimeType: 'ollama',
         baseUrl: 'http://127.0.0.1:11434',
         model: 'llama3.1:8b',
-        visionModel: 'qwen2.5vl:7b',
+        visionModel: 'qwen3.5:9b',
         timeoutMs: 120000,
         messages: [
           {
@@ -682,7 +733,7 @@ describe('local-ai sidecar', () => {
     expect(httpClient.post).toHaveBeenCalledWith(
       'http://127.0.0.1:11434/api/chat',
       expect.objectContaining({
-        model: 'qwen2.5vl:7b',
+        model: 'qwen3.5:9b',
       }),
       expect.objectContaining({
         timeout: 90000,
@@ -721,13 +772,13 @@ describe('local-ai sidecar', () => {
     const httpClient = {
       post: jest.fn(async () => {
         const error = new Error(
-          'model "qwen2.5vl:7b" not found, try pulling it first'
+          'model "qwen3.5:9b" not found, try pulling it first'
         )
         error.response = {
           status: 404,
           data: {
             error: {
-              message: 'model "qwen2.5vl:7b" not found, try pulling it first',
+              message: 'model "qwen3.5:9b" not found, try pulling it first',
             },
           },
         }
@@ -741,7 +792,7 @@ describe('local-ai sidecar', () => {
         runtimeType: 'ollama',
         baseUrl: 'http://127.0.0.1:11434',
         model: 'llama3.1:8b',
-        visionModel: 'qwen2.5vl:7b',
+        visionModel: 'qwen3.5:9b',
         messages: [
           {
             role: 'user',
@@ -753,7 +804,7 @@ describe('local-ai sidecar', () => {
     ).resolves.toMatchObject({
       ok: false,
       status: 'unavailable',
-      lastError: expect.stringContaining('ollama pull qwen2.5vl:7b'),
+      lastError: expect.stringContaining('ollama pull qwen3.5:9b'),
     })
   })
 
