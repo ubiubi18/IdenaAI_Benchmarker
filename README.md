@@ -15,14 +15,6 @@ It is a research fork, not a polished end-user app release.
 `IdenaAI_Benchmarker` is also back in embryo stage for the moment while
 research for a better local base layer is ongoing.
 
-> I just pulled the plug on Qwen 3.5 as base model for the moment. Too much
-> opaque pretraining. You can’t grow a trustworthy system on a black box. Back
-> to embryo stage.
-
-Sanitized screenshot of the behavior that triggered this reset:
-
-![Sanitized base-layer review example](docs/assets/base-layer-research-note.jpg)
-
 Current consequence:
 - no approved local base model ships by default
 - benchmarking, annotation, and provider experiments continue
