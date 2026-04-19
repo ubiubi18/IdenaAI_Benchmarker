@@ -44,6 +44,7 @@ import {
   DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
   DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
   DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
+  DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
@@ -54,6 +55,7 @@ import {
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
   normalizeDeveloperAiDraftAnswerWindowTokens,
+  normalizeDeveloperBenchmarkReviewRequiredFields,
   normalizeDeveloperAiDraftContextWindowTokens,
   normalizeDeveloperAiDraftTriggerMode,
   normalizeDeveloperAiDraftQuestionWindowChars,
@@ -84,6 +86,24 @@ const AUTO_SAVE_DELAY_MS = 2500
 const PANEL_REFERENCE_CODES = ['A', 'B', 'C']
 const AI_ANNOTATION_RATINGS = ['good', 'bad', 'wrong']
 const AI_DRAFT_PANEL_COUNT = 8
+const BENCHMARK_EXAMPLE_FILTER_OPTIONS = [
+  'all',
+  'failures',
+  'regressed',
+  'baseline_better',
+  'improved',
+  'close_calls',
+]
+const BENCHMARK_REVIEW_ISSUE_TYPE_OPTIONS = [
+  'wrong_answer',
+  'missed_text',
+  'sequence_confusion',
+  'reportability_miss',
+  'weak_reasoning',
+  'panel_read_failure',
+  'ambiguous_flip',
+  'other',
+]
 
 function HelpPopover({label, children, placement = 'top-end'}) {
   let body = children
@@ -669,7 +689,7 @@ function formatErrorMessage(error) {
   }
 
   if (/Local AI human-teacher bridge is unavailable/i.test(message)) {
-    return 'The human-teacher bridge is unavailable in this build. Fully restart IdenaAI and try again.'
+    return 'The local AI human-teacher bridge is unavailable right now. If you are on localhost dev, reload the page and ensure the dev server picked up the browser bridge.'
   }
 
   if (
@@ -827,7 +847,87 @@ function createEmptyAnnotationDraft() {
     final_answer: '',
     why_answer: '',
     confidence: '',
+    benchmark_review_issue_type: '',
+    benchmark_review_failure_note: '',
+    benchmark_review_retraining_hint: '',
+    benchmark_review_include_for_training: null,
   }
+}
+
+function normalizeAnnotationDraftBool(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null
+  }
+
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  const raw = String(value).trim().toLowerCase()
+
+  if (['true', 'yes', '1'].includes(raw)) {
+    return true
+  }
+
+  if (['false', 'no', '0'].includes(raw)) {
+    return false
+  }
+
+  return null
+}
+
+function normalizeBenchmarkReviewIssueType(value) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/gu, '_')
+
+  return BENCHMARK_REVIEW_ISSUE_TYPE_OPTIONS.includes(next) ? next : ''
+}
+
+function getBenchmarkReviewRequiredFieldKeys(value = []) {
+  return normalizeDeveloperBenchmarkReviewRequiredFields(value, {
+    fallbackToDefault: false,
+  })
+}
+
+function getBenchmarkReviewMissingFields(
+  annotation = {},
+  requiredFieldKeys = []
+) {
+  const next = normalizeAnnotationDraft(annotation)
+  const required = getBenchmarkReviewRequiredFieldKeys(requiredFieldKeys)
+  const missingFields = []
+
+  if (
+    required.includes('benchmark_review_issue_type') &&
+    !next.benchmark_review_issue_type
+  ) {
+    missingFields.push('benchmark_review_issue_type')
+  }
+
+  if (
+    required.includes('benchmark_review_failure_note') &&
+    !String(next.benchmark_review_failure_note || '').trim()
+  ) {
+    missingFields.push('benchmark_review_failure_note')
+  }
+
+  if (
+    required.includes('benchmark_review_retraining_hint') &&
+    !String(next.benchmark_review_retraining_hint || '').trim()
+  ) {
+    missingFields.push('benchmark_review_retraining_hint')
+  }
+
+  if (
+    required.includes('benchmark_review_include_for_training') &&
+    next.benchmark_review_include_for_training === null
+  ) {
+    missingFields.push('benchmark_review_include_for_training')
+  }
+
+  return missingFields
 }
 
 function normalizeAnnotationDraft(annotation = {}) {
@@ -882,6 +982,27 @@ function normalizeAnnotationDraft(annotation = {}) {
       next.confidence === null || typeof next.confidence === 'undefined'
         ? ''
         : String(next.confidence),
+    benchmark_review_issue_type: normalizeBenchmarkReviewIssueType(
+      next.benchmark_review_issue_type ?? next.benchmarkReviewIssueType
+    ),
+    benchmark_review_failure_note: String(
+      next.benchmark_review_failure_note ??
+        next.benchmarkReviewFailureNote ??
+        ''
+    )
+      .trim()
+      .slice(0, 900),
+    benchmark_review_retraining_hint: String(
+      next.benchmark_review_retraining_hint ??
+        next.benchmarkReviewRetrainingHint ??
+        ''
+    )
+      .trim()
+      .slice(0, 900),
+    benchmark_review_include_for_training: normalizeAnnotationDraftBool(
+      next.benchmark_review_include_for_training ??
+        next.benchmarkReviewIncludeForTraining
+    ),
   }
 }
 
@@ -900,6 +1021,10 @@ function hasDraftContent(annotation = {}) {
       next.report_reason.trim() ||
       next.final_answer.trim() ||
       next.why_answer.trim() ||
+      next.benchmark_review_issue_type ||
+      next.benchmark_review_failure_note.trim() ||
+      next.benchmark_review_retraining_hint.trim() ||
+      next.benchmark_review_include_for_training !== null ||
       next.text_required !== null ||
       next.sequence_markers_present !== null ||
       next.report_required !== null ||
@@ -907,7 +1032,10 @@ function hasDraftContent(annotation = {}) {
   )
 }
 
-function getAnnotationCompletionState(annotation = {}) {
+function getAnnotationCompletionState(
+  annotation = {},
+  {benchmarkReviewRequiredFields = []} = {}
+) {
   const next = normalizeAnnotationDraft(annotation)
   const filledFrameCaptions = next.frame_captions.filter((item) =>
     String(item || '').trim()
@@ -959,9 +1087,24 @@ function getAnnotationCompletionState(annotation = {}) {
   if (!hasConfidence) {
     missingRequiredFields.push('confidence')
   }
+  const benchmarkReviewMissingFields = getBenchmarkReviewMissingFields(
+    next,
+    benchmarkReviewRequiredFields
+  )
+  missingRequiredFields.push(...benchmarkReviewMissingFields)
   const hasOptionalDetailContent =
     filledFrameCaptions > 0 || hasOptionASummary || hasOptionBSummary
   const optionalDetailComplete = hasFrameCaptions && hasStorySummaries
+  const benchmarkReviewRequirements = getBenchmarkReviewRequiredFieldKeys(
+    benchmarkReviewRequiredFields
+  )
+  const hasBenchmarkReviewRequirements = benchmarkReviewRequirements.length > 0
+  const benchmarkReviewComplete = benchmarkReviewMissingFields.length === 0
+  const benchmarkReviewCompletedChecks =
+    benchmarkReviewRequirements.length - benchmarkReviewMissingFields.length
+  if (hasBenchmarkReviewRequirements) {
+    checks.push(benchmarkReviewComplete)
+  }
 
   return {
     filledFrameCaptions,
@@ -976,6 +1119,11 @@ function getAnnotationCompletionState(annotation = {}) {
     hasOptionBSummary,
     hasStorySummaries,
     hasFrameCaptions,
+    benchmarkReviewRequirements,
+    benchmarkReviewCompletedChecks,
+    benchmarkReviewTotalChecks: benchmarkReviewRequirements.length,
+    hasBenchmarkReviewRequirements,
+    benchmarkReviewComplete,
     hasOptionalDetailContent,
     optionalDetailComplete,
     missingRequiredFields,
@@ -1006,8 +1154,39 @@ function getRequiredFieldLabel(fieldKey, t) {
       return t('report reason')
     case 'confidence':
       return t('confidence')
+    case 'benchmark_review_issue_type':
+      return t('issue type')
+    case 'benchmark_review_failure_note':
+      return t('failure note')
+    case 'benchmark_review_retraining_hint':
+      return t('retraining hint')
+    case 'benchmark_review_include_for_training':
+      return t('retraining choice')
     default:
       return String(fieldKey || '').trim()
+  }
+}
+
+function formatBenchmarkReviewIssueTypeLabel(value, t) {
+  switch (String(value || '').trim()) {
+    case 'wrong_answer':
+      return t('Wrong answer')
+    case 'missed_text':
+      return t('Missed text')
+    case 'sequence_confusion':
+      return t('Sequence confusion')
+    case 'reportability_miss':
+      return t('Reportability miss')
+    case 'weak_reasoning':
+      return t('Weak reasoning')
+    case 'panel_read_failure':
+      return t('Panel read failure')
+    case 'ambiguous_flip':
+      return t('Ambiguous flip')
+    case 'other':
+      return t('Other')
+    default:
+      return t('Not set')
   }
 }
 
@@ -1023,8 +1202,8 @@ function formatMissingRequiredFields(t, fieldKeys = []) {
   return labels.join(', ')
 }
 
-function isCompleteDraft(annotation = {}) {
-  return getAnnotationCompletionState(annotation).isComplete
+function isCompleteDraft(annotation = {}, options = {}) {
+  return getAnnotationCompletionState(annotation, options).isComplete
 }
 
 function normalizePanelOrder(order = [], panelCount = 0) {
@@ -1381,53 +1560,6 @@ function formatDecisionLabel(value, t) {
   return t('Unknown')
 }
 
-function getDraftStatusLabel(annotation, t) {
-  if (annotation && typeof annotation === 'object' && annotation.isComplete) {
-    return t('Complete')
-  }
-
-  if (annotation && typeof annotation === 'object' && annotation.hasDraft) {
-    return t('Draft')
-  }
-
-  const nextAnnotation = annotation || {}
-
-  if (isCompleteDraft(nextAnnotation)) {
-    return t('Complete')
-  }
-
-  if (hasDraftContent(nextAnnotation)) {
-    return t('Draft')
-  }
-
-  return t('Pending')
-}
-
-function getDraftHelperText(annotation, t) {
-  if (annotation && typeof annotation === 'object' && annotation.isComplete) {
-    return t('This flip looks complete.')
-  }
-
-  if (annotation && typeof annotation === 'object' && annotation.hasDraft) {
-    return t('This flip has unsaved or incomplete draft content.')
-  }
-
-  const nextAnnotation = annotation || {}
-  const completion = getAnnotationCompletionState(nextAnnotation)
-
-  if (completion.isComplete) {
-    return t('This flip looks complete.')
-  }
-
-  if (hasDraftContent(nextAnnotation)) {
-    return t('This flip still needs {{count}} required item(s).', {
-      count: completion.remainingChecks,
-    })
-  }
-
-  return t('No annotation content yet.')
-}
-
 function buildAnnotationDraftKey({
   annotationSourceMode = 'epoch',
   epoch = '',
@@ -1475,7 +1607,11 @@ const DEVELOPER_TRAINING_SAMPLE_OPTIONS = [
 ]
 const DEVELOPER_TRAINING_CHUNK_SIZE = 5
 
-function pickPreferredTaskId(workspace, preferredTaskId = '') {
+function pickPreferredTaskId(
+  workspace,
+  preferredTaskId = '',
+  {allowCompletedPreferred = false} = {}
+) {
   const tasks =
     workspace && Array.isArray(workspace.tasks) ? workspace.tasks : []
 
@@ -1483,14 +1619,20 @@ function pickPreferredTaskId(workspace, preferredTaskId = '') {
     return ''
   }
 
+  const preferredTask = preferredTaskId
+    ? tasks.find((task) => task.taskId === preferredTaskId)
+    : null
+  const nextIncompleteTask = tasks.find((task) => !task.isComplete)
+
   if (
-    preferredTaskId &&
-    tasks.some((task) => task.taskId === preferredTaskId)
+    preferredTask &&
+    (allowCompletedPreferred ||
+      !preferredTask.isComplete ||
+      !nextIncompleteTask)
   ) {
     return preferredTaskId
   }
 
-  const nextIncompleteTask = tasks.find((task) => !task.isComplete)
   return nextIncompleteTask ? nextIncompleteTask.taskId : tasks[0].taskId
 }
 
@@ -3831,7 +3973,8 @@ function clampPercent(value) {
 function getWorkspaceCountsAfterSave(
   workspace,
   selectedTaskId,
-  annotation = {}
+  annotation = {},
+  options = {}
 ) {
   const tasks =
     workspace && Array.isArray(workspace.tasks) ? workspace.tasks : []
@@ -3847,7 +3990,7 @@ function getWorkspaceCountsAfterSave(
   }
 
   const hasDraft = hasDraftContent(annotation)
-  const completion = getAnnotationCompletionState(annotation)
+  const completion = getAnnotationCompletionState(annotation, options)
   const {isComplete, missingRequiredFields} = completion
   const nextTasks = tasks.map((task) =>
     task.taskId === selectedTaskId
@@ -3875,7 +4018,8 @@ function getWorkspaceCountsAfterSave(
 function getWorkspacePreviewAfterSave(
   workspace,
   selectedTaskId,
-  annotation = {}
+  annotation = {},
+  options = {}
 ) {
   const tasks =
     workspace && Array.isArray(workspace.tasks) ? workspace.tasks : []
@@ -3895,13 +4039,16 @@ function getWorkspacePreviewAfterSave(
   }
 
   const hasDraft = hasDraftContent(annotation)
-  const isComplete = isCompleteDraft(annotation)
+  const completion = getAnnotationCompletionState(annotation, options)
+  const {isComplete} = completion
+  const {missingRequiredFields} = completion
   const nextTasks = tasks.map((task) =>
     task.taskId === selectedTaskId
       ? {
           ...task,
           hasDraft,
           isComplete,
+          missingRequiredFields,
         }
       : task
   )
@@ -4634,6 +4781,661 @@ function describeBenchmarkRunExampleResult(entry, t) {
   }
 }
 
+function buildBenchmarkExampleIdentity(example, index = 0) {
+  return String(
+    example?.sampleId ||
+      example?.flipHash ||
+      example?.reviewTarget?.taskId ||
+      `benchmark-example-${index}`
+  ).trim()
+}
+
+function formatBenchmarkJsonPreview(value) {
+  if (!value || typeof value !== 'object') {
+    return ''
+  }
+
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return ''
+  }
+}
+
+function describeBenchmarkInspectorSummary(example, t) {
+  if (!example) {
+    return ''
+  }
+
+  if (example.current?.correct === true) {
+    if (example.baseline?.correct === false) {
+      return t('The trained adapter corrected a mistake the baseline made.')
+    }
+
+    if (example.previous?.correct === false) {
+      return t('This benchmark flip improved compared with the last saved run.')
+    }
+
+    return t('The trained adapter handled this benchmark flip correctly.')
+  }
+
+  if (example.baseline?.correct === true) {
+    return t(
+      'The trained adapter missed this flip, but the baseline got it right.'
+    )
+  }
+
+  if (example.previous?.correct === true) {
+    return t(
+      'The current run regressed on this flip compared with the last saved run.'
+    )
+  }
+
+  if (
+    String(example.current?.predicted || '')
+      .trim()
+      .toLowerCase() === 'skip'
+  ) {
+    return t('The model chose SKIP here instead of selecting LEFT or RIGHT.')
+  }
+
+  return t('This flip is still a failure case for the current adapter.')
+}
+
+function describeBenchmarkReviewAction(example, t) {
+  if (!example?.reviewTarget?.taskId) {
+    return t(
+      'No linked annotation target was found for this benchmark flip yet.'
+    )
+  }
+
+  return t(
+    'Open this flip in the annotation flow, save your human answer, then include it in the next local adapter run.'
+  )
+}
+
+function normalizeBenchmarkCandidateKey(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+}
+
+function formatBenchmarkCandidateLabel(candidate, detail, t) {
+  const key = normalizeBenchmarkCandidateKey(candidate)
+
+  if (!key) {
+    return t('Unknown')
+  }
+
+  if (key === 'a') {
+    return detail?.optionAMapsTo
+      ? `A → ${formatBenchmarkAnswerLabel(detail.optionAMapsTo, t)}`
+      : t('Candidate A')
+  }
+
+  if (key === 'b') {
+    return detail?.optionBMapsTo
+      ? `B → ${formatBenchmarkAnswerLabel(detail.optionBMapsTo, t)}`
+      : t('Candidate B')
+  }
+
+  return key.toUpperCase()
+}
+
+function readBenchmarkNumericScore(metric = null) {
+  if (!metric || typeof metric !== 'object' || Array.isArray(metric)) {
+    return null
+  }
+
+  const candidates = [
+    metric.avg_logprob,
+    metric.compareScore,
+    metric.score,
+    metric.winnerLoserMargin,
+    metric.margin,
+  ]
+
+  for (const value of candidates) {
+    const next = Number(value)
+    if (Number.isFinite(next)) {
+      return next
+    }
+  }
+
+  return null
+}
+
+function formatBenchmarkNumericScore(value) {
+  const next = Number(value)
+
+  if (!Number.isFinite(next)) {
+    return ''
+  }
+
+  return next.toFixed(Math.abs(next) >= 10 ? 2 : 3)
+}
+
+function getBenchmarkTraceLeaderboard(detail = null) {
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) {
+    return []
+  }
+
+  const candidateScores =
+    detail.candidateScores &&
+    typeof detail.candidateScores === 'object' &&
+    !Array.isArray(detail.candidateScores)
+      ? Object.entries(detail.candidateScores)
+      : []
+
+  if (candidateScores.length) {
+    return candidateScores
+      .map(([candidate, metric]) => ({
+        candidate,
+        score: readBenchmarkNumericScore(metric),
+      }))
+      .filter((entry) => Number.isFinite(entry.score))
+      .sort((left, right) => right.score - left.score)
+  }
+
+  const candidateAnalyses =
+    detail.candidateAnalyses &&
+    typeof detail.candidateAnalyses === 'object' &&
+    !Array.isArray(detail.candidateAnalyses)
+      ? Object.entries(detail.candidateAnalyses)
+      : []
+
+  return candidateAnalyses
+    .map(([candidate, metric]) => ({
+      candidate,
+      score: readBenchmarkNumericScore(metric),
+    }))
+    .filter((entry) => Number.isFinite(entry.score))
+    .sort((left, right) => right.score - left.score)
+}
+
+function describeBenchmarkTraceStability(detail, t) {
+  const leaderboard = getBenchmarkTraceLeaderboard(detail)
+  const top = leaderboard[0] || null
+  const runnerUp = leaderboard[1] || null
+  const margin =
+    top && runnerUp
+      ? Math.abs(Number(top.score) - Number(runnerUp.score))
+      : null
+  const generatedPrediction = String(detail?.generatedPrediction || '').trim()
+  const scoredPrediction = String(detail?.scoredPrediction || '').trim()
+  const hasMismatch =
+    generatedPrediction &&
+    scoredPrediction &&
+    generatedPrediction !== scoredPrediction
+
+  if (hasMismatch) {
+    return {
+      key: 'generation_mismatch',
+      label: t('Generation and scoring disagreed'),
+      detail: t(
+        'Free-form generation and score-based selection pointed to different answers.'
+      ),
+      tone: 'orange',
+    }
+  }
+
+  if (top && runnerUp && Number.isFinite(margin)) {
+    return margin < 0.2
+      ? {
+          key: 'close_call',
+          label: t('Very close call'),
+          detail: t('{{top}} only led by {{margin}} over {{runnerUp}}.', {
+            top: String(top.candidate).toUpperCase(),
+            margin: formatBenchmarkNumericScore(margin),
+            runnerUp: String(runnerUp.candidate).toUpperCase(),
+          }),
+          tone: 'orange',
+        }
+      : {
+          key: 'clear_lead',
+          label: t('Clear score lead'),
+          detail: t('{{top}} led by {{margin}} over {{runnerUp}}.', {
+            top: String(top.candidate).toUpperCase(),
+            margin: formatBenchmarkNumericScore(margin),
+            runnerUp: String(runnerUp.candidate).toUpperCase(),
+          }),
+          tone: 'green',
+        }
+  }
+
+  return {
+    key: 'trace_only',
+    label: t('Trace available'),
+    detail: t(
+      'The run saved a decision trace, but not a comparable numeric margin.'
+    ),
+    tone: 'blue',
+  }
+}
+
+function buildBenchmarkReviewSuggestion(example, t) {
+  if (!example) {
+    return null
+  }
+
+  const detail = example.currentDetails || null
+  const stability = describeBenchmarkTraceStability(detail, t)
+  const predicted = String(example.current?.predicted || '')
+    .trim()
+    .toLowerCase()
+  const expected = String(example.expected || '')
+    .trim()
+    .toLowerCase()
+  const baselineCorrect = example.baseline?.correct === true
+  const previousCorrect = example.previous?.correct === true
+  const generatedPrediction = String(detail?.generatedPrediction || '')
+    .trim()
+    .toLowerCase()
+  const scoredPrediction = String(detail?.scoredPrediction || '')
+    .trim()
+    .toLowerCase()
+  const hasMismatch =
+    generatedPrediction &&
+    scoredPrediction &&
+    generatedPrediction !== scoredPrediction
+
+  let issueType = 'wrong_answer'
+  let headline = t('Wrong answer')
+  let summary = t(
+    'The adapter chose {{predicted}} even though the expected answer was {{expected}}.',
+    {
+      predicted: formatBenchmarkAnswerLabel(predicted, t),
+      expected: formatBenchmarkAnswerLabel(expected, t),
+    }
+  )
+  let retrainingHint = t(
+    'Write the single cue that separates the expected side from the chosen side, then include that correction in the next retraining run.'
+  )
+
+  if (predicted === 'skip' && expected && expected !== 'skip') {
+    issueType = 'ambiguous_flip'
+    headline = t('Skipped a solvable flip')
+    summary = t(
+      'The adapter fell back to SKIP instead of choosing the expected {{expected}} answer.',
+      {
+        expected: formatBenchmarkAnswerLabel(expected, t),
+      }
+    )
+    retrainingHint = t(
+      'Emphasize why this flip is still solvable and which concrete cue should beat the model’s urge to skip.'
+    )
+  } else if (baselineCorrect) {
+    issueType = 'weak_reasoning'
+    headline = t('Baseline outperformed the adapter')
+    summary = t(
+      'The trained adapter missed this flip, but the baseline solved it correctly in the same run.'
+    )
+    retrainingHint = t(
+      'Describe what the adapter overfit on and which cue the baseline respected correctly.'
+    )
+  } else if (previousCorrect) {
+    issueType = 'weak_reasoning'
+    headline = t('Regression from the last run')
+    summary = t(
+      'This flip regressed compared with the last saved benchmark run.'
+    )
+    retrainingHint = t(
+      'Point out what changed between the good and bad decision so the next adapter update does not overwrite the earlier success.'
+    )
+  } else if (hasMismatch) {
+    issueType = 'weak_reasoning'
+    headline = t('Generation and scoring diverged')
+    summary = t(
+      'The free-form answer and the score-based answer disagreed on this flip.'
+    )
+    retrainingHint = t(
+      'Write the answer as one consistent judgment and explain the exact cue that should align both generation and scoring.'
+    )
+  } else if (stability.key === 'close_call') {
+    issueType = 'sequence_confusion'
+    headline = t('The model was unsure between two stories')
+    summary = stability.detail
+    retrainingHint = t(
+      'Focus your note on the smallest cue that resolves the close call: text order, motion direction, or chronology marker.'
+    )
+  }
+
+  return {
+    issueType,
+    headline,
+    summary,
+    retrainingHint,
+    stability,
+  }
+}
+
+function describeBenchmarkTraceScoreRace(detail, t) {
+  const leaderboard = getBenchmarkTraceLeaderboard(detail)
+  const top = leaderboard[0] || null
+  const runnerUp = leaderboard[1] || null
+
+  if (!top) {
+    return {
+      value: t('No numeric race'),
+      detail: t('This trace did not save comparable candidate scores.'),
+      tone: 'gray',
+    }
+  }
+
+  const topLabel = formatBenchmarkCandidateLabel(top.candidate, detail, t)
+
+  if (!runnerUp) {
+    return {
+      value: topLabel,
+      detail: t('Only one scored candidate was saved for this trace.'),
+      tone: 'blue',
+    }
+  }
+
+  const runnerUpLabel = formatBenchmarkCandidateLabel(
+    runnerUp.candidate,
+    detail,
+    t
+  )
+  const margin = Math.abs(Number(top.score) - Number(runnerUp.score))
+  const isClose = Number.isFinite(margin) && margin < 0.2
+
+  return {
+    value: `${topLabel} > ${runnerUpLabel}`,
+    detail: t('{{top}} led {{runnerUp}} by {{margin}}.', {
+      top: topLabel,
+      runnerUp: runnerUpLabel,
+      margin: formatBenchmarkNumericScore(margin),
+    }),
+    tone: isClose ? 'orange' : 'green',
+  }
+}
+
+function describeBenchmarkExampleFilterLabel(filterKey, t) {
+  switch (
+    String(filterKey || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case 'failures':
+      return t('Failures')
+    case 'regressed':
+      return t('Regressed')
+    case 'baseline_better':
+      return t('Baseline better')
+    case 'improved':
+      return t('Improved')
+    case 'close_calls':
+      return t('Close calls')
+    case 'all':
+    default:
+      return t('All')
+  }
+}
+
+function matchesBenchmarkExampleFilter(example, filterKey, t) {
+  const normalizedFilter = String(filterKey || '')
+    .trim()
+    .toLowerCase()
+
+  if (!normalizedFilter || normalizedFilter === 'all') {
+    return true
+  }
+
+  switch (normalizedFilter) {
+    case 'failures':
+      return example?.current?.correct === false
+    case 'regressed':
+      return (
+        String(example?.changeType || '')
+          .trim()
+          .toLowerCase() === 'regressed'
+      )
+    case 'baseline_better':
+      return (
+        example?.current?.correct === false &&
+        example?.baseline?.correct === true
+      )
+    case 'improved':
+      return (
+        String(example?.changeType || '')
+          .trim()
+          .toLowerCase() === 'improved'
+      )
+    case 'close_calls':
+      return (
+        describeBenchmarkTraceStability(example?.currentDetails, t).key ===
+        'close_call'
+      )
+    default:
+      return true
+  }
+}
+
+function applyBenchmarkReviewSuggestionToDraft(
+  annotation = {},
+  suggestion = null,
+  {overwrite = false} = {}
+) {
+  if (!suggestion) {
+    return normalizeAnnotationDraft(annotation)
+  }
+
+  const next = normalizeAnnotationDraft(annotation)
+
+  return normalizeAnnotationDraft({
+    ...next,
+    benchmark_review_issue_type:
+      overwrite || !next.benchmark_review_issue_type
+        ? suggestion.issueType
+        : next.benchmark_review_issue_type,
+    benchmark_review_failure_note:
+      overwrite || !String(next.benchmark_review_failure_note || '').trim()
+        ? suggestion.summary
+        : next.benchmark_review_failure_note,
+    benchmark_review_retraining_hint:
+      overwrite || !String(next.benchmark_review_retraining_hint || '').trim()
+        ? suggestion.retrainingHint
+        : next.benchmark_review_retraining_hint,
+    benchmark_review_include_for_training:
+      next.benchmark_review_include_for_training === null
+        ? true
+        : next.benchmark_review_include_for_training,
+  })
+}
+
+function BenchmarkInsightCard({title, value, detail = '', tone = 'blue'}) {
+  const toneMap = {
+    green: {borderColor: 'green.100', bg: 'green.50'},
+    orange: {borderColor: 'orange.100', bg: 'orange.50'},
+    red: {borderColor: 'red.100', bg: 'red.50'},
+    purple: {borderColor: 'purple.100', bg: 'purple.50'},
+    blue: {borderColor: 'blue.100', bg: 'blue.50'},
+    gray: {borderColor: 'gray.100', bg: 'gray.50'},
+  }
+  const palette = toneMap[tone] || toneMap.blue
+
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor={palette.borderColor}
+      borderRadius="md"
+      p={3}
+      bg={palette.bg}
+    >
+      <Stack spacing={1}>
+        <Text color="muted" fontSize="xs">
+          {title}
+        </Text>
+        <Text fontSize="sm" fontWeight={700}>
+          {value}
+        </Text>
+        {detail ? (
+          <Text color="muted" fontSize="xs">
+            {detail}
+          </Text>
+        ) : null}
+      </Stack>
+    </Box>
+  )
+}
+
+function BenchmarkExampleDecisionTraceCard({title, detail = null, t}) {
+  if (!detail) {
+    return null
+  }
+
+  const scorePreview = formatBenchmarkJsonPreview(detail.candidateScores)
+  const parsedPreview = formatBenchmarkJsonPreview(detail.parsedResponse)
+  const analysesPreview = formatBenchmarkJsonPreview(detail.candidateAnalyses)
+  let detailTone = 'yellow'
+  let detailLabel = t('Unclear')
+
+  if (detail.correct === true) {
+    detailTone = 'green'
+    detailLabel = t('Correct')
+  } else if (detail.correct === false) {
+    detailTone = 'red'
+    detailLabel = t('Wrong')
+  }
+
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor="gray.100"
+      borderRadius="md"
+      p={3}
+      bg="white"
+    >
+      <Stack spacing={3}>
+        <Box>
+          <Text fontSize="sm" fontWeight={700}>
+            {title}
+          </Text>
+          <HStack spacing={2} mt={2} flexWrap="wrap">
+            <Badge colorScheme={detailTone} borderRadius="full">
+              {detailLabel}
+            </Badge>
+            <Badge colorScheme="blue" borderRadius="full">
+              {t('Predicted')}:{' '}
+              {formatBenchmarkAnswerLabel(detail.predicted, t)}
+            </Badge>
+            {detail.selectedCandidate ? (
+              <Badge colorScheme="purple" borderRadius="full">
+                {t('Chosen candidate')}:{' '}
+                {String(detail.selectedCandidate).toUpperCase()}
+              </Badge>
+            ) : null}
+          </HStack>
+        </Box>
+
+        {(detail.generatedPrediction || detail.scoredPrediction) &&
+        detail.generatedPrediction !== detail.predicted ? (
+          <Text fontSize="sm">
+            {t('Generated')}:{' '}
+            {formatBenchmarkAnswerLabel(detail.generatedPrediction, t)}
+            {' · '}
+            {t('Scored')}:{' '}
+            {formatBenchmarkAnswerLabel(detail.scoredPrediction, t)}
+          </Text>
+        ) : null}
+
+        {detail.rawResponse ? (
+          <Box>
+            <Text color="muted" fontSize="xs" mb={1}>
+              {t('Raw model answer')}
+            </Text>
+            <Box
+              as="pre"
+              fontSize="xs"
+              whiteSpace="pre-wrap"
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              bg="gray.50"
+              px={3}
+              py={2}
+              maxH="180px"
+              overflowY="auto"
+            >
+              {detail.rawResponse}
+            </Box>
+          </Box>
+        ) : null}
+
+        {parsedPreview ? (
+          <Box>
+            <Text color="muted" fontSize="xs" mb={1}>
+              {t('Parsed answer data')}
+            </Text>
+            <Box
+              as="pre"
+              fontSize="xs"
+              whiteSpace="pre-wrap"
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              bg="gray.50"
+              px={3}
+              py={2}
+              maxH="180px"
+              overflowY="auto"
+            >
+              {parsedPreview}
+            </Box>
+          </Box>
+        ) : null}
+
+        {scorePreview ? (
+          <Box>
+            <Text color="muted" fontSize="xs" mb={1}>
+              {t('Answer score table')}
+            </Text>
+            <Box
+              as="pre"
+              fontSize="xs"
+              whiteSpace="pre-wrap"
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              bg="gray.50"
+              px={3}
+              py={2}
+              maxH="180px"
+              overflowY="auto"
+            >
+              {scorePreview}
+            </Box>
+          </Box>
+        ) : null}
+
+        {analysesPreview ? (
+          <Box>
+            <Text color="muted" fontSize="xs" mb={1}>
+              {t('Candidate analysis trace')}
+            </Text>
+            <Box
+              as="pre"
+              fontSize="xs"
+              whiteSpace="pre-wrap"
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              bg="gray.50"
+              px={3}
+              py={2}
+              maxH="220px"
+              overflowY="auto"
+            >
+              {analysesPreview}
+            </Box>
+          </Box>
+        ) : null}
+      </Stack>
+    </Box>
+  )
+}
+
 function summarizeBenchmarkExamples(examples = []) {
   return examples.reduce(
     (summary, example) => {
@@ -5022,8 +5824,118 @@ function DeveloperBenchmarkExamplesPanel({
   error = '',
   activeRun = null,
   telemetry = null,
+  onReviewExample = null,
   t,
 }) {
+  const examples = React.useMemo(
+    () => (Array.isArray(data?.examples) ? data.examples : []),
+    [data?.examples]
+  )
+  const selectedExampleDefaultKey = React.useMemo(() => {
+    const failedExample = examples.find(
+      (example) => example?.current?.correct === false
+    )
+    return buildBenchmarkExampleIdentity(failedExample || examples[0], 0)
+  }, [examples])
+  const [exampleFilter, setExampleFilter] = React.useState('failures')
+  const filterOptions = React.useMemo(
+    () =>
+      BENCHMARK_EXAMPLE_FILTER_OPTIONS.map((filterKey) => ({
+        value: filterKey,
+        label: describeBenchmarkExampleFilterLabel(filterKey, t),
+        count: examples.filter((example) =>
+          matchesBenchmarkExampleFilter(example, filterKey, t)
+        ).length,
+      })),
+    [examples, t]
+  )
+  const filteredExamples = React.useMemo(() => {
+    const nextExamples = examples.filter((example) =>
+      matchesBenchmarkExampleFilter(example, exampleFilter, t)
+    )
+
+    return nextExamples.length ? nextExamples : examples
+  }, [exampleFilter, examples, t])
+  const [selectedExampleKey, setSelectedExampleKey] = React.useState(
+    selectedExampleDefaultKey
+  )
+
+  React.useEffect(() => {
+    setSelectedExampleKey(selectedExampleDefaultKey)
+  }, [selectedExampleDefaultKey])
+
+  const selectedExample = React.useMemo(() => {
+    if (!filteredExamples.length) {
+      return null
+    }
+
+    return (
+      filteredExamples.find(
+        (example, index) =>
+          buildBenchmarkExampleIdentity(example, index) === selectedExampleKey
+      ) || filteredExamples[0]
+    )
+  }, [filteredExamples, selectedExampleKey])
+  const selectedExampleStyles = describeBenchmarkExampleChange(
+    selectedExample?.changeType,
+    t
+  )
+  const selectedExampleSuggestion = buildBenchmarkReviewSuggestion(
+    selectedExample,
+    t
+  )
+  const selectedExampleTraceStability = describeBenchmarkTraceStability(
+    selectedExample?.currentDetails,
+    t
+  )
+  const selectedExampleScoreRace = describeBenchmarkTraceScoreRace(
+    selectedExample?.currentDetails,
+    t
+  )
+  let selectedExampleCauseTone = 'orange'
+  if (selectedExample?.current?.correct === true) {
+    selectedExampleCauseTone = 'green'
+  } else if (selectedExample?.baseline?.correct === true) {
+    selectedExampleCauseTone = 'purple'
+  }
+  let selectedExampleBaselineClue = {
+    value: t('Still needs teaching'),
+    detail: t(
+      'Neither the current adapter nor the comparison reference solved this flip reliably yet.'
+    ),
+    tone: 'gray',
+  }
+
+  if (selectedExample?.baseline?.correct === true) {
+    selectedExampleBaselineClue = {
+      value: t('Baseline still saw the right cue'),
+      detail: t(
+        'The base model solved this flip, so the new adapter likely learned the wrong emphasis.'
+      ),
+      tone: 'purple',
+    }
+  } else if (selectedExample?.previous?.correct === true) {
+    selectedExampleBaselineClue = {
+      value: t('This run regressed'),
+      detail: t(
+        'An earlier saved adapter solved this flip, so this failure is likely overwrite or drift rather than missing coverage.'
+      ),
+      tone: 'orange',
+    }
+  }
+  const selectedExampleCurrentResult = describeBenchmarkRunExampleResult(
+    selectedExample?.current,
+    t
+  )
+  const selectedExampleBaselineResult = describeBenchmarkRunExampleResult(
+    selectedExample?.baseline,
+    t
+  )
+  const selectedExamplePreviousResult = describeBenchmarkRunExampleResult(
+    selectedExample?.previous,
+    t
+  )
+
   if (isLoading) {
     return (
       <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
@@ -5088,8 +6000,6 @@ function DeveloperBenchmarkExamplesPanel({
     )
   }
 
-  const examples = Array.isArray(data.examples) ? data.examples : []
-
   return (
     <Box borderWidth="1px" borderColor="gray.100" borderRadius="md" p={3}>
       <Stack spacing={3}>
@@ -5115,7 +6025,20 @@ function DeveloperBenchmarkExamplesPanel({
                   )}
             </Text>
           </Box>
-          <HStack spacing={2} flexWrap="wrap">
+          <HStack spacing={2} flexWrap="wrap" align="center">
+            <Box minW={['100%', '220px']} maxW="260px">
+              <FormLabel mb={1}>{t('Show')}</FormLabel>
+              <Select
+                value={exampleFilter}
+                onChange={(e) => setExampleFilter(e?.target?.value || 'all')}
+              >
+                {filterOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {`${option.label} (${option.count})`}
+                  </option>
+                ))}
+              </Select>
+            </Box>
             <Badge colorScheme="blue" borderRadius="full" px={2}>
               {t('Current')}: {formatSuccessRate(data.current.accuracy)}
             </Badge>
@@ -5183,107 +6106,286 @@ function DeveloperBenchmarkExamplesPanel({
         />
 
         {examples.length ? (
-          <SimpleGrid columns={[1, 1, 2]} spacing={3}>
-            {examples.map((example, index) => {
-              const styles = describeBenchmarkExampleChange(
-                example.changeType,
-                t
-              )
-              const currentResult = describeBenchmarkRunExampleResult(
-                example.current,
-                t
-              )
-              const previousResult = describeBenchmarkRunExampleResult(
-                example.previous,
-                t
-              )
-              const title =
-                example.sampleId || example.flipHash || `#${index + 1}`
+          <SimpleGrid columns={[1, 1, 3]} spacing={3}>
+            <Box
+              borderWidth="1px"
+              borderColor="gray.100"
+              borderRadius="md"
+              overflow="hidden"
+            >
+              <Stack spacing={0}>
+                {filteredExamples.map((example, index) => {
+                  const identity = buildBenchmarkExampleIdentity(example, index)
+                  const styles = describeBenchmarkExampleChange(
+                    example.changeType,
+                    t
+                  )
+                  const currentResult = describeBenchmarkRunExampleResult(
+                    example.current,
+                    t
+                  )
+                  const isSelected = identity === selectedExampleKey
 
-              return (
-                <Box
-                  key={`${title}-${index}`}
-                  borderWidth="1px"
-                  borderColor={styles.borderColor}
-                  borderRadius="md"
-                  px={3}
-                  py={3}
-                  bg={styles.background}
-                >
-                  <Stack spacing={3}>
-                    <Flex justify="space-between" align="center" gap={2}>
-                      <Box minW={0}>
-                        <Text fontSize="sm" fontWeight={700} noOfLines={1}>
-                          {title}
-                        </Text>
+                  return (
+                    <Box
+                      key={identity}
+                      px={3}
+                      py={3}
+                      bg={isSelected ? styles.background : 'white'}
+                      borderBottomWidth={
+                        index < filteredExamples.length - 1 ? '1px' : '0px'
+                      }
+                      borderBottomColor="gray.50"
+                      cursor="pointer"
+                      onClick={() => setSelectedExampleKey(identity)}
+                    >
+                      <Stack spacing={2}>
+                        <Flex justify="space-between" align="center" gap={2}>
+                          <Text fontSize="sm" fontWeight={700} noOfLines={1}>
+                            {example.sampleId ||
+                              example.flipHash ||
+                              `#${index + 1}`}
+                          </Text>
+                          <HStack spacing={1} flexWrap="wrap">
+                            {isSelected ? (
+                              <Badge colorScheme="blue" borderRadius="full">
+                                {t('Inspecting')}
+                              </Badge>
+                            ) : null}
+                            <Badge
+                              colorScheme={styles.scheme}
+                              borderRadius="full"
+                            >
+                              {styles.label}
+                            </Badge>
+                          </HStack>
+                        </Flex>
                         <Text color="muted" fontSize="xs">
                           {t('Expected')}:{' '}
                           {formatBenchmarkAnswerLabel(example.expected, t)}
+                          {' · '}
+                          {t('Current')}: {currentResult.label}
                         </Text>
-                      </Box>
+                        {example.reviewTarget?.taskNumber ? (
+                          <Text color="muted" fontSize="xs">
+                            {t('Annotation target')}: {t('Flip')}{' '}
+                            {example.reviewTarget.taskNumber}
+                          </Text>
+                        ) : null}
+                      </Stack>
+                    </Box>
+                  )
+                })}
+              </Stack>
+            </Box>
+
+            <Box
+              borderWidth="1px"
+              borderColor={selectedExampleStyles.borderColor}
+              borderRadius="md"
+              p={3}
+              bg={selectedExampleStyles.background}
+              gridColumn={['auto', 'auto', 'span 2']}
+            >
+              {selectedExample ? (
+                <Stack spacing={3}>
+                  <Flex
+                    justify="space-between"
+                    align={['flex-start', 'center']}
+                    direction={['column', 'row']}
+                    gap={2}
+                  >
+                    <Box minW={0}>
+                      <Text fontSize="sm" fontWeight={700} noOfLines={1}>
+                        {selectedExample.sampleId ||
+                          selectedExample.flipHash ||
+                          t('Benchmark flip')}
+                      </Text>
+                      <Text color="muted" fontSize="xs" mt={1}>
+                        {describeBenchmarkInspectorSummary(selectedExample, t)}
+                      </Text>
+                    </Box>
+                    <HStack spacing={2} flexWrap="wrap">
                       <Badge
-                        colorScheme={styles.scheme}
+                        colorScheme={selectedExampleStyles.scheme}
                         borderRadius="full"
                         px={2}
                       >
-                        {styles.label}
+                        {selectedExampleStyles.label}
                       </Badge>
-                    </Flex>
-
-                    <SimpleGrid columns={[1, 2]} spacing={2}>
-                      <Box
-                        borderWidth="1px"
-                        borderColor="whiteAlpha.700"
-                        borderRadius="md"
-                        px={3}
-                        py={2}
-                        bg="white"
-                      >
-                        <Text color="muted" fontSize="xs">
-                          {t('Current run')}
-                        </Text>
-                        <Badge
-                          colorScheme={currentResult.scheme}
-                          borderRadius="full"
+                      {selectedExample.reviewTarget?.taskId ? (
+                        <PrimaryButton
+                          onClick={() =>
+                            typeof onReviewExample === 'function'
+                              ? onReviewExample(selectedExample)
+                              : null
+                          }
                         >
-                          {currentResult.label}
-                        </Badge>
-                        <Text fontSize="sm" mt={2}>
-                          {currentResult.detail}
-                        </Text>
-                      </Box>
-                      <Box
-                        borderWidth="1px"
-                        borderColor="whiteAlpha.700"
-                        borderRadius="md"
-                        px={3}
-                        py={2}
-                        bg="white"
-                      >
-                        <Text color="muted" fontSize="xs">
-                          {t('Last run')}
-                        </Text>
-                        <Badge
-                          colorScheme={previousResult.scheme}
-                          borderRadius="full"
-                        >
-                          {previousResult.label}
-                        </Badge>
-                        <Text fontSize="sm" mt={2}>
-                          {previousResult.detail}
-                        </Text>
-                      </Box>
-                    </SimpleGrid>
+                          {t('Review and annotate')}
+                        </PrimaryButton>
+                      ) : null}
+                    </HStack>
+                  </Flex>
 
-                    {example.flipHash ? (
+                  <Alert status="info" borderRadius="md">
+                    <Text fontSize="sm">
+                      {describeBenchmarkReviewAction(selectedExample, t)}
+                    </Text>
+                  </Alert>
+
+                  <SimpleGrid columns={[1, 1, 3]} spacing={3}>
+                    <BenchmarkInsightCard
+                      title={t('Likely failure cause')}
+                      value={
+                        selectedExampleSuggestion?.headline || t('No summary')
+                      }
+                      detail={
+                        selectedExampleSuggestion?.summary ||
+                        t('This example has no derived diagnosis yet.')
+                      }
+                      tone={selectedExampleCauseTone}
+                    />
+                    <BenchmarkInsightCard
+                      title={t('Decision stability')}
+                      value={selectedExampleTraceStability.label}
+                      detail={selectedExampleTraceStability.detail}
+                      tone={selectedExampleTraceStability.tone}
+                    />
+                    <BenchmarkInsightCard
+                      title={t('Reference clue')}
+                      value={selectedExampleBaselineClue.value}
+                      detail={selectedExampleBaselineClue.detail}
+                      tone={selectedExampleBaselineClue.tone}
+                    />
+                  </SimpleGrid>
+
+                  <SimpleGrid columns={[1, 2, 3]} spacing={3}>
+                    <Box
+                      borderWidth="1px"
+                      borderColor="whiteAlpha.700"
+                      borderRadius="md"
+                      p={3}
+                      bg="white"
+                    >
                       <Text color="muted" fontSize="xs">
-                        {t('Flip hash')}: {example.flipHash}
+                        {t('Expected')}
                       </Text>
-                    ) : null}
-                  </Stack>
-                </Box>
-              )
-            })}
+                      <Text fontWeight={700}>
+                        {formatBenchmarkAnswerLabel(
+                          selectedExample.expected,
+                          t
+                        )}
+                      </Text>
+                    </Box>
+                    <Box
+                      borderWidth="1px"
+                      borderColor="whiteAlpha.700"
+                      borderRadius="md"
+                      p={3}
+                      bg="white"
+                    >
+                      <Text color="muted" fontSize="xs">
+                        {t('Adapter now')}
+                      </Text>
+                      <Badge
+                        colorScheme={selectedExampleCurrentResult.scheme}
+                        borderRadius="full"
+                      >
+                        {selectedExampleCurrentResult.label}
+                      </Badge>
+                      <Text fontSize="sm" mt={2}>
+                        {selectedExampleCurrentResult.detail}
+                      </Text>
+                    </Box>
+                    <Box
+                      borderWidth="1px"
+                      borderColor="whiteAlpha.700"
+                      borderRadius="md"
+                      p={3}
+                      bg="white"
+                    >
+                      <Text color="muted" fontSize="xs">
+                        {t('Baseline in same run')}
+                      </Text>
+                      <Badge
+                        colorScheme={selectedExampleBaselineResult.scheme}
+                        borderRadius="full"
+                      >
+                        {selectedExampleBaselineResult.label}
+                      </Badge>
+                      <Text fontSize="sm" mt={2}>
+                        {selectedExampleBaselineResult.detail}
+                      </Text>
+                    </Box>
+                  </SimpleGrid>
+
+                  <SimpleGrid columns={[1, 1, 2]} spacing={3}>
+                    <BenchmarkInsightCard
+                      title={t('Score race')}
+                      value={selectedExampleScoreRace.value}
+                      detail={selectedExampleScoreRace.detail}
+                      tone={selectedExampleScoreRace.tone}
+                    />
+                    <BenchmarkInsightCard
+                      title={t('Suggested retraining focus')}
+                      value={t('Next note to add')}
+                      detail={
+                        selectedExampleSuggestion?.retrainingHint ||
+                        t(
+                          'Add a short human explanation of the cue the model should respect next time.'
+                        )
+                      }
+                      tone="blue"
+                    />
+                  </SimpleGrid>
+
+                  <SimpleGrid columns={[1, 1, 2]} spacing={3}>
+                    <BenchmarkExampleDecisionTraceCard
+                      title={t('Adapter decision trace')}
+                      detail={selectedExample.currentDetails}
+                      t={t}
+                    />
+                    <BenchmarkExampleDecisionTraceCard
+                      title={t('Baseline decision trace')}
+                      detail={selectedExample.baselineDetails}
+                      t={t}
+                    />
+                  </SimpleGrid>
+
+                  {selectedExample.previous ? (
+                    <Box
+                      borderWidth="1px"
+                      borderColor="whiteAlpha.700"
+                      borderRadius="md"
+                      p={3}
+                      bg="white"
+                    >
+                      <Stack spacing={2}>
+                        <Text fontSize="sm" fontWeight={700}>
+                          {t('Last saved run')}
+                        </Text>
+                        <Badge
+                          alignSelf="flex-start"
+                          colorScheme={selectedExamplePreviousResult.scheme}
+                          borderRadius="full"
+                        >
+                          {selectedExamplePreviousResult.label}
+                        </Badge>
+                        <Text fontSize="sm">
+                          {selectedExamplePreviousResult.detail}
+                        </Text>
+                      </Stack>
+                    </Box>
+                  ) : null}
+
+                  {selectedExample.flipHash ? (
+                    <Text color="muted" fontSize="xs">
+                      {t('Flip hash')}: {selectedExample.flipHash}
+                    </Text>
+                  ) : null}
+                </Stack>
+              ) : null}
+            </Box>
           </SimpleGrid>
         ) : (
           <Text color="muted" fontSize="sm">
@@ -5332,6 +6434,7 @@ export default function AiHumanTeacherPage() {
   const autoStartKeyRef = React.useRef('')
   const shouldFlushAutosaveRef = React.useRef(false)
   const localPilotTrainingRef = React.useRef(null)
+  const annotationWorkspaceRef = React.useRef(null)
   const developerSessionContextVersionRef = React.useRef(0)
   const developerSessionLoadRequestIdRef = React.useRef(0)
   const developerSessionStatusRequestIdRef = React.useRef(0)
@@ -5394,6 +6497,8 @@ export default function AiHumanTeacherPage() {
   const [isUpdatingDeveloperRunControls, setIsUpdatingDeveloperRunControls] =
     React.useState(false)
   const [developerPendingRunControl, setDeveloperPendingRunControl] =
+    React.useState(null)
+  const [developerBenchmarkReviewContext, setDeveloperBenchmarkReviewContext] =
     React.useState(null)
   const [isPromptToolsOpen, setIsPromptToolsOpen] = React.useState(false)
   const [isPromptEditingUnlocked, setIsPromptEditingUnlocked] =
@@ -5469,9 +6574,15 @@ export default function AiHumanTeacherPage() {
     )
   }, [isDeveloperMode, queryDemoSample])
 
+  const hasInteractiveLocalAiBridge = Boolean(
+    global.localAi &&
+      ['electron', 'browser_dev_api'].includes(global.localAi.bridgeMode)
+  )
+
   const ensureBridge = React.useCallback(() => {
     if (
       !global.localAi ||
+      !['electron', 'browser_dev_api'].includes(global.localAi.bridgeMode) ||
       typeof global.localAi.loadHumanTeacherPackage !== 'function'
     ) {
       throw new Error('Local AI human-teacher bridge is unavailable')
@@ -5483,6 +6594,7 @@ export default function AiHumanTeacherPage() {
   const refreshDeveloperTelemetry = React.useCallback(async () => {
     if (
       !isDeveloperMode ||
+      !hasInteractiveLocalAiBridge ||
       !global.localAi ||
       typeof global.localAi.getDeveloperTelemetry !== 'function'
     ) {
@@ -5498,11 +6610,12 @@ export default function AiHumanTeacherPage() {
       setDeveloperTelemetryError(formatErrorMessage(nextError))
       return null
     }
-  }, [isDeveloperMode])
+  }, [hasInteractiveLocalAiBridge, isDeveloperMode])
 
   const refreshDeveloperSessionState = React.useCallback(async () => {
     if (
       !isDeveloperMode ||
+      !hasInteractiveLocalAiBridge ||
       !global.localAi ||
       typeof global.localAi.loadHumanTeacherDeveloperSessionState !== 'function'
     ) {
@@ -5533,12 +6646,18 @@ export default function AiHumanTeacherPage() {
     } catch {
       return null
     }
-  }, [currentPeriod, demoSampleName, isDeveloperMode])
+  }, [
+    currentPeriod,
+    demoSampleName,
+    hasInteractiveLocalAiBridge,
+    isDeveloperMode,
+  ])
 
   const stopDeveloperActiveRun = React.useCallback(
     async (stopMode = 'cancel_now') => {
       if (
         !isDeveloperMode ||
+        !hasInteractiveLocalAiBridge ||
         !global.localAi ||
         typeof global.localAi.stopHumanTeacherDeveloperRun !== 'function'
       ) {
@@ -5604,7 +6723,15 @@ export default function AiHumanTeacherPage() {
         setIsStoppingDeveloperRun(false)
       }
     },
-    [currentPeriod, demoSampleName, ensureBridge, isDeveloperMode, t, toast]
+    [
+      currentPeriod,
+      demoSampleName,
+      ensureBridge,
+      hasInteractiveLocalAiBridge,
+      isDeveloperMode,
+      t,
+      toast,
+    ]
   )
 
   const updateDeveloperActiveRunControls = React.useCallback(
@@ -5716,6 +6843,7 @@ export default function AiHumanTeacherPage() {
     async ({sampleName = demoSampleName, benchmarkFlips} = {}) => {
       if (
         !isDeveloperMode ||
+        !hasInteractiveLocalAiBridge ||
         !global.localAi ||
         typeof global.localAi.loadHumanTeacherDeveloperComparisonExamples !==
           'function'
@@ -5734,7 +6862,7 @@ export default function AiHumanTeacherPage() {
             sampleName,
             evaluationFlips: benchmarkFlips,
             currentPeriod,
-            maxExamples: 6,
+            maxExamples: 12,
           })
 
         if (developerComparisonExamplesRequestIdRef.current !== requestId) {
@@ -5757,7 +6885,13 @@ export default function AiHumanTeacherPage() {
         }
       }
     },
-    [currentPeriod, demoSampleName, ensureBridge, isDeveloperMode]
+    [
+      currentPeriod,
+      demoSampleName,
+      ensureBridge,
+      hasInteractiveLocalAiBridge,
+      isDeveloperMode,
+    ]
   )
 
   const savedDeveloperPromptOverride = React.useMemo(
@@ -5805,6 +6939,18 @@ export default function AiHumanTeacherPage() {
     normalizeDeveloperAiDraftAnswerWindowTokens(
       localAi?.developerAiDraftAnswerWindowTokens ||
         DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS
+    )
+  const developerBenchmarkReviewRequiredFields =
+    normalizeDeveloperBenchmarkReviewRequiredFields(
+      localAi?.developerBenchmarkReviewRequiredFields,
+      {
+        fallbackToDefault:
+          !localAi ||
+          !Object.prototype.hasOwnProperty.call(
+            localAi,
+            'developerBenchmarkReviewRequiredFields'
+          ),
+      }
     )
   const developerLocalTrainingEpochs = normalizeDeveloperLocalTrainingEpochs(
     localAi?.developerLocalTrainingEpochs ||
@@ -6763,7 +7909,12 @@ export default function AiHumanTeacherPage() {
   )
 
   const loadDeveloperSession = React.useCallback(
-    async ({offsetOverride} = {}) => {
+    async ({
+      offsetOverride,
+      sampleNameOverride,
+      preferredTaskIdOverride = '',
+      allowCompletedPreferred = false,
+    } = {}) => {
       const requestId = developerSessionLoadRequestIdRef.current + 1
       developerSessionLoadRequestIdRef.current = requestId
       const requestContextVersion =
@@ -6778,9 +7929,12 @@ export default function AiHumanTeacherPage() {
       setImportResult(null)
 
       try {
+        const activeSampleName = String(
+          sampleNameOverride || demoSampleName
+        ).trim()
         const nextResult =
           await ensureBridge().loadHumanTeacherDeveloperSession({
-            sampleName: demoSampleName,
+            sampleName: activeSampleName,
             offset: offsetOverride,
             currentPeriod,
           })
@@ -6799,7 +7953,18 @@ export default function AiHumanTeacherPage() {
         setDeveloperSessionState(nextResult.state || null)
         setDeveloperOffset(Number(nextResult.offset) || 0)
         setDeveloperActionResult(null)
-        setSelectedTaskId(pickPreferredTaskId(nextWorkspace, selectedTaskId))
+        if (activeSampleName && activeSampleName !== demoSampleName) {
+          setDemoSampleName(activeSampleName)
+        }
+        setSelectedTaskId(
+          pickPreferredTaskId(
+            nextWorkspace,
+            preferredTaskIdOverride || selectedTaskId,
+            {
+              allowCompletedPreferred,
+            }
+          )
+        )
 
         if (queryAction === 'start') {
           router.replace('/settings/ai-human-teacher?developer=1')
@@ -7119,16 +8284,48 @@ export default function AiHumanTeacherPage() {
   const hasReason = Boolean(String(annotationDraft.why_answer || '').trim())
   const showPanelReferenceTool =
     showReferenceTool || activePanelReferences.length > 0
+  const benchmarkReviewContextForCurrentTask = React.useMemo(() => {
+    const reviewContext =
+      developerBenchmarkReviewContext &&
+      typeof developerBenchmarkReviewContext === 'object' &&
+      !Array.isArray(developerBenchmarkReviewContext)
+        ? developerBenchmarkReviewContext
+        : null
+
+    if (
+      !reviewContext ||
+      annotationSourceMode !== 'developer' ||
+      String(reviewContext?.reviewTarget?.taskId || '').trim() !==
+        String(selectedTaskId || '').trim()
+    ) {
+      return null
+    }
+
+    return reviewContext
+  }, [annotationSourceMode, developerBenchmarkReviewContext, selectedTaskId])
+  const activeBenchmarkReviewRequiredFields = React.useMemo(
+    () =>
+      benchmarkReviewContextForCurrentTask
+        ? developerBenchmarkReviewRequiredFields
+        : [],
+    [
+      benchmarkReviewContextForCurrentTask,
+      developerBenchmarkReviewRequiredFields,
+    ]
+  )
   const normalizedDraft = React.useMemo(
     () => normalizeAnnotationDraft(annotationDraft),
     [annotationDraft]
   )
   const annotationCompletionState = React.useMemo(
-    () => getAnnotationCompletionState(annotationDraft),
-    [annotationDraft]
+    () =>
+      getAnnotationCompletionState(annotationDraft, {
+        benchmarkReviewRequiredFields: activeBenchmarkReviewRequiredFields,
+      }),
+    [activeBenchmarkReviewRequiredFields, annotationDraft]
   )
-  const annotationCompletionItems = React.useMemo(
-    () => [
+  const annotationCompletionItems = React.useMemo(() => {
+    const items = [
       {
         key: 'decision',
         label: t('Answer'),
@@ -7172,20 +8369,37 @@ export default function AiHumanTeacherPage() {
             })
           : t('Choose one level'),
       },
-    ],
-    [
-      annotationCompletionState.hasConfidence,
-      annotationCompletionState.hasDecision,
-      annotationCompletionState.hasReason,
-      annotationCompletionState.hasReportDecision,
-      annotationCompletionState.hasReportReason,
-      annotationCompletionState.hasSequenceDecision,
-      annotationCompletionState.hasTextDecision,
-      annotationDraft.confidence,
-      annotationDraft.final_answer,
-      t,
     ]
-  )
+
+    if (annotationCompletionState.hasBenchmarkReviewRequirements) {
+      items.push({
+        key: 'benchmark_review',
+        label: t('Benchmark review'),
+        done: annotationCompletionState.benchmarkReviewComplete,
+        detail: t('{{done}} / {{total}} required', {
+          done: annotationCompletionState.benchmarkReviewCompletedChecks,
+          total: annotationCompletionState.benchmarkReviewTotalChecks,
+        }),
+      })
+    }
+
+    return items
+  }, [
+    annotationCompletionState.benchmarkReviewComplete,
+    annotationCompletionState.benchmarkReviewCompletedChecks,
+    annotationCompletionState.benchmarkReviewTotalChecks,
+    annotationCompletionState.hasBenchmarkReviewRequirements,
+    annotationCompletionState.hasConfidence,
+    annotationCompletionState.hasDecision,
+    annotationCompletionState.hasReason,
+    annotationCompletionState.hasReportDecision,
+    annotationCompletionState.hasReportReason,
+    annotationCompletionState.hasSequenceDecision,
+    annotationCompletionState.hasTextDecision,
+    annotationDraft.confidence,
+    annotationDraft.final_answer,
+    t,
+  ])
   const currentMissingRequiredFieldLabels = React.useMemo(
     () =>
       formatMissingRequiredFields(
@@ -7260,6 +8474,35 @@ export default function AiHumanTeacherPage() {
 
     return 'gray'
   }, [annotationCompletionState.isComplete, annotationDraft])
+  const currentTaskStatusLabel = React.useMemo(() => {
+    if (annotationCompletionState.isComplete) {
+      return t('Complete')
+    }
+
+    if (hasDraftContent(annotationDraft)) {
+      return t('Draft')
+    }
+
+    return t('Pending')
+  }, [annotationCompletionState.isComplete, annotationDraft, t])
+  const currentDraftHelperLabel = React.useMemo(() => {
+    if (annotationCompletionState.isComplete) {
+      return t('This flip looks complete.')
+    }
+
+    if (hasDraftContent(annotationDraft)) {
+      return t('This flip still needs {{count}} required item(s).', {
+        count: annotationCompletionState.missingRequiredFields.length,
+      })
+    }
+
+    return t('No annotation content yet.')
+  }, [
+    annotationCompletionState.isComplete,
+    annotationCompletionState.missingRequiredFields.length,
+    annotationDraft,
+    t,
+  ])
   const showOptionalDetailSection =
     showAdvancedFields || annotationCompletionState.hasOptionalDetailContent
   const optionalDetailToggleLabel = React.useMemo(() => {
@@ -7317,6 +8560,19 @@ export default function AiHumanTeacherPage() {
     highlightedMissingFieldSet.has('report_reason')
   const isConfidenceFieldHighlighted =
     highlightedMissingFieldSet.has('confidence')
+  const isBenchmarkReviewIssueTypeHighlighted = highlightedMissingFieldSet.has(
+    'benchmark_review_issue_type'
+  )
+  const isBenchmarkReviewFailureNoteHighlighted =
+    highlightedMissingFieldSet.has('benchmark_review_failure_note')
+  const isBenchmarkReviewRetrainingHintHighlighted =
+    highlightedMissingFieldSet.has('benchmark_review_retraining_hint')
+  const isBenchmarkReviewIncludeForTrainingHighlighted =
+    highlightedMissingFieldSet.has('benchmark_review_include_for_training')
+  const benchmarkReviewRequiredFieldSet = React.useMemo(
+    () => new Set(activeBenchmarkReviewRequiredFields),
+    [activeBenchmarkReviewRequiredFields]
+  )
   const currentAiReplyDraft = String(
     aiReplyDraftByTaskId[selectedTaskId] || ''
   ).slice(0, developerAiDraftQuestionWindowChars)
@@ -7894,8 +9150,15 @@ export default function AiHumanTeacherPage() {
   )
   const completionPreview = React.useMemo(
     () =>
-      getWorkspaceCountsAfterSave(workspace, selectedTaskId, annotationDraft),
-    [annotationDraft, selectedTaskId, workspace]
+      getWorkspaceCountsAfterSave(workspace, selectedTaskId, annotationDraft, {
+        benchmarkReviewRequiredFields: activeBenchmarkReviewRequiredFields,
+      }),
+    [
+      activeBenchmarkReviewRequiredFields,
+      annotationDraft,
+      selectedTaskId,
+      workspace,
+    ]
   )
 
   const updatePanelReference = React.useCallback((code, nextPatch) => {
@@ -8052,7 +9315,9 @@ export default function AiHumanTeacherPage() {
           nextResult?.task?.annotationStatus || 'pending'
         )
         const nextNormalizedDraft = normalizeAnnotationDraft(annotationDraft)
-        const draftCompletion = getAnnotationCompletionState(annotationDraft)
+        const draftCompletion = getAnnotationCompletionState(annotationDraft, {
+          benchmarkReviewRequiredFields: activeBenchmarkReviewRequiredFields,
+        })
         const draftMissingRequiredFields = formatMissingRequiredFields(
           t,
           draftCompletion.missingRequiredFields
@@ -8068,7 +9333,10 @@ export default function AiHumanTeacherPage() {
         const workspacePreview = getWorkspacePreviewAfterSave(
           workspace,
           selectedTaskId,
-          annotationDraft
+          annotationDraft,
+          {
+            benchmarkReviewRequiredFields: activeBenchmarkReviewRequiredFields,
+          }
         )
         const {completionState, firstIncompleteTaskId} = workspacePreview
         setTaskDetail((current) =>
@@ -8244,14 +9512,20 @@ export default function AiHumanTeacherPage() {
           }
 
           if (
-            isCompleteDraft(annotationDraft) &&
+            isCompleteDraft(annotationDraft, {
+              benchmarkReviewRequiredFields:
+                activeBenchmarkReviewRequiredFields,
+            }) &&
             !willOpenChunkDecisionDialog
           ) {
             rewardWithConfetti({particleCount: 70})
           }
           if (!willOpenChunkDecisionDialog) {
             toast({
-              title: isCompleteDraft(annotationDraft)
+              title: isCompleteDraft(annotationDraft, {
+                benchmarkReviewRequiredFields:
+                  activeBenchmarkReviewRequiredFields,
+              })
                 ? t('Flip saved')
                 : t('Flip draft saved'),
               description: saveDescription,
@@ -8318,6 +9592,7 @@ export default function AiHumanTeacherPage() {
       }
     },
     [
+      activeBenchmarkReviewRequiredFields,
       annotationSourceMode,
       annotationDraft,
       currentEpoch,
@@ -8390,6 +9665,102 @@ export default function AiHumanTeacherPage() {
       selectedTaskIndex,
       t,
       taskIds,
+      toast,
+    ]
+  )
+
+  const handleReviewDeveloperBenchmarkExample = React.useCallback(
+    async (example) => {
+      const reviewTarget =
+        example &&
+        typeof example === 'object' &&
+        !Array.isArray(example) &&
+        example.reviewTarget &&
+        typeof example.reviewTarget === 'object'
+          ? example.reviewTarget
+          : null
+
+      if (!reviewTarget?.taskId) {
+        toast({
+          title: t('Benchmark review target missing'),
+          description: t(
+            'This saved benchmark example is not linked to a reviewable developer flip yet.'
+          ),
+          status: 'warning',
+          duration: 4000,
+          isClosable: true,
+        })
+        return
+      }
+
+      if (hasUnsavedDraftChanges) {
+        const saved = await saveTaskDraft({
+          quiet: true,
+          promptOnChunkComplete: false,
+          autosave: true,
+        })
+
+        if (!saved) {
+          return
+        }
+      }
+
+      const nextResult = await loadDeveloperSession({
+        sampleNameOverride: reviewTarget.sampleName || demoSampleName,
+        offsetOverride: reviewTarget.offset,
+        preferredTaskIdOverride: reviewTarget.taskId,
+        allowCompletedPreferred: true,
+      })
+
+      const nextTasks = Array.isArray(nextResult?.workspace?.tasks)
+        ? nextResult.workspace.tasks
+        : []
+
+      if (!nextTasks.some((task) => task.taskId === reviewTarget.taskId)) {
+        toast({
+          title: t('Could not open benchmark review'),
+          description: t(
+            'The linked developer flip is not available in the current sample.'
+          ),
+          status: 'error',
+          duration: 4500,
+          isClosable: true,
+        })
+        return
+      }
+
+      setSelectedTaskId(reviewTarget.taskId)
+      setDeveloperBenchmarkReviewContext(example)
+
+      if (typeof window !== 'undefined') {
+        window.setTimeout(() => {
+          const nextNode = annotationWorkspaceRef.current
+
+          if (nextNode && typeof nextNode.scrollIntoView === 'function') {
+            nextNode.scrollIntoView({
+              behavior: 'smooth',
+              block: 'start',
+            })
+          }
+        }, 120)
+      }
+
+      toast({
+        title: t('Benchmark flip opened for review'),
+        description: t(
+          'This flip is now open in the annotation flow. Save your human answer to feed the next local adapter run.'
+        ),
+        status: 'success',
+        duration: 3500,
+        isClosable: true,
+      })
+    },
+    [
+      demoSampleName,
+      hasUnsavedDraftChanges,
+      loadDeveloperSession,
+      saveTaskDraft,
+      t,
       toast,
     ]
   )
@@ -9131,6 +10502,7 @@ export default function AiHumanTeacherPage() {
   const developerComparison = developerSessionState?.comparison100 || null
   const developerLastTraining = developerSessionState?.lastTraining || null
   const developerSupportsLocalTraining =
+    hasInteractiveLocalAiBridge &&
     developerSessionState?.supportsLocalTraining !== false
   const developerActiveTrainingModelPath = String(
     developerSessionState?.activeTrainingModelPath || ''
@@ -9467,6 +10839,10 @@ export default function AiHumanTeacherPage() {
       return ''
     }
 
+    if (!hasInteractiveLocalAiBridge) {
+      return t('Local training bridge unavailable in this runtime.')
+    }
+
     if (!developerSupportsLocalTraining) {
       return t('Local comparison needs a trainable local backend.')
     }
@@ -9479,6 +10855,7 @@ export default function AiHumanTeacherPage() {
 
     return ''
   }, [
+    hasInteractiveLocalAiBridge,
     developerHasTrainedModel,
     developerSupportsLocalTraining,
     isDeveloperMode,
@@ -9568,6 +10945,47 @@ export default function AiHumanTeacherPage() {
         return 'blue.50'
     }
   }, [developerModelStatus?.tone])
+  const activeDeveloperBenchmarkReviewContext =
+    benchmarkReviewContextForCurrentTask
+  const activeBenchmarkReviewSuggestion = React.useMemo(
+    () =>
+      activeDeveloperBenchmarkReviewContext
+        ? buildBenchmarkReviewSuggestion(
+            activeDeveloperBenchmarkReviewContext,
+            t
+          )
+        : null,
+    [activeDeveloperBenchmarkReviewContext, t]
+  )
+  React.useEffect(() => {
+    if (!activeDeveloperBenchmarkReviewContext) {
+      return
+    }
+
+    setAnnotationDraft((current) => {
+      const normalized = normalizeAnnotationDraft(current)
+      const next = applyBenchmarkReviewSuggestionToDraft(
+        normalized,
+        activeBenchmarkReviewSuggestion,
+        {overwrite: false}
+      )
+
+      if (
+        next.benchmark_review_issue_type ===
+          normalized.benchmark_review_issue_type &&
+        next.benchmark_review_failure_note ===
+          normalized.benchmark_review_failure_note &&
+        next.benchmark_review_retraining_hint ===
+          normalized.benchmark_review_retraining_hint &&
+        next.benchmark_review_include_for_training ===
+          normalized.benchmark_review_include_for_training
+      ) {
+        return current
+      }
+
+      return next
+    })
+  }, [activeBenchmarkReviewSuggestion, activeDeveloperBenchmarkReviewContext])
   const savePrimaryLabel = nextTaskId ? t('Save and next flip') : t('Save flip')
   const saveDraftLabel = t('Save flip draft')
   const autosaveStatusText = React.useMemo(() => {
@@ -9668,7 +11086,9 @@ export default function AiHumanTeacherPage() {
     }
 
     if (!workspace || !isDeveloperSourceMode) {
-      return t('Open teaching chunk')
+      return hasInteractiveLocalAiBridge
+        ? t('Open teaching chunk')
+        : t('Desktop app required')
     }
 
     if (
@@ -9690,6 +11110,7 @@ export default function AiHumanTeacherPage() {
     return t('Start local adapter training now')
   }, [
     completionPreview.allComplete,
+    hasInteractiveLocalAiBridge,
     developerComparisonRunActive,
     developerHasSavedPendingChunk,
     developerTrainingBlockedBySystemPressure,
@@ -10302,6 +11723,7 @@ export default function AiHumanTeacherPage() {
                           </Stack>
                           <SecondaryButton
                             mt="auto"
+                            isDisabled={!hasInteractiveLocalAiBridge}
                             onClick={openLocalPilotTrainingDialog}
                           >
                             {t('Review local pilot training')}
@@ -10362,6 +11784,15 @@ export default function AiHumanTeacherPage() {
                   p={4}
                 >
                   <Stack spacing={2}>
+                    {!hasInteractiveLocalAiBridge ? (
+                      <Alert status="warning" borderRadius="md">
+                        <Text fontSize="sm">
+                          {t(
+                            'The local training bridge is unavailable here right now.'
+                          )}
+                        </Text>
+                      </Alert>
+                    ) : null}
                     <Text fontWeight={600}>
                       {workspace && isDeveloperSourceMode
                         ? t('5-flip chunk ready')
@@ -10394,6 +11825,7 @@ export default function AiHumanTeacherPage() {
                     <Stack isInline spacing={2} flexWrap="wrap">
                       <PrimaryButton
                         isDisabled={
+                          !hasInteractiveLocalAiBridge ||
                           isWorkspaceLoading ||
                           developerTrainingRunActive ||
                           developerComparisonRunActive
@@ -10406,7 +11838,10 @@ export default function AiHumanTeacherPage() {
                         {developerPrimaryDashboardActionLabel}
                       </PrimaryButton>
                       <SecondaryButton
-                        isDisabled={!developerCanRunComparison}
+                        isDisabled={
+                          !hasInteractiveLocalAiBridge ||
+                          !developerCanRunComparison
+                        }
                         isLoading={developerComparisonRunActive}
                         onClick={runDeveloperComparison}
                       >
@@ -10812,6 +12247,7 @@ export default function AiHumanTeacherPage() {
                       error={developerComparisonExamplesError}
                       activeRun={developerActiveRun}
                       telemetry={developerTelemetry}
+                      onReviewExample={handleReviewDeveloperBenchmarkExample}
                       t={t}
                     />
                     <Text color="muted" fontSize="xs">
@@ -11208,7 +12644,12 @@ export default function AiHumanTeacherPage() {
                     </Box>
                   </Stack>
 
-                  <Flex gap={4} align="flex-start" flexWrap="wrap">
+                  <Flex
+                    ref={annotationWorkspaceRef}
+                    gap={4}
+                    align="flex-start"
+                    flexWrap="wrap"
+                  >
                     <Box
                       minW="260px"
                       flex="1 1 260px"
@@ -11241,16 +12682,33 @@ export default function AiHumanTeacherPage() {
                           </Text>
                         </Box>
                         {workspace.tasks.map((task, index) => {
-                          let taskStatusTone = 'gray'
-
-                          if (task.isComplete) {
-                            taskStatusTone = 'green'
-                          } else if (task.hasDraft) {
-                            taskStatusTone = 'orange'
-                          }
-
                           const isSelectedTask = task.taskId === selectedTaskId
                           const isNextQueuedTask = task.taskId === nextTaskId
+                          const displayedTaskIsComplete =
+                            isSelectedTask &&
+                            activeDeveloperBenchmarkReviewContext
+                              ? annotationCompletionState.isComplete
+                              : task.isComplete
+                          const displayedTaskHasDraft =
+                            isSelectedTask &&
+                            activeDeveloperBenchmarkReviewContext
+                              ? hasDraftContent(annotationDraft)
+                              : task.hasDraft
+                          let displayedTaskStatusLabel = t('Pending')
+                          let taskStatusTone = 'gray'
+
+                          if (displayedTaskIsComplete) {
+                            taskStatusTone = 'green'
+                            displayedTaskStatusLabel = t('Complete')
+                          } else if (displayedTaskHasDraft) {
+                            taskStatusTone = 'orange'
+                            displayedTaskStatusLabel = t('Draft')
+                          }
+                          const displayedTaskMissingRequiredFields =
+                            isSelectedTask &&
+                            activeDeveloperBenchmarkReviewContext
+                              ? annotationCompletionState.missingRequiredFields
+                              : task.missingRequiredFields
 
                           return (
                             <Box
@@ -11298,7 +12756,7 @@ export default function AiHumanTeacherPage() {
                                     colorScheme={taskStatusTone}
                                     borderRadius="full"
                                   >
-                                    {getDraftStatusLabel(task, t)}
+                                    {displayedTaskStatusLabel}
                                   </Badge>
                                 </Stack>
                               </Flex>
@@ -11309,16 +12767,16 @@ export default function AiHumanTeacherPage() {
                                 {t('Consensus')}:{' '}
                                 {task.consensusAnswer || 'n/a'}
                               </Text>
-                              {!task.isComplete &&
+                              {!displayedTaskIsComplete &&
                               formatMissingRequiredFields(
                                 t,
-                                task.missingRequiredFields
+                                displayedTaskMissingRequiredFields
                               ) ? (
                                 <Text color="orange.600" fontSize="xs" mt={1}>
                                   {t('Missing: {{fields}}', {
                                     fields: formatMissingRequiredFields(
                                       t,
-                                      task.missingRequiredFields
+                                      displayedTaskMissingRequiredFields
                                     ),
                                   })}
                                 </Text>
@@ -11332,6 +12790,376 @@ export default function AiHumanTeacherPage() {
                     <Box flex="2 1 640px" minW="320px">
                       {taskDetail ? (
                         <Stack spacing={4}>
+                          {activeDeveloperBenchmarkReviewContext ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="purple.100"
+                              bg="purple.50"
+                              borderRadius="xl"
+                              p={4}
+                            >
+                              <Stack spacing={2}>
+                                <Text
+                                  fontSize="sm"
+                                  fontWeight={700}
+                                  color="purple.600"
+                                >
+                                  {t('Benchmark review')}
+                                </Text>
+                                <Text fontSize="sm">
+                                  {describeBenchmarkInspectorSummary(
+                                    activeDeveloperBenchmarkReviewContext,
+                                    t
+                                  )}
+                                </Text>
+                                <Text color="muted" fontSize="xs">
+                                  {t('Expected')}:&nbsp;
+                                  {formatBenchmarkAnswerLabel(
+                                    activeDeveloperBenchmarkReviewContext.expected,
+                                    t
+                                  )}
+                                  {' · '}
+                                  {t('Adapter')}:&nbsp;
+                                  {formatBenchmarkAnswerLabel(
+                                    activeDeveloperBenchmarkReviewContext
+                                      .current?.predicted,
+                                    t
+                                  )}
+                                  {activeDeveloperBenchmarkReviewContext.baseline
+                                    ? ` · ${t(
+                                        'Baseline'
+                                      )}: ${formatBenchmarkAnswerLabel(
+                                        activeDeveloperBenchmarkReviewContext
+                                          .baseline?.predicted,
+                                        t
+                                      )}`
+                                    : ''}
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : null}
+                          {activeDeveloperBenchmarkReviewContext ? (
+                            <Box
+                              borderWidth="1px"
+                              borderColor="purple.100"
+                              borderRadius="xl"
+                              p={4}
+                              bg="white"
+                            >
+                              <Stack spacing={4}>
+                                <Flex
+                                  justify="space-between"
+                                  align={['flex-start', 'center']}
+                                  direction={['column', 'row']}
+                                  gap={3}
+                                >
+                                  <Box>
+                                    <Text fontWeight={700}>
+                                      {t('Benchmark correction')}
+                                    </Text>
+                                    <Text color="muted" fontSize="sm" mt={1}>
+                                      {t(
+                                        'Save what failed here so you can feed it into the next retraining round.'
+                                      )}
+                                    </Text>
+                                  </Box>
+                                  <Stack
+                                    direction={['column', 'row']}
+                                    spacing={2}
+                                    flexWrap="wrap"
+                                    align={['stretch', 'center']}
+                                  >
+                                    <Badge
+                                      colorScheme="purple"
+                                      borderRadius="full"
+                                    >
+                                      {t('{{count}} rules active', {
+                                        count:
+                                          activeBenchmarkReviewRequiredFields.length,
+                                      })}
+                                    </Badge>
+                                    <SecondaryButton
+                                      onClick={() =>
+                                        setAnnotationDraft((current) =>
+                                          applyBenchmarkReviewSuggestionToDraft(
+                                            current,
+                                            activeBenchmarkReviewSuggestion,
+                                            {overwrite: false}
+                                          )
+                                        )
+                                      }
+                                      isDisabled={
+                                        !activeBenchmarkReviewSuggestion
+                                      }
+                                    >
+                                      {t('Use suggested correction')}
+                                    </SecondaryButton>
+                                    <SecondaryButton
+                                      onClick={() =>
+                                        setAnnotationDraft((current) =>
+                                          applyBenchmarkReviewSuggestionToDraft(
+                                            current,
+                                            activeBenchmarkReviewSuggestion,
+                                            {overwrite: true}
+                                          )
+                                        )
+                                      }
+                                      isDisabled={
+                                        !activeBenchmarkReviewSuggestion
+                                      }
+                                    >
+                                      {t('Replace with suggestion')}
+                                    </SecondaryButton>
+                                  </Stack>
+                                </Flex>
+
+                                {activeBenchmarkReviewSuggestion ? (
+                                  <SimpleGrid columns={[1, 1, 3]} spacing={3}>
+                                    <BenchmarkInsightCard
+                                      title={t('Likely issue')}
+                                      value={
+                                        activeBenchmarkReviewSuggestion.headline
+                                      }
+                                      detail={
+                                        activeBenchmarkReviewSuggestion.summary
+                                      }
+                                      tone="purple"
+                                    />
+                                    <BenchmarkInsightCard
+                                      title={t('Decision stability')}
+                                      value={
+                                        activeBenchmarkReviewSuggestion
+                                          .stability.label
+                                      }
+                                      detail={
+                                        activeBenchmarkReviewSuggestion
+                                          .stability.detail
+                                      }
+                                      tone={
+                                        activeBenchmarkReviewSuggestion
+                                          .stability.tone
+                                      }
+                                    />
+                                    <BenchmarkInsightCard
+                                      title={t('Suggested retraining focus')}
+                                      value={t('Add this next')}
+                                      detail={
+                                        activeBenchmarkReviewSuggestion.retrainingHint
+                                      }
+                                      tone="blue"
+                                    />
+                                  </SimpleGrid>
+                                ) : null}
+
+                                <Box
+                                  borderWidth="1px"
+                                  borderColor="gray.100"
+                                  borderRadius="lg"
+                                  p={3}
+                                  bg="gray.50"
+                                >
+                                  <Stack spacing={3}>
+                                    <Text fontSize="sm" fontWeight={600}>
+                                      {t('Require on benchmark review flips')}
+                                    </Text>
+                                    <SimpleGrid columns={[1, 2, 2]} spacing={2}>
+                                      {DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS.map(
+                                        (fieldKey) => {
+                                          const checked =
+                                            benchmarkReviewRequiredFieldSet.has(
+                                              fieldKey
+                                            )
+
+                                          return (
+                                            <Checkbox
+                                              key={fieldKey}
+                                              isChecked={checked}
+                                              onChange={(e) => {
+                                                const nextChecked =
+                                                  e.target.checked
+                                                const currentFields =
+                                                  normalizeDeveloperBenchmarkReviewRequiredFields(
+                                                    developerBenchmarkReviewRequiredFields,
+                                                    {
+                                                      fallbackToDefault: false,
+                                                    }
+                                                  )
+                                                const nextFields = nextChecked
+                                                  ? Array.from(
+                                                      new Set([
+                                                        ...currentFields,
+                                                        fieldKey,
+                                                      ])
+                                                    )
+                                                  : currentFields.filter(
+                                                      (item) =>
+                                                        item !== fieldKey
+                                                    )
+
+                                                updateLocalAiSettings({
+                                                  developerBenchmarkReviewRequiredFields:
+                                                    nextFields,
+                                                })
+                                              }}
+                                            >
+                                              <Text fontSize="sm">
+                                                {getRequiredFieldLabel(
+                                                  fieldKey,
+                                                  t
+                                                )}
+                                              </Text>
+                                            </Checkbox>
+                                          )
+                                        }
+                                      )}
+                                    </SimpleGrid>
+                                  </Stack>
+                                </Box>
+
+                                <InterviewPrompt
+                                  title={t('What kind of failure was this?')}
+                                  isMissing={
+                                    isBenchmarkReviewIssueTypeHighlighted
+                                  }
+                                  missingHint={t(
+                                    'Choose one issue type before moving on.'
+                                  )}
+                                  sectionRef={(node) => {
+                                    missingFieldSectionRefs.current.benchmark_review_issue_type =
+                                      node
+                                  }}
+                                >
+                                  <Select
+                                    value={
+                                      annotationDraft.benchmark_review_issue_type
+                                    }
+                                    onChange={(e) => {
+                                      const nextValue = e?.target?.value || ''
+
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        benchmark_review_issue_type: nextValue,
+                                      }))
+                                    }}
+                                  >
+                                    <option value="">
+                                      {t('Choose issue type')}
+                                    </option>
+                                    {BENCHMARK_REVIEW_ISSUE_TYPE_OPTIONS.map(
+                                      (option) => (
+                                        <option key={option} value={option}>
+                                          {formatBenchmarkReviewIssueTypeLabel(
+                                            option,
+                                            t
+                                          )}
+                                        </option>
+                                      )
+                                    )}
+                                  </Select>
+                                </InterviewPrompt>
+
+                                <InterviewPrompt
+                                  title={t(
+                                    'What failed in this benchmark run?'
+                                  )}
+                                  isMissing={
+                                    isBenchmarkReviewFailureNoteHighlighted
+                                  }
+                                  missingHint={t(
+                                    'Write the failure note before moving on.'
+                                  )}
+                                  sectionRef={(node) => {
+                                    missingFieldSectionRefs.current.benchmark_review_failure_note =
+                                      node
+                                  }}
+                                >
+                                  <Textarea
+                                    placeholder={t(
+                                      'For example: the adapter ignored the visible order cue and still chose the weaker story.'
+                                    )}
+                                    value={
+                                      annotationDraft.benchmark_review_failure_note
+                                    }
+                                    onChange={(e) => {
+                                      const nextValue = e?.target?.value || ''
+
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        benchmark_review_failure_note:
+                                          nextValue,
+                                      }))
+                                    }}
+                                  />
+                                </InterviewPrompt>
+
+                                <InterviewPrompt
+                                  title={t(
+                                    'What should the model learn next time?'
+                                  )}
+                                  isMissing={
+                                    isBenchmarkReviewRetrainingHintHighlighted
+                                  }
+                                  missingHint={t(
+                                    'Add a retraining hint before moving on.'
+                                  )}
+                                  sectionRef={(node) => {
+                                    missingFieldSectionRefs.current.benchmark_review_retraining_hint =
+                                      node
+                                  }}
+                                >
+                                  <Textarea
+                                    placeholder={t(
+                                      'For example: prefer explicit timeline clues over repeated background objects.'
+                                    )}
+                                    value={
+                                      annotationDraft.benchmark_review_retraining_hint
+                                    }
+                                    onChange={(e) => {
+                                      const nextValue = e?.target?.value || ''
+
+                                      setAnnotationDraft((current) => ({
+                                        ...current,
+                                        benchmark_review_retraining_hint:
+                                          nextValue,
+                                      }))
+                                    }}
+                                  />
+                                </InterviewPrompt>
+
+                                <BooleanChoiceField
+                                  title={t(
+                                    'Use this benchmark note in retraining?'
+                                  )}
+                                  description={t(
+                                    'Choose yes to append these review notes to the next local training prompt for this flip.'
+                                  )}
+                                  value={
+                                    annotationDraft.benchmark_review_include_for_training
+                                  }
+                                  onChange={(value) =>
+                                    setAnnotationDraft((current) => ({
+                                      ...current,
+                                      benchmark_review_include_for_training:
+                                        value,
+                                    }))
+                                  }
+                                  trueLabel={t('Yes, use it')}
+                                  falseLabel={t('No, keep it as audit only')}
+                                  t={t}
+                                  isMissing={
+                                    isBenchmarkReviewIncludeForTrainingHighlighted
+                                  }
+                                  missingHint={t(
+                                    'Choose whether this review should feed retraining.'
+                                  )}
+                                  sectionRef={(node) => {
+                                    missingFieldSectionRefs.current.benchmark_review_include_for_training =
+                                      node
+                                  }}
+                                />
+                              </Stack>
+                            </Box>
+                          ) : null}
                           <Box
                             borderWidth="1px"
                             borderColor="blue.100"
@@ -11368,7 +13196,7 @@ export default function AiHumanTeacherPage() {
                                 colorScheme={taskDetailStatusTone}
                                 borderRadius="full"
                               >
-                                {getDraftStatusLabel(annotationDraft, t)}
+                                {currentTaskStatusLabel}
                               </Badge>
                               <Badge colorScheme="purple" borderRadius="full">
                                 {t('{{done}} / {{total}} complete', {
@@ -12706,7 +14534,7 @@ export default function AiHumanTeacherPage() {
                                 fontSize="sm"
                                 alignSelf="center"
                               >
-                                {getDraftHelperText(annotationDraft, t)}
+                                {currentDraftHelperLabel}
                               </Text>
                             </Stack>
                             {nextTaskId && !canMoveForwardFromCurrentFlip ? (

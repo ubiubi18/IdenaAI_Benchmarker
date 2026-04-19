@@ -31,6 +31,16 @@ const DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK = 10
 const DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS = 0
 const DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS = 1200
 const DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS = 768
+const DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS = [
+  'benchmark_review_issue_type',
+  'benchmark_review_failure_note',
+  'benchmark_review_retraining_hint',
+  'benchmark_review_include_for_training',
+]
+const DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS = [
+  'benchmark_review_issue_type',
+  'benchmark_review_failure_note',
+]
 const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [50, 100, 200]
 const DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG = {
   safe: {
@@ -112,6 +122,8 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
     DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
   developerAiDraftAnswerWindowTokens:
     DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  developerBenchmarkReviewRequiredFields:
+    DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS,
   shareHumanTeacherAnnotationsWithNetwork: false,
   contractVersion: 'idena-local/v1',
   captureEnabled: false,
@@ -411,6 +423,37 @@ function normalizeDeveloperAiDraftAnswerWindowTokens(value) {
   return Math.min(2048, Math.max(128, parsed))
 }
 
+function normalizeDeveloperBenchmarkReviewRequiredFields(
+  value,
+  {fallbackToDefault = true} = {}
+) {
+  let input = []
+
+  if (Array.isArray(value)) {
+    input = value
+  } else if (typeof value === 'string') {
+    input = String(value)
+      .split(',')
+      .map((item) => item.trim())
+  }
+
+  const normalized = input
+    .map((item) => trimString(item))
+    .filter(
+      (item, index, items) =>
+        DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS.includes(item) &&
+        items.indexOf(item) === index
+    )
+
+  if (normalized.length) {
+    return normalized
+  }
+
+  return fallbackToDefault
+    ? [...DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS]
+    : []
+}
+
 function normalizeDeveloperLocalBenchmarkSize(value) {
   const parsed = Number.parseInt(value, 10)
 
@@ -672,6 +715,16 @@ function buildLocalAiSettings(settings = {}) {
       normalizeDeveloperAiDraftAnswerWindowTokens(
         source.developerAiDraftAnswerWindowTokens
       ),
+    developerBenchmarkReviewRequiredFields:
+      normalizeDeveloperBenchmarkReviewRequiredFields(
+        source.developerBenchmarkReviewRequiredFields,
+        {
+          fallbackToDefault: !Object.prototype.hasOwnProperty.call(
+            source,
+            'developerBenchmarkReviewRequiredFields'
+          ),
+        }
+      ),
     shareHumanTeacherAnnotationsWithNetwork:
       source.shareHumanTeacherAnnotationsWithNetwork === true,
     contractVersion: normalizeContractVersion(source.contractVersion),
@@ -742,6 +795,8 @@ module.exports = {
   DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
   DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
   DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS,
+  DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS,
   DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
   DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
   DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
@@ -764,6 +819,7 @@ module.exports = {
   normalizeDeveloperAiDraftContextWindowTokens,
   normalizeDeveloperAiDraftQuestionWindowChars,
   normalizeDeveloperAiDraftAnswerWindowTokens,
+  normalizeDeveloperBenchmarkReviewRequiredFields,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeModel,
   resolveDeveloperLocalTrainingProfileRuntimeVisionModel,

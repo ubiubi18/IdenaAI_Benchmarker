@@ -23,6 +23,7 @@ import {
   APP_VERSION_FALLBACK,
   syncSharedGlobal,
 } from '../shared/utils/shared-global'
+import {getBrowserDevLocalAiBridge} from '../shared/utils/local-ai-browser-dev-bridge'
 
 function hasRealBridge(bridge = {}) {
   return Boolean(
@@ -39,6 +40,10 @@ function syncLegacyBridgeGlobals(bridge = {}) {
     bridge && bridge.globals && typeof bridge.globals === 'object'
       ? bridge.globals
       : {}
+  const browserDevLocalAiBridge =
+    !bridgeGlobals.localAi && getBrowserDevLocalAiBridge
+      ? getBrowserDevLocalAiBridge()
+      : null
 
   if (!window.global) {
     window.global = window
@@ -96,7 +101,8 @@ function syncLegacyBridgeGlobals(bridge = {}) {
 
   if (!global.localAi) {
     const empty = async () => ({ok: false, status: 'unavailable'})
-    global.localAi = {
+    global.localAi = browserDevLocalAiBridge || {
+      bridgeMode: 'browser_stub',
       status: async () => ({
         available: false,
         running: false,
@@ -192,6 +198,8 @@ function syncLegacyBridgeGlobals(bridge = {}) {
 
   if (bridgeGlobals.localAi) {
     global.localAi = bridgeGlobals.localAi
+  } else if (browserDevLocalAiBridge) {
+    global.localAi = browserDevLocalAiBridge
   }
 
   syncSharedGlobal('env', global.env)

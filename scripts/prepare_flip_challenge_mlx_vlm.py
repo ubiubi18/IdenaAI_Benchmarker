@@ -1079,6 +1079,28 @@ def normalize_ai_annotation(annotation: Dict[str, Any]) -> Dict[str, Any]:
 def summarize_human_annotation(record: Dict[str, Any], annotation: Dict[str, Any]) -> str:
     reasons: List[str] = []
     why_answer = str(annotation.get("why_answer") or "").strip()
+    benchmark_review_issue_type = str(
+        annotation.get("benchmark_review_issue_type")
+        or annotation.get("benchmarkReviewIssueType")
+        or ""
+    ).strip()
+    benchmark_review_failure_note = str(
+        annotation.get("benchmark_review_failure_note")
+        or annotation.get("benchmarkReviewFailureNote")
+        or ""
+    ).strip()[:900]
+    benchmark_review_retraining_hint = str(
+        annotation.get("benchmark_review_retraining_hint")
+        or annotation.get("benchmarkReviewRetrainingHint")
+        or ""
+    ).strip()[:900]
+    benchmark_review_include_for_training = annotation.get(
+        "benchmark_review_include_for_training"
+    )
+    if benchmark_review_include_for_training is None:
+        benchmark_review_include_for_training = annotation.get(
+            "benchmarkReviewIncludeForTraining"
+        )
     ai_annotation = normalize_ai_annotation(annotation)
     ai_annotation_feedback = str(
         annotation.get("ai_annotation_feedback")
@@ -1161,6 +1183,20 @@ def summarize_human_annotation(record: Dict[str, Any], annotation: Dict[str, Any
         reasons.append("The human rated the AI draft as completely wrong.")
     if ai_annotation_feedback:
         reasons.append(f"Human correction to the AI draft: {ai_annotation_feedback}")
+
+    if benchmark_review_include_for_training is True:
+        if benchmark_review_issue_type:
+            reasons.append(
+                "Benchmark review issue type: "
+                + benchmark_review_issue_type.replace("_", " ")
+                + "."
+            )
+        if benchmark_review_failure_note:
+            reasons.append(f"Benchmark review failure note: {benchmark_review_failure_note}")
+        if benchmark_review_retraining_hint:
+            reasons.append(
+                f"Benchmark review retraining hint: {benchmark_review_retraining_hint}"
+            )
 
     if not reasons:
         reasons.append("Human teacher confirms the decision using common-sense chronology and visual coherence.")
