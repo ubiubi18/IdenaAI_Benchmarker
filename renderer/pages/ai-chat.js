@@ -4,15 +4,26 @@ import {
   Badge,
   Box,
   Button,
+  Code,
   Flex,
+  Heading,
   HStack,
   IconButton,
   Image,
   Input,
+  Link,
+  ListItem,
+  OrderedList,
+  Popover,
+  PopoverArrow,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
   SimpleGrid,
   Spinner,
   Stack,
   Text,
+  UnorderedList,
   useToast,
 } from '@chakra-ui/react'
 import {useRouter} from 'next/router'
@@ -25,8 +36,13 @@ import {
   SuccessAlert,
   Textarea,
   Toast,
+  Tooltip,
 } from '../shared/components/components'
-import {PrimaryButton, SecondaryButton} from '../shared/components/button'
+import {
+  InfoButton,
+  PrimaryButton,
+  SecondaryButton,
+} from '../shared/components/button'
 import {useChainState} from '../shared/providers/chain-context'
 import {EpochPeriod, useEpochState} from '../shared/providers/epoch-context'
 import {
@@ -80,6 +96,45 @@ const FLIP_REQUEST_PATTERN =
 const SAMPLE_FLIP_PATTERN = /\b(sample|test)\s*flip(s)?\b/i
 const SAMPLE_FLIP_ACTION_PATTERN =
   /\b(show|load|display|open|give|send|solve|analy[sz]e|explain|caption|order)\b/i
+
+function HelpPopover({label, children, placement = 'top-end'}) {
+  let body = children
+
+  if (Array.isArray(children)) {
+    body = (
+      <Stack spacing={2}>
+        {children.map((item, index) => (
+          <Text key={`${label}-${index}`} fontSize="sm">
+            {item}
+          </Text>
+        ))}
+      </Stack>
+    )
+  } else if (typeof children === 'string') {
+    body = <Text fontSize="sm">{children}</Text>
+  }
+
+  return (
+    <Popover trigger="click" placement={placement} isLazy>
+      <PopoverTrigger>
+        <Box as="span">
+          <InfoButton aria-label={label} display="inline-flex" />
+        </Box>
+      </PopoverTrigger>
+      <PopoverContent
+        border="none"
+        bg="graphite.500"
+        color="white"
+        borderRadius="md"
+        boxShadow="lg"
+        maxW="320px"
+      >
+        <PopoverArrow bg="graphite.500" />
+        <PopoverBody p={3}>{body}</PopoverBody>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 function createChatId(role) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -496,6 +551,357 @@ function getLocalAiBridge() {
   return global.localAi
 }
 
+function normalizeMarkdownLines(content) {
+  return String(content || '')
+    .replace(/\r\n?/gu, '\n')
+    .split('\n')
+}
+
+function joinMarkdownParagraphLines(lines = []) {
+  return lines
+    .map((line) => String(line || '').trim())
+    .filter(Boolean)
+    .join(' ')
+}
+
+function renderMarkdownInlines(content, options = {}) {
+  const text = String(content || '')
+  const keyPrefix = String(options.keyPrefix || 'inline')
+  const linkColor = options.linkColor || 'blue.500'
+  const nodes = []
+  const patterns = [
+    {
+      type: 'link',
+      regex: /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/u,
+    },
+    {
+      type: 'bold',
+      regex: /\*\*([^*]+)\*\*/u,
+    },
+    {
+      type: 'code',
+      regex: /`([^`\n]+)`/u,
+    },
+    {
+      type: 'italic',
+      regex: /\*([^*\n]+)\*/u,
+    },
+  ]
+
+  let remaining = text
+  let partIndex = 0
+
+  while (remaining) {
+    let bestMatch = null
+
+    for (const nextPattern of patterns) {
+      const nextMatch = nextPattern.regex.exec(remaining)
+
+      if (!nextMatch) {
+        // Keep scanning until we find the earliest inline token.
+      } else if (
+        !bestMatch ||
+        nextMatch.index < bestMatch.match.index ||
+        (nextMatch.index === bestMatch.match.index &&
+          patterns.indexOf(nextPattern) < patterns.indexOf(bestMatch.pattern))
+      ) {
+        bestMatch = {pattern: nextPattern, match: nextMatch}
+      }
+    }
+
+    if (!bestMatch) {
+      nodes.push(remaining)
+      break
+    }
+
+    const selectedPattern = bestMatch.pattern
+    const selectedMatch = bestMatch.match
+
+    if (selectedMatch.index > 0) {
+      nodes.push(remaining.slice(0, selectedMatch.index))
+    }
+
+    const matchKey = `${keyPrefix}-${partIndex}`
+
+    if (selectedPattern.type === 'link') {
+      const label = String(selectedMatch[1] || '').trim()
+      const href = String(selectedMatch[2] || '').trim()
+      nodes.push(
+        <Link
+          key={matchKey}
+          color={linkColor}
+          href={href}
+          isExternal
+          textDecoration="underline"
+          wordBreak="break-all"
+        >
+          {label || href}
+        </Link>
+      )
+    } else if (selectedPattern.type === 'bold') {
+      nodes.push(
+        <Text as="strong" key={matchKey} fontWeight={700} color="inherit">
+          {renderMarkdownInlines(selectedMatch[1], {
+            keyPrefix: `${matchKey}-strong`,
+            linkColor,
+          })}
+        </Text>
+      )
+    } else if (selectedPattern.type === 'italic') {
+      nodes.push(
+        <Text as="em" key={matchKey} fontStyle="italic" color="inherit">
+          {renderMarkdownInlines(selectedMatch[1], {
+            keyPrefix: `${matchKey}-em`,
+            linkColor,
+          })}
+        </Text>
+      )
+    } else if (selectedPattern.type === 'code') {
+      nodes.push(
+        <Code
+          key={matchKey}
+          px={1.5}
+          py={0.5}
+          borderRadius="md"
+          fontSize="0.92em"
+          colorScheme="gray"
+        >
+          {selectedMatch[1]}
+        </Code>
+      )
+    }
+
+    remaining = remaining.slice(selectedMatch.index + selectedMatch[0].length)
+    partIndex += 1
+  }
+
+  return nodes
+}
+
+function renderMarkdownBlocks(content, options = {}) {
+  const lines = normalizeMarkdownLines(content)
+  const blocks = []
+  const keyPrefix = String(options.keyPrefix || 'block')
+  const textColor = options.textColor || 'inherit'
+  const linkColor = options.linkColor || 'blue.500'
+  let index = 0
+  let blockIndex = 0
+
+  const isBlockBoundary = (line) => {
+    const nextLine = String(line || '')
+    return (
+      /^#{1,6}\s+/u.test(nextLine) ||
+      /^\s*[-*]\s+/u.test(nextLine) ||
+      /^\s*\d+\.\s+/u.test(nextLine) ||
+      /^\s*>\s+/u.test(nextLine) ||
+      /^\s*```/u.test(nextLine)
+    )
+  }
+
+  while (index < lines.length) {
+    const line = String(lines[index] || '')
+    const trimmed = line.trim()
+
+    if (!trimmed) {
+      index += 1
+    } else if (/^\s*```/u.test(line)) {
+      const codeLines = []
+      index += 1
+
+      while (index < lines.length && !/^\s*```/u.test(lines[index])) {
+        codeLines.push(lines[index])
+        index += 1
+      }
+
+      if (index < lines.length) {
+        index += 1
+      }
+
+      blocks.push(
+        <Box
+          as="pre"
+          key={`${keyPrefix}-${blockIndex}`}
+          overflowX="auto"
+          whiteSpace="pre-wrap"
+          bg="blackAlpha.50"
+          borderWidth="1px"
+          borderColor="blackAlpha.100"
+          borderRadius="lg"
+          px={3}
+          py={2.5}
+          fontSize="sm"
+          lineHeight="tall"
+          fontFamily="mono"
+          color={textColor}
+        >
+          {codeLines.join('\n')}
+        </Box>
+      )
+      blockIndex += 1
+    } else {
+      const headingMatch = /^(#{1,6})\s+(.*)$/u.exec(trimmed)
+
+      if (headingMatch) {
+        const level = Math.min(headingMatch[1].length, 6)
+        const sizeMap = {
+          1: 'lg',
+          2: 'md',
+          3: 'sm',
+          4: 'xs',
+          5: 'xs',
+          6: 'xs',
+        }
+
+        blocks.push(
+          <Heading
+            key={`${keyPrefix}-${blockIndex}`}
+            as={`h${level}`}
+            size={sizeMap[level] || 'sm'}
+            color={textColor}
+            lineHeight="short"
+          >
+            {renderMarkdownInlines(headingMatch[2], {
+              keyPrefix: `${keyPrefix}-${blockIndex}-heading`,
+              linkColor,
+            })}
+          </Heading>
+        )
+        blockIndex += 1
+        index += 1
+      } else if (/^\s*[-*]\s+/u.test(line)) {
+        const currentBlockIndex = blockIndex
+        const items = []
+
+        while (index < lines.length && /^\s*[-*]\s+/u.test(lines[index])) {
+          items.push(lines[index].replace(/^\s*[-*]\s+/u, '').trim())
+          index += 1
+        }
+
+        blocks.push(
+          <UnorderedList
+            key={`${keyPrefix}-${currentBlockIndex}`}
+            spacing={2}
+            pl={5}
+            color={textColor}
+          >
+            {items.map((item, itemIndex) => (
+              <ListItem
+                key={`${keyPrefix}-${currentBlockIndex}-item-${itemIndex}`}
+              >
+                {renderMarkdownInlines(item, {
+                  keyPrefix: `${keyPrefix}-${currentBlockIndex}-item-${itemIndex}`,
+                  linkColor,
+                })}
+              </ListItem>
+            ))}
+          </UnorderedList>
+        )
+        blockIndex += 1
+      } else if (/^\s*\d+\.\s+/u.test(line)) {
+        const currentBlockIndex = blockIndex
+        const items = []
+
+        while (index < lines.length && /^\s*\d+\.\s+/u.test(lines[index])) {
+          items.push(lines[index].replace(/^\s*\d+\.\s+/u, '').trim())
+          index += 1
+        }
+
+        blocks.push(
+          <OrderedList
+            key={`${keyPrefix}-${currentBlockIndex}`}
+            spacing={2}
+            pl={5}
+            color={textColor}
+          >
+            {items.map((item, itemIndex) => (
+              <ListItem
+                key={`${keyPrefix}-${currentBlockIndex}-item-${itemIndex}`}
+              >
+                {renderMarkdownInlines(item, {
+                  keyPrefix: `${keyPrefix}-${currentBlockIndex}-item-${itemIndex}`,
+                  linkColor,
+                })}
+              </ListItem>
+            ))}
+          </OrderedList>
+        )
+        blockIndex += 1
+      } else if (/^\s*>\s+/u.test(line)) {
+        const quoteLines = []
+
+        while (index < lines.length && /^\s*>\s+/u.test(lines[index])) {
+          quoteLines.push(lines[index].replace(/^\s*>\s+/u, '').trim())
+          index += 1
+        }
+
+        blocks.push(
+          <Box
+            key={`${keyPrefix}-${blockIndex}`}
+            borderLeftWidth="3px"
+            borderLeftColor="gray.300"
+            pl={3}
+            py={1}
+            color={textColor}
+          >
+            <Text lineHeight="tall">
+              {renderMarkdownInlines(joinMarkdownParagraphLines(quoteLines), {
+                keyPrefix: `${keyPrefix}-${blockIndex}-quote`,
+                linkColor,
+              })}
+            </Text>
+          </Box>
+        )
+        blockIndex += 1
+      } else {
+        const paragraphLines = [trimmed]
+        index += 1
+
+        while (index < lines.length) {
+          const nextLine = String(lines[index] || '')
+
+          if (!nextLine.trim() || isBlockBoundary(nextLine)) {
+            break
+          }
+
+          paragraphLines.push(nextLine.trim())
+          index += 1
+        }
+
+        blocks.push(
+          <Text
+            key={`${keyPrefix}-${blockIndex}`}
+            whiteSpace="pre-wrap"
+            lineHeight="tall"
+            color={textColor}
+          >
+            {renderMarkdownInlines(joinMarkdownParagraphLines(paragraphLines), {
+              keyPrefix: `${keyPrefix}-${blockIndex}-paragraph`,
+              linkColor,
+            })}
+          </Text>
+        )
+        blockIndex += 1
+      }
+    }
+  }
+
+  return blocks
+}
+
+function FormattedChatContent({content = '', isAssistant = false}) {
+  const blocks = React.useMemo(
+    () =>
+      renderMarkdownBlocks(content, {
+        keyPrefix: isAssistant ? 'assistant-message' : 'user-message',
+        textColor: 'inherit',
+        linkColor: isAssistant ? 'blue.500' : 'white',
+      }),
+    [content, isAssistant]
+  )
+
+  return <Stack spacing={3}>{blocks}</Stack>
+}
+
 function ChatMessage({message}) {
   const isAssistant = message.role === 'assistant'
 
@@ -548,9 +954,10 @@ function ChatMessage({message}) {
               ))}
             </SimpleGrid>
           )}
-        <Text whiteSpace="pre-wrap" lineHeight="tall">
-          {message.content}
-        </Text>
+        <FormattedChatContent
+          content={message.content}
+          isAssistant={isAssistant}
+        />
       </Box>
     </Flex>
   )
@@ -924,7 +1331,11 @@ export default function AiChatPage() {
 
   const handleDraftKeyDown = React.useCallback(
     (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      if (
+        event.key === 'Enter' &&
+        !event.shiftKey &&
+        !event.nativeEvent?.isComposing
+      ) {
         event.preventDefault()
         handleSend()
       }
@@ -1221,20 +1632,38 @@ export default function AiChatPage() {
 
   return (
     <Layout loading={loading} syncing={syncing} offline={offline}>
-      <Page minW={0}>
+      <Page minW={0} px={[4, 6, 8]} py={4}>
         <Flex direction="column" flex={1} w="full" minH={0}>
-          <Stack spacing={5} flex={1} minH={0}>
-            <Stack spacing={2}>
+          <Stack spacing={4} flex={1} minH={0}>
+            <Flex
+              align={['flex-start', 'center']}
+              direction={['column', 'row']}
+              justify="space-between"
+              gap={3}
+            >
               <HStack spacing={3} align="center">
                 <ChatIcon boxSize="6" color="brandBlue.500" />
                 <PageTitle mb={0}>{t('IdenaAI')}</PageTitle>
               </HStack>
-              <Text color="muted" maxW="3xl">
-                {t(
-                  'Ask directly, add images when needed, and keep the chat local to this desktop profile.'
-                )}
-              </Text>
-            </Stack>
+              <HStack spacing={2}>
+                <HelpPopover label={t('Chat privacy')}>
+                  {[
+                    t(
+                      'Conversation history stays in this desktop profile only.'
+                    ),
+                    t(
+                      'Attached images stay in the live session and are not written into saved chat history.'
+                    ),
+                  ]}
+                </HelpPopover>
+                <SecondaryButton
+                  leftIcon={<SettingsIcon boxSize="4" />}
+                  onClick={() => router.push('/settings/ai')}
+                >
+                  {t('AI settings')}
+                </SecondaryButton>
+              </HStack>
+            </Flex>
 
             <Box
               bg="white"
@@ -1274,12 +1703,6 @@ export default function AiChatPage() {
                     >
                       {t('Refresh status')}
                     </SecondaryButton>
-                    <SecondaryButton
-                      leftIcon={<SettingsIcon boxSize="4" />}
-                      onClick={() => router.push('/settings/ai')}
-                    >
-                      {t('AI settings')}
-                    </SecondaryButton>
                   </HStack>
                 </Flex>
 
@@ -1288,15 +1711,16 @@ export default function AiChatPage() {
             </Box>
 
             <Box
-              bg="white"
+              bg="gray.50"
               borderWidth="1px"
-              borderColor="blue.100"
-              borderRadius="xl"
+              borderColor="gray.100"
+              borderRadius="2xl"
               px={4}
               py={4}
-              boxShadow="sm"
+              flex={1}
+              minH={0}
             >
-              <Stack spacing={3}>
+              <Stack spacing={4} h="full">
                 <Input
                   ref={fileInputRef}
                   type="file"
@@ -1311,12 +1735,20 @@ export default function AiChatPage() {
                   direction={['column', 'row']}
                   gap={3}
                 >
-                  <Stack spacing={1}>
-                    <Text fontWeight={700}>{t('Ask IdenaAI')}</Text>
-                    <Text color="muted" fontSize="sm">
-                      {t(
-                        'Type a question directly. Add images only when they help the answer.'
-                      )}
+                  <Stack spacing={1} minW={0}>
+                    <HStack spacing={2}>
+                      <Text fontWeight={600}>{t('Conversation')}</Text>
+                      <HelpPopover label={t('Chat help')}>
+                        {[
+                          t('Enter sends. Shift+Enter adds a new line.'),
+                          t(
+                            'Add images only when they help the answer or flip analysis.'
+                          ),
+                        ]}
+                      </HelpPopover>
+                    </HStack>
+                    <Text color="muted" fontSize="xs">
+                      {t('Reply below like a normal chat.')}
                     </Text>
                   </Stack>
                   <HStack spacing={2} alignSelf={['stretch', 'auto']}>
@@ -1326,14 +1758,9 @@ export default function AiChatPage() {
                     >
                       {t('Add images')}
                     </SecondaryButton>
-                    {attachments.length > 0 && (
-                      <SecondaryButton
-                        leftIcon={<DeleteIcon boxSize="4" />}
-                        onClick={handleClearAttachments}
-                      >
-                        {t('Clear images')}
-                      </SecondaryButton>
-                    )}
+                    <SecondaryButton onClick={handleClearConversation}>
+                      {t('New chat')}
+                    </SecondaryButton>
                   </HStack>
                 </Flex>
 
@@ -1398,161 +1825,6 @@ export default function AiChatPage() {
                   </Box>
                 )}
 
-                {attachments.length > 0 && (
-                  <Box
-                    bg="gray.50"
-                    borderWidth="1px"
-                    borderColor="gray.100"
-                    borderRadius="xl"
-                    px={3}
-                    py={3}
-                  >
-                    <Stack spacing={3}>
-                      <HStack justify="space-between">
-                        <HStack spacing={2}>
-                          <PhotoIcon boxSize="4" color="brandBlue.500" />
-                          <Text fontWeight={600}>
-                            {t('Attached images ({{count}})', {
-                              count: attachments.length,
-                            })}
-                          </Text>
-                        </HStack>
-                        <Text color="muted" fontSize="sm">
-                          {attachments.length >= 2
-                            ? t('Ready for local flip analysis')
-                            : t('Ready for image chat')}
-                        </Text>
-                      </HStack>
-                      <SimpleGrid columns={[2, 2, 4]} spacing={3}>
-                        {attachments.map((attachment) => (
-                          <Box
-                            key={attachment.id}
-                            position="relative"
-                            borderRadius="lg"
-                            overflow="hidden"
-                            borderWidth="1px"
-                            borderColor="gray.100"
-                            bg="white"
-                          >
-                            <Image
-                              src={attachment.dataUrl}
-                              alt={attachment.fileName}
-                              objectFit="cover"
-                              w="full"
-                              h="108px"
-                            />
-                            <IconButton
-                              aria-label={t('Remove image')}
-                              icon={<DeleteIcon boxSize="4" />}
-                              size="xs"
-                              position="absolute"
-                              top={2}
-                              right={2}
-                              onClick={() =>
-                                handleRemoveAttachment(attachment.id)
-                              }
-                            />
-                            <Box px={2} py={2}>
-                              <Text fontSize="xs" color="muted" noOfLines={1}>
-                                {attachment.fileName}
-                              </Text>
-                            </Box>
-                          </Box>
-                        ))}
-                      </SimpleGrid>
-                    </Stack>
-                  </Box>
-                )}
-
-                <Textarea
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={handleDraftKeyDown}
-                  minH="128px"
-                  bg="white"
-                  placeholder={t(
-                    'Ask about a flip, validation, your node, or strategy...'
-                  )}
-                />
-
-                <Flex
-                  justify="space-between"
-                  align={['flex-start', 'center']}
-                  direction={['column', 'row']}
-                  gap={3}
-                >
-                  <Stack spacing={2} minW={0}>
-                    <Text color="muted" fontSize="xs" fontWeight={600}>
-                      {t('Quick starts')}
-                    </Text>
-                    <HStack spacing={2} flexWrap="wrap">
-                      {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
-                        <Button
-                          key={prompt}
-                          size="sm"
-                          variant="ghost"
-                          colorScheme="blue"
-                          onClick={() => handleQuickPrompt(prompt)}
-                        >
-                          {t(prompt)}
-                        </Button>
-                      ))}
-                    </HStack>
-                  </Stack>
-                  <PrimaryButton
-                    leftIcon={<SendIcon boxSize="4" />}
-                    isLoading={isSending}
-                    onClick={handleSend}
-                    isDisabled={
-                      (!String(draft || '').trim() &&
-                        attachments.length === 0) ||
-                      !isRuntimeReady
-                    }
-                  >
-                    {t('Send')}
-                  </PrimaryButton>
-                </Flex>
-
-                <Text color="muted" fontSize="sm">
-                  {attachments.length > 0
-                    ? t(
-                        'Attached images and image-derived replies stay only in this live session. They are not stored in saved chat history.'
-                      )
-                    : t(
-                        'Conversation history is stored only in this desktop profile.'
-                      )}
-                </Text>
-              </Stack>
-            </Box>
-
-            <Box
-              bg="gray.50"
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="xl"
-              px={4}
-              py={4}
-              flex={1}
-              minH={0}
-            >
-              <Stack spacing={4} h="full">
-                <Flex
-                  align={['flex-start', 'center']}
-                  direction={['column', 'row']}
-                  justify="space-between"
-                  gap={3}
-                >
-                  <Stack spacing={1}>
-                    <Text fontWeight={600}>{t('Conversation')}</Text>
-                    <Text color="muted" fontSize="sm">
-                      {t('Use Cmd/Ctrl + Enter to send quickly.')}
-                    </Text>
-                  </Stack>
-                  <SecondaryButton onClick={handleClearConversation}>
-                    {t('New chat')}
-                  </SecondaryButton>
-                </Flex>
-
                 <Box
                   bg="white"
                   borderRadius="xl"
@@ -1561,8 +1833,7 @@ export default function AiChatPage() {
                   px={4}
                   py={4}
                   flex={1}
-                  minH="320px"
-                  maxH="calc(100vh - 520px)"
+                  minH={0}
                   overflowY="auto"
                 >
                   {messages.length > 0 ? (
@@ -1592,11 +1863,176 @@ export default function AiChatPage() {
                     </Stack>
                   ) : (
                     <Flex h="full" align="center" justify="center">
-                      <Text color="muted">
-                        {t('Your conversation will appear here.')}
-                      </Text>
+                      <Stack spacing={4} align="center" maxW="2xl">
+                        <Text color="muted">
+                          {t('Start a local chat below.')}
+                        </Text>
+                        <HStack spacing={2} flexWrap="wrap" justify="center">
+                          {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
+                            <Button
+                              key={prompt}
+                              size="sm"
+                              variant="ghost"
+                              colorScheme="blue"
+                              onClick={() => handleQuickPrompt(prompt)}
+                            >
+                              {t(prompt)}
+                            </Button>
+                          ))}
+                        </HStack>
+                      </Stack>
                     </Flex>
                   )}
+                </Box>
+
+                {attachments.length > 0 && (
+                  <Box
+                    bg="white"
+                    borderWidth="1px"
+                    borderColor="gray.100"
+                    borderRadius="xl"
+                    px={3}
+                    py={3}
+                  >
+                    <Stack spacing={3}>
+                      <Flex
+                        justify="space-between"
+                        align={['flex-start', 'center']}
+                        direction={['column', 'row']}
+                        gap={2}
+                      >
+                        <HStack spacing={2}>
+                          <PhotoIcon boxSize="4" color="brandBlue.500" />
+                          <Text fontWeight={600}>
+                            {t('Images ({{count}})', {
+                              count: attachments.length,
+                            })}
+                          </Text>
+                        </HStack>
+                        <HStack spacing={2}>
+                          <Text color="muted" fontSize="xs">
+                            {attachments.length >= 2
+                              ? t('Flip analysis ready')
+                              : t('Image chat ready')}
+                          </Text>
+                          <SecondaryButton
+                            leftIcon={<DeleteIcon boxSize="4" />}
+                            onClick={handleClearAttachments}
+                          >
+                            {t('Clear')}
+                          </SecondaryButton>
+                        </HStack>
+                      </Flex>
+                      <SimpleGrid columns={[2, 2, 4]} spacing={3}>
+                        {attachments.map((attachment) => (
+                          <Box
+                            key={attachment.id}
+                            position="relative"
+                            borderRadius="lg"
+                            overflow="hidden"
+                            borderWidth="1px"
+                            borderColor="gray.100"
+                            bg="gray.50"
+                          >
+                            <Image
+                              src={attachment.dataUrl}
+                              alt={attachment.fileName}
+                              objectFit="cover"
+                              w="full"
+                              h="96px"
+                            />
+                            <IconButton
+                              aria-label={t('Remove image')}
+                              icon={<DeleteIcon boxSize="4" />}
+                              size="xs"
+                              position="absolute"
+                              top={2}
+                              right={2}
+                              onClick={() =>
+                                handleRemoveAttachment(attachment.id)
+                              }
+                            />
+                            <Box px={2} py={2}>
+                              <Text fontSize="xs" color="muted" noOfLines={1}>
+                                {attachment.fileName}
+                              </Text>
+                            </Box>
+                          </Box>
+                        ))}
+                      </SimpleGrid>
+                    </Stack>
+                  </Box>
+                )}
+
+                <Box
+                  bg="white"
+                  borderWidth="1px"
+                  borderColor="gray.100"
+                  borderRadius="xl"
+                  px={3}
+                  py={3}
+                >
+                  <Stack spacing={3}>
+                    {messages.length > 0 ? (
+                      <HStack spacing={2} flexWrap="wrap">
+                        {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
+                          <Button
+                            key={prompt}
+                            size="sm"
+                            variant="ghost"
+                            colorScheme="blue"
+                            onClick={() => handleQuickPrompt(prompt)}
+                          >
+                            {t(prompt)}
+                          </Button>
+                        ))}
+                      </HStack>
+                    ) : null}
+
+                    <Textarea
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                      onKeyDown={handleDraftKeyDown}
+                      minH="92px"
+                      bg="white"
+                      placeholder={t(
+                        'Ask about a flip, validation, your node, or strategy…'
+                      )}
+                    />
+
+                    <Flex
+                      justify="space-between"
+                      align={['flex-start', 'center']}
+                      direction={['column', 'row']}
+                      gap={3}
+                    >
+                      <Text color="muted" fontSize="xs">
+                        {attachments.length > 0
+                          ? t('{{count}} images attached', {
+                              count: attachments.length,
+                            })
+                          : t('Local desktop chat')}
+                      </Text>
+
+                      <Tooltip
+                        label={t('Enter sends. Shift+Enter adds a new line.')}
+                      >
+                        <IconButton
+                          aria-label={t('Send message')}
+                          icon={<SendIcon boxSize="4" />}
+                          colorScheme="blue"
+                          borderRadius="full"
+                          onClick={handleSend}
+                          isLoading={isSending}
+                          isDisabled={
+                            (!String(draft || '').trim() &&
+                              attachments.length === 0) ||
+                            !isRuntimeReady
+                          }
+                        />
+                      </Tooltip>
+                    </Flex>
+                  </Stack>
                 </Box>
 
                 {lastError && <ErrorAlert>{lastError}</ErrorAlert>}

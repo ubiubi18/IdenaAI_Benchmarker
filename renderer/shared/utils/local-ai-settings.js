@@ -22,6 +22,7 @@ const STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL =
 const FALLBACK_LOCAL_AI_TRAINING_MODEL = RECOMMENDED_LOCAL_AI_TRAINING_MODEL
 const DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE = 'strong'
 const DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE = 'balanced'
+const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE = 'balanced'
 const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
 const DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE = 'manual'
 const DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS = 1
@@ -58,14 +59,17 @@ const DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG = {
   full_speed: {
     stepCooldownMs: 0,
     epochCooldownMs: 0,
+    benchmarkCooldownMs: 0,
   },
   balanced: {
     stepCooldownMs: 250,
     epochCooldownMs: 1500,
+    benchmarkCooldownMs: 400,
   },
   cool: {
     stepCooldownMs: 750,
     epochCooldownMs: 4000,
+    benchmarkCooldownMs: 1500,
   },
 }
 const DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT =
@@ -95,6 +99,8 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   developerLocalTrainingProfile: DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
   developerLocalTrainingThermalMode:
     DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  developerLocalBenchmarkThermalMode:
+    DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE,
   developerLocalBenchmarkSize: DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   developerAiDraftTriggerMode: DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
   developerLocalTrainingEpochs: DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
@@ -358,6 +364,17 @@ function normalizeDeveloperLocalTrainingThermalMode(value) {
     : DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
 }
 
+function normalizeDeveloperLocalBenchmarkThermalMode(value) {
+  const nextValue = trimString(value).toLowerCase()
+
+  return Object.prototype.hasOwnProperty.call(
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
+    nextValue
+  )
+    ? nextValue
+    : DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+}
+
 function normalizeDeveloperAiDraftTriggerMode(value) {
   return trimString(value).toLowerCase() === 'automatic'
     ? 'automatic'
@@ -466,6 +483,21 @@ function resolveDeveloperLocalTrainingThermalModeCooldowns(value) {
     mode: normalizedMode,
     stepCooldownMs: config.stepCooldownMs,
     epochCooldownMs: config.epochCooldownMs,
+    benchmarkCooldownMs: config.benchmarkCooldownMs,
+  }
+}
+
+function resolveDeveloperLocalBenchmarkThermalModeCooldowns(value) {
+  const normalizedMode = normalizeDeveloperLocalBenchmarkThermalMode(value)
+  const config =
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG[normalizedMode] ||
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG[
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+    ]
+
+  return {
+    mode: normalizedMode,
+    benchmarkCooldownMs: config.benchmarkCooldownMs,
   }
 }
 
@@ -515,6 +547,7 @@ function buildLocalAiRuntimePreset(runtimeBackend = 'ollama-direct') {
 function buildRecommendedLocalAiMacPreset() {
   return {
     ...buildLocalAiRuntimePreset('ollama-direct'),
+    trainEnabled: true,
     model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
     visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   }
@@ -569,6 +602,7 @@ function buildLocalAiSettings(settings = {}) {
   const normalizedSettings = {
     ...DEFAULT_LOCAL_AI_SETTINGS,
     ...source,
+    enabled: source.enabled === true,
     runtimeBackend: normalizeRuntimeBackend(source),
     reasonerBackend:
       trimString(source.reasonerBackend) ||
@@ -607,6 +641,10 @@ function buildLocalAiSettings(settings = {}) {
       normalizeDeveloperLocalTrainingThermalMode(
         source.developerLocalTrainingThermalMode
       ),
+    developerLocalBenchmarkThermalMode:
+      normalizeDeveloperLocalBenchmarkThermalMode(
+        source.developerLocalBenchmarkThermalMode
+      ),
     developerLocalBenchmarkSize: normalizeDeveloperLocalBenchmarkSize(
       source.developerLocalBenchmarkSize
     ),
@@ -637,6 +675,7 @@ function buildLocalAiSettings(settings = {}) {
     shareHumanTeacherAnnotationsWithNetwork:
       source.shareHumanTeacherAnnotationsWithNetwork === true,
     contractVersion: normalizeContractVersion(source.contractVersion),
+    trainEnabled: source.enabled === true,
     federated: {
       ...DEFAULT_LOCAL_AI_SETTINGS.federated,
       ...((source && source.federated) || {}),
@@ -694,6 +733,7 @@ module.exports = {
   FALLBACK_LOCAL_AI_TRAINING_MODEL,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE,
   DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
@@ -715,6 +755,7 @@ module.exports = {
   buildRecommendedLocalAiMacPreset,
   normalizeDeveloperLocalTrainingProfile,
   normalizeDeveloperLocalTrainingThermalMode,
+  normalizeDeveloperLocalBenchmarkThermalMode,
   normalizeDeveloperLocalBenchmarkSize,
   normalizeDeveloperAiDraftTriggerMode,
   normalizeDeveloperLocalTrainingEpochs,
@@ -729,6 +770,7 @@ module.exports = {
   resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
   resolveDeveloperLocalTrainingThermalModeCooldowns,
+  resolveDeveloperLocalBenchmarkThermalModeCooldowns,
   buildLocalAiSettings,
   mergeLocalAiSettings,
 }
