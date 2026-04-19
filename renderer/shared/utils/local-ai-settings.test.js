@@ -1,15 +1,54 @@
 const {
   DEFAULT_LOCAL_AI_SETTINGS,
-  FIXED_LOCAL_AI_RUNTIME_BACKEND,
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
+  DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
+  DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
+  DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS,
+  DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS,
+  DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
+  DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
+  DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
+  DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   buildLocalAiSettings,
+  buildRecommendedLocalAiMacPreset,
   buildLocalAiRuntimePreset,
   getLocalAiEndpointSafety,
   mergeLocalAiSettings,
+  normalizeDeveloperLocalTrainingProfile,
+  normalizeDeveloperLocalTrainingThermalMode,
+  normalizeDeveloperLocalBenchmarkThermalMode,
+  normalizeDeveloperLocalBenchmarkSize,
+  normalizeDeveloperAiDraftTriggerMode,
+  normalizeDeveloperLocalTrainingEpochs,
+  normalizeDeveloperLocalTrainingBatchSize,
+  normalizeDeveloperLocalTrainingLoraRank,
+  normalizeDeveloperAiDraftContextWindowTokens,
+  normalizeDeveloperAiDraftQuestionWindowChars,
+  normalizeDeveloperAiDraftAnswerWindowTokens,
+  normalizeDeveloperBenchmarkReviewRequiredFields,
+  resolveDeveloperLocalTrainingProfileModelPath,
+  resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
+  resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
+  resolveDeveloperLocalTrainingProfileRuntimeModel,
+  resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
+  resolveDeveloperLocalBenchmarkThermalModeCooldowns,
+  resolveDeveloperLocalTrainingThermalModeCooldowns,
   resolveLocalAiWireRuntimeType,
 } = require('./local-ai-settings')
 
@@ -28,6 +67,45 @@ describe('local-ai settings schema', () => {
     expect(settings.model).toBe(DEFAULT_LOCAL_AI_OLLAMA_MODEL)
     expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
     expect(settings.runtimeType).toBe('ollama')
+    expect(settings.developerHumanTeacherSystemPrompt).toBe('')
+    expect(settings.developerLocalTrainingProfile).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+    )
+    expect(settings.developerLocalTrainingThermalMode).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+    )
+    expect(settings.developerLocalBenchmarkThermalMode).toBe(
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+    )
+    expect(settings.developerLocalBenchmarkSize).toBe(
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+    )
+    expect(settings.developerAiDraftTriggerMode).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
+    )
+    expect(settings.developerLocalTrainingEpochs).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS
+    )
+    expect(settings.developerLocalTrainingBatchSize).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE
+    )
+    expect(settings.developerLocalTrainingLoraRank).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK
+    )
+    expect(settings.developerAiDraftContextWindowTokens).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS
+    )
+    expect(settings.developerAiDraftQuestionWindowChars).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS
+    )
+    expect(settings.developerAiDraftAnswerWindowTokens).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS
+    )
+    expect(settings.developerBenchmarkReviewRequiredFields).toEqual(
+      DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS
+    )
+    expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(false)
+    expect(settings.trainEnabled).toBe(false)
   })
 
   it('migrates legacy phi contract defaults into the Ollama setup', () => {
@@ -63,20 +141,6 @@ describe('local-ai settings schema', () => {
     expect(settings.publicVisionId).toBe(DEFAULT_LOCAL_AI_PUBLIC_VISION_ID)
   })
 
-  it('forces the fixed local qwen runtime even if older local models were saved', () => {
-    const settings = buildLocalAiSettings({
-      runtimeBackend: 'sidecar-http',
-      runtimeType: 'sidecar',
-      model: 'llama3.1:8b',
-      visionModel: 'moondream:latest',
-    })
-
-    expect(settings.runtimeBackend).toBe(FIXED_LOCAL_AI_RUNTIME_BACKEND)
-    expect(settings.runtimeType).toBe('ollama')
-    expect(settings.model).toBe(DEFAULT_LOCAL_AI_OLLAMA_MODEL)
-    expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
-  })
-
   it('keeps explicit neutral fields and nested preferences when merging', () => {
     const settings = mergeLocalAiSettings(
       buildLocalAiSettings({
@@ -90,7 +154,7 @@ describe('local-ai settings schema', () => {
       }
     )
 
-    expect(settings.runtimeBackend).toBe(FIXED_LOCAL_AI_RUNTIME_BACKEND)
+    expect(settings.runtimeBackend).toBe('adapter-gateway')
     expect(settings.publicModelId).toBe('Idena-text-v2')
     expect(settings.federated.enabled).toBe(true)
     expect(settings.federated.minExamples).toBe(5)
@@ -131,7 +195,7 @@ describe('local-ai settings schema', () => {
 
   it('builds explicit backend presets for the settings UI', () => {
     expect(buildLocalAiRuntimePreset('ollama-direct')).toMatchObject({
-      runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+      runtimeBackend: 'ollama-direct',
       baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       runtimeType: 'ollama',
@@ -140,13 +204,270 @@ describe('local-ai settings schema', () => {
     })
 
     expect(buildLocalAiRuntimePreset('sidecar-http')).toMatchObject({
-      runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+      runtimeBackend: 'sidecar-http',
+      baseUrl: 'http://127.0.0.1:5000',
+      endpoint: 'http://127.0.0.1:5000',
+      runtimeType: 'sidecar',
+      model: '',
+      visionModel: '',
+    })
+  })
+
+  it('builds an embryo-stage Mac Ollama preset without a bundled base model', () => {
+    expect(buildRecommendedLocalAiMacPreset()).toMatchObject({
+      runtimeBackend: 'ollama-direct',
       baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
       runtimeType: 'ollama',
-      model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
-      visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+      model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+      visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
     })
+    expect(RECOMMENDED_LOCAL_AI_TRAINING_MODEL).toBe('')
+    expect(DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT).toMatch(
+      /display slot are not evidence/i
+    )
+  })
+
+  it('keeps local training disabled until a local base model is configured', () => {
+    const settings = buildLocalAiSettings({
+      enabled: true,
+      trainEnabled: false,
+    })
+
+    expect(settings.enabled).toBe(true)
+    expect(settings.trainEnabled).toBe(false)
+  })
+
+  it('keeps persisted explicit local runtime picks instead of forcing a fixed lane', () => {
+    const settings = buildLocalAiSettings({
+      runtimeBackend: 'ollama-direct',
+      model: 'qwen2.5vl:7b',
+      visionModel: 'qwen2.5vl:7b',
+    })
+
+    expect(settings.model).toBe('qwen2.5vl:7b')
+    expect(settings.visionModel).toBe('qwen2.5vl:7b')
+  })
+
+  it('keeps a persisted custom developer human-teacher system prompt', () => {
+    const settings = buildLocalAiSettings({
+      developerHumanTeacherSystemPrompt: 'Prefer chronology over slot bias.',
+    })
+
+    expect(settings.developerHumanTeacherSystemPrompt).toBe(
+      'Prefer chronology over slot bias.'
+    )
+  })
+
+  it('keeps a persisted developer local training profile', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalTrainingProfile: 'balanced',
+    })
+
+    expect(settings.developerLocalTrainingProfile).toBe('strong')
+    expect(normalizeDeveloperLocalTrainingProfile('unknown')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+    )
+    expect(normalizeDeveloperLocalTrainingProfile('safe')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+    )
+    expect(resolveDeveloperLocalTrainingProfileRuntimeModel('safe')).toBe(
+      RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+    )
+    expect(resolveDeveloperLocalTrainingProfileRuntimeVisionModel('safe')).toBe(
+      RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
+    )
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeFallbackModel('safe')
+    ).toBe('')
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel('safe')
+    ).toBe('')
+    expect(resolveDeveloperLocalTrainingProfileModelPath('safe')).toBe(
+      RECOMMENDED_LOCAL_AI_TRAINING_MODEL
+    )
+    expect(resolveDeveloperLocalTrainingProfileRuntimeModel('strong')).toBe(
+      RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+    )
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeVisionModel('strong')
+    ).toBe(RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL)
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeFallbackModel('strong')
+    ).toBe('')
+    expect(
+      resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel('strong')
+    ).toBe('')
+    expect(resolveDeveloperLocalTrainingProfileModelPath('strong')).toBe(
+      RECOMMENDED_LOCAL_AI_TRAINING_MODEL
+    )
+    expect(DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG.strong).toMatchObject({
+      modelPath: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+      runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+    })
+  })
+
+  it('normalizes the benchmark review required field list', () => {
+    expect(
+      normalizeDeveloperBenchmarkReviewRequiredFields([
+        'benchmark_review_failure_note',
+        'benchmark_review_failure_note',
+        'nope',
+        'benchmark_review_retraining_hint',
+      ])
+    ).toEqual([
+      'benchmark_review_failure_note',
+      'benchmark_review_retraining_hint',
+    ])
+
+    expect(normalizeDeveloperBenchmarkReviewRequiredFields('')).toEqual(
+      DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS
+    )
+
+    expect(
+      normalizeDeveloperBenchmarkReviewRequiredFields([], {
+        fallbackToDefault: false,
+      })
+    ).toEqual([])
+
+    expect(DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS).toEqual(
+      expect.arrayContaining([
+        'benchmark_review_issue_type',
+        'benchmark_review_failure_note',
+        'benchmark_review_retraining_hint',
+        'benchmark_review_include_for_training',
+      ])
+    )
+  })
+
+  it('keeps a persisted developer annotation-sharing consent', () => {
+    const settings = buildLocalAiSettings({
+      shareHumanTeacherAnnotationsWithNetwork: true,
+    })
+
+    expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(true)
+  })
+
+  it('keeps a persisted developer local training thermal mode', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalTrainingThermalMode: 'cool',
+    })
+
+    expect(settings.developerLocalTrainingThermalMode).toBe('cool')
+    expect(normalizeDeveloperLocalTrainingThermalMode('full_speed')).toBe(
+      'full_speed'
+    )
+    expect(normalizeDeveloperLocalTrainingThermalMode('balanced')).toBe(
+      'balanced'
+    )
+    expect(normalizeDeveloperLocalTrainingThermalMode('cool')).toBe('cool')
+    expect(normalizeDeveloperLocalTrainingThermalMode('unknown')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+    )
+    expect(
+      resolveDeveloperLocalTrainingThermalModeCooldowns('full_speed')
+    ).toMatchObject({
+      mode: 'full_speed',
+      stepCooldownMs: 0,
+      epochCooldownMs: 0,
+    })
+    expect(resolveDeveloperLocalTrainingThermalModeCooldowns('cool')).toEqual(
+      expect.objectContaining(DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG.cool)
+    )
+  })
+
+  it('keeps a persisted developer local benchmark thermal mode', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalBenchmarkThermalMode: 'cool',
+    })
+
+    expect(settings.developerLocalBenchmarkThermalMode).toBe('cool')
+    expect(normalizeDeveloperLocalBenchmarkThermalMode('full_speed')).toBe(
+      'full_speed'
+    )
+    expect(normalizeDeveloperLocalBenchmarkThermalMode('balanced')).toBe(
+      'balanced'
+    )
+    expect(normalizeDeveloperLocalBenchmarkThermalMode('cool')).toBe('cool')
+    expect(normalizeDeveloperLocalBenchmarkThermalMode('unknown')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+    )
+    expect(
+      resolveDeveloperLocalBenchmarkThermalModeCooldowns('cool')
+    ).toMatchObject({
+      mode: 'cool',
+      benchmarkCooldownMs:
+        DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG.cool.benchmarkCooldownMs,
+    })
+  })
+
+  it('keeps a persisted developer local benchmark size', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalBenchmarkSize: 200,
+    })
+
+    expect(settings.developerLocalBenchmarkSize).toBe(200)
+    expect(
+      normalizeDeveloperLocalBenchmarkSize(
+        DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS[0]
+      )
+    ).toBe(25)
+    expect(normalizeDeveloperLocalBenchmarkSize('999')).toBe(500)
+    expect(normalizeDeveloperLocalBenchmarkSize('0')).toBe(1)
+    expect(normalizeDeveloperLocalBenchmarkSize('abc')).toBe(
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+    )
+  })
+
+  it('keeps persisted local training heaviness controls', () => {
+    const settings = buildLocalAiSettings({
+      developerLocalTrainingEpochs: 3,
+      developerLocalTrainingBatchSize: 2,
+      developerLocalTrainingLoraRank: 6,
+    })
+
+    expect(settings.developerLocalTrainingEpochs).toBe(3)
+    expect(settings.developerLocalTrainingBatchSize).toBe(2)
+    expect(settings.developerLocalTrainingLoraRank).toBe(6)
+    expect(normalizeDeveloperLocalTrainingEpochs('0')).toBe(1)
+    expect(normalizeDeveloperLocalTrainingEpochs('999')).toBe(6)
+    expect(normalizeDeveloperLocalTrainingBatchSize('0')).toBe(1)
+    expect(normalizeDeveloperLocalTrainingBatchSize('999')).toBe(4)
+    expect(normalizeDeveloperLocalTrainingLoraRank('1')).toBe(4)
+    expect(normalizeDeveloperLocalTrainingLoraRank('999')).toBe(16)
+  })
+
+  it('keeps a persisted developer AI draft trigger mode', () => {
+    const settings = buildLocalAiSettings({
+      developerAiDraftTriggerMode: 'automatic',
+    })
+
+    expect(settings.developerAiDraftTriggerMode).toBe('automatic')
+    expect(normalizeDeveloperAiDraftTriggerMode('manual')).toBe('manual')
+    expect(normalizeDeveloperAiDraftTriggerMode('automatic')).toBe('automatic')
+    expect(normalizeDeveloperAiDraftTriggerMode('unknown')).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
+    )
+  })
+
+  it('keeps persisted developer AI draft window sizes', () => {
+    const settings = buildLocalAiSettings({
+      developerAiDraftContextWindowTokens: 16384,
+      developerAiDraftQuestionWindowChars: 1800,
+      developerAiDraftAnswerWindowTokens: 1024,
+    })
+
+    expect(settings.developerAiDraftContextWindowTokens).toBe(16384)
+    expect(settings.developerAiDraftQuestionWindowChars).toBe(1800)
+    expect(settings.developerAiDraftAnswerWindowTokens).toBe(1024)
+    expect(normalizeDeveloperAiDraftContextWindowTokens('0')).toBe(
+      DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS
+    )
+    expect(normalizeDeveloperAiDraftContextWindowTokens('999999')).toBe(32768)
+    expect(normalizeDeveloperAiDraftQuestionWindowChars('50')).toBe(240)
+    expect(normalizeDeveloperAiDraftQuestionWindowChars('999999')).toBe(4000)
+    expect(normalizeDeveloperAiDraftAnswerWindowTokens('64')).toBe(128)
+    expect(normalizeDeveloperAiDraftAnswerWindowTokens('999999')).toBe(2048)
   })
 
   it('accepts loopback-only Local AI endpoints', () => {

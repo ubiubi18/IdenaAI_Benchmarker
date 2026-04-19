@@ -10,6 +10,24 @@ Use it for:
 
 It is a research fork, not a polished end-user app release.
 
+## Embryo stage
+
+`IdenaAI_Benchmarker` is also back in embryo stage for the moment while
+research for a better local base layer is ongoing.
+
+> I just pulled the plug on Qwen 3.5 as base model for the moment. Too much
+> opaque pretraining. You can’t grow a trustworthy system on a black box. Back
+> to embryo stage.
+
+Sanitized screenshot of the behavior that triggered this reset:
+
+![Sanitized base-layer review example](docs/assets/base-layer-research-note.jpg)
+
+Current consequence:
+- no approved local base model ships by default
+- benchmarking, annotation, and provider experiments continue
+- any future local base layer should be chosen deliberately and audited first
+
 ## Current status
 
 Available today:
@@ -102,6 +120,9 @@ Typical setup:
 
 Keep Local AI endpoints on this machine unless you intentionally switch to a
 hosted-provider experiment.
+
+There is no approved bundled local base model at the moment. If you continue
+local training research here, choose and audit the base model yourself first.
 
 ## Training and evaluation
 

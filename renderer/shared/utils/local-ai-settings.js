@@ -6,9 +6,85 @@ const LEGACY_LOCAL_AI_CONTRACT_VERSION = 'phi-sidecar/v1'
 const LEGACY_LOCAL_AI_BASE_URL = 'http://127.0.0.1:5000'
 const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_LOCAL_AI_SIDECAR_BASE_URL = LEGACY_LOCAL_AI_BASE_URL
-const FIXED_LOCAL_AI_RUNTIME_BACKEND = 'ollama-direct'
-const DEFAULT_LOCAL_AI_OLLAMA_MODEL = 'qwen3.5:9b'
-const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen3.5:9b'
+const DEFAULT_LOCAL_AI_OLLAMA_MODEL = ''
+const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = ''
+const RECOMMENDED_LOCAL_AI_OLLAMA_MODEL = ''
+const RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL = ''
+const RECOMMENDED_LOCAL_AI_TRAINING_MODEL = ''
+const STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL = RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+const STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL =
+  RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
+const SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL = RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+const SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL =
+  RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
+const STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL =
+  RECOMMENDED_LOCAL_AI_TRAINING_MODEL
+const FALLBACK_LOCAL_AI_TRAINING_MODEL = RECOMMENDED_LOCAL_AI_TRAINING_MODEL
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE = 'strong'
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE = 'balanced'
+const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE = 'balanced'
+const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
+const DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE = 'manual'
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS = 1
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE = 1
+const DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK = 10
+const DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS = 0
+const DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS = 1200
+const DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS = 768
+const DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS = [
+  'benchmark_review_issue_type',
+  'benchmark_review_failure_note',
+  'benchmark_review_retraining_hint',
+  'benchmark_review_include_for_training',
+]
+const DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS = [
+  'benchmark_review_issue_type',
+  'benchmark_review_failure_note',
+]
+const MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE = 500
+const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [25, 50, 100, 200, 500]
+const DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG = {
+  safe: {
+    modelPath: FALLBACK_LOCAL_AI_TRAINING_MODEL,
+    runtimeModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+    runtimeVisionModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeFallbackModel: '',
+    runtimeFallbackVisionModel: '',
+  },
+  balanced: {
+    modelPath: STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
+    runtimeModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+    runtimeVisionModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeFallbackModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+    runtimeFallbackVisionModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+  },
+  strong: {
+    modelPath: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+    runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+    runtimeVisionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeFallbackModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+    runtimeFallbackVisionModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+  },
+}
+const DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG = {
+  full_speed: {
+    stepCooldownMs: 0,
+    epochCooldownMs: 0,
+    benchmarkCooldownMs: 0,
+  },
+  balanced: {
+    stepCooldownMs: 250,
+    epochCooldownMs: 1500,
+    benchmarkCooldownMs: 400,
+  },
+  cool: {
+    stepCooldownMs: 750,
+    epochCooldownMs: 4000,
+    benchmarkCooldownMs: 1500,
+  },
+}
+const DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT =
+  'Use human-teacher guidance without collapsing into a left-only or right-only bias. Candidate order, first-vs-second position, and display slot are not evidence. Compare candidate identity and the actual visual chronology instead of where a candidate appears. Prefer left or right only when the visible sequence, readable text, reportability cues, or explicit human annotation meaningfully support that side. If the evidence is weak or conflicting, stay cautious and abstain instead of defaulting to the first shown candidate.'
 const LEGACY_LOCAL_AI_PUBLIC_MODEL_ID = 'idena-multimodal-v1'
 const LEGACY_LOCAL_AI_PUBLIC_VISION_ID = 'idena-vision-v1'
 const DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID = 'Idena-text-v1'
@@ -17,7 +93,7 @@ const DEFAULT_LOCAL_AI_PUBLIC_VISION_ID = 'Idena-multimodal-v1'
 const DEFAULT_LOCAL_AI_SETTINGS = {
   enabled: false,
   runtimeMode: 'sidecar',
-  runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+  runtimeBackend: 'ollama-direct',
   reasonerBackend: 'local-reasoner',
   visionBackend: 'local-vision',
   publicModelId: DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
@@ -30,6 +106,26 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
   adapterStrategy: 'lora-first',
   trainingPolicy: 'approved-post-consensus-only',
+  developerHumanTeacherSystemPrompt: '',
+  developerLocalTrainingProfile: DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  developerLocalTrainingThermalMode:
+    DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  developerLocalBenchmarkThermalMode:
+    DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE,
+  developerLocalBenchmarkSize: DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
+  developerAiDraftTriggerMode: DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
+  developerLocalTrainingEpochs: DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
+  developerLocalTrainingBatchSize: DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
+  developerLocalTrainingLoraRank: DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
+  developerAiDraftContextWindowTokens:
+    DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
+  developerAiDraftQuestionWindowChars:
+    DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
+  developerAiDraftAnswerWindowTokens:
+    DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  developerBenchmarkReviewRequiredFields:
+    DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS,
+  shareHumanTeacherAnnotationsWithNetwork: false,
   contractVersion: 'idena-local/v1',
   captureEnabled: false,
   trainEnabled: false,
@@ -222,7 +318,7 @@ function normalizeEndpoint(source = {}) {
   return normalizeBaseUrl(source)
 }
 
-function _normalizeLegacyRuntimeFamily(source = {}) {
+function normalizeLegacyRuntimeFamily(source = {}) {
   const explicit = trimString(source.runtimeFamily)
   if (explicit) {
     return explicit
@@ -261,6 +357,196 @@ function normalizePublicVisionId(value) {
   return nextValue
 }
 
+function normalizeDeveloperHumanTeacherSystemPrompt(value) {
+  const nextValue = String(value || '').trim()
+  return nextValue.slice(0, 8000)
+}
+
+function normalizeDeveloperLocalTrainingProfile(_value) {
+  return DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
+}
+
+function normalizeDeveloperLocalTrainingThermalMode(value) {
+  const nextValue = trimString(value).toLowerCase()
+
+  return Object.prototype.hasOwnProperty.call(
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
+    nextValue
+  )
+    ? nextValue
+    : DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+}
+
+function normalizeDeveloperLocalBenchmarkThermalMode(value) {
+  const nextValue = trimString(value).toLowerCase()
+
+  return Object.prototype.hasOwnProperty.call(
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
+    nextValue
+  )
+    ? nextValue
+    : DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+}
+
+function normalizeDeveloperAiDraftTriggerMode(value) {
+  return trimString(value).toLowerCase() === 'automatic'
+    ? 'automatic'
+    : DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
+}
+
+function normalizeDeveloperAiDraftContextWindowTokens(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS
+  }
+
+  return Math.min(32768, Math.max(2048, parsed))
+}
+
+function normalizeDeveloperAiDraftQuestionWindowChars(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS
+  }
+
+  return Math.min(4000, Math.max(240, parsed))
+}
+
+function normalizeDeveloperAiDraftAnswerWindowTokens(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS
+  }
+
+  return Math.min(2048, Math.max(128, parsed))
+}
+
+function normalizeDeveloperBenchmarkReviewRequiredFields(
+  value,
+  {fallbackToDefault = true} = {}
+) {
+  let input = []
+
+  if (Array.isArray(value)) {
+    input = value
+  } else if (typeof value === 'string') {
+    input = String(value)
+      .split(',')
+      .map((item) => item.trim())
+  }
+
+  const normalized = input
+    .map((item) => trimString(item))
+    .filter(
+      (item, index, items) =>
+        DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS.includes(item) &&
+        items.indexOf(item) === index
+    )
+
+  if (normalized.length) {
+    return normalized
+  }
+
+  return fallbackToDefault
+    ? [...DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS]
+    : []
+}
+
+function normalizeDeveloperLocalBenchmarkSize(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+  }
+
+  return Math.min(MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE, Math.max(1, parsed))
+}
+
+function normalizeDeveloperLocalTrainingEpochs(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS
+  }
+
+  return Math.min(6, Math.max(1, parsed))
+}
+
+function normalizeDeveloperLocalTrainingBatchSize(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE
+  }
+
+  return Math.min(4, Math.max(1, parsed))
+}
+
+function normalizeDeveloperLocalTrainingLoraRank(value) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK
+  }
+
+  return Math.min(16, Math.max(4, parsed))
+}
+
+function resolveDeveloperLocalTrainingProfileModelPath(_value) {
+  return RECOMMENDED_LOCAL_AI_TRAINING_MODEL
+}
+
+function resolveDeveloperLocalTrainingProfileRuntimeModel(_value) {
+  return RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+}
+
+function resolveDeveloperLocalTrainingProfileRuntimeVisionModel(_value) {
+  return RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
+}
+
+function resolveDeveloperLocalTrainingProfileRuntimeFallbackModel(_value) {
+  return ''
+}
+
+function resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel(
+  _value
+) {
+  return ''
+}
+
+function resolveDeveloperLocalTrainingThermalModeCooldowns(value) {
+  const normalizedMode = normalizeDeveloperLocalTrainingThermalMode(value)
+  const config =
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG[normalizedMode] ||
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG[
+      DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE
+    ]
+
+  return {
+    mode: normalizedMode,
+    stepCooldownMs: config.stepCooldownMs,
+    epochCooldownMs: config.epochCooldownMs,
+    benchmarkCooldownMs: config.benchmarkCooldownMs,
+  }
+}
+
+function resolveDeveloperLocalBenchmarkThermalModeCooldowns(value) {
+  const normalizedMode = normalizeDeveloperLocalBenchmarkThermalMode(value)
+  const config =
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG[normalizedMode] ||
+    DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG[
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
+    ]
+
+  return {
+    mode: normalizedMode,
+    benchmarkCooldownMs: config.benchmarkCooldownMs,
+  }
+}
+
 function resolveLocalAiWireRuntimeType(settings = {}) {
   const explicit = trimString(settings.runtimeType)
   if (explicit) {
@@ -278,15 +564,37 @@ function resolveLocalAiWireRuntimeType(settings = {}) {
   }
 }
 
-function buildLocalAiRuntimePreset() {
+function buildLocalAiRuntimePreset(runtimeBackend = 'ollama-direct') {
+  const nextRuntimeBackend = normalizeRuntimeBackend({runtimeBackend})
+
+  if (nextRuntimeBackend === 'sidecar-http') {
+    return {
+      runtimeBackend: nextRuntimeBackend,
+      baseUrl: DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
+      endpoint: DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
+      runtimeType: 'sidecar',
+      runtimeFamily: '',
+      model: '',
+      visionModel: '',
+    }
+  }
+
   return {
-    runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+    runtimeBackend: 'ollama-direct',
     baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
     endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
     runtimeType: 'ollama',
     runtimeFamily: '',
     model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
     visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  }
+}
+
+function buildRecommendedLocalAiMacPreset() {
+  return {
+    ...buildLocalAiRuntimePreset('ollama-direct'),
+    model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+    visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   }
 }
 
@@ -335,11 +643,21 @@ function buildLocalAiSettings(settings = {}) {
         ...buildLocalAiRuntimePreset('ollama-direct'),
       }
     : rawSource
+  const normalizedRuntimeBackend = normalizeRuntimeBackend(source)
+  const normalizedModel =
+    normalizedRuntimeBackend === 'ollama-direct'
+      ? trimString(source.model) || DEFAULT_LOCAL_AI_OLLAMA_MODEL
+      : ''
+  const normalizedVisionModel =
+    normalizedRuntimeBackend === 'ollama-direct'
+      ? trimString(source.visionModel) || DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL
+      : ''
 
   const normalizedSettings = {
     ...DEFAULT_LOCAL_AI_SETTINGS,
     ...source,
-    runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
+    enabled: source.enabled === true,
+    runtimeBackend: normalizedRuntimeBackend,
     reasonerBackend:
       trimString(source.reasonerBackend) ||
       DEFAULT_LOCAL_AI_SETTINGS.reasonerBackend,
@@ -348,25 +666,77 @@ function buildLocalAiSettings(settings = {}) {
       DEFAULT_LOCAL_AI_SETTINGS.visionBackend,
     publicModelId: normalizePublicModelId(source.publicModelId),
     publicVisionId: normalizePublicVisionId(source.publicVisionId),
-    baseUrl: normalizeBaseUrl({
-      ...source,
-      runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
-    }),
-    endpoint: normalizeEndpoint({
-      ...source,
-      runtimeBackend: FIXED_LOCAL_AI_RUNTIME_BACKEND,
-    }),
-    runtimeType: 'ollama',
-    runtimeFamily: '',
-    model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
-    visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+    baseUrl: normalizeBaseUrl(source),
+    endpoint: normalizeEndpoint(source),
+    runtimeType: trimString(source.runtimeType),
+    runtimeFamily: normalizeLegacyRuntimeFamily(source),
+    model: normalizedModel,
+    visionModel: normalizedVisionModel,
     adapterStrategy:
       trimString(source.adapterStrategy) ||
       DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy,
     trainingPolicy:
       trimString(source.trainingPolicy) ||
       DEFAULT_LOCAL_AI_SETTINGS.trainingPolicy,
+    developerHumanTeacherSystemPrompt:
+      normalizeDeveloperHumanTeacherSystemPrompt(
+        source.developerHumanTeacherSystemPrompt
+      ),
+    developerLocalTrainingProfile: normalizeDeveloperLocalTrainingProfile(
+      source.developerLocalTrainingProfile
+    ),
+    developerLocalTrainingThermalMode:
+      normalizeDeveloperLocalTrainingThermalMode(
+        source.developerLocalTrainingThermalMode
+      ),
+    developerLocalBenchmarkThermalMode:
+      normalizeDeveloperLocalBenchmarkThermalMode(
+        source.developerLocalBenchmarkThermalMode
+      ),
+    developerLocalBenchmarkSize: normalizeDeveloperLocalBenchmarkSize(
+      source.developerLocalBenchmarkSize
+    ),
+    developerAiDraftTriggerMode: normalizeDeveloperAiDraftTriggerMode(
+      source.developerAiDraftTriggerMode
+    ),
+    developerLocalTrainingEpochs: normalizeDeveloperLocalTrainingEpochs(
+      source.developerLocalTrainingEpochs
+    ),
+    developerLocalTrainingBatchSize: normalizeDeveloperLocalTrainingBatchSize(
+      source.developerLocalTrainingBatchSize
+    ),
+    developerLocalTrainingLoraRank: normalizeDeveloperLocalTrainingLoraRank(
+      source.developerLocalTrainingLoraRank
+    ),
+    developerAiDraftContextWindowTokens:
+      normalizeDeveloperAiDraftContextWindowTokens(
+        source.developerAiDraftContextWindowTokens
+      ),
+    developerAiDraftQuestionWindowChars:
+      normalizeDeveloperAiDraftQuestionWindowChars(
+        source.developerAiDraftQuestionWindowChars
+      ),
+    developerAiDraftAnswerWindowTokens:
+      normalizeDeveloperAiDraftAnswerWindowTokens(
+        source.developerAiDraftAnswerWindowTokens
+      ),
+    developerBenchmarkReviewRequiredFields:
+      normalizeDeveloperBenchmarkReviewRequiredFields(
+        source.developerBenchmarkReviewRequiredFields,
+        {
+          fallbackToDefault: !Object.prototype.hasOwnProperty.call(
+            source,
+            'developerBenchmarkReviewRequiredFields'
+          ),
+        }
+      ),
+    shareHumanTeacherAnnotationsWithNetwork:
+      source.shareHumanTeacherAnnotationsWithNetwork === true,
     contractVersion: normalizeContractVersion(source.contractVersion),
+    trainEnabled:
+      source.enabled === true &&
+      normalizedRuntimeBackend === 'ollama-direct' &&
+      Boolean(normalizedModel || normalizedVisionModel),
     federated: {
       ...DEFAULT_LOCAL_AI_SETTINGS.federated,
       ...((source && source.federated) || {}),
@@ -410,16 +780,62 @@ module.exports = {
   LEGACY_LOCAL_AI_VISION_MODEL,
   LEGACY_LOCAL_AI_CONTRACT_VERSION,
   DEFAULT_LOCAL_AI_SETTINGS,
-  FIXED_LOCAL_AI_RUNTIME_BACKEND,
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+  RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+  STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+  STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+  SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
+  SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+  RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
+  STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
+  FALLBACK_LOCAL_AI_TRAINING_MODEL,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE,
+  DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE,
+  DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_EPOCHS,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_BATCH_SIZE,
+  DEFAULT_DEVELOPER_LOCAL_TRAINING_LORA_RANK,
+  DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
+  DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS,
+  DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS,
+  MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE,
+  DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
+  DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
+  DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
+  DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
   getLocalAiEndpointSafety,
   resolveLocalAiWireRuntimeType,
   buildLocalAiRuntimePreset,
+  buildRecommendedLocalAiMacPreset,
+  normalizeDeveloperLocalTrainingProfile,
+  normalizeDeveloperLocalTrainingThermalMode,
+  normalizeDeveloperLocalBenchmarkThermalMode,
+  normalizeDeveloperLocalBenchmarkSize,
+  normalizeDeveloperAiDraftTriggerMode,
+  normalizeDeveloperLocalTrainingEpochs,
+  normalizeDeveloperLocalTrainingBatchSize,
+  normalizeDeveloperLocalTrainingLoraRank,
+  normalizeDeveloperAiDraftContextWindowTokens,
+  normalizeDeveloperAiDraftQuestionWindowChars,
+  normalizeDeveloperAiDraftAnswerWindowTokens,
+  normalizeDeveloperBenchmarkReviewRequiredFields,
+  resolveDeveloperLocalTrainingProfileModelPath,
+  resolveDeveloperLocalTrainingProfileRuntimeModel,
+  resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
+  resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
+  resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
+  resolveDeveloperLocalTrainingThermalModeCooldowns,
+  resolveDeveloperLocalBenchmarkThermalModeCooldowns,
   buildLocalAiSettings,
   mergeLocalAiSettings,
 }

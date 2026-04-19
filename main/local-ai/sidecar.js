@@ -9,11 +9,11 @@ const {
 } = require('./runtime-adapter')
 
 const DEFAULT_BASE_URL = 'http://localhost:5000'
-const DEFAULT_MODEL = 'qwen3.5:9b'
+const DEFAULT_MODEL = ''
 const DEFAULT_RUNTIME = LOCAL_AI_RUNTIME
 const DEFAULT_RUNTIME_TYPE = 'sidecar'
 const DEFAULT_OLLAMA_ENDPOINT = LOCAL_AI_OLLAMA_DEFAULT_BASE_URL
-const DEFAULT_VISION_MODEL = 'qwen3.5:9b'
+const DEFAULT_VISION_MODEL = ''
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_FLIP_IMAGES = 8
 const MIN_TIMEOUT_MS = 1000
@@ -24,6 +24,11 @@ const MAX_CHAT_MESSAGE_CHARS = 10 * 1000
 const MAX_TOTAL_CHAT_CHARS = 80 * 1000
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
+const MAX_TRAIN_STRING_CHARS = 8000
+const MAX_TRAIN_PATH_CHARS = 4096
+const MAX_TRAIN_OBJECT_DEPTH = 4
+const MAX_TRAIN_ARRAY_ITEMS = 24
+const MAX_TRAIN_OBJECT_KEYS = 48
 const ALLOWED_CHAT_ROLES = new Set(['system', 'user', 'assistant'])
 const CHECKER_CLASSIFICATIONS = new Set([
   'consistent',
@@ -32,6 +37,13 @@ const CHECKER_CLASSIFICATIONS = new Set([
 ])
 const CHECKER_CONFIDENCES = new Set(['low', 'medium', 'high'])
 const ALLOWED_RESPONSE_FORMATS = new Set(['json'])
+const ALLOWED_TRAINING_THERMAL_MODES = new Set([
+  'full_speed',
+  'balanced',
+  'cool',
+])
+const ALLOWED_TRAINING_PROFILES = new Set(['safe', 'balanced', 'strong'])
+const ALLOWED_EVALUATION_FLIPS = new Set([50, 100, 200])
 const OCR_FIRST_CHAT_PATTERN =
   /\b(text|read|ocr|screenshot|transcribe|quote|what does it say|what should i answer)\b/i
 
@@ -81,7 +93,7 @@ function createErrorMessage(
   return status ? `${remoteMessage} (HTTP ${status})` : remoteMessage
 }
 
-function looksLikeMissingOllamaModel(message) {
+function looksLikeMissingOllamaModel(message = '') {
   const text = String(message || '')
     .trim()
     .toLowerCase()
@@ -90,8 +102,8 @@ function looksLikeMissingOllamaModel(message) {
     text.includes('model') &&
     (text.includes('not found') ||
       text.includes('pull') ||
-      text.includes('manifest') ||
-      text.includes('no such file'))
+      text.includes('manifest unknown') ||
+      text.includes('file does not exist'))
   )
 }
 
@@ -99,16 +111,15 @@ function withOllamaInstallHint(message, model) {
   const nextMessage = String(message || '').trim()
   const nextModel = String(model || '').trim()
 
-  if (
-    !nextMessage ||
-    !nextModel ||
-    !looksLikeMissingOllamaModel(nextMessage) ||
-    nextMessage.includes(`ollama pull ${nextModel}`)
-  ) {
+  if (!nextMessage || !nextModel || !looksLikeMissingOllamaModel(nextMessage)) {
     return nextMessage
   }
 
-  return `${nextMessage}. IdenaAI_Benchmarker is locked to ${nextModel}. Install it locally with: ollama pull ${nextModel}`
+  if (nextMessage.includes(`ollama pull ${nextModel}`)) {
+    return nextMessage
+  }
+
+  return `${nextMessage}. Install it locally with: ollama pull ${nextModel}`
 }
 
 function normalizeModelList(data) {
@@ -146,15 +157,34 @@ function normalizeTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
 }
 
 function normalizeResponseFormat(value) {
-  const format = String(value || '')
-    .trim()
-    .toLowerCase()
+  if (typeof value === 'string') {
+    const format = String(value || '')
+      .trim()
+      .toLowerCase()
 
-  if (!format) {
+    if (!format) {
+      return null
+    }
+
+    return ALLOWED_RESPONSE_FORMATS.has(format) ? format : null
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }
 
-  return ALLOWED_RESPONSE_FORMATS.has(format) ? format : null
+  const normalized = sanitizeCloneableTrainValue(value)
+
+  if (
+    normalized &&
+    typeof normalized === 'object' &&
+    !Array.isArray(normalized) &&
+    Object.keys(normalized).length > 0
+  ) {
+    return normalized
+  }
+
+  return null
 }
 
 function normalizeGenerationOptions(input) {
@@ -164,27 +194,408 @@ function normalizeGenerationOptions(input) {
 
   const options = {}
   const temperature = Number.parseFloat(input.temperature)
+  const numCtx = Number.parseInt(input.num_ctx ?? input.numCtx, 10)
   const numPredict = Number.parseInt(input.num_predict ?? input.numPredict, 10)
 
   if (Number.isFinite(temperature)) {
     options.temperature = Math.min(1, Math.max(0, temperature))
   }
 
+  if (Number.isFinite(numCtx) && numCtx > 0) {
+    options.num_ctx = Math.min(32768, Math.max(2048, numCtx))
+  }
+
   if (Number.isFinite(numPredict)) {
-    options.num_predict = Math.min(256, Math.max(1, numPredict))
+    options.num_predict = Math.min(2048, Math.max(1, numPredict))
   }
 
   return Object.keys(options).length > 0 ? options : null
 }
 
-function buildVisionModelCandidates(model, includesImages) {
+function sanitizeTrainString(value, maxLength = MAX_TRAIN_STRING_CHARS) {
+  const text = String(value || '').trim()
+  return text ? text.slice(0, maxLength) : ''
+}
+
+function sanitizeTrainInteger(value, fallback = null, min = 0, max = Infinity) {
+  const parsed = Number.parseInt(value, 10)
+
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, parsed))
+}
+
+function sanitizeCloneableTrainValue(value, depth = 0) {
+  if (depth > MAX_TRAIN_OBJECT_DEPTH) {
+    return null
+  }
+
+  if (value === null || typeof value === 'undefined') {
+    return value
+  }
+
+  if (typeof value === 'string') {
+    return value.slice(0, MAX_TRAIN_STRING_CHARS)
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, MAX_TRAIN_ARRAY_ITEMS)
+      .map((entry) => sanitizeCloneableTrainValue(entry, depth + 1))
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .slice(0, MAX_TRAIN_OBJECT_KEYS)
+      .reduce((result, [key, entryValue]) => {
+        if (typeof key !== 'string') {
+          return result
+        }
+
+        const sanitized = sanitizeCloneableTrainValue(entryValue, depth + 1)
+
+        if (typeof sanitized !== 'undefined') {
+          result[key] = sanitized
+        }
+
+        return result
+      }, {})
+  }
+
+  return undefined
+}
+
+function sanitizeTrainingProfile(value) {
+  const profile = sanitizeTrainString(value, 32).toLowerCase()
+  return ALLOWED_TRAINING_PROFILES.has(profile) ? profile : 'strong'
+}
+
+function sanitizeTrainingThermalMode(value) {
+  const thermalMode = sanitizeTrainString(value, 32).toLowerCase()
+  return ALLOWED_TRAINING_THERMAL_MODES.has(thermalMode)
+    ? thermalMode
+    : 'balanced'
+}
+
+function sanitizeTrainingEvaluationFlips(value) {
+  const parsed = sanitizeTrainInteger(value, 100, 50, 200)
+  return ALLOWED_EVALUATION_FLIPS.has(parsed) ? parsed : 100
+}
+
+function sanitizeTrainingTarget(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const source = value
+  const result = {}
+  const isDeveloperHumanTeacher = source.developerHumanTeacher === true
+  const hasExplicitTrainingProfile =
+    typeof source.localTrainingProfile !== 'undefined'
+  const hasExplicitThermalMode =
+    typeof source.localTrainingThermalMode !== 'undefined'
+  const hasExplicitEpochs = typeof source.localTrainingEpochs !== 'undefined'
+  const hasExplicitTrainingBatchSize =
+    typeof source.localTrainingBatchSize !== 'undefined'
+  const hasExplicitLoraRank =
+    typeof source.localTrainingLoraRank !== 'undefined'
+  const hasExplicitEvaluationFlips =
+    typeof source.evaluationFlips !== 'undefined'
+  const sampleName = sanitizeTrainString(source.sampleName, 128)
+  const currentPeriod = sanitizeTrainString(source.currentPeriod, 64)
+  const trainingModelPath =
+    sanitizeTrainString(source.trainingModelPath || source.modelPath, 256) || ''
+  const annotatedAnnotationsPath = sanitizeTrainString(
+    source.annotatedAnnotationsPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const pendingAnnotationsPath = sanitizeTrainString(
+    source.pendingAnnotationsPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const trainedAnnotationsPath = sanitizeTrainString(
+    source.trainedAnnotationsPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const developerStatePath = sanitizeTrainString(
+    source.developerStatePath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const comparisonPath = sanitizeTrainString(
+    source.comparisonPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+  const normalizedAnnotationsPath = sanitizeTrainString(
+    source.normalizedAnnotationsPath,
+    MAX_TRAIN_PATH_CHARS
+  )
+
+  if (isDeveloperHumanTeacher) {
+    result.developerHumanTeacher = true
+  }
+
+  if (sampleName) {
+    result.sampleName = sampleName
+  }
+
+  if (currentPeriod) {
+    result.currentPeriod = currentPeriod
+  }
+
+  if (trainingModelPath) {
+    result.trainingModelPath = trainingModelPath
+    result.modelPath = trainingModelPath
+  }
+
+  if (annotatedAnnotationsPath) {
+    result.annotatedAnnotationsPath = annotatedAnnotationsPath
+  }
+
+  if (pendingAnnotationsPath) {
+    result.pendingAnnotationsPath = pendingAnnotationsPath
+  }
+
+  if (trainedAnnotationsPath) {
+    result.trainedAnnotationsPath = trainedAnnotationsPath
+  }
+
+  if (developerStatePath) {
+    result.developerStatePath = developerStatePath
+  }
+
+  if (comparisonPath) {
+    result.comparisonPath = comparisonPath
+  }
+
+  if (normalizedAnnotationsPath) {
+    result.normalizedAnnotationsPath = normalizedAnnotationsPath
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitTrainingProfile) {
+    result.localTrainingProfile = sanitizeTrainingProfile(
+      source.localTrainingProfile
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitThermalMode) {
+    result.localTrainingThermalMode = sanitizeTrainingThermalMode(
+      source.localTrainingThermalMode
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitEpochs) {
+    result.localTrainingEpochs = sanitizeTrainInteger(
+      source.localTrainingEpochs,
+      1,
+      1,
+      6
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitTrainingBatchSize) {
+    result.localTrainingBatchSize = sanitizeTrainInteger(
+      source.localTrainingBatchSize,
+      1,
+      1,
+      4
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitLoraRank) {
+    result.localTrainingLoraRank = sanitizeTrainInteger(
+      source.localTrainingLoraRank,
+      10,
+      4,
+      16
+    )
+  }
+
+  if (isDeveloperHumanTeacher || hasExplicitEvaluationFlips) {
+    result.evaluationFlips = sanitizeTrainingEvaluationFlips(
+      source.evaluationFlips
+    )
+  }
+
+  if (typeof source.compareOnly === 'boolean') {
+    result.compareOnly = source.compareOnly
+  }
+
+  if (typeof source.comparisonOnly === 'boolean') {
+    result.comparisonOnly = source.comparisonOnly
+  }
+
+  if (typeof source.trainNow === 'boolean') {
+    result.trainNow = source.trainNow
+  }
+
+  if (typeof source.advance === 'boolean') {
+    result.advance = source.advance
+  }
+
+  const epoch = sanitizeTrainInteger(source.epoch, null, 0, 1_000_000)
+  const currentEpoch = sanitizeTrainInteger(
+    source.currentEpoch,
+    null,
+    0,
+    1_000_000
+  )
+  const offset = sanitizeTrainInteger(source.offset, null, 0, 1_000_000)
+  const batchSize = sanitizeTrainInteger(source.batchSize, null, 1, 50)
+
+  if (epoch !== null) {
+    result.epoch = epoch
+  }
+
+  if (currentEpoch !== null) {
+    result.currentEpoch = currentEpoch
+  }
+
+  if (offset !== null) {
+    result.offset = offset
+  }
+
+  if (batchSize !== null) {
+    result.batchSize = batchSize
+  }
+
+  return result
+}
+
+function sanitizeTrainEndpointPayload(payload = {}) {
+  const source =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {}
+  const runtime = {}
+  const runtimeBackend = sanitizeTrainString(source.runtimeBackend, 64)
+  const runtimeType = sanitizeTrainString(source.runtimeType, 64)
+  const reasonerBackend = sanitizeTrainString(source.reasonerBackend, 64)
+  const visionBackend = sanitizeTrainString(source.visionBackend, 64)
+  const contractVersion = sanitizeTrainString(source.contractVersion, 64)
+  const adapterStrategy = sanitizeTrainString(source.adapterStrategy, 64)
+  const trainingPolicy = sanitizeTrainString(source.trainingPolicy, 64)
+  const publicModelId = sanitizeTrainString(source.publicModelId, 256)
+  const publicVisionId = sanitizeTrainString(source.publicVisionId, 256)
+  const model = sanitizeTrainString(source.model, 256)
+  const visionModel = sanitizeTrainString(source.visionModel, 256)
+  const developerPrompt = sanitizeTrainString(
+    source.developerHumanTeacherSystemPrompt,
+    8000
+  )
+  const rankingPolicy = sanitizeCloneableTrainValue(source.rankingPolicy)
+  const topLevelTraining = sanitizeTrainingTarget(source)
+  const nestedInput = sanitizeTrainingTarget(source.input)
+  const nestedPayload = sanitizeTrainingTarget(source.payload)
+
+  if (runtimeBackend) {
+    runtime.runtimeBackend = runtimeBackend
+  }
+
+  if (runtimeType) {
+    runtime.runtimeType = runtimeType
+  }
+
+  if (reasonerBackend) {
+    runtime.reasonerBackend = reasonerBackend
+  }
+
+  if (visionBackend) {
+    runtime.visionBackend = visionBackend
+  }
+
+  if (contractVersion) {
+    runtime.contractVersion = contractVersion
+  }
+
+  if (adapterStrategy) {
+    runtime.adapterStrategy = adapterStrategy
+  }
+
+  if (trainingPolicy) {
+    runtime.trainingPolicy = trainingPolicy
+  }
+
+  if (publicModelId) {
+    runtime.publicModelId = publicModelId
+  }
+
+  if (publicVisionId) {
+    runtime.publicVisionId = publicVisionId
+  }
+
+  if (model) {
+    runtime.model = model
+  }
+
+  if (visionModel) {
+    runtime.visionModel = visionModel
+  }
+
+  if (developerPrompt) {
+    runtime.developerHumanTeacherSystemPrompt = developerPrompt
+  }
+
+  if (rankingPolicy && typeof rankingPolicy === 'object') {
+    runtime.rankingPolicy = rankingPolicy
+  }
+
+  if (topLevelTraining) {
+    Object.assign(runtime, topLevelTraining)
+  }
+
+  if (nestedInput) {
+    runtime.input = nestedInput
+  }
+
+  if (nestedPayload) {
+    runtime.payload = nestedPayload
+  }
+
+  return runtime
+}
+
+function supportsOllamaThinkingToggle(model) {
+  const nextModel = String(model || '')
+    .trim()
+    .toLowerCase()
+
+  if (!nextModel) {
+    return false
+  }
+
+  return (
+    nextModel.startsWith('qwen3') ||
+    nextModel.startsWith('deepseek-r1') ||
+    nextModel.includes('/qwen3') ||
+    nextModel.includes('/deepseek-r1')
+  )
+}
+
+function buildVisionModelCandidates(
+  model,
+  includesImages,
+  fallbackModels = []
+) {
   const primary = String(model || '').trim()
+  const fallbacks = Array.isArray(fallbackModels)
+    ? fallbackModels.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
 
   if (!includesImages) {
     return primary ? [primary] : []
   }
 
-  return primary ? [primary] : []
+  return [...new Set([primary || DEFAULT_VISION_MODEL, ...fallbacks])]
 }
 
 function estimateBase64Bytes(value) {
@@ -968,11 +1379,8 @@ function createLocalAiSidecar({
     const nextRuntimeBackend = runtimeAdapter.runtimeBackend
     const nextRuntimeType = runtimeAdapter.runtimeType
     const nextBaseUrl = runtimeAdapter.baseUrl
-    const nextModel = String(model || DEFAULT_MODEL).trim()
-    const nextVisionModel = normalizeVisionModel(
-      visionModel,
-      DEFAULT_VISION_MODEL
-    )
+    const nextModel = String(model || '').trim()
+    const nextVisionModel = normalizeVisionModel(visionModel, '')
     const nextMessages = Array.isArray(messages) ? messages : []
     const includesImages = nextMessages.some(
       (item) => Array.isArray(item && item.images) && item.images.length > 0
@@ -1031,8 +1439,8 @@ function createLocalAiSidecar({
     const modelValidation = validateModelName(
       selectedModel,
       includesImages
-        ? 'Local AI vision model is required for Ollama image requests'
-        : 'Local AI model is required for Ollama requests'
+        ? 'No local vision base model is configured. IdenaAI is back in embryo stage until a better audited base layer is chosen.'
+        : 'No local base model is configured. IdenaAI is back in embryo stage until a better audited base layer is chosen.'
     )
 
     if (!modelValidation.ok) {
@@ -1074,6 +1482,9 @@ function createLocalAiSidecar({
           model: selectedModel,
           messages: nextMessages,
           stream: false,
+          ...(supportsOllamaThinkingToggle(modelValidation.model)
+            ? {think: false}
+            : {}),
           ...(normalizedResponseFormat
             ? {format: normalizedResponseFormat}
             : {}),
@@ -1123,7 +1534,7 @@ function createLocalAiSidecar({
         lastError: null,
       }
     } catch (error) {
-      const errorMessage = withOllamaInstallHint(
+      const lastError = withOllamaInstallHint(
         createErrorMessage(error, 'Local AI Ollama request failed'),
         modelValidation.model
       )
@@ -1139,7 +1550,7 @@ function createLocalAiSidecar({
         endpoint,
         text: null,
         error: 'unavailable',
-        lastError: errorMessage,
+        lastError,
       }
     }
   }
@@ -1322,6 +1733,8 @@ function createLocalAiSidecar({
     timeoutMs = 15 * 1000,
     responseFormat = null,
     generationOptions = null,
+    modelFallbacks = [],
+    visionModelFallbacks = [],
   } = {}) {
     const rawMessages = Array.isArray(messages) ? messages : []
     const nextMessages = normalizeChatMessages({
@@ -1335,7 +1748,8 @@ function createLocalAiSidecar({
     )
     const visionModelCandidates = buildVisionModelCandidates(
       visionModel,
-      includesImages
+      includesImages,
+      visionModelFallbacks
     )
     const rawImages = includesImages ? extractRawImages(rawMessages) : []
     let result = null
@@ -1373,23 +1787,56 @@ function createLocalAiSidecar({
       }
     }
 
-    for (const candidateVisionModel of visionModelCandidates.length
-      ? visionModelCandidates
-      : ['']) {
+    const textModelCandidates = includesImages
+      ? ['']
+      : [
+          ...new Set(
+            [model]
+              .concat(Array.isArray(modelFallbacks) ? modelFallbacks : [])
+              .map((item) => String(item || '').trim())
+              .filter(Boolean)
+          ),
+        ]
+    const modelAttempts = []
+    const activeRequestedModel = includesImages
+      ? String(visionModel || '').trim() || DEFAULT_VISION_MODEL
+      : String(model || '').trim()
+    let selectedCandidateModel = ''
+    let activeModelCandidates = ['']
+
+    if (includesImages) {
+      activeModelCandidates = visionModelCandidates.length
+        ? visionModelCandidates
+        : ['']
+    } else if (textModelCandidates.length) {
+      activeModelCandidates = textModelCandidates
+    }
+
+    for (const candidateVisionModel of activeModelCandidates) {
+      const candidateModel = includesImages
+        ? candidateVisionModel
+        : String(candidateVisionModel || '').trim()
       // eslint-disable-next-line no-await-in-loop
       result = await requestOllamaChat({
         baseUrl,
         runtimeBackend,
         runtimeType,
-        model,
-        visionModel: candidateVisionModel,
+        model: includesImages ? model : candidateModel,
+        visionModel: includesImages ? candidateVisionModel : '',
         messages: nextMessages,
         timeoutMs,
         responseFormat,
         generationOptions,
       })
+      modelAttempts.push({
+        model: candidateModel,
+        ok: Boolean(result && result.ok),
+        lastError: String(result && result.lastError ? result.lastError : ''),
+      })
 
       if (result.ok && String(result.text || '').trim()) {
+        selectedCandidateModel =
+          String(result.model || candidateModel || '').trim() || candidateModel
         break
       }
     }
@@ -1409,8 +1856,31 @@ function createLocalAiSidecar({
       }
     }
 
+    const activeModel = String(
+      result && result.model ? result.model : selectedCandidateModel
+    ).trim()
+    const fallbackUsed = Boolean(
+      result &&
+        result.ok &&
+        activeRequestedModel &&
+        activeModel &&
+        activeModel !== activeRequestedModel
+    )
+    const fallbackAttempt = fallbackUsed
+      ? modelAttempts.find((attempt) => attempt.model === activeRequestedModel)
+      : null
+    const fallbackReason = fallbackUsed
+      ? String(fallbackAttempt && fallbackAttempt.lastError).trim() ||
+        `Requested runtime model ${activeRequestedModel} was unavailable or did not return a usable response.`
+      : ''
+
     return {
       ...result,
+      requestedModel: activeRequestedModel || null,
+      activeModel: activeModel || null,
+      fallbackUsed,
+      fallbackReason: fallbackReason || null,
+      modelAttempts,
       content: result.ok ? result.text : null,
     }
   }
@@ -1568,16 +2038,42 @@ function createLocalAiSidecar({
           timeout: normalizedTimeoutMs,
         }
       )
+      const responseData =
+        response && response.data && typeof response.data === 'object'
+          ? response.data
+          : {}
+      const normalizedStatus =
+        String(responseData.status || 'ok').trim() || 'ok'
+      const responseOk =
+        responseData.ok !== false &&
+        !['error', 'failed', 'not_implemented'].includes(normalizedStatus)
+
+      if (!responseOk) {
+        return {
+          ok: false,
+          status: normalizedStatus,
+          baseUrl: normalizedBaseUrl,
+          endpoint,
+          data: responseData,
+          lastError:
+            String(
+              responseData.lastError ||
+                responseData.message ||
+                responseData.detail ||
+                ''
+            ).trim() ||
+            (normalizedStatus === 'not_implemented'
+              ? `${action} is not implemented by this Local AI sidecar`
+              : `${action} failed`),
+        }
+      }
 
       return {
         ok: true,
         status: 'ok',
         baseUrl: normalizedBaseUrl,
         endpoint,
-        data:
-          response && response.data && typeof response.data === 'object'
-            ? response.data
-            : {},
+        data: responseData,
         lastError: null,
       }
     } catch (error) {
@@ -1627,7 +2123,8 @@ function createLocalAiSidecar({
       callLocalEndpoint({
         baseUrl: payload.baseUrl,
         endpointPath: '/train',
-        payload,
+        payload: sanitizeTrainEndpointPayload(payload),
+        timeoutMs: payload.timeoutMs,
         action: 'Local AI training request',
       }),
   }
