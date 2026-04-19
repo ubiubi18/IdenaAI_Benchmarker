@@ -308,6 +308,11 @@ def choose_option_a_mapping(task_id: str) -> str:
     return "left" if score % 2 == 0 else "right"
 
 
+def normalize_option_a_mapping(value: Any, fallback: str = "left") -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {"left", "right"} else fallback
+
+
 def choose_first_presented_candidate(task_id: str) -> str:
     score = sum(ord(character) for character in f"{task_id}:presentation")
     return "a" if score % 2 == 0 else "b"
@@ -1006,9 +1011,11 @@ def should_apply_human_followup(mode: str) -> bool:
 
 HUMAN_TEACHER_SYSTEM_PROMPT = (
     "Use human-teacher guidance without collapsing into a left-only or right-only bias. "
+    "Candidate order, first-vs-second position, and display slot are not evidence. "
+    "Compare candidate identity and the actual visual chronology instead of where a candidate appears. "
     "Prefer one side only when concrete visual chronology, readable text, reportability cues, "
     "or explicit human annotation supports it. If the evidence is weak or conflicting, stay cautious "
-    "and do not force the same side by habit."
+    "and abstain instead of defaulting to the first shown candidate."
 )
 
 
@@ -1637,6 +1644,99 @@ def build_swapped_training_record(record: dict, prompt_template: str) -> dict:
     return swapped
 
 
+def reassign_training_record_option_mapping(
+    record: dict,
+    prompt_template: str,
+    target_option_a_maps_to: str,
+) -> dict:
+    target_mapping = normalize_option_a_mapping(
+        target_option_a_maps_to,
+        normalize_option_a_mapping(record.get("option_a_maps_to")),
+    )
+    current_mapping = normalize_option_a_mapping(record.get("option_a_maps_to"))
+    if current_mapping == target_mapping:
+        return {
+            **record,
+            "presentation_balance_adjusted": bool(
+                record.get("presentation_balance_adjusted")
+            ),
+        }
+
+    left_order = list(record.get("left_order") or [])
+    right_order = list(record.get("right_order") or [])
+    left_frame_images = list(record.get("left_frame_images") or [])
+    right_frame_images = list(record.get("right_frame_images") or [])
+    option_a_maps_to = target_mapping
+    option_b_maps_to = "right" if option_a_maps_to == "left" else "left"
+    option_a_order = left_order if option_a_maps_to == "left" else right_order
+    option_b_order = right_order if option_a_maps_to == "left" else left_order
+    option_a_frame_images = (
+        left_frame_images if option_a_maps_to == "left" else right_frame_images
+    )
+    option_b_frame_images = (
+        right_frame_images if option_a_maps_to == "left" else left_frame_images
+    )
+    first_candidate_key = (
+        "a"
+        if str(record.get("first_candidate_key") or "").strip().lower() == "a"
+        else "b"
+    )
+    expected_answer = str(record.get("expected_answer") or "").strip().lower()
+    training_target = (
+        "a"
+        if expected_answer == option_a_maps_to
+        else "b"
+        if expected_answer == option_b_maps_to
+        else "skip"
+    )
+    prompt_family = str(record.get("prompt_family") or "").strip().lower()
+    assistant_target = (
+        build_structured_compare_target(
+            task_id=str(record.get("flip_hash") or record.get("sample_id") or ""),
+            training_target=training_target,
+            expected_strength=record.get("expected_strength") or "",
+        )
+        if prompt_family == "structured_compare_native_frames_v1"
+        else training_target
+    )
+    training_image_mode = normalize_image_mode(
+        record.get("training_image_mode", "composite")
+    )
+    images = (
+        build_training_images(
+            image_mode=training_image_mode,
+            composite_path=Path(record["images"][0]),
+            option_a_frame_images=option_a_frame_images,
+            option_b_frame_images=option_b_frame_images,
+            first_candidate_key=first_candidate_key,
+        )
+        if training_image_mode == "native_frames"
+        else list(record.get("images") or [])
+    )
+
+    return {
+        **record,
+        "images": images,
+        "messages": build_training_messages(
+            prompt_template,
+            option_a_order,
+            option_b_order,
+            first_candidate_key,
+            assistant_target,
+            len(images),
+        ),
+        "training_target": training_target,
+        "assistant_target": assistant_target,
+        "option_a_maps_to": option_a_maps_to,
+        "option_b_maps_to": option_b_maps_to,
+        "option_a_order": option_a_order,
+        "option_b_order": option_b_order,
+        "option_a_frame_images": option_a_frame_images,
+        "option_b_frame_images": option_b_frame_images,
+        "presentation_balance_adjusted": True,
+    }
+
+
 def process_parquet_files(
     parquet_files: Iterable[Path],
     max_flips: int,
@@ -1793,6 +1893,94 @@ def balance_records_by_expected_answer(
     }
 
 
+def summarize_option_a_balance(records: List[dict]) -> Dict[str, Any]:
+    counts: Dict[str, int] = {"left": 0, "right": 0}
+    option_a_correct = 0
+    comparable = 0
+
+    for record in records:
+        option_a_maps_to = normalize_option_a_mapping(record.get("option_a_maps_to"), "")
+        expected_answer = str(record.get("expected_answer") or "").strip().lower()
+        if option_a_maps_to in counts:
+            counts[option_a_maps_to] += 1
+        if option_a_maps_to in {"left", "right"} and expected_answer in {"left", "right"}:
+            comparable += 1
+            if option_a_maps_to == expected_answer:
+                option_a_correct += 1
+
+    left_count = counts["left"]
+    right_count = counts["right"]
+    return {
+        "optionAMapsToCounts": counts,
+        "optionAMapsToImbalance": abs(left_count - right_count),
+        "optionAWouldBeCorrect": option_a_correct if comparable else None,
+        "optionAWouldBeWrong": (comparable - option_a_correct) if comparable else None,
+    }
+
+
+def rebalance_records_by_option_a_mapping(
+    records: List[dict],
+    prompt_template: str,
+) -> Tuple[List[dict], Dict[str, Any]]:
+    canonical_records = [
+        record
+        for record in records
+        if str(record.get("prompt_variant") or "canonical").strip().lower()
+        != "swapped-orders"
+    ]
+    if not canonical_records:
+        return records, {
+            "enabled": False,
+            "applied": False,
+            "reason": "no_canonical_records",
+            **summarize_option_a_balance(records),
+        }
+
+    sorted_records = sorted(
+        canonical_records,
+        key=lambda item: (
+            str(item.get("expected_answer") or ""),
+            str(item.get("flip_hash") or ""),
+            str(item.get("sample_id") or ""),
+        ),
+    )
+    target_left_count = math.ceil(len(sorted_records) / 2)
+    remapped_by_key: Dict[str, dict] = {}
+    assignments: Dict[str, int] = {"left": 0, "right": 0}
+
+    for index, record in enumerate(sorted_records):
+        target_mapping = "left" if index < target_left_count else "right"
+        remapped = reassign_training_record_option_mapping(
+            record,
+            prompt_template,
+            target_mapping,
+        )
+        key = str(remapped.get("sample_id") or remapped.get("flip_hash") or index)
+        remapped_by_key[key] = remapped
+        assignments[target_mapping] += 1
+
+    balanced_records: List[dict] = []
+    adjusted_count = 0
+    for index, record in enumerate(records):
+        key = str(record.get("sample_id") or record.get("flip_hash") or index)
+        replacement = remapped_by_key.get(key)
+        if replacement is not None:
+            if replacement.get("option_a_maps_to") != record.get("option_a_maps_to"):
+                adjusted_count += 1
+            balanced_records.append(replacement)
+        else:
+            balanced_records.append(record)
+
+    return balanced_records, {
+        "enabled": True,
+        "applied": True,
+        "method": "rebalance_option_a_mapping",
+        "adjustedCount": adjusted_count,
+        "selectedByMapping": assignments,
+        **summarize_option_a_balance(balanced_records),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Prepare FLIP-Challenge as a local MLX-VLM LoRA dataset"
@@ -1859,6 +2047,14 @@ def main() -> int:
         help=(
             "subsample left/right examples to a balanced count after preparation; "
             "useful for fixed validation slices"
+        ),
+    )
+    parser.add_argument(
+        "--balance-option-a-mapping",
+        action="store_true",
+        help=(
+            "rebalance option_a_maps_to across the prepared slice so candidate A "
+            "does not systematically map to one canonical side"
         ),
     )
     parser.add_argument(
@@ -1965,6 +2161,28 @@ def main() -> int:
     balancing_summary = None
     if args.balance_canonical_answers:
         records, balancing_summary = balance_records_by_expected_answer(records)
+    fairness_summary = {
+        "requestedCount": args.max_flips,
+        "actualCount": len(records),
+        "balanceCanonicalAnswers": balancing_summary
+        or {
+            "enabled": False,
+        },
+        "optionAMapping": {
+            "enabled": False,
+            "applied": False,
+            **summarize_option_a_balance(records),
+        },
+        "swapConsistencyDefault": False,
+        "presentationEnsembleDefault": False,
+    }
+    if args.balance_option_a_mapping:
+        records, option_a_balance_summary = rebalance_records_by_option_a_mapping(
+            records,
+            prompt_template,
+        )
+        fairness_summary["actualCount"] = len(records)
+        fairness_summary["optionAMapping"] = option_a_balance_summary
 
     dataset = Dataset.from_list(records)
     dataset.save_to_disk(str(hf_dataset_dir))
@@ -2039,6 +2257,7 @@ def main() -> int:
         or {
             "enabled": False,
         },
+        "fairBenchmark": fairness_summary,
         "imageMode": selected_image_mode,
         "countsByAnswer": counts_by_answer,
         "countsByTrainingTarget": counts_by_training_target,

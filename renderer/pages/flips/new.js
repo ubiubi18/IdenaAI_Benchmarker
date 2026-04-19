@@ -1306,7 +1306,7 @@ const AiBenchmarkQuickStartModal = React.memo(
               </Text>
               <Text fontSize="sm" color="muted" mt={1}>
                 {t(
-                  'To run the IdenaAI benchmark helper, choose your preferred AI provider and complete its setup. Cloud providers need a session API key; Local AI needs the local runtime to be enabled and reachable.'
+                  'To run the IdenaAI benchmark helper, choose your preferred AI provider and complete its setup. Cloud providers need a session API key; Local AI needs the local runtime to be enabled and reachable. These off-chain benchmark runs audit provider solving on queued flips and do not train the local AI model.'
                 )}
               </Text>
             </Box>
@@ -5560,7 +5560,7 @@ export default function NewFlipPage() {
                                     </Text>
                                     <Text fontSize="xs" color="muted">
                                       {t(
-                                        'Add the current draft flip to the queue, then run a short or long AI session to benchmark solving performance.'
+                                        'Add the current draft flip to the queue, then run a short or long AI session to benchmark provider solving on queued flips. This does not train the local AI model.'
                                       )}
                                     </Text>
                                     <Stack isInline justify="flex-end">

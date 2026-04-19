@@ -1870,6 +1870,16 @@ describe('local-ai manager', () => {
     })
 
     expect(task.task.annotation).toMatchObject({
+      benchmark_review: {
+        correction: {
+          issue_type: 'missed_text',
+          failure_note:
+            'The model ignored the visible order word in the panel.',
+          retraining_hint:
+            'Prefer explicit text order cues when they contradict object repetition.',
+          include_for_training: true,
+        },
+      },
       benchmark_review_issue_type: 'missed_text',
       benchmark_review_failure_note:
         'The model ignored the visible order word in the panel.',
@@ -3238,6 +3248,23 @@ describe('local-ai manager', () => {
       correct: 64,
       totalFlips: 100,
       deltaAccuracy: 0.04,
+      fairBenchmark: {
+        requestedCount: 100,
+        actualCount: 100,
+        swapConsistencyDefault: true,
+        presentationEnsembleDefault: true,
+        optionAMapping: {
+          enabled: true,
+          applied: true,
+          optionAMapsToCounts: {
+            left: 50,
+            right: 50,
+          },
+          optionAMapsToImbalance: 0,
+          optionAWouldBeCorrect: 49,
+          optionAWouldBeWrong: 51,
+        },
+      },
       baseline: {
         resultPath: currentBaselinePath,
       },
@@ -3410,11 +3437,28 @@ describe('local-ai manager', () => {
           accuracy: 0.64,
           correct: 64,
           totalFlips: 100,
+          fairBenchmark: expect.objectContaining({
+            requestedCount: 100,
+            actualCount: 100,
+            swapConsistencyDefault: true,
+            presentationEnsembleDefault: true,
+            optionAMapping: expect.objectContaining({
+              enabled: true,
+              applied: true,
+              optionAMapsToCounts: expect.objectContaining({
+                left: 50,
+                right: 50,
+              }),
+            }),
+          }),
         }),
         previous: expect.objectContaining({
           accuracy: 0.6,
           correct: 60,
           totalFlips: 100,
+          fairBenchmark: expect.objectContaining({
+            legacyFairnessUnknown: true,
+          }),
         }),
         examples: expect.arrayContaining([
           expect.objectContaining({
@@ -3602,10 +3646,16 @@ describe('local-ai manager', () => {
         benchmarkFlips: 100,
         accuracy: 0.313953,
         totalFlips: 86,
+        fairBenchmark: expect.objectContaining({
+          legacyFairnessUnknown: true,
+        }),
         history: expect.arrayContaining([
           expect.objectContaining({
             benchmarkFlips: 100,
             totalFlips: 86,
+            fairBenchmark: expect.objectContaining({
+              legacyFairnessUnknown: true,
+            }),
           }),
         ]),
       })
@@ -3616,6 +3666,9 @@ describe('local-ai manager', () => {
         current: expect.objectContaining({
           accuracy: 0.313953,
           totalFlips: 86,
+          fairBenchmark: expect.objectContaining({
+            legacyFairnessUnknown: true,
+          }),
         }),
         examples: expect.arrayContaining([
           expect.objectContaining({

@@ -48,11 +48,11 @@ function buildAllowedAnswers(forceDecision) {
 function buildDecisionRules({forceDecision, secondPass, repromptRule}) {
   const allowedAnswers = buildAllowedAnswers(forceDecision)
   const uncertaintyRule = forceDecision
-    ? '- You must choose left or right. Do not return skip.'
-    : '- If uncertain, return "skip"'
+    ? '- You must choose left or right. If the evidence stays close, pick the better supported side, but never because it appeared first.'
+    : '- If the evidence is weak or conflicting, return "skip" instead of defaulting to the first shown side.'
   const passRule = secondPass
-    ? '- This is a second-pass uncertainty review. Re-check both sides carefully before deciding.'
-    : '- This is the first-pass decision.'
+    ? '- This is a second-pass uncertainty review. Re-check both sides from scratch and do not anchor on the first listed candidate or your earlier lean.'
+    : '- This is the first-pass decision. Compare both candidates from scratch before answering.'
 
   return {
     allowedAnswers,
@@ -60,6 +60,15 @@ function buildDecisionRules({forceDecision, secondPass, repromptRule}) {
     passRule,
     repromptRule: String(repromptRule || '').trim(),
   }
+}
+
+function buildAntiPositionRules() {
+  return [
+    '- LEFT/RIGHT names, first-vs-second presentation, and candidate slot are arbitrary.',
+    '- Candidate order is never evidence.',
+    '- Compare story identity, visible chronology, and cause -> effect links, not slot position.',
+    '- Never choose a side just because it was shown first.',
+  ].join('\n')
 }
 
 function buildReportabilityRules() {
@@ -78,6 +87,7 @@ function buildCompositePrompt({
   repromptRule,
 }) {
   const reportabilityRules = buildReportabilityRules()
+  const antiPositionRules = buildAntiPositionRules()
   return `
 You are solving an Idena short-session flip benchmark.
 You are given one 2x2 composite image with four panels:
@@ -103,7 +113,7 @@ Allowed JSON schema:
 Rules:
 - Use only ${allowedAnswers} for "answer"
 - "confidence" must be between 0 and 1
-- Candidate side labels are arbitrary. Do not use position or label frequency as a hint.
+${antiPositionRules}
 - Keep reasoning concise and factual, and mention one concrete visual cue when possible.
 ${reportabilityRules}
 ${uncertaintyRule}
@@ -122,6 +132,7 @@ function buildFramesSinglePassPrompt({
   repromptRule,
 }) {
   const reportabilityRules = buildReportabilityRules()
+  const antiPositionRules = buildAntiPositionRules()
   return `
 You are solving an Idena short-session flip benchmark.
 You are given 8 ordered frame images:
@@ -142,8 +153,8 @@ Allowed JSON schema:
 Rules:
 - Use only ${allowedAnswers} for "answer"
 - "confidence" must be between 0 and 1
-- Do not use LEFT/RIGHT label identity or candidate position as a hint.
 - Keep reasoning concise and factual, and mention one concrete visual cue when possible.
+${antiPositionRules}
 ${reportabilityRules}
 ${uncertaintyRule}
 ${passRule}
@@ -154,6 +165,7 @@ Flip hash: ${hash}
 }
 
 function buildFramesReasoningPrompt({hash}) {
+  const antiPositionRules = buildAntiPositionRules()
   return `
 You are solving an Idena flip benchmark in analysis mode.
 You are given 8 ordered frame images:
@@ -195,10 +207,12 @@ Rules:
 - Use "" for text and translation when no readable text exists
 - Keep story summaries concise
 - coherence scores must be integers between 0 and 100
+- Evaluate LEFT and RIGHT independently before comparing them
+- Do not let the first listed side inherit a higher coherence score by default
 - Set reportRisk=true if reading text is required to solve the flip
 - Set reportRisk=true if visible order labels, numbers, letters, arrows, captions, or sequence markers appear on the images
 - Set reportRisk=true if the flip contains inappropriate, NSFW, or graphic violent content
-- Do not use LEFT/RIGHT label identity as a hint when comparing stories
+${antiPositionRules}
 
 Flip hash: ${hash}
 `.trim()
@@ -213,6 +227,7 @@ function buildFramesDecisionPrompt({
   repromptRule,
 }) {
   const reportabilityRules = buildReportabilityRules()
+  const antiPositionRules = buildAntiPositionRules()
   return `
 You are solving an Idena short-session flip benchmark.
 You are given pre-analysis JSON for LEFT and RIGHT story frames.
@@ -231,6 +246,7 @@ Rules:
 - Use only ${allowedAnswers} for "answer"
 - "confidence" must be between 0 and 1
 - Keep reasoning concise and factual, and cite one key caption or reportability signal
+${antiPositionRules}
 ${reportabilityRules}
 ${uncertaintyRule}
 ${passRule}

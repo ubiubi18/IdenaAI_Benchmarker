@@ -3,7 +3,7 @@ const fs = require('fs')
 const path = require('path')
 
 const DEFAULT_EVALUATION_FLIPS = 100
-const ALLOWED_EVALUATION_FLIPS = [50, 100, 200]
+const MAX_EVALUATION_FLIPS = 500
 const DEFAULT_TRAINING_EPOCHS = 1
 const DEFAULT_TRAINING_BATCH_SIZE = 1
 const DEFAULT_TRAINING_LEARNING_RATE = 1e-4
@@ -148,9 +148,11 @@ function roundTelemetryValue(value, precision = 1) {
 
 function normalizeEvaluationFlips(value) {
   const parsed = normalizeInteger(value)
-  return ALLOWED_EVALUATION_FLIPS.includes(parsed)
-    ? parsed
-    : DEFAULT_EVALUATION_FLIPS
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_EVALUATION_FLIPS
+  }
+
+  return Math.min(MAX_EVALUATION_FLIPS, Math.max(1, parsed))
 }
 
 function normalizeDeveloperLocalTrainingThermalMode(value) {
@@ -906,6 +908,7 @@ function buildComparisonSummary({
   modelPath,
   adapterPath,
   holdoutPath,
+  holdoutManifest,
   baselineResult,
   trainedResult,
   comparisonPath,
@@ -934,6 +937,31 @@ function buildComparisonSummary({
     normalizeIsoDate(
       readMetric(trainedResult, [['evaluatedAt'], ['generatedAt']])
     ) || new Date().toISOString()
+  const fairBenchmark =
+    holdoutManifest &&
+    typeof holdoutManifest.fairBenchmark === 'object' &&
+    !Array.isArray(holdoutManifest.fairBenchmark)
+      ? {
+          ...holdoutManifest.fairBenchmark,
+          requestedCount:
+            normalizeInteger(holdoutManifest.fairBenchmark.requestedCount) ||
+            normalizeInteger(holdoutManifest.max) ||
+            baselineTotal ||
+            trainedTotal ||
+            null,
+          actualCount:
+            normalizeInteger(holdoutManifest.fairBenchmark.actualCount) ||
+            baselineTotal ||
+            trainedTotal ||
+            null,
+          swapConsistencyDefault: true,
+          presentationEnsembleDefault: true,
+        }
+      : {
+          legacyFairnessUnknown: true,
+          swapConsistencyDefault: true,
+          presentationEnsembleDefault: true,
+        }
 
   return {
     ok: true,
@@ -944,6 +972,7 @@ function buildComparisonSummary({
     holdoutPath,
     comparisonPath,
     evaluatedAt,
+    fairBenchmark,
     baseline: {
       accuracy: baselineAccuracy,
       correct: baselineCorrect,
@@ -1073,6 +1102,9 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
     const datasetPath = path.join(holdoutDir, 'hf-dataset')
     const manifestPath = path.join(holdoutDir, 'manifest.json')
     const existingManifest = await readJsonIfExists(manifestPath, null)
+    const existingRequestedCount =
+      normalizeInteger(existingManifest?.fairBenchmark?.requestedCount) ??
+      normalizeInteger(existingManifest?.max)
 
     emitProgress(onProgress, {
       kind,
@@ -1089,7 +1121,10 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
     if (
       (await exists(datasetPath)) &&
       existingManifest &&
-      normalizeInteger(existingManifest.count) === evaluationFlips
+      (existingRequestedCount === evaluationFlips ||
+        normalizeInteger(existingManifest.count) === evaluationFlips) &&
+      existingManifest?.fairBenchmark?.optionAMapping?.enabled === true &&
+      existingManifest?.fairBenchmark?.optionAMapping?.applied === true
     ) {
       emitProgress(onProgress, {
         kind,
@@ -1132,6 +1167,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         '--image-mode',
         'native_frames',
         '--balance-canonical-answers',
+        '--balance-option-a-mapping',
       ],
     })
 
@@ -1496,7 +1532,9 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         '--output',
         outputPath,
         '--mode',
-        'score',
+        'candidate_compare',
+        '--swap-consistency',
+        '--presentation-ensemble',
         '--example-cooldown-ms',
         String(benchmarkCooldownMs),
         '--run-control-path',
@@ -1590,6 +1628,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
       modelPath,
       adapterPath,
       holdoutPath: holdout.datasetPath,
+      holdoutManifest: holdout.manifest,
       baselineResult: baselineEval.result,
       trainedResult: trainedEval.result,
       comparisonPath,

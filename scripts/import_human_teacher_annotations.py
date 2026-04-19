@@ -278,8 +278,24 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
     final_answer = validate_final_answer(annotation_row.get("final_answer"))
     why_answer = normalize_text(annotation_row.get("why_answer"))
     confidence = normalize_confidence(annotation_row.get("confidence"))
+    benchmark_review_source = (
+        annotation_row.get("benchmark_review")
+        if isinstance(annotation_row.get("benchmark_review"), dict)
+        else annotation_row.get("benchmarkReview")
+        if isinstance(annotation_row.get("benchmarkReview"), dict)
+        else {}
+    )
+    benchmark_review_correction = (
+        benchmark_review_source.get("correction")
+        if isinstance(benchmark_review_source.get("correction"), dict)
+        else {}
+    )
     benchmark_review_issue_type_value = (
-        annotation_row["benchmark_review_issue_type"]
+        benchmark_review_correction["issue_type"]
+        if "issue_type" in benchmark_review_correction
+        else benchmark_review_correction.get("issueType")
+        if "issueType" in benchmark_review_correction
+        else annotation_row["benchmark_review_issue_type"]
         if "benchmark_review_issue_type" in annotation_row
         else annotation_row.get("benchmarkReviewIssueType")
     )
@@ -287,7 +303,11 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
         benchmark_review_issue_type_value
     )
     benchmark_review_failure_note_value = (
-        annotation_row["benchmark_review_failure_note"]
+        benchmark_review_correction["failure_note"]
+        if "failure_note" in benchmark_review_correction
+        else benchmark_review_correction.get("failureNote")
+        if "failureNote" in benchmark_review_correction
+        else annotation_row["benchmark_review_failure_note"]
         if "benchmark_review_failure_note" in annotation_row
         else annotation_row.get("benchmarkReviewFailureNote")
     )
@@ -296,7 +316,11 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
         max_length=900,
     )
     benchmark_review_retraining_hint_value = (
-        annotation_row["benchmark_review_retraining_hint"]
+        benchmark_review_correction["retraining_hint"]
+        if "retraining_hint" in benchmark_review_correction
+        else benchmark_review_correction.get("retrainingHint")
+        if "retrainingHint" in benchmark_review_correction
+        else annotation_row["benchmark_review_retraining_hint"]
         if "benchmark_review_retraining_hint" in annotation_row
         else annotation_row.get("benchmarkReviewRetrainingHint")
     )
@@ -305,12 +329,21 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
         max_length=900,
     )
     benchmark_review_include_for_training_value = (
-        annotation_row["benchmark_review_include_for_training"]
+        benchmark_review_correction["include_for_training"]
+        if "include_for_training" in benchmark_review_correction
+        else benchmark_review_correction.get("includeForTraining")
+        if "includeForTraining" in benchmark_review_correction
+        else annotation_row["benchmark_review_include_for_training"]
         if "benchmark_review_include_for_training" in annotation_row
         else annotation_row.get("benchmarkReviewIncludeForTraining")
     )
     benchmark_review_include_for_training = normalize_bool(
         benchmark_review_include_for_training_value
+    )
+    benchmark_review_context = (
+        benchmark_review_source.get("context")
+        if isinstance(benchmark_review_source.get("context"), dict)
+        else {}
     )
     assert_complete_annotation(
         text_required=text_required,
@@ -343,6 +376,56 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
         "final_answer": final_answer,
         "why_answer": why_answer,
         "confidence": confidence,
+        "benchmark_review": {
+            "context": {
+                "expected_answer": normalize_text(
+                    benchmark_review_context.get("expected_answer")
+                    or benchmark_review_context.get("expectedAnswer"),
+                    max_length=16,
+                ).lower(),
+                "ai_prediction": normalize_text(
+                    benchmark_review_context.get("ai_prediction")
+                    or benchmark_review_context.get("aiPrediction"),
+                    max_length=16,
+                ).lower(),
+                "baseline_prediction": normalize_text(
+                    benchmark_review_context.get("baseline_prediction")
+                    or benchmark_review_context.get("baselinePrediction"),
+                    max_length=16,
+                ).lower(),
+                "previous_prediction": normalize_text(
+                    benchmark_review_context.get("previous_prediction")
+                    or benchmark_review_context.get("previousPrediction"),
+                    max_length=16,
+                ).lower(),
+                "benchmark_flips": benchmark_review_context.get("benchmark_flips")
+                if benchmark_review_context.get("benchmark_flips") is not None
+                else benchmark_review_context.get("benchmarkFlips"),
+                "evaluated_at": normalize_text(
+                    benchmark_review_context.get("evaluated_at")
+                    or benchmark_review_context.get("evaluatedAt"),
+                    max_length=64,
+                ),
+                "change_type": normalize_text(
+                    benchmark_review_context.get("change_type")
+                    or benchmark_review_context.get("changeType"),
+                    max_length=64,
+                )
+                .lower()
+                .replace(" ", "_"),
+                "ai_correct": normalize_bool(
+                    benchmark_review_context.get("ai_correct")
+                    if "ai_correct" in benchmark_review_context
+                    else benchmark_review_context.get("aiCorrect")
+                ),
+            },
+            "correction": {
+                "issue_type": benchmark_review_issue_type,
+                "failure_note": benchmark_review_failure_note,
+                "retraining_hint": benchmark_review_retraining_hint,
+                "include_for_training": benchmark_review_include_for_training,
+            },
+        },
         "benchmark_review_issue_type": benchmark_review_issue_type,
         "benchmark_review_failure_note": benchmark_review_failure_note,
         "benchmark_review_retraining_hint": benchmark_review_retraining_hint,

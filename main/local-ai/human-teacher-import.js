@@ -396,37 +396,101 @@ function normalizeAnnotation(taskRow, annotationRow) {
   const reportReason = trimText(annotationRow.report_reason)
   const whyAnswer = trimText(annotationRow.why_answer)
   const confidence = normalizeConfidence(annotationRow.confidence)
-  const finalAnswer = validateFinalAnswer(annotationRow.final_answer)
-  const benchmarkReviewIssueType = normalizeBenchmarkReviewIssueType(
-    readAnnotationField(
+  let benchmarkReviewSource = {}
+  if (
+    annotationRow.benchmark_review &&
+    typeof annotationRow.benchmark_review === 'object' &&
+    !Array.isArray(annotationRow.benchmark_review)
+  ) {
+    benchmarkReviewSource = annotationRow.benchmark_review
+  } else if (
+    annotationRow.benchmarkReview &&
+    typeof annotationRow.benchmarkReview === 'object' &&
+    !Array.isArray(annotationRow.benchmarkReview)
+  ) {
+    benchmarkReviewSource = annotationRow.benchmarkReview
+  }
+  const benchmarkReviewCorrection =
+    benchmarkReviewSource.correction &&
+    typeof benchmarkReviewSource.correction === 'object' &&
+    !Array.isArray(benchmarkReviewSource.correction)
+      ? benchmarkReviewSource.correction
+      : {}
+  let benchmarkReviewIssueTypeSource
+  if (typeof benchmarkReviewCorrection.issue_type !== 'undefined') {
+    benchmarkReviewIssueTypeSource = benchmarkReviewCorrection.issue_type
+  } else if (typeof benchmarkReviewCorrection.issueType !== 'undefined') {
+    benchmarkReviewIssueTypeSource = benchmarkReviewCorrection.issueType
+  } else {
+    benchmarkReviewIssueTypeSource = readAnnotationField(
       annotationRow,
       'benchmark_review_issue_type',
       'benchmarkReviewIssueType'
     )
-  )
-  const benchmarkReviewFailureNote = trimText(
-    readAnnotationField(
+  }
+  let benchmarkReviewFailureNoteSource
+  if (typeof benchmarkReviewCorrection.failure_note !== 'undefined') {
+    benchmarkReviewFailureNoteSource = benchmarkReviewCorrection.failure_note
+  } else if (typeof benchmarkReviewCorrection.failureNote !== 'undefined') {
+    benchmarkReviewFailureNoteSource = benchmarkReviewCorrection.failureNote
+  } else {
+    benchmarkReviewFailureNoteSource = readAnnotationField(
       annotationRow,
       'benchmark_review_failure_note',
       'benchmarkReviewFailureNote'
-    ),
-    900
-  )
-  const benchmarkReviewRetrainingHint = trimText(
-    readAnnotationField(
+    )
+  }
+  let benchmarkReviewRetrainingHintSource
+  if (typeof benchmarkReviewCorrection.retraining_hint !== 'undefined') {
+    benchmarkReviewRetrainingHintSource =
+      benchmarkReviewCorrection.retraining_hint
+  } else if (typeof benchmarkReviewCorrection.retrainingHint !== 'undefined') {
+    benchmarkReviewRetrainingHintSource =
+      benchmarkReviewCorrection.retrainingHint
+  } else {
+    benchmarkReviewRetrainingHintSource = readAnnotationField(
       annotationRow,
       'benchmark_review_retraining_hint',
       'benchmarkReviewRetrainingHint'
-    ),
-    900
-  )
-  const benchmarkReviewIncludeForTraining = normalizeBool(
-    readAnnotationField(
+    )
+  }
+  let benchmarkReviewIncludeForTrainingSource
+  if (typeof benchmarkReviewCorrection.include_for_training !== 'undefined') {
+    benchmarkReviewIncludeForTrainingSource =
+      benchmarkReviewCorrection.include_for_training
+  } else if (
+    typeof benchmarkReviewCorrection.includeForTraining !== 'undefined'
+  ) {
+    benchmarkReviewIncludeForTrainingSource =
+      benchmarkReviewCorrection.includeForTraining
+  } else {
+    benchmarkReviewIncludeForTrainingSource = readAnnotationField(
       annotationRow,
       'benchmark_review_include_for_training',
       'benchmarkReviewIncludeForTraining'
     )
+  }
+  const finalAnswer = validateFinalAnswer(annotationRow.final_answer)
+  const benchmarkReviewIssueType = normalizeBenchmarkReviewIssueType(
+    benchmarkReviewIssueTypeSource
   )
+  const benchmarkReviewFailureNote = trimText(
+    benchmarkReviewFailureNoteSource,
+    900
+  )
+  const benchmarkReviewRetrainingHint = trimText(
+    benchmarkReviewRetrainingHintSource,
+    900
+  )
+  const benchmarkReviewIncludeForTraining = normalizeBool(
+    benchmarkReviewIncludeForTrainingSource
+  )
+  const benchmarkReviewContext =
+    benchmarkReviewSource.context &&
+    typeof benchmarkReviewSource.context === 'object' &&
+    !Array.isArray(benchmarkReviewSource.context)
+      ? benchmarkReviewSource.context
+      : {}
 
   assertCompleteHumanTeacherAnnotation({
     textRequired,
@@ -465,6 +529,55 @@ function normalizeAnnotation(taskRow, annotationRow) {
     final_answer: finalAnswer,
     why_answer: whyAnswer,
     confidence,
+    benchmark_review: {
+      context: {
+        expected_answer: trimText(
+          benchmarkReviewContext.expected_answer ??
+            benchmarkReviewContext.expectedAnswer,
+          16
+        ).toLowerCase(),
+        ai_prediction: trimText(
+          benchmarkReviewContext.ai_prediction ??
+            benchmarkReviewContext.aiPrediction,
+          16
+        ).toLowerCase(),
+        baseline_prediction: trimText(
+          benchmarkReviewContext.baseline_prediction ??
+            benchmarkReviewContext.baselinePrediction,
+          16
+        ).toLowerCase(),
+        previous_prediction: trimText(
+          benchmarkReviewContext.previous_prediction ??
+            benchmarkReviewContext.previousPrediction,
+          16
+        ).toLowerCase(),
+        benchmark_flips:
+          benchmarkReviewContext.benchmark_flips ??
+          benchmarkReviewContext.benchmarkFlips ??
+          null,
+        evaluated_at: trimText(
+          benchmarkReviewContext.evaluated_at ??
+            benchmarkReviewContext.evaluatedAt,
+          64
+        ),
+        change_type: trimText(
+          benchmarkReviewContext.change_type ??
+            benchmarkReviewContext.changeType,
+          64
+        )
+          .toLowerCase()
+          .replace(/\s+/gu, '_'),
+        ai_correct: normalizeBool(
+          benchmarkReviewContext.ai_correct ?? benchmarkReviewContext.aiCorrect
+        ),
+      },
+      correction: {
+        issue_type: benchmarkReviewIssueType,
+        failure_note: benchmarkReviewFailureNote,
+        retraining_hint: benchmarkReviewRetrainingHint,
+        include_for_training: benchmarkReviewIncludeForTraining,
+      },
+    },
     benchmark_review_issue_type: benchmarkReviewIssueType,
     benchmark_review_failure_note: benchmarkReviewFailureNote,
     benchmark_review_retraining_hint: benchmarkReviewRetrainingHint,

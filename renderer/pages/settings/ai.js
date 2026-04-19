@@ -2067,7 +2067,7 @@ export default function AiSettingsPage() {
                     </Text>
                     <Text color="muted" fontSize="sm">
                       {t(
-                        'After the provider setup works, you can use one AI page for all flows: AI Flip Builder, AI Solver, off-chain benchmark, and on-chain automatic flow.'
+                        'After the provider setup works, you can use one AI page for provider-backed flip building, solving, off-chain benchmarking, and cautious on-chain automation. Provider benchmarks stay in the provider lane and do not train the local AI model.'
                       )}
                     </Text>
                     <UnorderedList spacing={1} color="muted" fontSize="sm">
@@ -2081,7 +2081,7 @@ export default function AiSettingsPage() {
                       </ListItem>
                       <ListItem>
                         {t(
-                          'Off-chain benchmark: test queue runs locally without publishing.'
+                          'Off-chain benchmark: benchmark provider solving on queued flips locally without publishing or feeding local AI training.'
                         )}
                       </ListItem>
                       <ListItem>
@@ -2696,10 +2696,10 @@ export default function AiSettingsPage() {
                     <Text color="muted" fontSize="sm">
                       {aiSolver.benchmarkProfile === 'strict'
                         ? t(
-                            'Strict profile targets 6 flips within 60 seconds with fixed retry/output limits and sequential pacing for fair customer-side benchmark comparison.'
+                            'Strict profile targets provider-side flip solving benchmarks with fixed retry, pacing, and timeout limits for fair comparison.'
                           )
                         : t(
-                            'Custom profile allows local overrides for exploratory research. All custom settings are logged in benchmark metrics.'
+                            'Custom profile allows exploratory provider benchmark overrides. All custom settings are logged in benchmark metrics.'
                           )}
                     </Text>
 
@@ -2732,6 +2732,33 @@ export default function AiSettingsPage() {
                         )}
                       </Text>
                     </SettingsFormControl>
+
+                    {!isLocalAiPrimaryProvider && (
+                      <SettingsFormControl>
+                        <SettingsFormLabel>
+                          {t('API provider solver prompt override (optional)')}
+                        </SettingsFormLabel>
+                        <Textarea
+                          value={aiSolver.promptTemplateOverride || ''}
+                          onChange={(e) =>
+                            updateAiSolverSettings({
+                              promptTemplateOverride: e.target.value,
+                            })
+                          }
+                          minH="120px"
+                          maxH="280px"
+                          w="xl"
+                          placeholder={t(
+                            'Use {{hash}}, {{allowSkip}}, {{secondPass}}, {{allowedAnswers}}, {{visionMode}}, {{promptPhase}}. Leave blank to use the built-in anti-slot-bias solver prompt.'
+                          )}
+                        />
+                        <Text color="muted" fontSize="sm" mt={1}>
+                          {t(
+                            'Applies to provider flip solving and provider benchmark/test-unit runs only. It does not change provider-based flip generation or local human-teacher training.'
+                          )}
+                        </Text>
+                      </SettingsFormControl>
+                    )}
 
                     {aiSolver.benchmarkProfile === 'custom' && (
                       <Stack spacing={3}>
@@ -2966,26 +2993,6 @@ export default function AiSettingsPage() {
                             </SettingsFormControl>
                           </>
                         )}
-
-                        <SettingsFormControl>
-                          <SettingsFormLabel>
-                            {t('Prompt template override (optional)')}
-                          </SettingsFormLabel>
-                          <Textarea
-                            value={aiSolver.promptTemplateOverride || ''}
-                            onChange={(e) =>
-                              updateAiSolverSettings({
-                                promptTemplateOverride: e.target.value,
-                              })
-                            }
-                            minH="120px"
-                            maxH="280px"
-                            w="xl"
-                            placeholder={t(
-                              'Use {{hash}}, {{allowSkip}}, {{secondPass}}, {{allowedAnswers}} placeholders.'
-                            )}
-                          />
-                        </SettingsFormControl>
                       </Stack>
                     )}
                   </>

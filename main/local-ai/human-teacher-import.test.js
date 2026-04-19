@@ -48,6 +48,13 @@ describe('human-teacher import', () => {
 
     expect(result.rows).toHaveLength(1)
     expect(result.rows[0]).toMatchObject({
+      benchmark_review: {
+        correction: {
+          issue_type: 'weak_reasoning',
+          failure_note: 'Keep as audit only.',
+          include_for_training: false,
+        },
+      },
       benchmark_review_issue_type: 'weak_reasoning',
       benchmark_review_failure_note: 'Keep as audit only.',
       benchmark_review_include_for_training: false,

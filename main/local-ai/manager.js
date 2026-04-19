@@ -52,7 +52,7 @@ const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL =
   'mlx-community/Qwen3.5-9B-MLX-4bit'
 const EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE = 200
 const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
-const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [50, 100, 200]
+const MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE = 500
 const MAX_DEVELOPER_COMPARISON_TRACE_DEPTH = 3
 const MAX_DEVELOPER_COMPARISON_TRACE_OBJECT_KEYS = 24
 const MAX_DEVELOPER_COMPARISON_TRACE_ARRAY_ITEMS = 12
@@ -1373,9 +1373,11 @@ function normalizeDemoHumanTeacherOffset(value) {
 function normalizeDeveloperLocalBenchmarkFlips(value) {
   const parsed = Number.parseInt(value, 10)
 
-  return DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS.includes(parsed)
-    ? parsed
-    : DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+  }
+
+  return Math.min(MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE, Math.max(1, parsed))
 }
 
 function normalizeDeveloperTrainingInteger(value, fallback, min, max) {
@@ -1749,7 +1751,111 @@ function createDefaultDeveloperComparisonState() {
     correct: null,
     totalFlips: null,
     bestAccuracy: null,
+    fairBenchmark: {
+      legacyFairnessUnknown: false,
+      requestedCount: null,
+      actualCount: null,
+      swapConsistencyDefault: null,
+      presentationEnsembleDefault: null,
+      optionAMapping: {
+        enabled: false,
+        applied: false,
+        optionAMapsToCounts: {
+          left: 0,
+          right: 0,
+        },
+        optionAMapsToImbalance: null,
+        optionAWouldBeCorrect: null,
+        optionAWouldBeWrong: null,
+      },
+    },
     history: [],
+  }
+}
+
+function normalizeDeveloperComparisonFairBenchmark(value, fallback = {}) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const optionAMappingSource =
+    source.optionAMapping &&
+    typeof source.optionAMapping === 'object' &&
+    !Array.isArray(source.optionAMapping)
+      ? source.optionAMapping
+      : {}
+  const optionCountsSource =
+    optionAMappingSource.optionAMapsToCounts &&
+    typeof optionAMappingSource.optionAMapsToCounts === 'object' &&
+    !Array.isArray(optionAMappingSource.optionAMapsToCounts)
+      ? optionAMappingSource.optionAMapsToCounts
+      : {}
+  let swapConsistencyDefault = null
+  if (typeof source.swapConsistencyDefault === 'boolean') {
+    swapConsistencyDefault = source.swapConsistencyDefault
+  } else if (typeof fallback.swapConsistencyDefault === 'boolean') {
+    swapConsistencyDefault = fallback.swapConsistencyDefault
+  }
+  let presentationEnsembleDefault = null
+  if (typeof source.presentationEnsembleDefault === 'boolean') {
+    presentationEnsembleDefault = source.presentationEnsembleDefault
+  } else if (typeof fallback.presentationEnsembleDefault === 'boolean') {
+    presentationEnsembleDefault = fallback.presentationEnsembleDefault
+  }
+
+  return {
+    legacyFairnessUnknown:
+      source.legacyFairnessUnknown === true ||
+      fallback.legacyFairnessUnknown === true,
+    requestedCount: normalizeNonNegativeInteger(
+      source.requestedCount ?? fallback.requestedCount
+    ),
+    actualCount: normalizeNonNegativeInteger(
+      source.actualCount ?? fallback.actualCount
+    ),
+    swapConsistencyDefault,
+    presentationEnsembleDefault,
+    optionAMapping: {
+      enabled: Boolean(
+        optionAMappingSource.enabled === true ||
+          fallback?.optionAMapping?.enabled === true
+      ),
+      applied: Boolean(
+        optionAMappingSource.applied === true ||
+          fallback?.optionAMapping?.applied === true
+      ),
+      optionAMapsToCounts: {
+        left:
+          normalizeNonNegativeInteger(optionCountsSource.left) ??
+          normalizeNonNegativeInteger(
+            fallback?.optionAMapping?.optionAMapsToCounts?.left
+          ) ??
+          0,
+        right:
+          normalizeNonNegativeInteger(optionCountsSource.right) ??
+          normalizeNonNegativeInteger(
+            fallback?.optionAMapping?.optionAMapsToCounts?.right
+          ) ??
+          0,
+      },
+      optionAMapsToImbalance:
+        normalizeNonNegativeInteger(
+          optionAMappingSource.optionAMapsToImbalance
+        ) ??
+        normalizeNonNegativeInteger(
+          fallback?.optionAMapping?.optionAMapsToImbalance
+        ),
+      optionAWouldBeCorrect:
+        normalizeNonNegativeInteger(
+          optionAMappingSource.optionAWouldBeCorrect
+        ) ??
+        normalizeNonNegativeInteger(
+          fallback?.optionAMapping?.optionAWouldBeCorrect
+        ),
+      optionAWouldBeWrong:
+        normalizeNonNegativeInteger(optionAMappingSource.optionAWouldBeWrong) ??
+        normalizeNonNegativeInteger(
+          fallback?.optionAMapping?.optionAWouldBeWrong
+        ),
+    },
   }
 }
 
@@ -1800,6 +1906,19 @@ function normalizeDeveloperComparisonHistoryEntry(entry = {}) {
     correct: normalizeNonNegativeInteger(source.correct),
     totalFlips: normalizeNonNegativeInteger(
       source.totalFlips || source.total || source.flipCount
+    ),
+    fairBenchmark: normalizeDeveloperComparisonFairBenchmark(
+      source.fairBenchmark,
+      source.fairBenchmark
+        ? {}
+        : {
+            legacyFairnessUnknown: true,
+            requestedCount: inferDeveloperComparisonBenchmarkFlips(source),
+            actualCount:
+              normalizeNonNegativeInteger(
+                source.totalFlips || source.total || source.flipCount
+              ) || null,
+          }
     ),
   }
 }
@@ -1907,6 +2026,20 @@ function normalizeDeveloperComparisonState(value) {
         ? latestEntry.totalFlips
         : normalizeNonNegativeInteger(source.totalFlips),
     bestAccuracy,
+    fairBenchmark: normalizeDeveloperComparisonFairBenchmark(
+      latestEntry?.fairBenchmark || source.fairBenchmark,
+      !latestEntry?.fairBenchmark && !source.fairBenchmark
+        ? {
+            legacyFairnessUnknown: hasDeveloperComparisonMetrics(source),
+            requestedCount:
+              latestEntry?.benchmarkFlips ??
+              normalizeNonNegativeInteger(source.benchmarkFlips),
+            actualCount:
+              latestEntry?.totalFlips ??
+              normalizeNonNegativeInteger(source.totalFlips),
+          }
+        : {}
+    ),
     history,
   }
 }
@@ -1921,6 +2054,7 @@ function sanitizePublicDeveloperComparisonHistoryEntry(entry = {}) {
     accuracy: source.accuracy,
     correct: source.correct,
     totalFlips: source.totalFlips,
+    fairBenchmark: source.fairBenchmark,
   }
 }
 
@@ -1935,6 +2069,7 @@ function sanitizePublicDeveloperComparisonState(value) {
     correct: source.correct,
     totalFlips: source.totalFlips,
     bestAccuracy: source.bestAccuracy,
+    fairBenchmark: source.fairBenchmark,
     history: Array.isArray(source.history)
       ? source.history.map((entry) =>
           sanitizePublicDeveloperComparisonHistoryEntry(entry)
@@ -1987,6 +2122,20 @@ function sanitizePublicDeveloperRunResult(value) {
       source.totalFlips || source.total || source.flipCount
     ),
     deltaAccuracy: normalizeAccuracyValue(source.deltaAccuracy),
+    fairBenchmark: normalizeDeveloperComparisonFairBenchmark(
+      source.fairBenchmark,
+      source.fairBenchmark
+        ? {}
+        : {
+            legacyFairnessUnknown: true,
+            requestedCount: normalizeNonNegativeInteger(
+              source.requestedBenchmarkFlips || source.benchmarkFlips
+            ),
+            actualCount: normalizeNonNegativeInteger(
+              source.totalFlips || source.total || source.flipCount
+            ),
+          }
+    ),
     comparison100: source.comparison100
       ? sanitizePublicDeveloperComparisonState(source.comparison100)
       : null,
@@ -2089,6 +2238,18 @@ function extractDeveloperComparisonSnapshot(
         holdoutPath ||
         ''
     ).trim() || null
+  const fairBenchmark = normalizeDeveloperComparisonFairBenchmark(
+    readComparisonMetric(source, [
+      ['fairBenchmark'],
+      ['summary', 'fairBenchmark'],
+      ['comparison100', 'fairBenchmark'],
+    ]),
+    {
+      legacyFairnessUnknown: true,
+      requestedCount: inferDeveloperComparisonBenchmarkFlips(source),
+      actualCount: totalFlips,
+    }
+  )
 
   return normalizeDeveloperComparisonHistoryEntry({
     status: fallbackStatus,
@@ -2098,6 +2259,7 @@ function extractDeveloperComparisonSnapshot(
     accuracy,
     correct,
     totalFlips,
+    fairBenchmark,
   })
 }
 
@@ -2138,6 +2300,7 @@ function mergeDeveloperComparisonSnapshot(
       snapshot.totalFlips !== null
         ? snapshot.totalFlips
         : normalizedCurrent.totalFlips,
+    fairBenchmark: snapshot.fairBenchmark || normalizedCurrent.fairBenchmark,
     history: [snapshot, ...normalizedCurrent.history],
   })
 }
@@ -2347,6 +2510,18 @@ function normalizeDeveloperComparisonSummary(value = {}) {
       source.totalFlips || source.total || source.flipCount
     ),
     deltaAccuracy: normalizeAccuracyValue(source.deltaAccuracy),
+    fairBenchmark: normalizeDeveloperComparisonFairBenchmark(
+      source.fairBenchmark,
+      source.fairBenchmark
+        ? {}
+        : {
+            legacyFairnessUnknown: true,
+            requestedCount: normalizeNonNegativeInteger(source.benchmarkFlips),
+            actualCount: normalizeNonNegativeInteger(
+              source.totalFlips || source.total || source.flipCount
+            ),
+          }
+    ),
   }
 }
 
@@ -2579,6 +2754,14 @@ function selectDeveloperComparisonExamples({
       return {
         flipHash: entry.flipHash,
         sampleId: entry.sampleId,
+        benchmarkFlips:
+          currentArtifact?.entry?.benchmarkFlips ||
+          currentArtifact?.summary?.fairBenchmark?.requestedCount ||
+          null,
+        evaluatedAt:
+          currentArtifact?.summary?.evaluatedAt ||
+          currentArtifact?.entry?.evaluatedAt ||
+          null,
         expected: entry.expected,
         current: {
           predicted: entry.predicted,
@@ -3271,10 +3454,135 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
     final_answer: '',
     why_answer: '',
     confidence: null,
+    benchmark_review: {
+      context: {
+        expected_answer: '',
+        ai_prediction: '',
+        baseline_prediction: '',
+        previous_prediction: '',
+        benchmark_flips: null,
+        evaluated_at: '',
+        change_type: '',
+        ai_correct: null,
+      },
+      correction: {
+        issue_type: '',
+        failure_note: '',
+        retraining_hint: '',
+        include_for_training: null,
+      },
+    },
     benchmark_review_issue_type: '',
     benchmark_review_failure_note: '',
     benchmark_review_retraining_hint: '',
     benchmark_review_include_for_training: null,
+  }
+}
+
+function normalizeHumanTeacherBenchmarkReviewContext(value = {}) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const expectedAnswer = normalizeHumanTeacherDraftText(
+    source.expected_answer ?? source.expectedAnswer,
+    16
+  ).toLowerCase()
+  const aiPrediction = normalizeHumanTeacherDraftText(
+    source.ai_prediction ?? source.aiPrediction,
+    16
+  ).toLowerCase()
+  const baselinePrediction = normalizeHumanTeacherDraftText(
+    source.baseline_prediction ?? source.baselinePrediction,
+    16
+  ).toLowerCase()
+  const previousPrediction = normalizeHumanTeacherDraftText(
+    source.previous_prediction ?? source.previousPrediction,
+    16
+  ).toLowerCase()
+  const changeType = normalizeHumanTeacherDraftText(
+    source.change_type ?? source.changeType,
+    32
+  )
+    .toLowerCase()
+    .replace(/\s+/gu, '_')
+
+  return {
+    expected_answer: ['left', 'right', 'skip'].includes(expectedAnswer)
+      ? expectedAnswer
+      : '',
+    ai_prediction: ['left', 'right', 'skip'].includes(aiPrediction)
+      ? aiPrediction
+      : '',
+    baseline_prediction: ['left', 'right', 'skip'].includes(baselinePrediction)
+      ? baselinePrediction
+      : '',
+    previous_prediction: ['left', 'right', 'skip'].includes(previousPrediction)
+      ? previousPrediction
+      : '',
+    benchmark_flips: normalizeNonNegativeInteger(
+      source.benchmark_flips ?? source.benchmarkFlips
+    ),
+    evaluated_at: normalizeHumanTeacherDraftText(
+      source.evaluated_at ?? source.evaluatedAt,
+      64
+    ),
+    change_type: changeType,
+    ai_correct: normalizeHumanTeacherDraftBool(
+      source.ai_correct ?? source.aiCorrect
+    ),
+  }
+}
+
+function normalizeHumanTeacherBenchmarkReviewLayer(source = {}, aliases = {}) {
+  const nestedSource =
+    source && typeof source === 'object' && !Array.isArray(source) ? source : {}
+  const aliasSource =
+    aliases && typeof aliases === 'object' && !Array.isArray(aliases)
+      ? aliases
+      : {}
+  let includeForTrainingSource
+  if (typeof nestedSource?.correction?.include_for_training !== 'undefined') {
+    includeForTrainingSource = nestedSource.correction.include_for_training
+  } else if (
+    typeof nestedSource?.correction?.includeForTraining !== 'undefined'
+  ) {
+    includeForTrainingSource = nestedSource.correction.includeForTraining
+  } else {
+    includeForTrainingSource =
+      aliasSource.benchmark_review_include_for_training ??
+      aliasSource.benchmarkReviewIncludeForTraining
+  }
+
+  const normalizedCorrection = {
+    issue_type: normalizeHumanTeacherBenchmarkReviewIssueType(
+      nestedSource?.correction?.issue_type ??
+        nestedSource?.correction?.issueType ??
+        aliasSource.benchmark_review_issue_type ??
+        aliasSource.benchmarkReviewIssueType
+    ),
+    failure_note: normalizeHumanTeacherDraftText(
+      nestedSource?.correction?.failure_note ??
+        nestedSource?.correction?.failureNote ??
+        aliasSource.benchmark_review_failure_note ??
+        aliasSource.benchmarkReviewFailureNote,
+      900
+    ),
+    retraining_hint: normalizeHumanTeacherDraftText(
+      nestedSource?.correction?.retraining_hint ??
+        nestedSource?.correction?.retrainingHint ??
+        aliasSource.benchmark_review_retraining_hint ??
+        aliasSource.benchmarkReviewRetrainingHint,
+      900
+    ),
+    include_for_training: normalizeHumanTeacherDraftBool(
+      includeForTrainingSource
+    ),
+  }
+
+  return {
+    context: normalizeHumanTeacherBenchmarkReviewContext(
+      nestedSource.context || nestedSource.source || nestedSource
+    ),
+    correction: normalizedCorrection,
   }
 }
 
@@ -3625,6 +3933,10 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
       ? annotation
       : {}
   const expectedTaskId = String(task.task_id || task.taskId || '').trim()
+  const benchmarkReview = normalizeHumanTeacherBenchmarkReviewLayer(
+    source.benchmark_review ?? source.benchmarkReview,
+    source
+  )
   const finalAnswer = normalizeHumanTeacherDraftText(
     source.final_answer ?? source.finalAnswer,
     16
@@ -3672,22 +3984,14 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
       source.why_answer ?? source.whyAnswer
     ),
     confidence: normalizeHumanTeacherDraftConfidence(source.confidence),
-    benchmark_review_issue_type: normalizeHumanTeacherBenchmarkReviewIssueType(
-      source.benchmark_review_issue_type ?? source.benchmarkReviewIssueType
-    ),
-    benchmark_review_failure_note: normalizeHumanTeacherDraftText(
-      source.benchmark_review_failure_note ?? source.benchmarkReviewFailureNote,
-      900
-    ),
-    benchmark_review_retraining_hint: normalizeHumanTeacherDraftText(
-      source.benchmark_review_retraining_hint ??
-        source.benchmarkReviewRetrainingHint,
-      900
-    ),
-    benchmark_review_include_for_training: normalizeHumanTeacherDraftBool(
-      source.benchmark_review_include_for_training ??
-        source.benchmarkReviewIncludeForTraining
-    ),
+    benchmark_review: benchmarkReview,
+    benchmarkReview,
+    benchmark_review_issue_type: benchmarkReview.correction.issue_type,
+    benchmark_review_failure_note: benchmarkReview.correction.failure_note,
+    benchmark_review_retraining_hint:
+      benchmarkReview.correction.retraining_hint,
+    benchmark_review_include_for_training:
+      benchmarkReview.correction.include_for_training,
   }
 }
 
@@ -7071,8 +7375,11 @@ function createLocalAiManager({
     const next = normalizeRuntimePayload(payload)
     const parsedMaxExamples = Number.parseInt(next.maxExamples, 10)
     const maxExamples = Number.isFinite(parsedMaxExamples)
-      ? Math.min(8, Math.max(1, parsedMaxExamples))
-      : 6
+      ? Math.min(
+          MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE,
+          Math.max(1, parsedMaxExamples)
+        )
+      : 12
     assertDeveloperHumanTeacherSessionAllowed(
       next.currentPeriod,
       'comparison examples'
@@ -7147,6 +7454,7 @@ function createLocalAiManager({
                 ? currentArtifact.summary.totalFlips
                 : currentArtifact.entry.totalFlips,
             deltaAccuracy: currentArtifact.summary.deltaAccuracy,
+            fairBenchmark: currentArtifact.summary.fairBenchmark,
           }
         : null,
       previous: previousArtifact
@@ -7167,6 +7475,7 @@ function createLocalAiManager({
                 ? previousArtifact.summary.totalFlips
                 : previousArtifact.entry.totalFlips,
             deltaAccuracy: previousArtifact.summary.deltaAccuracy,
+            fairBenchmark: previousArtifact.summary.fairBenchmark,
           }
         : null,
       examples,

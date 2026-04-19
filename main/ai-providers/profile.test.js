@@ -21,6 +21,18 @@ describe('sanitizeBenchmarkProfile', () => {
     })
   })
 
+  it('preserves prompt override in strict profile mode', () => {
+    expect(
+      sanitizeBenchmarkProfile({
+        benchmarkProfile: 'strict',
+        promptTemplateOverride: 'Custom solver prompt for {{hash}}',
+      })
+    ).toStrictEqual({
+      ...STRICT_PROFILE,
+      promptTemplateOverride: 'Custom solver prompt for {{hash}}',
+    })
+  })
+
   it('clamps custom values to allowed limits', () => {
     expect(
       sanitizeBenchmarkProfile({

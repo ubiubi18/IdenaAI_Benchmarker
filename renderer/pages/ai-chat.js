@@ -4,7 +4,9 @@ import {
   Badge,
   Box,
   Button,
+  Checkbox as ChakraCheckbox,
   Code,
+  Divider,
   Flex,
   Heading,
   HStack,
@@ -22,6 +24,7 @@ import {
   SimpleGrid,
   Spinner,
   Stack,
+  Textarea as ChakraTextarea,
   Text,
   UnorderedList,
   useToast,
@@ -34,7 +37,6 @@ import {
   Page,
   PageTitle,
   SuccessAlert,
-  Textarea,
   Toast,
   Tooltip,
 } from '../shared/components/components'
@@ -71,8 +73,12 @@ const bundledSampleFlipSet = require('../../samples/flips/flip-challenge-test-5-
 
 const CHAT_HISTORY_STORAGE_KEY = 'idenaLocalAiChatHistoryV1'
 const CHAT_DRAFT_STORAGE_KEY = 'idenaLocalAiChatDraftV1'
+const CHAT_PREFERENCES_STORAGE_KEY = 'idenaLocalAiChatPreferencesV1'
 const CHAT_HISTORY_LIMIT = 40
 const CHAT_ATTACHMENT_LIMIT = 8
+const CHAT_COMPOSER_COLLAPSED_HEIGHT = 58
+const CHAT_COMPOSER_EXPANDED_MIN_HEIGHT = 96
+const CHAT_COMPOSER_EXPANDED_MAX_HEIGHT = 240
 const SYSTEM_CHAT_MESSAGE = {
   role: 'system',
   content:
@@ -221,6 +227,14 @@ function loadStoredChatHistory() {
   }
 }
 
+function clearStoredChatHistory() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.removeItem(CHAT_HISTORY_STORAGE_KEY)
+}
+
 function persistStoredChatHistory(messages) {
   if (typeof window === 'undefined') {
     return
@@ -258,12 +272,60 @@ function loadStoredDraft() {
   return String(window.localStorage.getItem(CHAT_DRAFT_STORAGE_KEY) || '')
 }
 
+function clearStoredDraft() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.removeItem(CHAT_DRAFT_STORAGE_KEY)
+}
+
 function persistStoredDraft(value) {
   if (typeof window === 'undefined') {
     return
   }
 
   window.localStorage.setItem(CHAT_DRAFT_STORAGE_KEY, String(value || ''))
+}
+
+function loadStoredChatPreferences() {
+  if (typeof window === 'undefined') {
+    return {storeLocally: false}
+  }
+
+  const hasExistingStoredChat = Boolean(
+    window.localStorage.getItem(CHAT_HISTORY_STORAGE_KEY) ||
+      window.localStorage.getItem(CHAT_DRAFT_STORAGE_KEY)
+  )
+
+  try {
+    const raw = JSON.parse(
+      window.localStorage.getItem(CHAT_PREFERENCES_STORAGE_KEY) || '{}'
+    )
+
+    if (typeof raw?.storeLocally === 'boolean') {
+      return {storeLocally: raw.storeLocally}
+    }
+  } catch {
+    // Ignore malformed preferences and fall back to the privacy-first default.
+  }
+
+  return {
+    storeLocally: hasExistingStoredChat,
+  }
+}
+
+function persistStoredChatPreferences(preferences = {}) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(
+    CHAT_PREFERENCES_STORAGE_KEY,
+    JSON.stringify({
+      storeLocally: preferences.storeLocally === true,
+    })
+  )
 }
 
 function formatRuntimeStatusError(result, t) {
@@ -541,6 +603,22 @@ function formatMessageTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function summarizeContextSnippet(value, maxLength = 180) {
+  const raw = String(value || '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+
+  if (!raw) {
+    return ''
+  }
+
+  if (raw.length <= maxLength) {
+    return raw
+  }
+
+  return `${raw.slice(0, maxLength).trim()}…`
 }
 
 function getLocalAiBridge() {
@@ -908,13 +986,13 @@ function ChatMessage({message}) {
   return (
     <Flex justify={isAssistant ? 'flex-start' : 'flex-end'}>
       <Box
-        maxW="3xl"
+        maxW={isAssistant ? '4xl' : '3xl'}
         w="fit-content"
         bg={isAssistant ? 'white' : 'brandBlue.500'}
         color={isAssistant ? 'brandGray.500' : 'white'}
         borderWidth={isAssistant ? '1px' : '0'}
         borderColor="gray.100"
-        borderRadius="xl"
+        borderRadius="2xl"
         px={4}
         py={3}
         boxShadow={isAssistant ? 'sm' : 'none'}
@@ -993,28 +1071,48 @@ export default function AiChatPage() {
   const [messages, setMessages] = React.useState([])
   const [draft, setDraft] = React.useState('')
   const [attachments, setAttachments] = React.useState([])
+  const [storeChatLocally, setStoreChatLocally] = React.useState(false)
   const [statusResult, setStatusResult] = React.useState(null)
   const [isCheckingStatus, setIsCheckingStatus] = React.useState(false)
   const [isStartingRuntime, setIsStartingRuntime] = React.useState(false)
   const [isSending, setIsSending] = React.useState(false)
+  const [isComposerFocused, setIsComposerFocused] = React.useState(false)
   const [lastError, setLastError] = React.useState('')
 
   const scrollAnchorRef = React.useRef(null)
   const fileInputRef = React.useRef(null)
+  const composerRef = React.useRef(null)
   const sampleFlipCursorRef = React.useRef(0)
 
   React.useEffect(() => {
-    setMessages(loadStoredChatHistory())
-    setDraft(loadStoredDraft())
+    const preferences = loadStoredChatPreferences()
+    setStoreChatLocally(preferences.storeLocally)
+
+    if (preferences.storeLocally) {
+      setMessages(loadStoredChatHistory())
+      setDraft(loadStoredDraft())
+    }
   }, [])
 
   React.useEffect(() => {
-    persistStoredChatHistory(messages)
-  }, [messages])
+    persistStoredChatPreferences({storeLocally: storeChatLocally})
+  }, [storeChatLocally])
 
   React.useEffect(() => {
-    persistStoredDraft(draft)
-  }, [draft])
+    if (storeChatLocally) {
+      persistStoredChatHistory(messages)
+    } else {
+      clearStoredChatHistory()
+    }
+  }, [messages, storeChatLocally])
+
+  React.useEffect(() => {
+    if (storeChatLocally) {
+      persistStoredDraft(draft)
+    } else {
+      clearStoredDraft()
+    }
+  }, [draft, storeChatLocally])
 
   React.useEffect(() => {
     scrollAnchorRef.current?.scrollIntoView({
@@ -1022,6 +1120,33 @@ export default function AiChatPage() {
       block: 'end',
     })
   }, [messages, isSending])
+
+  React.useLayoutEffect(() => {
+    const node = composerRef.current
+
+    if (!node) {
+      return
+    }
+
+    const canExpand =
+      isComposerFocused ||
+      Boolean(String(draft || '').trim()) ||
+      attachments.length > 0
+    const minHeight = canExpand
+      ? CHAT_COMPOSER_EXPANDED_MIN_HEIGHT
+      : CHAT_COMPOSER_COLLAPSED_HEIGHT
+    const maxHeight = canExpand
+      ? CHAT_COMPOSER_EXPANDED_MAX_HEIGHT
+      : CHAT_COMPOSER_EXPANDED_MIN_HEIGHT
+
+    node.style.height = 'auto'
+    const nextHeight = Math.min(
+      maxHeight,
+      Math.max(minHeight, node.scrollHeight)
+    )
+    node.style.height = `${nextHeight}px`
+    node.style.overflowY = node.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [attachments.length, draft, isComposerFocused])
 
   const latestFlipContextMessage = React.useMemo(
     () => findLatestFlipContext(messages),
@@ -1040,6 +1165,10 @@ export default function AiChatPage() {
     [latestFlipContextMessage]
   )
   const hasRetainedFlipContext = Boolean(latestFlipContextMessage?.flipContext)
+  const retainedFlipContextSnippet = React.useMemo(
+    () => summarizeContextSnippet(latestFlipContextMessage?.flipContext),
+    [latestFlipContextMessage]
+  )
 
   const refreshRuntimeStatus = React.useCallback(async () => {
     setIsCheckingStatus(true)
@@ -1182,13 +1311,14 @@ export default function AiChatPage() {
 
     const userMessage = createChatMessage('user', effectivePrompt, {
       attachments: outgoingAttachments,
-      persistLocally: outgoingAttachments.length === 0,
+      persistLocally: storeChatLocally && outgoingAttachments.length === 0,
     })
     const nextHistory = [...messages, userMessage].slice(-CHAT_HISTORY_LIMIT)
 
     setMessages(nextHistory)
     setDraft('')
     setAttachments([])
+    composerRef.current?.blur()
     setLastError('')
     setIsSending(true)
 
@@ -1305,7 +1435,8 @@ export default function AiChatPage() {
           createChatMessage('assistant', displayText, {
             flipAnalysis,
             flipContext: currentFlipContext || followUpFlipContext || null,
-            persistLocally: outgoingAttachments.length === 0,
+            persistLocally:
+              storeChatLocally && outgoingAttachments.length === 0,
           }),
         ].slice(-CHAT_HISTORY_LIMIT)
       )
@@ -1326,6 +1457,7 @@ export default function AiChatPage() {
     latestFlipContextMessage,
     messages,
     runtimePayload,
+    storeChatLocally,
     t,
   ])
 
@@ -1346,10 +1478,10 @@ export default function AiChatPage() {
   const handleClearConversation = React.useCallback(() => {
     setMessages([])
     setAttachments([])
+    setDraft('')
     setLastError('')
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(CHAT_HISTORY_STORAGE_KEY)
-    }
+    clearStoredChatHistory()
+    clearStoredDraft()
   }, [])
 
   const handleQuickPrompt = React.useCallback((value) => {
@@ -1417,14 +1549,42 @@ export default function AiChatPage() {
     await handleStartLocalAi()
   }, [handleEnableLocalAi, handleStartLocalAi])
 
+  const handleToggleStoredChat = React.useCallback(
+    (event) => {
+      const nextValue = Boolean(event?.target?.checked)
+      setStoreChatLocally(nextValue)
+
+      if (!nextValue) {
+        clearStoredChatHistory()
+        clearStoredDraft()
+        toast({
+          render: () => (
+            <Toast title={t('Local chat storage turned off')}>
+              {t(
+                'This conversation now stays in memory only. If privacy matters, keep storage off and delete old chats you no longer want saved on this device.'
+              )}
+            </Toast>
+          ),
+        })
+      } else {
+        toast({
+          render: () => (
+            <Toast title={t('Local chat storage turned on')}>
+              {t(
+                'This device will keep your text-only chat timeline locally until you clear it. Attached images still stay out of saved history.'
+              )}
+            </Toast>
+          ),
+        })
+      }
+    },
+    [t, toast]
+  )
+
   const isRuntimeReady = Boolean(
     localAi.enabled && statusResult && statusResult.sidecarReachable === true
   )
   const runtimeErrorMessage = formatRuntimeStatusError(statusResult, t)
-  const textModelLabel =
-    String(localAi.publicModelId || '').trim() || 'Idena-text-v1'
-  const multimodalModelLabel =
-    String(localAi.publicVisionId || '').trim() || 'Idena-multimodal-v1'
   const backendLabel =
     localAi.runtimeBackend === 'ollama-direct'
       ? t('Local runtime via Ollama')
@@ -1437,6 +1597,19 @@ export default function AiChatPage() {
     runtimeStatusLabel = t('Ready')
   } else if (localAi.enabled) {
     runtimeStatusLabel = t('Needs attention')
+  }
+  let storageHelperText = t(
+    'This chat is ephemeral right now unless you turn local storage on.'
+  )
+
+  if (attachments.length > 0) {
+    storageHelperText = t('{{count}} images attached for this message', {
+      count: attachments.length,
+    })
+  } else if (storeChatLocally) {
+    storageHelperText = t(
+      'Text-only messages in this chat will be kept locally until you clear them.'
+    )
   }
 
   const runtimeStatusTone = isRuntimeReady ? 'green' : 'orange'
@@ -1632,262 +1805,264 @@ export default function AiChatPage() {
 
   return (
     <Layout loading={loading} syncing={syncing} offline={offline}>
-      <Page minW={0} px={[4, 6, 8]} py={4}>
-        <Flex direction="column" flex={1} w="full" minH={0}>
-          <Stack spacing={4} flex={1} minH={0}>
-            <Flex
-              align={['flex-start', 'center']}
-              direction={['column', 'row']}
-              justify="space-between"
-              gap={3}
-            >
+      <Page minW={0} px={[4, 6, 8]} py={4} overflow="hidden">
+        <Input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          display="none"
+          onChange={handlePickAttachments}
+        />
+
+        <Flex direction="column" flex={1} w="full" minH={0} gap={4}>
+          <Flex
+            align={['flex-start', 'center']}
+            direction={['column', 'row']}
+            justify="space-between"
+            gap={3}
+          >
+            <Stack spacing={1}>
               <HStack spacing={3} align="center">
                 <ChatIcon boxSize="6" color="brandBlue.500" />
                 <PageTitle mb={0}>{t('IdenaAI')}</PageTitle>
               </HStack>
-              <HStack spacing={2}>
-                <HelpPopover label={t('Chat privacy')}>
-                  {[
-                    t(
-                      'Conversation history stays in this desktop profile only.'
-                    ),
-                    t(
-                      'Attached images stay in the live session and are not written into saved chat history.'
-                    ),
-                  ]}
-                </HelpPopover>
-                <SecondaryButton
-                  leftIcon={<SettingsIcon boxSize="4" />}
-                  onClick={() => router.push('/settings/ai')}
+              <Text color="muted" fontSize="sm">
+                {t(
+                  'Local chat on this device. Timeline above, composer below.'
+                )}
+              </Text>
+            </Stack>
+            <HStack
+              spacing={2}
+              wrap="wrap"
+              justify={['flex-start', 'flex-end']}
+            >
+              <Badge colorScheme={runtimeStatusTone}>
+                {runtimeStatusLabel}
+              </Badge>
+              <Badge variant="subtle">{backendLabel}</Badge>
+              <SecondaryButton
+                leftIcon={<SyncIcon boxSize="4" />}
+                isLoading={isCheckingStatus}
+                onClick={refreshRuntimeStatus}
+              >
+                {t('Refresh')}
+              </SecondaryButton>
+              <SecondaryButton
+                leftIcon={<SettingsIcon boxSize="4" />}
+                onClick={() => router.push('/settings/ai')}
+              >
+                {t('AI settings')}
+              </SecondaryButton>
+            </HStack>
+          </Flex>
+
+          {!isRuntimeReady ? runtimeAlert : null}
+
+          <Box
+            bg="white"
+            borderWidth="1px"
+            borderColor="gray.100"
+            borderRadius="2xl"
+            boxShadow="sm"
+            flex={1}
+            minH={0}
+            display="flex"
+            flexDirection="column"
+            overflow="hidden"
+          >
+            <Flex
+              px={4}
+              py={3}
+              borderBottomWidth="1px"
+              borderBottomColor="gray.100"
+              justify="space-between"
+              align={['flex-start', 'center']}
+              direction={['column', 'row']}
+              gap={3}
+            >
+              <Stack spacing={1} minW={0}>
+                <HStack spacing={2}>
+                  <Text fontWeight={700}>{t('Conversation')}</Text>
+                  <HelpPopover label={t('Chat help')}>
+                    {[
+                      t('Enter sends. Shift+Enter adds a new line.'),
+                      t(
+                        'The composer stays compact after send so the timeline remains easier to read.'
+                      ),
+                      t(
+                        'Add images only when they help the answer or flip analysis.'
+                      ),
+                    ]}
+                  </HelpPopover>
+                </HStack>
+                <Text color="muted" fontSize="xs">
+                  {t('Write below. Replies appear in the timeline above.')}
+                </Text>
+              </Stack>
+
+              <HStack spacing={2} wrap="wrap">
+                <Badge colorScheme={storeChatLocally ? 'green' : 'gray'}>
+                  {storeChatLocally
+                    ? t('Saved locally')
+                    : t('Not saved locally')}
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  colorScheme="blue"
+                  leftIcon={<UploadIcon boxSize="4" />}
+                  onClick={handleOpenAttachmentPicker}
                 >
-                  {t('AI settings')}
-                </SecondaryButton>
+                  {t('Add images')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  colorScheme="blue"
+                  onClick={handleClearConversation}
+                >
+                  {t('New chat')}
+                </Button>
               </HStack>
             </Flex>
 
-            <Box
-              bg="white"
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="xl"
-              px={4}
-              py={3}
-            >
-              <Stack spacing={3}>
+            {(hasRetainedFlipContext || willUseRetainedFlipContext) && (
+              <Box
+                px={4}
+                py={3}
+                borderBottomWidth="1px"
+                borderBottomColor="gray.100"
+                bg={willUseRetainedFlipContext ? 'blue.50' : 'gray.50'}
+              >
                 <Flex
+                  justify="space-between"
                   align={['flex-start', 'center']}
                   direction={['column', 'row']}
-                  justify="space-between"
                   gap={3}
                 >
-                  <Stack spacing={1} minW={0}>
-                    <HStack spacing={2} wrap="wrap">
-                      <Badge colorScheme={runtimeStatusTone}>
-                        {runtimeStatusLabel}
-                      </Badge>
-                      <Badge variant="subtle">
-                        {formatAiProviderLabel('local-ai')}
-                      </Badge>
-                    </HStack>
-                    <Text color="muted" fontSize="sm" noOfLines={2}>
-                      {t('Runtime')}: {backendLabel} · {textModelLabel} ·{' '}
-                      {multimodalModelLabel}
-                    </Text>
-                  </Stack>
-
-                  <HStack spacing={2} alignSelf={['stretch', 'auto']}>
-                    <SecondaryButton
-                      leftIcon={<SyncIcon boxSize="4" />}
-                      isLoading={isCheckingStatus}
-                      onClick={refreshRuntimeStatus}
+                  <HStack spacing={3} minW={0} align="flex-start">
+                    <Badge
+                      colorScheme={willUseRetainedFlipContext ? 'blue' : 'gray'}
                     >
-                      {t('Refresh status')}
-                    </SecondaryButton>
+                      {willUseRetainedFlipContext
+                        ? t('Will reuse flip context')
+                        : t('Flip context kept')}
+                    </Badge>
+                    <Stack spacing={1} minW={0}>
+                      <Text fontSize="sm" noOfLines={2}>
+                        {retainedFlipContextSnippet ||
+                          t(
+                            'A recent flip discussion can be reused without resending images.'
+                          )}
+                      </Text>
+                      {retainedFlipContextSource ? (
+                        <Text color="muted" fontSize="xs" noOfLines={1}>
+                          {t('Source')}: {retainedFlipContextSource}
+                        </Text>
+                      ) : null}
+                    </Stack>
+                  </HStack>
+                  <HStack spacing={2}>
+                    <HelpPopover label={t('Retained flip context')}>
+                      {[
+                        t(
+                          'This keeps the last discussed flip available for follow-up questions without reattaching images.'
+                        ),
+                        t(
+                          'Clear it if you want the next answer to ignore that older flip context.'
+                        ),
+                      ]}
+                    </HelpPopover>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={handleClearFlipContext}
+                    >
+                      {t('Clear')}
+                    </Button>
                   </HStack>
                 </Flex>
-
-                {runtimeAlert}
-              </Stack>
-            </Box>
+              </Box>
+            )}
 
             <Box
-              bg="gray.50"
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="2xl"
-              px={4}
-              py={4}
               flex={1}
               minH={0}
+              overflowY="auto"
+              px={[3, 4]}
+              py={4}
+              bg="gray.50"
             >
-              <Stack spacing={4} h="full">
-                <Input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  display="none"
-                  onChange={handlePickAttachments}
-                />
-                <Flex
-                  justify="space-between"
-                  align={['flex-start', 'center']}
-                  direction={['column', 'row']}
-                  gap={3}
-                >
-                  <Stack spacing={1} minW={0}>
-                    <HStack spacing={2}>
-                      <Text fontWeight={600}>{t('Conversation')}</Text>
-                      <HelpPopover label={t('Chat help')}>
-                        {[
-                          t('Enter sends. Shift+Enter adds a new line.'),
-                          t(
-                            'Add images only when they help the answer or flip analysis.'
-                          ),
-                        ]}
-                      </HelpPopover>
+              {messages.length > 0 ? (
+                <Stack spacing={4} maxW="4xl" mx="auto" w="full">
+                  {messages.map((message) => (
+                    <ChatMessage key={message.id} message={message} />
+                  ))}
+                  {isSending ? (
+                    <Flex justify="flex-start">
+                      <Box
+                        bg="white"
+                        borderWidth="1px"
+                        borderColor="gray.100"
+                        borderRadius="2xl"
+                        px={4}
+                        py={3}
+                        boxShadow="sm"
+                      >
+                        <HStack spacing={3}>
+                          <Spinner size="sm" color="brandBlue.500" />
+                          <Text color="muted">{t('Thinking...')}</Text>
+                        </HStack>
+                      </Box>
+                    </Flex>
+                  ) : null}
+                  <Box ref={scrollAnchorRef} />
+                </Stack>
+              ) : (
+                <Flex h="full" align="center" justify="center">
+                  <Stack
+                    spacing={5}
+                    align="center"
+                    maxW="2xl"
+                    textAlign="center"
+                  >
+                    <Stack spacing={2}>
+                      <Text fontWeight={600}>
+                        {t('Start with a short message.')}
+                      </Text>
+                      <Text color="muted" fontSize="sm">
+                        {t(
+                          'The reply will appear here in the timeline. Keep local storage off if you want this chat to stay ephemeral.'
+                        )}
+                      </Text>
+                    </Stack>
+                    <HStack spacing={2} flexWrap="wrap" justify="center">
+                      {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
+                        <Button
+                          key={prompt}
+                          size="sm"
+                          variant="ghost"
+                          colorScheme="blue"
+                          onClick={() => handleQuickPrompt(prompt)}
+                        >
+                          {t(prompt)}
+                        </Button>
+                      ))}
                     </HStack>
-                    <Text color="muted" fontSize="xs">
-                      {t('Reply below like a normal chat.')}
-                    </Text>
                   </Stack>
-                  <HStack spacing={2} alignSelf={['stretch', 'auto']}>
-                    <SecondaryButton
-                      leftIcon={<UploadIcon boxSize="4" />}
-                      onClick={handleOpenAttachmentPicker}
-                    >
-                      {t('Add images')}
-                    </SecondaryButton>
-                    <SecondaryButton onClick={handleClearConversation}>
-                      {t('New chat')}
-                    </SecondaryButton>
-                  </HStack>
                 </Flex>
+              )}
+            </Box>
 
-                {hasRetainedFlipContext && (
+            <Divider />
+
+            <Box px={[3, 4]} py={4} bg="white">
+              <Stack spacing={3} maxW="4xl" mx="auto" w="full">
+                {attachments.length > 0 ? (
                   <Box
                     bg="gray.50"
-                    borderWidth="1px"
-                    borderColor="gray.100"
-                    borderRadius="lg"
-                    px={3}
-                    py={3}
-                  >
-                    <Flex
-                      justify="space-between"
-                      align={['flex-start', 'center']}
-                      direction={['column', 'row']}
-                      gap={3}
-                    >
-                      <Stack spacing={1}>
-                        <Badge variant="subtle" colorScheme="gray">
-                          {t('Retained flip context')}
-                        </Badge>
-                        {retainedFlipContextSource && (
-                          <Text color="muted" fontSize="xs">
-                            {t('Context source')}: {retainedFlipContextSource}
-                          </Text>
-                        )}
-                      </Stack>
-                      <SecondaryButton onClick={handleClearFlipContext}>
-                        {t('Clear flip context')}
-                      </SecondaryButton>
-                    </Flex>
-                  </Box>
-                )}
-
-                {willUseRetainedFlipContext && (
-                  <Box
-                    bg="blue.50"
-                    borderWidth="1px"
-                    borderColor="blue.100"
-                    borderRadius="lg"
-                    px={3}
-                    py={3}
-                  >
-                    <HStack spacing={3} align="flex-start">
-                      <Badge colorScheme="blue">
-                        {t('Using last flip context')}
-                      </Badge>
-                      <Stack spacing={1}>
-                        <Text color="brandGray.500" fontSize="sm">
-                          {t(
-                            'This message will use the last discussed flip as context instead of resending those image panels.'
-                          )}
-                        </Text>
-                        {retainedFlipContextSource && (
-                          <Text color="muted" fontSize="xs">
-                            {t('Context source')}: {retainedFlipContextSource}
-                          </Text>
-                        )}
-                      </Stack>
-                    </HStack>
-                  </Box>
-                )}
-
-                <Box
-                  bg="white"
-                  borderRadius="xl"
-                  borderWidth="1px"
-                  borderColor="gray.100"
-                  px={4}
-                  py={4}
-                  flex={1}
-                  minH={0}
-                  overflowY="auto"
-                >
-                  {messages.length > 0 ? (
-                    <Stack spacing={4}>
-                      {messages.map((message) => (
-                        <ChatMessage key={message.id} message={message} />
-                      ))}
-                      {isSending && (
-                        <Flex justify="flex-start">
-                          <Box
-                            bg="white"
-                            borderWidth="1px"
-                            borderColor="gray.100"
-                            borderRadius="xl"
-                            px={4}
-                            py={3}
-                            boxShadow="sm"
-                          >
-                            <HStack spacing={3}>
-                              <Spinner size="sm" color="brandBlue.500" />
-                              <Text color="muted">{t('Thinking...')}</Text>
-                            </HStack>
-                          </Box>
-                        </Flex>
-                      )}
-                      <Box ref={scrollAnchorRef} />
-                    </Stack>
-                  ) : (
-                    <Flex h="full" align="center" justify="center">
-                      <Stack spacing={4} align="center" maxW="2xl">
-                        <Text color="muted">
-                          {t('Start a local chat below.')}
-                        </Text>
-                        <HStack spacing={2} flexWrap="wrap" justify="center">
-                          {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
-                            <Button
-                              key={prompt}
-                              size="sm"
-                              variant="ghost"
-                              colorScheme="blue"
-                              onClick={() => handleQuickPrompt(prompt)}
-                            >
-                              {t(prompt)}
-                            </Button>
-                          ))}
-                        </HStack>
-                      </Stack>
-                    </Flex>
-                  )}
-                </Box>
-
-                {attachments.length > 0 && (
-                  <Box
-                    bg="white"
                     borderWidth="1px"
                     borderColor="gray.100"
                     borderRadius="xl"
@@ -1904,24 +2079,19 @@ export default function AiChatPage() {
                         <HStack spacing={2}>
                           <PhotoIcon boxSize="4" color="brandBlue.500" />
                           <Text fontWeight={600}>
-                            {t('Images ({{count}})', {
+                            {t('Images ready ({{count}})', {
                               count: attachments.length,
                             })}
                           </Text>
                         </HStack>
-                        <HStack spacing={2}>
-                          <Text color="muted" fontSize="xs">
-                            {attachments.length >= 2
-                              ? t('Flip analysis ready')
-                              : t('Image chat ready')}
-                          </Text>
-                          <SecondaryButton
-                            leftIcon={<DeleteIcon boxSize="4" />}
-                            onClick={handleClearAttachments}
-                          >
-                            {t('Clear')}
-                          </SecondaryButton>
-                        </HStack>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          leftIcon={<DeleteIcon boxSize="4" />}
+                          onClick={handleClearAttachments}
+                        >
+                          {t('Clear images')}
+                        </Button>
                       </Flex>
                       <SimpleGrid columns={[2, 2, 4]} spacing={3}>
                         {attachments.map((attachment) => (
@@ -1932,7 +2102,7 @@ export default function AiChatPage() {
                             overflow="hidden"
                             borderWidth="1px"
                             borderColor="gray.100"
-                            bg="gray.50"
+                            bg="white"
                           >
                             <Image
                               src={attachment.dataUrl}
@@ -1962,83 +2132,109 @@ export default function AiChatPage() {
                       </SimpleGrid>
                     </Stack>
                   </Box>
-                )}
+                ) : null}
 
                 <Box
-                  bg="white"
                   borderWidth="1px"
-                  borderColor="gray.100"
-                  borderRadius="xl"
+                  borderColor={isComposerFocused ? 'blue.200' : 'gray.100'}
+                  borderRadius="2xl"
+                  bg="gray.50"
                   px={3}
                   py={3}
+                  boxShadow={
+                    isComposerFocused
+                      ? '0 0 0 1px rgba(66,153,225,0.12)'
+                      : 'none'
+                  }
                 >
-                  <Stack spacing={3}>
-                    {messages.length > 0 ? (
-                      <HStack spacing={2} flexWrap="wrap">
-                        {QUICK_PROMPTS.slice(0, 4).map((prompt) => (
-                          <Button
-                            key={prompt}
-                            size="sm"
-                            variant="ghost"
-                            colorScheme="blue"
-                            onClick={() => handleQuickPrompt(prompt)}
-                          >
-                            {t(prompt)}
-                          </Button>
-                        ))}
-                      </HStack>
-                    ) : null}
-
-                    <Textarea
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                      onKeyDown={handleDraftKeyDown}
-                      minH="92px"
-                      bg="white"
-                      placeholder={t(
-                        'Ask about a flip, validation, your node, or strategy…'
-                      )}
-                    />
-
-                    <Flex
-                      justify="space-between"
-                      align={['flex-start', 'center']}
-                      direction={['column', 'row']}
-                      gap={3}
-                    >
-                      <Text color="muted" fontSize="xs">
-                        {attachments.length > 0
-                          ? t('{{count}} images attached', {
-                              count: attachments.length,
-                            })
-                          : t('Local desktop chat')}
-                      </Text>
-
-                      <Tooltip
-                        label={t('Enter sends. Shift+Enter adds a new line.')}
-                      >
-                        <IconButton
-                          aria-label={t('Send message')}
-                          icon={<SendIcon boxSize="4" />}
-                          colorScheme="blue"
-                          borderRadius="full"
-                          onClick={handleSend}
-                          isLoading={isSending}
-                          isDisabled={
-                            (!String(draft || '').trim() &&
-                              attachments.length === 0) ||
-                            !isRuntimeReady
-                          }
-                        />
-                      </Tooltip>
-                    </Flex>
-                  </Stack>
+                  <ChakraTextarea
+                    ref={composerRef}
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={handleDraftKeyDown}
+                    onFocus={() => setIsComposerFocused(true)}
+                    onBlur={() => setIsComposerFocused(false)}
+                    resize="none"
+                    minH={`${CHAT_COMPOSER_COLLAPSED_HEIGHT}px`}
+                    border="none"
+                    bg="transparent"
+                    px={1}
+                    py={1}
+                    _focus={{boxShadow: 'none'}}
+                    _placeholder={{color: 'muted'}}
+                    placeholder={t(
+                      'Write to IdenaAI… Ask about a flip, your node, validation, or strategy.'
+                    )}
+                  />
                 </Box>
 
-                {lastError && <ErrorAlert>{lastError}</ErrorAlert>}
+                <Flex
+                  justify="space-between"
+                  align={['flex-start', 'center']}
+                  direction={['column', 'row']}
+                  gap={3}
+                >
+                  <Stack spacing={2}>
+                    <HStack spacing={3} wrap="wrap">
+                      <ChakraCheckbox
+                        size="sm"
+                        isChecked={storeChatLocally}
+                        onChange={handleToggleStoredChat}
+                      >
+                        {t('Store text chat locally on this device')}
+                      </ChakraCheckbox>
+                      <HelpPopover label={t('Local storage privacy')}>
+                        {[
+                          t(
+                            'Stored chat stays only on this desktop profile. You are responsible for your own privacy.'
+                          ),
+                          t(
+                            'If you want to reduce the chance of old chats leaking into future AI reuse or training, keep storage off and delete saved conversations you no longer need.'
+                          ),
+                          t(
+                            'Attached images stay out of saved chat history even when local storage is on.'
+                          ),
+                        ]}
+                      </HelpPopover>
+                    </HStack>
+                    <Text color="muted" fontSize="xs">
+                      {storageHelperText}
+                    </Text>
+                  </Stack>
+
+                  <HStack spacing={2} alignSelf={['stretch', 'auto']}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      leftIcon={<UploadIcon boxSize="4" />}
+                      onClick={handleOpenAttachmentPicker}
+                    >
+                      {t('Add images')}
+                    </Button>
+                    <Tooltip
+                      label={t('Enter sends. Shift+Enter adds a new line.')}
+                    >
+                      <IconButton
+                        aria-label={t('Send message')}
+                        icon={<SendIcon boxSize="4" />}
+                        colorScheme="blue"
+                        borderRadius="full"
+                        onClick={handleSend}
+                        isLoading={isSending}
+                        isDisabled={
+                          (!String(draft || '').trim() &&
+                            attachments.length === 0) ||
+                          !isRuntimeReady
+                        }
+                      />
+                    </Tooltip>
+                  </HStack>
+                </Flex>
+
+                {lastError ? <ErrorAlert>{lastError}</ErrorAlert> : null}
               </Stack>
             </Box>
-          </Stack>
+          </Box>
         </Flex>
       </Page>
     </Layout>

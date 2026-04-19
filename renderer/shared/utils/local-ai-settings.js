@@ -41,7 +41,8 @@ const DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS = [
   'benchmark_review_issue_type',
   'benchmark_review_failure_note',
 ]
-const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [50, 100, 200]
+const MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE = 500
+const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [25, 50, 100, 200, 500]
 const DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG = {
   safe: {
     modelPath: FALLBACK_LOCAL_AI_TRAINING_MODEL,
@@ -83,7 +84,7 @@ const DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG = {
   },
 }
 const DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT =
-  'Use human-teacher guidance without collapsing into a left-only or right-only bias. Prefer left or right only when the visual chronology, readable text, reportability cues, or explicit human annotation meaningfully support that side. If the evidence is weak or conflicting, stay cautious and do not default to one side.'
+  'Use human-teacher guidance without collapsing into a left-only or right-only bias. Candidate order, first-vs-second position, and display slot are not evidence. Compare candidate identity and the actual visual chronology instead of where a candidate appears. Prefer left or right only when the visible sequence, readable text, reportability cues, or explicit human annotation meaningfully support that side. If the evidence is weak or conflicting, stay cautious and abstain instead of defaulting to the first shown candidate.'
 const LEGACY_LOCAL_AI_PUBLIC_MODEL_ID = 'idena-multimodal-v1'
 const LEGACY_LOCAL_AI_PUBLIC_VISION_ID = 'idena-vision-v1'
 const DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID = 'Idena-text-v1'
@@ -457,9 +458,11 @@ function normalizeDeveloperBenchmarkReviewRequiredFields(
 function normalizeDeveloperLocalBenchmarkSize(value) {
   const parsed = Number.parseInt(value, 10)
 
-  return DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS.includes(parsed)
-    ? parsed
-    : DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+  }
+
+  return Math.min(MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE, Math.max(1, parsed))
 }
 
 function normalizeDeveloperLocalTrainingEpochs(value) {
@@ -797,6 +800,7 @@ module.exports = {
   DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
   DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS,
   DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS,
+  MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE,
   DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
   DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
   DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,

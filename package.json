@@ -40,6 +40,7 @@
     "lint:fix": "eslint . --fix",
     "test": "jest",
     "index:deep-research": "node scripts/run-python.js scripts/build_deep_research_index.py",
+    "playwright:close": "bash scripts/close-playwright-browser.sh",
     "i18n:init": "npm run i18n:clean && npm run i18n:scan",
     "i18n:scan": "i18next-scanner",
     "i18n:clean": "node scripts/clean-paths.js locales/en locales/id locales/fr locales/de locales/es locales/ru locales/zh locales/ko locales/hr locales/hi locales/ro locales/uk locales/sr locales/it locales/pt locales/pl locales/si locales/tr locales/bg locales/sv locales/ja locales/el",

@@ -54,6 +54,11 @@ function sanitizeBenchmarkProfile(payload = {}) {
   if (payload.benchmarkProfile !== 'custom') {
     return {
       ...STRICT_PROFILE,
+      promptTemplateOverride: toShortText(
+        payload.promptTemplateOverride,
+        STRICT_PROFILE.promptTemplateOverride,
+        6000
+      ),
       flipVisionMode: normalizeVisionMode(
         payload.flipVisionMode,
         STRICT_PROFILE.flipVisionMode

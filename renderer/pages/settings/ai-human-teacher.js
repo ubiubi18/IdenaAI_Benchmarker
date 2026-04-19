@@ -53,7 +53,6 @@ import {
   DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE,
   DEFAULT_DEVELOPER_LOCAL_TRAINING_THERMAL_MODE,
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
-  DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
   normalizeDeveloperAiDraftAnswerWindowTokens,
   normalizeDeveloperBenchmarkReviewRequiredFields,
   normalizeDeveloperAiDraftContextWindowTokens,
@@ -260,18 +259,6 @@ function describeDeveloperLocalBenchmarkThermalMode(mode, t) {
         ),
         benchmarkCooldownMs,
       }
-  }
-}
-
-function describeDeveloperLocalBenchmarkSizeOption(size, t) {
-  switch (Number(size)) {
-    case 50:
-      return t('50 flips (quickest)')
-    case 200:
-      return t('200 flips (stronger check, slower)')
-    case 100:
-    default:
-      return t('100 flips (balanced)')
   }
 }
 
@@ -545,15 +532,146 @@ function hasAiAnnotationListContent(value = []) {
   return Array.isArray(value) && value.some((item) => String(item || '').trim())
 }
 
-function normalizeAiAnnotationDraft(annotation = {}) {
+const AI_ANNOTATION_WRAPPER_KEYS = [
+  'annotation',
+  'draft',
+  'result',
+  'data',
+  'json',
+  'response',
+  'output',
+  'content',
+]
+
+function countAiAnnotationSignalFields(value = {}) {
   const next =
-    annotation && typeof annotation === 'object' && !Array.isArray(annotation)
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+
+  let score = 0
+  const signalKeys = [
+    'final_answer',
+    'finalAnswer',
+    'answer',
+    'why_answer',
+    'whyAnswer',
+    'reason',
+    'confidence',
+    'text_required',
+    'textRequired',
+    'sequence_markers_present',
+    'sequenceMarkersPresent',
+    'report_required',
+    'reportRequired',
+    'option_a_summary',
+    'optionASummary',
+    'option_b_summary',
+    'optionBSummary',
+    'left_summary',
+    'leftSummary',
+    'right_summary',
+    'rightSummary',
+    'ordered_panel_descriptions',
+    'orderedPanelDescriptions',
+    'panel_descriptions',
+    'panelDescriptions',
+    'ordered_panel_text',
+    'orderedPanelText',
+    'panel_text',
+    'panelText',
+  ]
+
+  signalKeys.forEach((key) => {
+    const item = next[key]
+
+    if (
+      Array.isArray(item) &&
+      item.some((entry) => String(entry || '').trim())
+    ) {
+      score += 2
+      return
+    }
+
+    if (typeof item === 'boolean') {
+      score += 1
+      return
+    }
+
+    if (
+      typeof item === 'number' &&
+      Number.isFinite(item) &&
+      key === 'confidence'
+    ) {
+      score += 1
+      return
+    }
+
+    if (String(item || '').trim()) {
+      score += 1
+    }
+  })
+
+  return score
+}
+
+function unwrapAiAnnotationPayload(value, depth = 0) {
+  if (depth > 2) {
+    return value
+  }
+
+  const next =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : null
+
+  if (!next) {
+    return value
+  }
+
+  let bestCandidate = next
+  let bestScore = countAiAnnotationSignalFields(next)
+
+  AI_ANNOTATION_WRAPPER_KEYS.forEach((key) => {
+    const candidate = unwrapAiAnnotationPayload(next[key], depth + 1)
+    const candidateScore = countAiAnnotationSignalFields(candidate)
+
+    if (candidateScore > bestScore) {
+      bestCandidate = candidate
+      bestScore = candidateScore
+    }
+  })
+
+  Object.values(next).forEach((candidateValue) => {
+    if (
+      !candidateValue ||
+      typeof candidateValue !== 'object' ||
+      Array.isArray(candidateValue)
+    ) {
+      return
+    }
+
+    const candidate = unwrapAiAnnotationPayload(candidateValue, depth + 1)
+    const candidateScore = countAiAnnotationSignalFields(candidate)
+
+    if (candidateScore > bestScore) {
+      bestCandidate = candidate
+      bestScore = candidateScore
+    }
+  })
+
+  return bestCandidate
+}
+
+function normalizeAiAnnotationDraft(annotation = {}) {
+  const unwrapped = unwrapAiAnnotationPayload(annotation)
+  const next =
+    unwrapped && typeof unwrapped === 'object' && !Array.isArray(unwrapped)
       ? {
           ...createEmptyAiAnnotationDraft(),
-          ...annotation,
+          ...unwrapped,
         }
       : createEmptyAiAnnotationDraft()
   const finalAnswer = String(next.final_answer ?? next.finalAnswer ?? '')
+    .trim()
+    .toLowerCase()
+  const normalizedFinalAnswer = String(next.answer ?? finalAnswer)
     .trim()
     .toLowerCase()
   const normalized = {
@@ -577,33 +695,57 @@ function normalizeAiAnnotationDraft(annotation = {}) {
       .trim()
       .slice(0, 256),
     ordered_panel_descriptions: normalizeAiAnnotationDraftList(
-      next.ordered_panel_descriptions ?? next.orderedPanelDescriptions,
+      next.ordered_panel_descriptions ??
+        next.orderedPanelDescriptions ??
+        next.panel_descriptions ??
+        next.panelDescriptions ??
+        next.frame_notes ??
+        next.frameNotes,
       {
         maxItems: AI_DRAFT_PANEL_COUNT,
         maxLength: 280,
       }
     ),
     ordered_panel_text: normalizeAiAnnotationDraftList(
-      next.ordered_panel_text ?? next.orderedPanelText,
+      next.ordered_panel_text ??
+        next.orderedPanelText ??
+        next.panel_text ??
+        next.panelText ??
+        next.ocr_text ??
+        next.ocrText,
       {
         maxItems: AI_DRAFT_PANEL_COUNT,
         maxLength: 200,
       }
     ),
     option_a_story_analysis: String(
-      next.option_a_story_analysis ?? next.optionAStoryAnalysis ?? ''
+      next.option_a_story_analysis ??
+        next.optionAStoryAnalysis ??
+        next.option_a_analysis ??
+        next.optionAAnalysis ??
+        next.left_analysis ??
+        next.leftAnalysis ??
+        ''
     )
       .trim()
       .slice(0, 500),
     option_b_story_analysis: String(
-      next.option_b_story_analysis ?? next.optionBStoryAnalysis ?? ''
+      next.option_b_story_analysis ??
+        next.optionBStoryAnalysis ??
+        next.option_b_analysis ??
+        next.optionBAnalysis ??
+        next.right_analysis ??
+        next.rightAnalysis ??
+        ''
     )
       .trim()
       .slice(0, 500),
-    final_answer: ['left', 'right', 'skip'].includes(finalAnswer)
-      ? finalAnswer
+    final_answer: ['left', 'right', 'skip'].includes(normalizedFinalAnswer)
+      ? normalizedFinalAnswer
       : '',
-    why_answer: String(next.why_answer ?? next.whyAnswer ?? '')
+    why_answer: String(
+      next.why_answer ?? next.whyAnswer ?? next.reason ?? next.explanation ?? ''
+    )
       .trim()
       .slice(0, 900),
     confidence: normalizeAiAnnotationConfidence(next.confidence),
@@ -622,13 +764,31 @@ function normalizeAiAnnotationDraft(annotation = {}) {
       Object.prototype.hasOwnProperty.call(next, 'reportRequired')
         ? next.report_required ?? next.reportRequired
         : null,
-    report_reason: String(next.report_reason ?? next.reportReason ?? '')
+    report_reason: String(
+      next.report_reason ??
+        next.reportReason ??
+        next.report_note ??
+        next.reportNote ??
+        ''
+    )
       .trim()
       .slice(0, 400),
-    option_a_summary: String(next.option_a_summary ?? next.optionASummary ?? '')
+    option_a_summary: String(
+      next.option_a_summary ??
+        next.optionASummary ??
+        next.left_summary ??
+        next.leftSummary ??
+        ''
+    )
       .trim()
       .slice(0, 400),
-    option_b_summary: String(next.option_b_summary ?? next.optionBSummary ?? '')
+    option_b_summary: String(
+      next.option_b_summary ??
+        next.optionBSummary ??
+        next.right_summary ??
+        next.rightSummary ??
+        ''
+    )
       .trim()
       .slice(0, 400),
     rating: normalizeAiAnnotationRating(next.rating),
@@ -663,6 +823,10 @@ function hasAiAnnotationContent(annotation = {}) {
       next.option_b_story_analysis ||
       next.final_answer ||
       next.why_answer ||
+      next.confidence ||
+      next.text_required !== null ||
+      next.sequence_markers_present !== null ||
+      next.report_required !== null ||
       next.option_a_summary ||
       next.option_b_summary ||
       next.report_reason
@@ -847,6 +1011,24 @@ function createEmptyAnnotationDraft() {
     final_answer: '',
     why_answer: '',
     confidence: '',
+    benchmark_review: {
+      context: {
+        expected_answer: '',
+        ai_prediction: '',
+        baseline_prediction: '',
+        previous_prediction: '',
+        benchmark_flips: null,
+        evaluated_at: '',
+        change_type: '',
+        ai_correct: null,
+      },
+      correction: {
+        issue_type: '',
+        failure_note: '',
+        retraining_hint: '',
+        include_for_training: null,
+      },
+    },
     benchmark_review_issue_type: '',
     benchmark_review_failure_note: '',
     benchmark_review_retraining_hint: '',
@@ -883,6 +1065,130 @@ function normalizeBenchmarkReviewIssueType(value) {
     .replace(/\s+/gu, '_')
 
   return BENCHMARK_REVIEW_ISSUE_TYPE_OPTIONS.includes(next) ? next : ''
+}
+
+function normalizeBenchmarkReviewContextDraft(value = {}) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const expectedAnswer = String(
+    source.expected_answer ?? source.expectedAnswer ?? ''
+  )
+    .trim()
+    .toLowerCase()
+  const aiPrediction = String(source.ai_prediction ?? source.aiPrediction ?? '')
+    .trim()
+    .toLowerCase()
+  const baselinePrediction = String(
+    source.baseline_prediction ?? source.baselinePrediction ?? ''
+  )
+    .trim()
+    .toLowerCase()
+  const previousPrediction = String(
+    source.previous_prediction ?? source.previousPrediction ?? ''
+  )
+    .trim()
+    .toLowerCase()
+  let benchmarkFlips = null
+  if (source.benchmark_flips === null || source.benchmarkFlips === null) {
+    benchmarkFlips = null
+  } else if (
+    typeof source.benchmark_flips !== 'undefined' ||
+    typeof source.benchmarkFlips !== 'undefined'
+  ) {
+    benchmarkFlips = normalizeDeveloperLocalBenchmarkSize(
+      source.benchmark_flips ?? source.benchmarkFlips
+    )
+  }
+
+  return {
+    expected_answer: ['left', 'right', 'skip'].includes(expectedAnswer)
+      ? expectedAnswer
+      : '',
+    ai_prediction: ['left', 'right', 'skip'].includes(aiPrediction)
+      ? aiPrediction
+      : '',
+    baseline_prediction: ['left', 'right', 'skip'].includes(baselinePrediction)
+      ? baselinePrediction
+      : '',
+    previous_prediction: ['left', 'right', 'skip'].includes(previousPrediction)
+      ? previousPrediction
+      : '',
+    benchmark_flips: benchmarkFlips,
+    evaluated_at: String(source.evaluated_at ?? source.evaluatedAt ?? '')
+      .trim()
+      .slice(0, 64),
+    change_type: String(source.change_type ?? source.changeType ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/gu, '_')
+      .slice(0, 64),
+    ai_correct: normalizeAnnotationDraftBool(
+      source.ai_correct ?? source.aiCorrect
+    ),
+  }
+}
+
+function normalizeBenchmarkReviewDraftLayer(
+  benchmarkReview = {},
+  annotationAliases = {}
+) {
+  const source =
+    benchmarkReview && typeof benchmarkReview === 'object'
+      ? benchmarkReview
+      : {}
+  const aliases =
+    annotationAliases && typeof annotationAliases === 'object'
+      ? annotationAliases
+      : {}
+  const correction =
+    source.correction && typeof source.correction === 'object'
+      ? source.correction
+      : {}
+  let includeForTrainingSource
+  if (typeof correction.include_for_training !== 'undefined') {
+    includeForTrainingSource = correction.include_for_training
+  } else if (typeof correction.includeForTraining !== 'undefined') {
+    includeForTrainingSource = correction.includeForTraining
+  } else {
+    includeForTrainingSource =
+      aliases.benchmark_review_include_for_training ??
+      aliases.benchmarkReviewIncludeForTraining
+  }
+
+  return {
+    context: normalizeBenchmarkReviewContextDraft(
+      source.context || source.source || source
+    ),
+    correction: {
+      issue_type: normalizeBenchmarkReviewIssueType(
+        correction.issue_type ??
+          correction.issueType ??
+          aliases.benchmark_review_issue_type ??
+          aliases.benchmarkReviewIssueType
+      ),
+      failure_note: String(
+        correction.failure_note ??
+          correction.failureNote ??
+          aliases.benchmark_review_failure_note ??
+          aliases.benchmarkReviewFailureNote ??
+          ''
+      )
+        .trim()
+        .slice(0, 900),
+      retraining_hint: String(
+        correction.retraining_hint ??
+          correction.retrainingHint ??
+          aliases.benchmark_review_retraining_hint ??
+          aliases.benchmarkReviewRetrainingHint ??
+          ''
+      )
+        .trim()
+        .slice(0, 900),
+      include_for_training: normalizeAnnotationDraftBool(
+        includeForTrainingSource
+      ),
+    },
+  }
 }
 
 function getBenchmarkReviewRequiredFieldKeys(value = []) {
@@ -935,6 +1241,10 @@ function normalizeAnnotationDraft(annotation = {}) {
     ...createEmptyAnnotationDraft(),
     ...(annotation && typeof annotation === 'object' ? annotation : {}),
   }
+  const benchmarkReview = normalizeBenchmarkReviewDraftLayer(
+    next.benchmark_review ?? next.benchmarkReview,
+    next
+  )
   const captions = Array.isArray(next.frame_captions)
     ? next.frame_captions.slice(0, 4)
     : []
@@ -982,27 +1292,14 @@ function normalizeAnnotationDraft(annotation = {}) {
       next.confidence === null || typeof next.confidence === 'undefined'
         ? ''
         : String(next.confidence),
-    benchmark_review_issue_type: normalizeBenchmarkReviewIssueType(
-      next.benchmark_review_issue_type ?? next.benchmarkReviewIssueType
-    ),
-    benchmark_review_failure_note: String(
-      next.benchmark_review_failure_note ??
-        next.benchmarkReviewFailureNote ??
-        ''
-    )
-      .trim()
-      .slice(0, 900),
-    benchmark_review_retraining_hint: String(
-      next.benchmark_review_retraining_hint ??
-        next.benchmarkReviewRetrainingHint ??
-        ''
-    )
-      .trim()
-      .slice(0, 900),
-    benchmark_review_include_for_training: normalizeAnnotationDraftBool(
-      next.benchmark_review_include_for_training ??
-        next.benchmarkReviewIncludeForTraining
-    ),
+    benchmark_review: benchmarkReview,
+    benchmarkReview,
+    benchmark_review_issue_type: benchmarkReview.correction.issue_type,
+    benchmark_review_failure_note: benchmarkReview.correction.failure_note,
+    benchmark_review_retraining_hint:
+      benchmarkReview.correction.retraining_hint,
+    benchmark_review_include_for_training:
+      benchmarkReview.correction.include_for_training,
   }
 }
 
@@ -1445,7 +1742,17 @@ function buildStoredAiAnnotation(aiAnnotation, result = {}, task = {}) {
   })
 
   if (!normalized) {
-    throw new Error('Local AI returned an empty draft annotation.')
+    const keys =
+      aiAnnotation &&
+      typeof aiAnnotation === 'object' &&
+      !Array.isArray(aiAnnotation)
+        ? Object.keys(aiAnnotation).slice(0, 12)
+        : []
+    const keyPreview = keys.length > 0 ? ` Keys: ${keys.join(', ')}` : ''
+
+    throw new Error(
+      `Local AI returned a draft object without usable annotation fields.${keyPreview}`
+    )
   }
 
   return normalized
@@ -5244,6 +5551,49 @@ function applyBenchmarkReviewSuggestionToDraft(
   })
 }
 
+function mergeBenchmarkReviewContextIntoDraft(
+  annotation = {},
+  reviewContext = null
+) {
+  if (!reviewContext || typeof reviewContext !== 'object') {
+    return normalizeAnnotationDraft(annotation)
+  }
+
+  const next = normalizeAnnotationDraft(annotation)
+  const currentBenchmarkReview = normalizeBenchmarkReviewDraftLayer(
+    next.benchmark_review,
+    next
+  )
+
+  return normalizeAnnotationDraft({
+    ...next,
+    benchmark_review: {
+      ...currentBenchmarkReview,
+      context: normalizeBenchmarkReviewContextDraft({
+        ...currentBenchmarkReview.context,
+        expected_answer: reviewContext.expected,
+        ai_prediction: reviewContext?.current?.predicted,
+        baseline_prediction: reviewContext?.baseline?.predicted,
+        previous_prediction: reviewContext?.previous?.predicted,
+        benchmark_flips:
+          reviewContext?.benchmarkFlips ??
+          currentBenchmarkReview.context.benchmark_flips,
+        evaluated_at:
+          reviewContext?.current?.evaluatedAt ||
+          reviewContext?.evaluatedAt ||
+          currentBenchmarkReview.context.evaluated_at,
+        change_type:
+          reviewContext?.changeType ||
+          currentBenchmarkReview.context.change_type,
+        ai_correct:
+          typeof reviewContext?.current?.correct === 'boolean'
+            ? reviewContext.current.correct
+            : currentBenchmarkReview.context.ai_correct,
+      }),
+    },
+  })
+}
+
 function BenchmarkInsightCard({title, value, detail = '', tone = 'blue'}) {
   const toneMap = {
     green: {borderColor: 'green.100', bg: 'green.50'},
@@ -5935,6 +6285,7 @@ function DeveloperBenchmarkExamplesPanel({
     selectedExample?.previous,
     t
   )
+  const currentFairness = data?.current?.fairBenchmark || null
 
   if (isLoading) {
     return (
@@ -6042,6 +6393,19 @@ function DeveloperBenchmarkExamplesPanel({
             <Badge colorScheme="blue" borderRadius="full" px={2}>
               {t('Current')}: {formatSuccessRate(data.current.accuracy)}
             </Badge>
+            {currentFairness ? (
+              <Badge
+                colorScheme={
+                  currentFairness.legacyFairnessUnknown ? 'orange' : 'green'
+                }
+                borderRadius="full"
+                px={2}
+              >
+                {currentFairness.legacyFairnessUnknown
+                  ? t('Legacy fairness unknown')
+                  : t('Fair benchmark')}
+              </Badge>
+            ) : null}
             {data.previous ? (
               <Badge colorScheme="gray" borderRadius="full" px={2}>
                 {t('Last run')}: {formatSuccessRate(data.previous.accuracy)}
@@ -6839,6 +7203,11 @@ export default function AiHumanTeacherPage() {
     ]
   )
 
+  const developerLocalBenchmarkSize = normalizeDeveloperLocalBenchmarkSize(
+    localAi?.developerLocalBenchmarkSize ||
+      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
+  )
+
   const loadDeveloperComparisonExamples = React.useCallback(
     async ({sampleName = demoSampleName, benchmarkFlips} = {}) => {
       if (
@@ -6862,7 +7231,7 @@ export default function AiHumanTeacherPage() {
             sampleName,
             evaluationFlips: benchmarkFlips,
             currentPeriod,
-            maxExamples: 12,
+            maxExamples: benchmarkFlips || developerLocalBenchmarkSize,
           })
 
         if (developerComparisonExamplesRequestIdRef.current !== requestId) {
@@ -6887,6 +7256,7 @@ export default function AiHumanTeacherPage() {
     },
     [
       currentPeriod,
+      developerLocalBenchmarkSize,
       demoSampleName,
       ensureBridge,
       hasInteractiveLocalAiBridge,
@@ -6917,10 +7287,6 @@ export default function AiHumanTeacherPage() {
       localAi?.developerLocalBenchmarkThermalMode ||
         DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE
     )
-  const developerLocalBenchmarkSize = normalizeDeveloperLocalBenchmarkSize(
-    localAi?.developerLocalBenchmarkSize ||
-      DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
-  )
   const developerAiDraftTriggerMode = normalizeDeveloperAiDraftTriggerMode(
     localAi?.developerAiDraftTriggerMode ||
       DEFAULT_DEVELOPER_AI_DRAFT_TRIGGER_MODE
@@ -10963,7 +11329,10 @@ export default function AiHumanTeacherPage() {
     }
 
     setAnnotationDraft((current) => {
-      const normalized = normalizeAnnotationDraft(current)
+      const normalized = mergeBenchmarkReviewContextIntoDraft(
+        current,
+        activeDeveloperBenchmarkReviewContext
+      )
       const next = applyBenchmarkReviewSuggestionToDraft(
         normalized,
         activeBenchmarkReviewSuggestion,
@@ -15084,32 +15453,25 @@ export default function AiHumanTeacherPage() {
                             <FormLabel mb={1}>
                               {t('Local benchmark size')}
                             </FormLabel>
-                            <Select
+                            <Input
                               size="sm"
+                              type="number"
+                              min={1}
+                              max={500}
+                              step={1}
                               value={String(developerLocalBenchmarkSize)}
                               onChange={(e) =>
                                 updateLocalAiSettings({
-                                  developerLocalBenchmarkSize: Number.parseInt(
-                                    e.target.value,
-                                    10
-                                  ),
+                                  developerLocalBenchmarkSize:
+                                    normalizeDeveloperLocalBenchmarkSize(
+                                      e.target.value
+                                    ),
                                 })
                               }
-                            >
-                              {DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS.map(
-                                (size) => (
-                                  <option key={size} value={String(size)}>
-                                    {describeDeveloperLocalBenchmarkSizeOption(
-                                      size,
-                                      t
-                                    )}
-                                  </option>
-                                )
-                              )}
-                            </Select>
+                            />
                             <Text color="muted" fontSize="xs" mt={1}>
                               {t(
-                                'This benchmark always uses a separate validation holdout and never reuses the flips you just trained on.'
+                                'Enter any benchmark size from 1 to 500. The final run clamps to the available unseen holdout and never reuses the flips you just trained on.'
                               )}
                             </Text>
                           </Box>

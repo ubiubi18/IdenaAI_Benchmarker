@@ -41,9 +41,11 @@ VALID_ANSWERS = {"left", "right", "skip"}
 PROMPT_FAMILY_CHOICES = sorted(PROMPT_FAMILIES.keys()) + ["auto"]
 HUMAN_TEACHER_SYSTEM_PROMPT = (
     "Use human-teacher guidance without collapsing into a left-only or right-only bias. "
-    "Prefer left or right only when the visual chronology, readable text, reportability cues, "
+    "Candidate order, first-vs-second position, and display slot are not evidence. "
+    "Compare candidate identity and the actual visual chronology instead of where a candidate appears. "
+    "Prefer left or right only when the visible sequence, readable text, reportability cues, "
     "or explicit human annotation meaningfully support that side. "
-    "If the evidence is weak or conflicting, stay cautious and do not default to one side."
+    "If the evidence is weak or conflicting, stay cautious and abstain instead of defaulting to the first shown candidate."
 )
 
 
@@ -280,6 +282,74 @@ def normalize_ai_annotation(value: Any) -> Dict[str, Any]:
     }
 
 
+def normalize_benchmark_review(annotation: Dict[str, Any]) -> Dict[str, Any]:
+    raw = (
+        annotation.get("benchmark_review")
+        if isinstance(annotation.get("benchmark_review"), dict)
+        else annotation.get("benchmarkReview")
+        if isinstance(annotation.get("benchmarkReview"), dict)
+        else {}
+    )
+    correction = raw.get("correction") if isinstance(raw.get("correction"), dict) else {}
+    context = raw.get("context") if isinstance(raw.get("context"), dict) else {}
+
+    return {
+        "context": {
+            "expected_answer": trim_text(
+                context.get("expected_answer") or context.get("expectedAnswer"), 16
+            ).lower(),
+            "ai_prediction": trim_text(
+                context.get("ai_prediction") or context.get("aiPrediction"), 16
+            ).lower(),
+            "baseline_prediction": trim_text(
+                context.get("baseline_prediction") or context.get("baselinePrediction"), 16
+            ).lower(),
+            "change_type": trim_text(
+                context.get("change_type") or context.get("changeType"), 64
+            )
+            .lower()
+            .replace(" ", "_"),
+            "benchmark_flips": context.get("benchmark_flips")
+            if context.get("benchmark_flips") is not None
+            else context.get("benchmarkFlips"),
+        },
+        "correction": {
+            "issue_type": trim_text(
+                correction.get("issue_type")
+                or correction.get("issueType")
+                or annotation.get("benchmark_review_issue_type")
+                or annotation.get("benchmarkReviewIssueType"),
+                64,
+            )
+            .lower()
+            .replace(" ", "_"),
+            "failure_note": trim_text(
+                correction.get("failure_note")
+                or correction.get("failureNote")
+                or annotation.get("benchmark_review_failure_note")
+                or annotation.get("benchmarkReviewFailureNote"),
+                900,
+            ),
+            "retraining_hint": trim_text(
+                correction.get("retraining_hint")
+                or correction.get("retrainingHint")
+                or annotation.get("benchmark_review_retraining_hint")
+                or annotation.get("benchmarkReviewRetrainingHint"),
+                900,
+            ),
+            "include_for_training": normalize_bool(
+                correction.get("include_for_training")
+                if "include_for_training" in correction
+                else correction.get("includeForTraining")
+                if "includeForTraining" in correction
+                else annotation.get("benchmark_review_include_for_training")
+                if "benchmark_review_include_for_training" in annotation
+                else annotation.get("benchmarkReviewIncludeForTraining")
+            ),
+        },
+    }
+
+
 def build_human_reasoning_summary(annotation: Dict[str, Any]) -> str:
     final_answer = trim_text(annotation.get("final_answer"), 16).lower()
     why_answer = trim_text(annotation.get("why_answer"), 900)
@@ -289,6 +359,7 @@ def build_human_reasoning_summary(annotation: Dict[str, Any]) -> str:
     report_required = normalize_bool(annotation.get("report_required"))
     report_reason = trim_text(annotation.get("report_reason"), 400)
     ai_annotation = normalize_ai_annotation(annotation.get("ai_annotation") or annotation.get("aiAnnotation"))
+    benchmark_review = normalize_benchmark_review(annotation)
     ai_annotation_feedback = trim_text(
         annotation.get("ai_annotation_feedback") or annotation.get("aiAnnotationFeedback"),
         600,
@@ -353,6 +424,21 @@ def build_human_reasoning_summary(annotation: Dict[str, Any]) -> str:
         parts.append(f"Human correction to the AI draft: {ai_annotation_feedback}")
     if references:
         parts.append(f"Panel references: {references}.")
+    if benchmark_review["correction"]["include_for_training"] is True:
+        if benchmark_review["correction"]["issue_type"]:
+            parts.append(
+                "Benchmark review issue: "
+                + benchmark_review["correction"]["issue_type"].replace("_", " ")
+                + "."
+            )
+        if benchmark_review["correction"]["failure_note"]:
+            parts.append(
+                f"Benchmark review failure note: {benchmark_review['correction']['failure_note']}"
+            )
+        if benchmark_review["correction"]["retraining_hint"]:
+            parts.append(
+                f"Benchmark review retraining hint: {benchmark_review['correction']['retraining_hint']}"
+            )
     if not parts:
         parts.append("Human teacher supplied a valid answer without extra notes.")
     return " ".join(part.strip() for part in parts if part.strip())[:1200]
@@ -470,6 +556,7 @@ def build_record(
     panel_references = normalize_panel_references(annotation.get("panel_references"))
     confidence = normalize_confidence(annotation.get("confidence"))
     ai_annotation = normalize_ai_annotation(annotation.get("ai_annotation") or annotation.get("aiAnnotation"))
+    benchmark_review = normalize_benchmark_review(annotation)
     ai_annotation_feedback = trim_text(
         annotation.get("ai_annotation_feedback") or annotation.get("aiAnnotationFeedback"),
         600,
@@ -539,6 +626,11 @@ def build_record(
         "ai_annotation": ai_annotation,
         "ai_annotation_rating": ai_annotation.get("rating") or "",
         "ai_annotation_feedback": ai_annotation_feedback,
+        "benchmark_review": benchmark_review,
+        "benchmark_review_issue_type": benchmark_review["correction"]["issue_type"],
+        "benchmark_review_failure_note": benchmark_review["correction"]["failure_note"],
+        "benchmark_review_retraining_hint": benchmark_review["correction"]["retraining_hint"],
+        "benchmark_review_include_for_training": benchmark_review["correction"]["include_for_training"],
         "text_required": normalize_bool(annotation.get("text_required")),
         "sequence_markers_present": normalize_bool(annotation.get("sequence_markers_present")),
         "report_required": normalize_bool(annotation.get("report_required")),

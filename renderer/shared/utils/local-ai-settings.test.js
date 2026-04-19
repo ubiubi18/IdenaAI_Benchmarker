@@ -228,7 +228,7 @@ describe('local-ai settings schema', () => {
       'mlx-community/Qwen3.5-9B-MLX-4bit'
     )
     expect(DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT).toMatch(
-      /left-only or right-only bias/i
+      /display slot are not evidence/i
     )
   })
 
@@ -415,8 +415,10 @@ describe('local-ai settings schema', () => {
       normalizeDeveloperLocalBenchmarkSize(
         DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS[0]
       )
-    ).toBe(50)
-    expect(normalizeDeveloperLocalBenchmarkSize('999')).toBe(
+    ).toBe(25)
+    expect(normalizeDeveloperLocalBenchmarkSize('999')).toBe(500)
+    expect(normalizeDeveloperLocalBenchmarkSize('0')).toBe(1)
+    expect(normalizeDeveloperLocalBenchmarkSize('abc')).toBe(
       DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE
     )
   })
