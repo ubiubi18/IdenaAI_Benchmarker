@@ -290,8 +290,8 @@ function BandwidthItem(props) {
 export function Logo() {
   return (
     <Image
-      src="/static/logo.svg"
-      alt="Idena logo"
+      src="/static/identity-mark.png"
+      alt="IdenaAI mark"
       w="14"
       mt="4"
       mb="2"

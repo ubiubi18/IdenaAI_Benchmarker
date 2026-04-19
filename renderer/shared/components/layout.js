@@ -900,7 +900,11 @@ function OfflineApp() {
       {isDownloadingBuiltinNode && (
         <Stack spacing={3} w="md">
           <Stack isInline spacing={4} align="center">
-            <Image src="/static/idena_white.svg" alt="logo" boxSize={12} />
+            <Image
+              src="/static/identity-mark.png"
+              alt="IdenaAI mark"
+              boxSize={12}
+            />
             <Stack spacing={1} flex={1}>
               <Heading fontSize="lg" fontWeight={500}>
                 {t('Downloading Idena Node...')}
@@ -1046,8 +1050,8 @@ function HardForkScreen({
             <Stack spacing={8}>
               <Stack isInline spacing={5} align="center">
                 <Image
-                  src="/static/idena_white.svg"
-                  alt={t('Idena logo')}
+                  src="/static/identity-mark.png"
+                  alt={t('IdenaAI mark')}
                   boxSize={20}
                 />
                 <Stack spacing={1}>

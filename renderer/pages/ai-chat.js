@@ -1587,8 +1587,8 @@ export default function AiChatPage() {
   const runtimeErrorMessage = formatRuntimeStatusError(statusResult, t)
   const backendLabel =
     localAi.runtimeBackend === 'ollama-direct'
-      ? t('Local runtime via Ollama')
-      : t('Legacy HTTP sidecar')
+      ? t('Local runtime')
+      : t('Legacy sidecar')
   let runtimeStatusLabel = t('Disabled')
 
   if (isCheckingStatus) {
@@ -1735,6 +1735,35 @@ export default function AiChatPage() {
                 py={5}
               >
                 <Stack spacing={3} h="full">
+                  <Badge colorScheme="green" alignSelf="flex-start">
+                    {t('Chat')}
+                  </Badge>
+                  <Text fontSize="xl" fontWeight={700}>
+                    {t('Chat with IdenaAI')}
+                  </Text>
+                  <Text color="muted" flex={1}>
+                    {t(
+                      'Open direct local chat, attach images, and ask for FLIP reasoning or general Idena help.'
+                    )}
+                  </Text>
+                  <PrimaryButton
+                    variant="solid"
+                    onClick={() => router.push('/ai-chat?mode=chat')}
+                  >
+                    {t('Chat with IdenaAI')}
+                  </PrimaryButton>
+                </Stack>
+              </Box>
+
+              <Box
+                bg="white"
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="xl"
+                px={5}
+                py={5}
+              >
+                <Stack spacing={3} h="full">
                   <Badge colorScheme="blue" alignSelf="flex-start">
                     {t('Developer mode')}
                   </Badge>
@@ -1753,7 +1782,7 @@ export default function AiChatPage() {
                       )}
                     </Text>
                   ) : null}
-                  <PrimaryButton
+                  <SecondaryButton
                     isDisabled={isValidationRunning}
                     onClick={() =>
                       router.push(
@@ -1762,36 +1791,7 @@ export default function AiChatPage() {
                     }
                   >
                     {t('Train your AI on flips')}
-                  </PrimaryButton>
-                </Stack>
-              </Box>
-
-              <Box
-                bg="white"
-                borderWidth="1px"
-                borderColor="gray.100"
-                borderRadius="xl"
-                px={5}
-                py={5}
-              >
-                <Stack spacing={3} h="full">
-                  <Badge colorScheme="green" alignSelf="flex-start">
-                    {t('Chat')}
-                  </Badge>
-                  <Text fontSize="xl" fontWeight={700}>
-                    {t('Chat with IdenaAI')}
-                  </Text>
-                  <Text color="muted" flex={1}>
-                    {t(
-                      'Open direct local chat, attach images, and ask for FLIP reasoning or general Idena help.'
-                    )}
-                  </Text>
-                  <PrimaryButton
-                    variant="solid"
-                    onClick={() => router.push('/ai-chat?mode=chat')}
-                  >
-                    {t('Chat with IdenaAI')}
-                  </PrimaryButton>
+                  </SecondaryButton>
                 </Stack>
               </Box>
             </SimpleGrid>
@@ -1827,11 +1827,6 @@ export default function AiChatPage() {
                 <ChatIcon boxSize="6" color="brandBlue.500" />
                 <PageTitle mb={0}>{t('IdenaAI')}</PageTitle>
               </HStack>
-              <Text color="muted" fontSize="sm">
-                {t(
-                  'Local chat on this device. Timeline above, composer below.'
-                )}
-              </Text>
             </Stack>
             <HStack
               spacing={2}
@@ -1897,9 +1892,6 @@ export default function AiChatPage() {
                     ]}
                   </HelpPopover>
                 </HStack>
-                <Text color="muted" fontSize="xs">
-                  {t('Write below. Replies appear in the timeline above.')}
-                </Text>
               </Stack>
 
               <HStack spacing={2} wrap="wrap">
