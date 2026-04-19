@@ -113,6 +113,30 @@ function resizeImageDataUrl(
   return url
 }
 
+function getEditorInstanceFromRefs(editorRefs, idx) {
+  return (
+    editorRefs.current[idx] &&
+    editorRefs.current[idx].current &&
+    editorRefs.current[idx].current.getInstance()
+  )
+}
+
+function isCurrentEditorInstance(editorRefs, idx, editor) {
+  return (
+    Boolean(editor) && getEditorInstanceFromRefs(editorRefs, idx) === editor
+  )
+}
+
+function resetEditorHistory(editor) {
+  if (!editor) return
+  if (typeof editor.clearUndoStack === 'function') {
+    editor.clearUndoStack()
+  }
+  if (typeof editor.clearRedoStack === 'function') {
+    editor.clearRedoStack()
+  }
+}
+
 export default function FlipEditor({
   idx = 0,
   src,
@@ -177,6 +201,12 @@ export default function FlipEditor({
     setChangesCnt(CHANGED)
   }, [])
 
+  const logEditorError = useCallback((message, error) => {
+    if (global.isDev) {
+      global.logger.debug(message, (error && error.message) || error)
+    }
+  }, [])
+
   useInterval(() => {
     if (changesCnt >= NEWCHANGES) {
       setShowArrowHint(false)
@@ -200,10 +230,19 @@ export default function FlipEditor({
       if (!editor) return
 
       if (!url) {
-        editor.loadImageFromURL(BLANK_IMAGE, 'blank').then(() => {
-          setChangesCnt(NOCHANGES)
-          onChange(null)
-        })
+        editor
+          .loadImageFromURL(BLANK_IMAGE, 'blank')
+          .then(() => {
+            if (!isCurrentEditorInstance(editorRefs, idx, editor)) {
+              return
+            }
+
+            setChangesCnt(NOCHANGES)
+            onChange(null)
+          })
+          .catch((error) => {
+            logEditorError('flipEditor clear image failed', error)
+          })
         return
       }
 
@@ -249,56 +288,87 @@ export default function FlipEditor({
       }
 
       if (nextInsertMode === INSERT_BACKGROUND_IMAGE) {
-        editor.loadImageFromURL(BLANK_IMAGE, 'blank').then(() => {
-          editor.addImageObject(url).then((objectProps) => {
-            const {id} = objectProps
-            const {width, height} = editor.getObjectProperties(id, [
-              'left',
-              'top',
-              'width',
-              'height',
-            ])
-            const {newWidth, newHeight} = resizing(
-              width,
-              height,
-              IMAGE_WIDTH,
-              IMAGE_HEIGHT,
-              false
-            )
-            editor.setObjectPropertiesQuietly(id, {
-              left: IMAGE_WIDTH / 2 + Math.random() * 200 - 400,
-              top: IMAGE_HEIGHT / 2 + Math.random() * 200 - 400,
-              width: newWidth * 10,
-              height: newHeight * 10,
-              opacity: 0.5,
-            })
-            editor.loadImageFromURL(editor.toDataURL(), 'BlurBkgd').then(() => {
-              editor.addImageObject(url).then(async (objectProps2) => {
-                const {id: id2} = objectProps2
+        editor
+          .loadImageFromURL(BLANK_IMAGE, 'blank')
+          .then(() => {
+            if (!isCurrentEditorInstance(editorRefs, idx, editor)) {
+              return null
+            }
 
-                editor.setObjectPropertiesQuietly(id2, {
-                  left: IMAGE_WIDTH / 2,
-                  top: IMAGE_HEIGHT / 2,
-                  scaleX: newWidth / width,
-                  scaleY: newHeight / height,
-                })
+            return editor.addImageObject(url).then((objectProps) => {
+              if (!isCurrentEditorInstance(editorRefs, idx, editor)) {
+                return null
+              }
 
-                await editor.loadImageFromURL(editor.toDataURL(), 'Bkgd')
-                editor.clearUndoStack()
-                editor.clearRedoStack()
-                handleOnChanged()
-                if (onDone) onDone()
+              const {id} = objectProps
+              const {width, height} = editor.getObjectProperties(id, [
+                'left',
+                'top',
+                'width',
+                'height',
+              ])
+              const {newWidth, newHeight} = resizing(
+                width,
+                height,
+                IMAGE_WIDTH,
+                IMAGE_HEIGHT,
+                false
+              )
 
-                if (editors[idx]._graphics) {
-                  editors[idx]._graphics.renderAll()
-                }
+              editor.setObjectPropertiesQuietly(id, {
+                left: IMAGE_WIDTH / 2 + Math.random() * 200 - 400,
+                top: IMAGE_HEIGHT / 2 + Math.random() * 200 - 400,
+                width: newWidth * 10,
+                height: newHeight * 10,
+                opacity: 0.5,
               })
+
+              return editor
+                .loadImageFromURL(editor.toDataURL(), 'BlurBkgd')
+                .then(() => {
+                  if (!isCurrentEditorInstance(editorRefs, idx, editor)) {
+                    return null
+                  }
+
+                  return editor
+                    .addImageObject(url)
+                    .then(async (objectProps2) => {
+                      if (!isCurrentEditorInstance(editorRefs, idx, editor)) {
+                        return
+                      }
+
+                      const {id: id2} = objectProps2
+
+                      editor.setObjectPropertiesQuietly(id2, {
+                        left: IMAGE_WIDTH / 2,
+                        top: IMAGE_HEIGHT / 2,
+                        scaleX: newWidth / width,
+                        scaleY: newHeight / height,
+                      })
+
+                      await editor.loadImageFromURL(editor.toDataURL(), 'Bkgd')
+
+                      if (!isCurrentEditorInstance(editorRefs, idx, editor)) {
+                        return
+                      }
+
+                      resetEditorHistory(editor)
+                      handleOnChanged()
+                      if (onDone) onDone()
+
+                      if (editors[idx] && editors[idx]._graphics) {
+                        editors[idx]._graphics.renderAll()
+                      }
+                    })
+                })
             })
           })
-        })
+          .catch((error) => {
+            logEditorError('flipEditor set background image failed', error)
+          })
       }
     },
-    [editors, handleOnChanged, idx, insertImageMode, onChange]
+    [editors, handleOnChanged, idx, insertImageMode, logEditorError, onChange]
   )
 
   const {
@@ -435,11 +505,7 @@ export default function FlipEditor({
   }
 
   function getEditorInstance() {
-    const editor =
-      editorRefs.current[idx] &&
-      editorRefs.current[idx].current &&
-      editorRefs.current[idx].current.getInstance()
-    return editor
+    return getEditorInstanceFromRefs(editorRefs, idx)
   }
 
   function getEditorActiveObjectId(editor) {
@@ -579,38 +645,52 @@ export default function FlipEditor({
       editorRefs.current[idx].current &&
       editorRefs.current[idx].current.getInstance()
 
-    if (newEditor) {
-      if (!editors[idx]) {
-        setEditor(idx, newEditor)
-        newEditor.setBrush({width: brush, color: brushColor})
+    let cancelled = false
 
-        if (src) {
-          newEditor.loadImageFromURL(src, 'src').then(() => {
-            newEditor.clearUndoStack()
-            newEditor.clearRedoStack()
-            updateEvents(newEditor)
-          })
-        } else {
-          newEditor.loadImageFromURL(BLANK_IMAGE, 'blank').then(() => {
-            newEditor.clearUndoStack()
-            newEditor.clearRedoStack()
-            updateEvents(newEditor)
-          })
-        }
-      }
+    if (newEditor && !editors[idx]) {
+      setEditor(idx, newEditor)
+      newEditor.setBrush({width: brush, color: brushColor})
+
+      const imageUrl = src || BLANK_IMAGE
+      const imageName = src ? 'src' : 'blank'
+
+      newEditor
+        .loadImageFromURL(imageUrl, imageName)
+        .then(() => {
+          if (
+            cancelled ||
+            !isCurrentEditorInstance(editorRefs, idx, newEditor)
+          ) {
+            return
+          }
+
+          resetEditorHistory(newEditor)
+          updateEvents(newEditor)
+        })
+        .catch((error) => {
+          logEditorError('flipEditor initial image load failed', error)
+        })
     }
 
     return () => {
+      cancelled = true
       mousetrap.reset()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorRefs, src, idx])
+  }, [editorRefs, idx, logEditorError, src])
 
   const [showImageSearch, setShowImageSearch] = React.useState()
 
   React.useEffect(() => {
     if (showImageSearch || !visible) {
-      editorRefs.current[idx].current.getInstance().discardSelection()
+      const editor =
+        editorRefs.current[idx] &&
+        editorRefs.current[idx].current &&
+        editorRefs.current[idx].current.getInstance()
+
+      if (editor && typeof editor.discardSelection === 'function') {
+        editor.discardSelection()
+      }
     }
   }, [idx, showImageSearch, visible])
 
