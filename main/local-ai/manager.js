@@ -32,6 +32,7 @@ const TRAINING_CANDIDATE_PACKAGE_VERSION = 1
 const HUMAN_TEACHER_PACKAGE_VERSION = 1
 const MAX_CAPTURE_INDEX_ITEMS = 1000
 const MAX_RECENT_CAPTURES = 20
+const MAX_IMPORTED_ADAPTER_BYTES = 96 * 1024 * 1024
 const DEFAULT_HUMAN_TEACHER_BATCH_SIZE = 30
 const MAX_HUMAN_TEACHER_BATCH_SIZE = 30
 const DEMO_HUMAN_TEACHER_BATCH_SIZE = 5
@@ -52,6 +53,10 @@ const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL =
 const EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE = 200
 const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
 const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [50, 100, 200]
+const MAX_DEVELOPER_COMPARISON_TRACE_DEPTH = 3
+const MAX_DEVELOPER_COMPARISON_TRACE_OBJECT_KEYS = 24
+const MAX_DEVELOPER_COMPARISON_TRACE_ARRAY_ITEMS = 12
+const MAX_DEVELOPER_COMPARISON_TRACE_STRING_LENGTH = 400
 const DEVELOPER_LOCAL_TRAINING_MODEL_OPTIONS = new Set([
   EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
 ])
@@ -1098,6 +1103,95 @@ function adapterArtifactManifestPath(storage, epoch) {
   return storage.resolveLocalAiPath('adapters', `epoch-${epoch}.json`)
 }
 
+function normalizeAdapterImportToken(value) {
+  const baseName = path.basename(String(value || '').trim())
+  const normalized = baseName.replace(/[^a-zA-Z0-9._-]+/g, '-')
+  return normalized || null
+}
+
+function sanitizeAdapterArtifactFileName(fileName, fallback = 'adapter.bin') {
+  const baseName = path.basename(String(fileName || '').trim())
+  const normalized = baseName.replace(/[^a-zA-Z0-9._-]+/g, '-')
+  return normalized || fallback
+}
+
+function adapterImportedArtifactPath(storage, epoch, token) {
+  return path.join(
+    storage.resolveLocalAiPath('adapter-imports', String(epoch)),
+    normalizeAdapterImportToken(token) || 'adapter.bin'
+  )
+}
+
+function adapterArtifactFileNameFromToken(token, fallback = 'adapter.bin') {
+  const normalizedToken = normalizeAdapterImportToken(token)
+
+  if (!normalizedToken) {
+    return fallback
+  }
+
+  const parts = normalizedToken.split('-')
+
+  if (parts.length < 3) {
+    return normalizedToken
+  }
+
+  return sanitizeAdapterArtifactFileName(parts.slice(2).join('-'), fallback)
+}
+
+function decodeAdapterImportBuffer(value) {
+  const raw = String(value || '').trim()
+
+  if (!raw) {
+    return null
+  }
+
+  const base64 = raw.includes(',')
+    ? raw.slice(raw.indexOf(',') + 1).replace(/\s+/g, '')
+    : raw.replace(/\s+/g, '')
+
+  if (!base64 || /[^A-Za-z0-9+/=]/u.test(base64)) {
+    return null
+  }
+
+  const buffer = Buffer.from(base64, 'base64')
+  return buffer.length ? buffer : null
+}
+
+function toPublicAdapterArtifactManifest(manifestPathValue, manifest = {}) {
+  const adapterArtifact =
+    manifest &&
+    manifest.adapterArtifact &&
+    typeof manifest.adapterArtifact === 'object' &&
+    !Array.isArray(manifest.adapterArtifact)
+      ? manifest.adapterArtifact
+      : {}
+
+  return {
+    epoch: manifest.epoch,
+    adapterManifestPath: manifestPathValue,
+    publicModelId: manifest.publicModelId || null,
+    publicVisionId: manifest.publicVisionId || null,
+    runtimeBackend: manifest.runtimeBackend || null,
+    reasonerBackend: manifest.reasonerBackend || null,
+    visionBackend: manifest.visionBackend || null,
+    contractVersion: manifest.contractVersion || null,
+    baseModelId: manifest.baseModelId || null,
+    baseModelHash: manifest.baseModelHash || null,
+    deltaType: manifest.deltaType || null,
+    adapterFormat: manifest.adapterFormat || null,
+    adapterSha256: manifest.adapterSha256 || null,
+    trainingConfigHash: manifest.trainingConfigHash || null,
+    registeredAt: manifest.registeredAt || null,
+    adapterArtifact: {
+      file: adapterArtifact.file || null,
+      sizeBytes: Number.isFinite(Number(adapterArtifact.sizeBytes))
+        ? Number(adapterArtifact.sizeBytes)
+        : null,
+      artifactToken: normalizeAdapterImportToken(adapterArtifact.artifactToken),
+    },
+  }
+}
+
 function trainingCandidatePackagePath(storage, epoch) {
   return storage.resolveLocalAiPath(
     'training-candidates',
@@ -1495,6 +1589,54 @@ function clampDeveloperHumanTeacherOffset(offset, totalFlips) {
   )
 
   return Math.min(nextOffset, maxOffset)
+}
+
+function isDeveloperHumanTeacherChunkFullyAnnotated(state, offset) {
+  const normalizedOffset = normalizeDeveloperHumanTeacherOffset(offset)
+  const source =
+    state && typeof state === 'object' && !Array.isArray(state) ? state : {}
+  const annotatedTaskIds = new Set(uniqueStrings(source.annotatedTaskIds || []))
+  const chunkEntry = Array.isArray(source.chunks)
+    ? source.chunks.find(
+        (entry) =>
+          normalizeDeveloperHumanTeacherOffset(entry && entry.offset) ===
+          normalizedOffset
+      )
+    : null
+  const taskIds = uniqueStrings(chunkEntry?.taskIds || [])
+
+  if (!taskIds.length) {
+    return false
+  }
+
+  return taskIds.every((taskId) => annotatedTaskIds.has(taskId))
+}
+
+function resolveDeveloperHumanTeacherSessionOffset(
+  state,
+  totalFlips,
+  preferredOffset = 0
+) {
+  const total = Number.parseInt(totalFlips, 10)
+
+  if (!Number.isFinite(total) || total <= 0) {
+    return 0
+  }
+
+  const startOffset = clampDeveloperHumanTeacherOffset(preferredOffset, total)
+  const maxOffset = clampDeveloperHumanTeacherOffset(total, total)
+
+  for (
+    let nextOffset = startOffset;
+    nextOffset <= maxOffset;
+    nextOffset += DEVELOPER_HUMAN_TEACHER_BATCH_SIZE
+  ) {
+    if (!isDeveloperHumanTeacherChunkFullyAnnotated(state, nextOffset)) {
+      return nextOffset
+    }
+  }
+
+  return startOffset
 }
 
 function normalizeCurrentPeriod(value) {
@@ -2008,6 +2150,75 @@ function normalizeDeveloperComparisonExampleAnswer(value) {
   return ['left', 'right', 'skip'].includes(nextValue) ? nextValue : null
 }
 
+function sanitizeDeveloperComparisonTraceValue(value, depth = 0) {
+  if (value === null || typeof value === 'undefined') {
+    return null
+  }
+
+  if (typeof value === 'string') {
+    return value.slice(0, MAX_DEVELOPER_COMPARISON_TRACE_STRING_LENGTH)
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  if (depth >= MAX_DEVELOPER_COMPARISON_TRACE_DEPTH) {
+    return '[truncated]'
+  }
+
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, MAX_DEVELOPER_COMPARISON_TRACE_ARRAY_ITEMS)
+      .map((item) => sanitizeDeveloperComparisonTraceValue(item, depth + 1))
+
+    if (value.length > MAX_DEVELOPER_COMPARISON_TRACE_ARRAY_ITEMS) {
+      items.push(
+        `… ${
+          value.length - MAX_DEVELOPER_COMPARISON_TRACE_ARRAY_ITEMS
+        } more items`
+      )
+    }
+
+    return items
+  }
+
+  if (typeof value === 'object') {
+    const entries = Object.entries(value).slice(
+      0,
+      MAX_DEVELOPER_COMPARISON_TRACE_OBJECT_KEYS
+    )
+    const next = {}
+
+    entries.forEach(([key, item]) => {
+      const normalizedKey = String(key).slice(0, 64)
+      const safeKey =
+        normalizedKey === '__proto__' ||
+        normalizedKey === 'prototype' ||
+        normalizedKey === 'constructor'
+          ? `_${normalizedKey}`
+          : normalizedKey
+
+      next[safeKey] = sanitizeDeveloperComparisonTraceValue(item, depth + 1)
+    })
+
+    if (
+      Object.keys(value).length > MAX_DEVELOPER_COMPARISON_TRACE_OBJECT_KEYS
+    ) {
+      next.__truncated_keys__ =
+        Object.keys(value).length - MAX_DEVELOPER_COMPARISON_TRACE_OBJECT_KEYS
+    }
+
+    return next
+  }
+
+  return String(value).slice(0, MAX_DEVELOPER_COMPARISON_TRACE_STRING_LENGTH)
+}
+
 function normalizeDeveloperComparisonExampleEntry(entry = {}) {
   const source =
     entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {}
@@ -2036,8 +2247,72 @@ function normalizeDeveloperComparisonExampleEntry(entry = {}) {
     scoredPrediction: normalizeDeveloperComparisonExampleAnswer(
       source.scoredPrediction
     ),
+    selectedCandidate:
+      String(source.selectedCandidate || '')
+        .trim()
+        .toLowerCase() || null,
+    generatedCandidate:
+      String(source.generatedCandidate || '')
+        .trim()
+        .toLowerCase() || null,
+    scoredCandidate:
+      String(source.scoredCandidate || '')
+        .trim()
+        .toLowerCase() || null,
     correct: normalizedCorrect,
     rankingSource: String(source.rankingSource || '').trim() || null,
+    rawResponse:
+      String(source.rawResponse || '')
+        .trim()
+        .slice(0, 4000) || null,
+    parsedResponse:
+      source.parsedResponse &&
+      typeof source.parsedResponse === 'object' &&
+      !Array.isArray(source.parsedResponse)
+        ? sanitizeDeveloperComparisonTraceValue(source.parsedResponse)
+        : null,
+    candidateScores:
+      source.candidateScores &&
+      typeof source.candidateScores === 'object' &&
+      !Array.isArray(source.candidateScores)
+        ? sanitizeDeveloperComparisonTraceValue(source.candidateScores)
+        : null,
+    candidateAnalyses:
+      source.candidateAnalyses &&
+      typeof source.candidateAnalyses === 'object' &&
+      !Array.isArray(source.candidateAnalyses)
+        ? sanitizeDeveloperComparisonTraceValue(source.candidateAnalyses)
+        : null,
+    optionAMapsTo:
+      String(source.optionAMapsTo || source.option_a_maps_to || '')
+        .trim()
+        .toLowerCase() || null,
+    optionBMapsTo:
+      String(source.optionBMapsTo || source.option_b_maps_to || '')
+        .trim()
+        .toLowerCase() || null,
+  }
+}
+
+function buildDeveloperComparisonExampleDetails(entry = null) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return null
+  }
+
+  return {
+    predicted: entry.predicted,
+    generatedPrediction: entry.generatedPrediction,
+    scoredPrediction: entry.scoredPrediction,
+    correct: entry.correct,
+    selectedCandidate: entry.selectedCandidate,
+    generatedCandidate: entry.generatedCandidate,
+    scoredCandidate: entry.scoredCandidate,
+    rawResponse: entry.rawResponse || null,
+    parsedResponse: entry.parsedResponse || null,
+    candidateScores: entry.candidateScores || null,
+    candidateAnalyses: entry.candidateAnalyses || null,
+    optionAMapsTo: entry.optionAMapsTo || null,
+    optionBMapsTo: entry.optionBMapsTo || null,
   }
 }
 
@@ -2125,6 +2400,11 @@ async function loadDeveloperComparisonArtifact(
         normalizeDeveloperComparisonExampleEntry(item)
       )
     : []
+  const baselineResults = Array.isArray(_baselineResult?.results)
+    ? _baselineResult.results.map((item) =>
+        normalizeDeveloperComparisonExampleEntry(item)
+      )
+    : []
 
   return {
     entry: normalizeDeveloperComparisonHistoryEntry(comparisonEntry),
@@ -2137,6 +2417,7 @@ async function loadDeveloperComparisonArtifact(
       ? resolveWorkspaceChildPath(developerDir, baselineResultPath)
       : null,
     trainedResults,
+    baselineResults,
     baselineSummary: normalizeDeveloperComparisonSummary(
       comparisonSummary?.baseline
     ),
@@ -2189,18 +2470,61 @@ function rankDeveloperComparisonExampleChange(changeType) {
   }
 }
 
+function createDeveloperComparisonReviewLookup(sample = null) {
+  const lookup = new Map()
+  const flips = Array.isArray(sample?.flips) ? sample.flips : []
+  const sampleName = normalizeDeveloperHumanTeacherSampleName(
+    sample?.sampleName
+  )
+
+  flips.forEach((flip, index) => {
+    const absoluteIndex = index + 1
+    const taskId = `demo:${sampleName}:${absoluteIndex}`
+    const reviewTarget = {
+      sampleName,
+      taskId,
+      taskNumber: absoluteIndex,
+      offset:
+        Math.floor(index / DEVELOPER_HUMAN_TEACHER_BATCH_SIZE) *
+        DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+      sampleId:
+        String(flip?.sample_id || flip?.sampleId || '').trim() || taskId,
+      flipHash: String(flip?.flip_hash || flip?.flipHash || '').trim() || null,
+    }
+    const keys = uniqueStrings([
+      taskId,
+      reviewTarget.sampleId,
+      reviewTarget.flipHash,
+    ])
+
+    keys.forEach((key) => {
+      if (!lookup.has(key)) {
+        lookup.set(key, reviewTarget)
+      }
+    })
+  })
+
+  return lookup
+}
+
 function selectDeveloperComparisonExamples({
   currentArtifact,
   previousArtifact = null,
+  sample = null,
   maxExamples = 6,
 } = {}) {
   const currentResults = Array.isArray(currentArtifact?.trainedResults)
     ? currentArtifact.trainedResults
     : []
+  const baselineResults = Array.isArray(currentArtifact?.baselineResults)
+    ? currentArtifact.baselineResults
+    : []
   const previousResults = Array.isArray(previousArtifact?.trainedResults)
     ? previousArtifact.trainedResults
     : []
   const previousByFlipHash = new Map()
+  const baselineByFlipHash = new Map()
+  const reviewLookup = createDeveloperComparisonReviewLookup(sample)
 
   previousResults.forEach((entry) => {
     const key =
@@ -2212,6 +2536,16 @@ function selectDeveloperComparisonExamples({
       previousByFlipHash.set(key, entry)
     }
   })
+  baselineResults.forEach((entry) => {
+    const key =
+      entry.flipHash ||
+      entry.sampleId ||
+      (entry.index !== null ? `${entry.index}` : '')
+
+    if (key && !baselineByFlipHash.has(key)) {
+      baselineByFlipHash.set(key, entry)
+    }
+  })
 
   const rankedExamples = currentResults
     .map((entry) => {
@@ -2219,6 +2553,9 @@ function selectDeveloperComparisonExamples({
         entry.flipHash ||
         entry.sampleId ||
         (entry.index !== null ? `${entry.index}` : '')
+      const baselineEntry = comparisonKey
+        ? baselineByFlipHash.get(comparisonKey) || null
+        : null
       const previousEntry = comparisonKey
         ? previousByFlipHash.get(comparisonKey) || null
         : null
@@ -2226,6 +2563,11 @@ function selectDeveloperComparisonExamples({
         entry,
         previousEntry
       )
+      const reviewTarget =
+        reviewLookup.get(entry.sampleId) ||
+        reviewLookup.get(entry.flipHash) ||
+        reviewLookup.get(comparisonKey) ||
+        null
       let exampleIndex = null
 
       if (entry.index !== null) {
@@ -2241,13 +2583,29 @@ function selectDeveloperComparisonExamples({
         current: {
           predicted: entry.predicted,
           correct: entry.correct,
+          generatedPrediction: entry.generatedPrediction,
+          scoredPrediction: entry.scoredPrediction,
         },
+        baseline: baselineEntry
+          ? {
+              predicted: baselineEntry.predicted,
+              correct: baselineEntry.correct,
+              generatedPrediction: baselineEntry.generatedPrediction,
+              scoredPrediction: baselineEntry.scoredPrediction,
+            }
+          : null,
         previous: previousEntry
           ? {
               predicted: previousEntry.predicted,
               correct: previousEntry.correct,
+              generatedPrediction: previousEntry.generatedPrediction,
+              scoredPrediction: previousEntry.scoredPrediction,
             }
           : null,
+        currentDetails: buildDeveloperComparisonExampleDetails(entry),
+        baselineDetails: buildDeveloperComparisonExampleDetails(baselineEntry),
+        previousDetails: buildDeveloperComparisonExampleDetails(previousEntry),
+        reviewTarget,
         changeType,
         order: rankDeveloperComparisonExampleChange(changeType),
         index: exampleIndex,
@@ -2913,6 +3271,10 @@ function buildDefaultHumanTeacherAnnotationRow(task = {}) {
     final_answer: '',
     why_answer: '',
     confidence: null,
+    benchmark_review_issue_type: '',
+    benchmark_review_failure_note: '',
+    benchmark_review_retraining_hint: '',
+    benchmark_review_include_for_training: null,
   }
 }
 
@@ -3026,6 +3388,25 @@ function normalizeHumanTeacherDraftConfidence(value) {
   }
 
   return Math.round(parsed)
+}
+
+function normalizeHumanTeacherBenchmarkReviewIssueType(value) {
+  const next = normalizeHumanTeacherDraftText(value, 64)
+    .toLowerCase()
+    .replace(/\s+/gu, '_')
+
+  return [
+    'wrong_answer',
+    'missed_text',
+    'sequence_confusion',
+    'reportability_miss',
+    'weak_reasoning',
+    'panel_read_failure',
+    'ambiguous_flip',
+    'other',
+  ].includes(next)
+    ? next
+    : ''
 }
 
 function normalizeHumanTeacherDraftCaptions(value) {
@@ -3291,6 +3672,22 @@ function normalizeHumanTeacherAnnotationDraft(task = {}, annotation = {}) {
       source.why_answer ?? source.whyAnswer
     ),
     confidence: normalizeHumanTeacherDraftConfidence(source.confidence),
+    benchmark_review_issue_type: normalizeHumanTeacherBenchmarkReviewIssueType(
+      source.benchmark_review_issue_type ?? source.benchmarkReviewIssueType
+    ),
+    benchmark_review_failure_note: normalizeHumanTeacherDraftText(
+      source.benchmark_review_failure_note ?? source.benchmarkReviewFailureNote,
+      900
+    ),
+    benchmark_review_retraining_hint: normalizeHumanTeacherDraftText(
+      source.benchmark_review_retraining_hint ??
+        source.benchmarkReviewRetrainingHint,
+      900
+    ),
+    benchmark_review_include_for_training: normalizeHumanTeacherDraftBool(
+      source.benchmark_review_include_for_training ??
+        source.benchmarkReviewIncludeForTraining
+    ),
   }
 }
 
@@ -3310,6 +3707,10 @@ function hasHumanTeacherAnnotationDraft(annotation = {}) {
       next.report_reason ||
       next.final_answer ||
       next.why_answer ||
+      next.benchmark_review_issue_type ||
+      next.benchmark_review_failure_note ||
+      next.benchmark_review_retraining_hint ||
+      next.benchmark_review_include_for_training !== null ||
       next.text_required !== null ||
       next.sequence_markers_present !== null ||
       next.report_required !== null ||
@@ -4736,12 +5137,6 @@ function createLocalAiManager({
       }
     }
 
-    const nextOffset = advance
-      ? clampDeveloperHumanTeacherOffset(
-          chunk.offset + DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
-          chunk.sample.totalFlips
-        )
-      : chunk.offset
     const chunkEntries = Array.isArray(baseState.chunks)
       ? baseState.chunks.filter((entry) => entry.offset !== chunk.offset)
       : []
@@ -4755,13 +5150,29 @@ function createLocalAiManager({
       normalizedPath,
       summaryPath,
     })
+    const requestedNextOffset = clampDeveloperHumanTeacherOffset(
+      chunk.offset + DEVELOPER_HUMAN_TEACHER_BATCH_SIZE,
+      chunk.sample.totalFlips
+    )
+    const nextAnnotatedTaskIds = uniqueStrings(
+      nextAnnotatedRows.map((row) => row && row.task_id)
+    )
+    const nextOffset = advance
+      ? resolveDeveloperHumanTeacherSessionOffset(
+          {
+            ...baseState,
+            annotatedTaskIds: nextAnnotatedTaskIds,
+            chunks: chunkEntries,
+          },
+          chunk.sample.totalFlips,
+          requestedNextOffset
+        )
+      : chunk.offset
 
     const nextState = {
       ...baseState,
       currentOffset: nextOffset,
-      annotatedTaskIds: uniqueStrings(
-        nextAnnotatedRows.map((row) => row && row.task_id)
-      ),
+      annotatedTaskIds: nextAnnotatedTaskIds,
       pendingTrainingTaskIds: pendingTaskIds,
       trainedTaskIds,
       activeTrainingModelPath:
@@ -5555,24 +5966,45 @@ function createLocalAiManager({
       throw new Error('Epoch is required')
     }
 
-    const sourcePath = normalizeFilePath(
-      next.sourcePath ||
-        next.artifactPath ||
+    const artifactToken = normalizeAdapterImportToken(
+      next.artifactToken ||
+        next.importedArtifactToken ||
         (next.adapterArtifact &&
         typeof next.adapterArtifact === 'object' &&
         !Array.isArray(next.adapterArtifact)
-          ? next.adapterArtifact.sourcePath ||
-            next.adapterArtifact.path ||
-            next.adapterArtifact.filePath
+          ? next.adapterArtifact.artifactToken ||
+            next.adapterArtifact.importedArtifactToken ||
+            next.adapterArtifact.token
           : '')
     )
 
-    if (!sourcePath) {
-      throw new Error('Adapter source path is required')
+    if (!artifactToken) {
+      if (
+        next.sourcePath ||
+        next.artifactPath ||
+        (next.adapterArtifact &&
+          typeof next.adapterArtifact === 'object' &&
+          !Array.isArray(next.adapterArtifact) &&
+          (next.adapterArtifact.sourcePath ||
+            next.adapterArtifact.path ||
+            next.adapterArtifact.filePath))
+      ) {
+        throw new Error(
+          'Direct adapter file paths are no longer accepted. Import the adapter file first.'
+        )
+      }
+
+      throw new Error('Import a local adapter file first')
     }
 
+    const sourcePath = adapterImportedArtifactPath(
+      localAiStorage,
+      epoch,
+      artifactToken
+    )
+
     if (!(await localAiStorage.exists(sourcePath))) {
-      throw new Error('Adapter source file is unavailable')
+      throw new Error('Imported adapter file is unavailable')
     }
 
     const modelReference = await resolveModelReference(
@@ -5580,7 +6012,10 @@ function createLocalAiManager({
       getModelReference,
       next
     )
-    const adapterFile = path.basename(sourcePath)
+    const adapterFile = adapterArtifactFileNameFromToken(
+      artifactToken,
+      path.basename(sourcePath)
+    )
     const sizeBytes = await localAiStorage.fileSize(sourcePath)
     const adapterSha256 = await localAiStorage.sha256File(sourcePath)
     const adapterContract = await resolveAdapterContract(
@@ -5594,6 +6029,7 @@ function createLocalAiManager({
           file: adapterFile,
           sourcePath,
           sizeBytes,
+          artifactToken,
         },
       },
       modelReference
@@ -5616,6 +6052,7 @@ function createLocalAiManager({
         file: adapterFile,
         sourcePath,
         sizeBytes,
+        artifactToken,
       },
       registeredAt: new Date().toISOString(),
     }
@@ -5623,10 +6060,76 @@ function createLocalAiManager({
 
     await localAiStorage.writeJsonAtomic(nextManifestPath, adapterManifest)
 
+    return toPublicAdapterArtifactManifest(nextManifestPath, adapterManifest)
+  }
+
+  async function importAdapterArtifact(payload = {}) {
+    await hydrate()
+
+    const next = normalizeRuntimePayload(payload)
+    const epoch = normalizeEpoch(
+      typeof next.epoch !== 'undefined' ? next.epoch : payload
+    )
+
+    if (epoch === null) {
+      throw new Error('Epoch is required')
+    }
+
+    const artifactBuffer = decodeAdapterImportBuffer(
+      next.artifactBase64 ||
+        next.base64 ||
+        next.dataUrl ||
+        (next.adapterArtifact &&
+        typeof next.adapterArtifact === 'object' &&
+        !Array.isArray(next.adapterArtifact)
+          ? next.adapterArtifact.artifactBase64 ||
+            next.adapterArtifact.base64 ||
+            next.adapterArtifact.dataUrl
+          : '')
+    )
+
+    if (!artifactBuffer) {
+      throw new Error('Adapter file contents are required')
+    }
+
+    if (artifactBuffer.length > MAX_IMPORTED_ADAPTER_BYTES) {
+      throw new Error(
+        `Adapter file is too large to import through the secure bridge (max ${MAX_IMPORTED_ADAPTER_BYTES} bytes)`
+      )
+    }
+
+    const artifactFileName = sanitizeAdapterArtifactFileName(
+      next.artifactFileName ||
+        next.fileName ||
+        next.name ||
+        (next.adapterArtifact &&
+        typeof next.adapterArtifact === 'object' &&
+        !Array.isArray(next.adapterArtifact)
+          ? next.adapterArtifact.file ||
+            next.adapterArtifact.fileName ||
+            next.adapterArtifact.name
+          : ''),
+      `epoch-${epoch}-adapter.bin`
+    )
+    const artifactSha256 = localAiStorage.sha256(artifactBuffer)
+    const artifactToken = normalizeAdapterImportToken(
+      `${Date.now()}-${artifactSha256.slice(0, 12)}-${artifactFileName}`
+    )
+    const storedPath = adapterImportedArtifactPath(
+      localAiStorage,
+      epoch,
+      artifactToken
+    )
+
+    await localAiStorage.writeBuffer(storedPath, artifactBuffer)
+
     return {
       epoch,
-      adapterManifestPath: nextManifestPath,
-      ...adapterManifest,
+      artifactToken,
+      artifactFileName,
+      sizeBytes: artifactBuffer.length,
+      artifactSha256,
+      importedAt: new Date().toISOString(),
     }
   }
 
@@ -5652,11 +6155,7 @@ function createLocalAiManager({
       throw new Error('Adapter artifact is unavailable')
     }
 
-    return {
-      epoch,
-      adapterManifestPath: nextManifestPath,
-      ...adapterManifest,
-    }
+    return toPublicAdapterArtifactManifest(nextManifestPath, adapterManifest)
   }
 
   async function buildTrainingCandidatePackage(payload) {
@@ -6321,12 +6820,14 @@ function createLocalAiManager({
       sample.sampleName,
       sample.totalFlips
     )
-    const effectiveOffset = clampDeveloperHumanTeacherOffset(
+    const effectiveOffset =
       typeof next.offset === 'number'
-        ? next.offset
-        : developerState.currentOffset,
-      sample.totalFlips
-    )
+        ? clampDeveloperHumanTeacherOffset(next.offset, sample.totalFlips)
+        : resolveDeveloperHumanTeacherSessionOffset(
+            developerState,
+            sample.totalFlips,
+            developerState.currentOffset
+          )
     const session = await loadDeveloperHumanTeacherChunkWorkspace({
       sampleName: sample.sampleName,
       offset: effectiveOffset,
@@ -6619,6 +7120,7 @@ function createLocalAiManager({
       ? selectDeveloperComparisonExamples({
           currentArtifact,
           previousArtifact,
+          sample,
           maxExamples,
         })
       : []
@@ -7806,6 +8308,7 @@ function createLocalAiManager({
     ocrImage,
     trainEpoch,
     captureFlip,
+    importAdapterArtifact,
     registerAdapterArtifact,
     loadAdapterArtifact,
     buildManifest,

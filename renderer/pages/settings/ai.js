@@ -188,6 +188,8 @@ const DEFAULT_LOCAL_AI_DEBUG_FLIP_INPUT = `{
   ]
 }`
 
+const MAX_LOCAL_AI_ADAPTER_IMPORT_BYTES = 96 * 1024 * 1024
+
 function numberOrFallback(value, fallback) {
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -395,6 +397,18 @@ function formatLocalAiArtifactSize(value) {
   }
 
   return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () =>
+      reject(reader.error || new Error('Could not read the selected file'))
+
+    reader.readAsDataURL(file)
+  })
 }
 
 function normalizeLocalAiTrainingPackageReviewStatus(value) {
@@ -608,6 +622,7 @@ export default function AiSettingsPage() {
     setShowLocalAiCompatibilityOverrides,
   ] = useState(false)
   const setupSectionRef = React.useRef(null)
+  const localAiAdapterFileInputRef = React.useRef(null)
   const [isEnableDialogOpen, setIsEnableDialogOpen] = useState(false)
   const [isCheckingLocalAi, setIsCheckingLocalAi] = useState(false)
   const [isStartingLocalAi, setIsStartingLocalAi] = useState(false)
@@ -650,10 +665,13 @@ export default function AiSettingsPage() {
   const [localAiPackagePreview, setLocalAiPackagePreview] = useState(null)
   const [localAiPackageExportPath, setLocalAiPackageExportPath] = useState('')
   const [localAiPackageError, setLocalAiPackageError] = useState('')
-  const [localAiAdapterSourcePath, setLocalAiAdapterSourcePath] = useState('')
+  const [isImportingLocalAiAdapter, setIsImportingLocalAiAdapter] =
+    useState(false)
   const [isRegisteringLocalAiAdapter, setIsRegisteringLocalAiAdapter] =
     useState(false)
   const [isLoadingLocalAiAdapter, setIsLoadingLocalAiAdapter] = useState(false)
+  const [localAiImportedAdapterArtifact, setLocalAiImportedAdapterArtifact] =
+    useState(null)
   const [localAiAdapterManifest, setLocalAiAdapterManifest] = useState(null)
   const [localAiAdapterError, setLocalAiAdapterError] = useState('')
   const [isBuildingLocalAiBundle, setIsBuildingLocalAiBundle] = useState(false)
@@ -1207,9 +1225,93 @@ export default function AiSettingsPage() {
     [localAiPackageEpoch, t]
   )
 
+  const runLocalAiImportAdapterArtifact = useCallback(() => {
+    const epoch = String(localAiPackageEpoch || '').trim()
+
+    if (!epoch) {
+      setLocalAiAdapterError(
+        t('Enter an epoch before importing a local adapter artifact.')
+      )
+      return
+    }
+
+    setLocalAiAdapterError('')
+
+    if (localAiAdapterFileInputRef.current) {
+      localAiAdapterFileInputRef.current.value = ''
+      localAiAdapterFileInputRef.current.click()
+    }
+  }, [localAiPackageEpoch, t])
+
+  const handleLocalAiAdapterFileChange = useCallback(
+    async (event) => {
+      const input = event && event.target ? event.target : null
+      const file =
+        input && input.files && input.files.length > 0 ? input.files[0] : null
+
+      if (!file) {
+        return
+      }
+
+      const epoch = String(localAiPackageEpoch || '').trim()
+
+      if (!epoch) {
+        setLocalAiAdapterError(
+          t('Enter an epoch before importing a local adapter artifact.')
+        )
+        if (input) {
+          input.value = ''
+        }
+        return
+      }
+
+      if (file.size > MAX_LOCAL_AI_ADAPTER_IMPORT_BYTES) {
+        setLocalAiImportedAdapterArtifact(null)
+        setLocalAiAdapterError(
+          t(
+            'The selected adapter file is too large for the secure import path.'
+          )
+        )
+        if (input) {
+          input.value = ''
+        }
+        return
+      }
+
+      setIsImportingLocalAiAdapter(true)
+      setLocalAiAdapterError('')
+
+      try {
+        const artifactBase64 = await readFileAsDataUrl(file)
+        const result = await ensureLocalAiBridge().importAdapterArtifact({
+          ...localAiRuntimePayload,
+          epoch,
+          artifactFileName: file.name,
+          artifactBase64,
+        })
+
+        setLocalAiImportedAdapterArtifact(result)
+      } catch (error) {
+        setLocalAiImportedAdapterArtifact(null)
+        setLocalAiAdapterError(formatErrorForToast(error))
+      } finally {
+        setIsImportingLocalAiAdapter(false)
+        if (input) {
+          input.value = ''
+        }
+      }
+    },
+    [localAiPackageEpoch, localAiRuntimePayload, t]
+  )
+
   const runLocalAiRegisterAdapterArtifact = useCallback(async () => {
     const epoch = String(localAiPackageEpoch || '').trim()
-    const sourcePath = String(localAiAdapterSourcePath || '').trim()
+    const artifactToken = String(
+      localAiImportedAdapterArtifact &&
+        localAiImportedAdapterArtifact.artifactToken
+        ? localAiImportedAdapterArtifact.artifactToken
+        : ''
+    ).trim()
 
     if (!epoch) {
       setLocalAiAdapterError(
@@ -1218,9 +1320,9 @@ export default function AiSettingsPage() {
       return
     }
 
-    if (!sourcePath) {
+    if (!artifactToken) {
       setLocalAiAdapterError(
-        t('Provide an absolute adapter file path before registering it.')
+        t('Import a local adapter file before registering it.')
       )
       return
     }
@@ -1232,7 +1334,7 @@ export default function AiSettingsPage() {
       const result = await ensureLocalAiBridge().registerAdapterArtifact({
         ...localAiRuntimePayload,
         epoch,
-        sourcePath,
+        artifactToken,
       })
 
       setLocalAiAdapterManifest(result)
@@ -1242,7 +1344,12 @@ export default function AiSettingsPage() {
     } finally {
       setIsRegisteringLocalAiAdapter(false)
     }
-  }, [localAiAdapterSourcePath, localAiRuntimePayload, localAiPackageEpoch, t])
+  }, [
+    localAiImportedAdapterArtifact,
+    localAiRuntimePayload,
+    localAiPackageEpoch,
+    t,
+  ])
 
   const runLocalAiLoadAdapterArtifact = useCallback(async () => {
     const epoch = String(localAiPackageEpoch || '').trim()
@@ -1264,12 +1371,16 @@ export default function AiSettingsPage() {
       })
 
       setLocalAiAdapterManifest(result)
-      setLocalAiAdapterSourcePath(
-        String(
-          result && result.adapterArtifact && result.adapterArtifact.sourcePath
-            ? result.adapterArtifact.sourcePath
-            : ''
-        ).trim()
+      setLocalAiImportedAdapterArtifact(
+        result && result.adapterArtifact
+          ? {
+              artifactToken: result.adapterArtifact.artifactToken || null,
+              artifactFileName: result.adapterArtifact.file || null,
+              sizeBytes: result.adapterArtifact.sizeBytes || null,
+              artifactSha256: result.adapterSha256 || null,
+              importedAt: null,
+            }
+          : null
       )
     } catch (error) {
       setLocalAiAdapterManifest(null)
@@ -3751,24 +3862,49 @@ export default function AiSettingsPage() {
                                 )}
                               </Text>
                             </Stack>
-                            <SettingsFormControl>
-                              <SettingsFormLabel>
-                                {t('Local adapter file path')}
-                              </SettingsFormLabel>
-                              <Input
-                                value={localAiAdapterSourcePath}
-                                onChange={(e) =>
-                                  setLocalAiAdapterSourcePath(e.target.value)
-                                }
-                                placeholder="/absolute/path/to/epoch-12-lora.safetensors"
-                              />
-                            </SettingsFormControl>
+                            <input
+                              ref={localAiAdapterFileInputRef}
+                              hidden
+                              type="file"
+                              onChange={handleLocalAiAdapterFileChange}
+                            />
+                            <Box
+                              borderWidth="1px"
+                              borderColor="gray.100"
+                              borderRadius="md"
+                              p={3}
+                            >
+                              <Stack spacing={1}>
+                                <Text fontWeight={500}>
+                                  {t('Imported adapter file')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {localAiImportedAdapterArtifact &&
+                                  localAiImportedAdapterArtifact.artifactFileName
+                                    ? localAiImportedAdapterArtifact.artifactFileName
+                                    : t('No adapter file imported yet.')}
+                                </Text>
+                                <Text color="muted" fontSize="sm">
+                                  {t('Size')}:{' '}
+                                  {formatLocalAiArtifactSize(
+                                    localAiImportedAdapterArtifact &&
+                                      localAiImportedAdapterArtifact.sizeBytes
+                                  )}
+                                </Text>
+                              </Stack>
+                            </Box>
                             <Stack isInline spacing={2}>
+                              <SecondaryButton
+                                isLoading={isImportingLocalAiAdapter}
+                                onClick={runLocalAiImportAdapterArtifact}
+                              >
+                                {t('Choose Adapter File')}
+                              </SecondaryButton>
                               <SecondaryButton
                                 isLoading={isRegisteringLocalAiAdapter}
                                 onClick={runLocalAiRegisterAdapterArtifact}
                               >
-                                {t('Register Adapter')}
+                                {t('Register Imported Adapter')}
                               </SecondaryButton>
                               <SecondaryButton
                                 isLoading={isLoadingLocalAiAdapter}
@@ -3848,10 +3984,14 @@ export default function AiSettingsPage() {
                                     )}
                                   </Text>
                                   <Text color="muted" fontSize="sm">
-                                    {t('Source path')}:{' '}
+                                    {t('Artifact storage')}:{' '}
+                                    {t('managed local AI storage')}
+                                  </Text>
+                                  <Text color="muted" fontSize="sm">
+                                    {t('Artifact token')}:{' '}
                                     {(localAiAdapterManifest.adapterArtifact &&
                                       localAiAdapterManifest.adapterArtifact
-                                        .sourcePath) ||
+                                        .artifactToken) ||
                                       '-'}
                                   </Text>
                                 </Stack>

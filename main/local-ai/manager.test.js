@@ -366,22 +366,26 @@ describe('local-ai manager', () => {
     })
   })
 
-  it('registers and reloads adapter artifacts from a local file', async () => {
+  it('imports, registers, and reloads adapter artifacts from managed storage', async () => {
     const logger = mockLogger()
     const manager = createLocalAiManager({logger, storage})
-    const sourcePath = storage.resolveLocalAiPath(
-      'artifacts',
-      'epoch-12-registration.safetensors'
-    )
     const adapterBuffer = Buffer.from('registered-adapter-bytes')
-
-    await storage.writeBuffer(sourcePath, adapterBuffer)
+    const imported = await manager.importAdapterArtifact({
+      epoch: 12,
+      artifactFileName: 'epoch-12-registration.safetensors',
+      artifactBase64: `data:application/octet-stream;base64,${adapterBuffer.toString(
+        'base64'
+      )}`,
+    })
 
     const registered = await manager.registerAdapterArtifact({
       epoch: 12,
-      sourcePath,
+      artifactToken: imported.artifactToken,
     })
     const reloaded = await manager.loadAdapterArtifact({epoch: 12})
+    const storedManifest = await storage.readJson(
+      storage.resolveLocalAiPath('adapters', 'epoch-12.json')
+    )
 
     expect(registered).toMatchObject({
       epoch: 12,
@@ -395,8 +399,8 @@ describe('local-ai manager', () => {
       adapterSha256: storage.sha256(adapterBuffer),
       adapterArtifact: {
         file: 'epoch-12-registration.safetensors',
-        sourcePath,
         sizeBytes: adapterBuffer.length,
+        artifactToken: imported.artifactToken,
       },
     })
     expect(reloaded).toMatchObject({
@@ -409,10 +413,43 @@ describe('local-ai manager', () => {
       adapterSha256: storage.sha256(adapterBuffer),
       adapterArtifact: {
         file: 'epoch-12-registration.safetensors',
-        sourcePath,
         sizeBytes: adapterBuffer.length,
+        artifactToken: imported.artifactToken,
       },
     })
+    expect(storedManifest).toMatchObject({
+      adapterArtifact: {
+        file: 'epoch-12-registration.safetensors',
+        sizeBytes: adapterBuffer.length,
+        artifactToken: imported.artifactToken,
+        sourcePath: expect.stringContaining(
+          `${path.sep}adapter-imports${path.sep}12${path.sep}`
+        ),
+      },
+    })
+  })
+
+  it('rejects direct adapter source paths during registration', async () => {
+    const logger = mockLogger()
+    const manager = createLocalAiManager({logger, storage})
+    const sourcePath = storage.resolveLocalAiPath(
+      'artifacts',
+      'epoch-12-registration.safetensors'
+    )
+
+    await storage.writeBuffer(
+      sourcePath,
+      Buffer.from('registered-adapter-bytes')
+    )
+
+    await expect(
+      manager.registerAdapterArtifact({
+        epoch: 12,
+        sourcePath,
+      })
+    ).rejects.toThrow(
+      'Direct adapter file paths are no longer accepted. Import the adapter file first.'
+    )
   })
 
   it('builds a local post-consensus training-candidate package conservatively', async () => {
@@ -1711,6 +1748,56 @@ describe('local-ai manager', () => {
     )
   })
 
+  it('skips fully annotated developer chunks when reopening the current teaching session', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const completedChunkTaskIds = Array.from(
+      {length: 5},
+      (_, index) => `demo:flip-challenge-test-20-decoded-labeled:${index + 1}`
+    )
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkSize: 5,
+        totalAvailableTasks: 500,
+        currentOffset: 0,
+        annotatedTaskIds: completedChunkTaskIds,
+        pendingTrainingTaskIds: completedChunkTaskIds,
+        trainedTaskIds: [],
+        chunks: [
+          {
+            offset: 0,
+            taskIds: completedChunkTaskIds,
+            rowCount: 5,
+            committedAt: '2026-04-19T04:00:00.000Z',
+            trainingStatus: 'pending',
+          },
+        ],
+        comparison100: {
+          status: 'not_loaded',
+          history: [],
+        },
+      }
+    )
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+    })
+
+    expect(session.offset).toBe(5)
+    expect(session.state.currentOffset).toBe(5)
+    expect(session.workspace.tasks[0].taskId).toBe(
+      'demo:flip-challenge-test-20-decoded-labeled:6'
+    )
+  })
+
   it('treats developer annotations with blank optional detail as complete', async () => {
     const manager = createLocalAiManager({logger: mockLogger(), storage})
 
@@ -1747,6 +1834,48 @@ describe('local-ai manager', () => {
       isComplete: true,
       annotationStatus: 'complete',
       missingRequiredFields: [],
+    })
+  })
+
+  it('persists benchmark review notes on developer annotations', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+    })
+    const firstTask = session.workspace.tasks[0]
+
+    await manager.saveHumanTeacherDeveloperDraft({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      taskId: firstTask.taskId,
+      annotation: {
+        ...createCompleteDeveloperAnnotation(
+          firstTask.taskId,
+          `benchmark review for ${firstTask.taskId}`
+        ),
+        benchmark_review_issue_type: 'missed_text',
+        benchmark_review_failure_note:
+          'The model ignored the visible order word in the panel.',
+        benchmark_review_retraining_hint:
+          'Prefer explicit text order cues when they contradict object repetition.',
+        benchmark_review_include_for_training: true,
+      },
+    })
+
+    const task = await manager.loadHumanTeacherDeveloperTask({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      taskId: firstTask.taskId,
+    })
+
+    expect(task.task.annotation).toMatchObject({
+      benchmark_review_issue_type: 'missed_text',
+      benchmark_review_failure_note:
+        'The model ignored the visible order word in the panel.',
+      benchmark_review_retraining_hint:
+        'Prefer explicit text order cues when they contradict object repetition.',
+      benchmark_review_include_for_training: true,
     })
   })
 
@@ -1967,6 +2096,94 @@ describe('local-ai manager', () => {
       }),
     })
     expect(reloadedSession.state.lastTraining?.result ?? null).toBeNull()
+  })
+
+  it('skips already annotated developer chunks when advancing to the next 5 flips', async () => {
+    const manager = createLocalAiManager({logger: mockLogger(), storage})
+    const alreadyAnnotatedNextChunkTaskIds = Array.from(
+      {length: 5},
+      (_, index) => `demo:flip-challenge-test-20-decoded-labeled:${index + 6}`
+    )
+    const annotatedRows = alreadyAnnotatedNextChunkTaskIds.map((taskId) => ({
+      task_id: taskId,
+      ...createCompleteDeveloperAnnotation(taskId, `existing ${taskId}`),
+    }))
+
+    await storage.writeJsonAtomic(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'state.json'
+      ),
+      {
+        schemaVersion: 1,
+        mode: 'developer-human-teacher',
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        chunkSize: 5,
+        totalAvailableTasks: 500,
+        currentOffset: 0,
+        annotatedTaskIds: alreadyAnnotatedNextChunkTaskIds,
+        pendingTrainingTaskIds: alreadyAnnotatedNextChunkTaskIds,
+        trainedTaskIds: [],
+        chunks: [
+          {
+            offset: 5,
+            taskIds: alreadyAnnotatedNextChunkTaskIds,
+            rowCount: 5,
+            committedAt: '2026-04-19T04:10:00.000Z',
+            trainingStatus: 'pending',
+          },
+        ],
+        comparison100: {
+          status: 'not_loaded',
+          history: [],
+        },
+      }
+    )
+    await fs.writeFile(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'annotations.annotated.jsonl'
+      ),
+      `${annotatedRows.map((row) => JSON.stringify(row)).join('\n')}\n`,
+      'utf8'
+    )
+    await fs.writeFile(
+      storage.resolveLocalAiPath(
+        'human-teacher-developer',
+        'flip-challenge-test-20-decoded-labeled',
+        'annotations.pending.jsonl'
+      ),
+      `${annotatedRows.map((row) => JSON.stringify(row)).join('\n')}\n`,
+      'utf8'
+    )
+
+    const session = await manager.loadHumanTeacherDeveloperSession({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+    })
+
+    for (const task of session.workspace.tasks) {
+      await manager.saveHumanTeacherDeveloperDraft({
+        sampleName: 'flip-challenge-test-20-decoded-labeled',
+        offset: 0,
+        taskId: task.taskId,
+        annotation: createCompleteDeveloperAnnotation(
+          task.taskId,
+          `advance ${task.taskId}`
+        ),
+      })
+    }
+
+    const committed = await manager.finalizeHumanTeacherDeveloperChunk({
+      sampleName: 'flip-challenge-test-20-decoded-labeled',
+      offset: 0,
+      advance: true,
+    })
+
+    expect(committed.nextOffset).toBe(10)
+    expect(committed.state.currentOffset).toBe(10)
   })
 
   it('sanitizes developer local training knobs before forwarding them to the backend', async () => {
@@ -3040,8 +3257,48 @@ describe('local-ai manager', () => {
         resultPath: previousTrainedPath,
       },
     })
-    await fs.writeJson(currentBaselinePath, {results: []})
+    await fs.writeJson(currentBaselinePath, {
+      results: [
+        {
+          index: 1,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:101',
+          flipHash: 'flip-improved',
+          expected: 'left',
+          predicted: 'right',
+          correct: false,
+          rawResponse: 'RIGHT',
+        },
+        {
+          index: 2,
+          sampleId: 'demo:flip-challenge-test-20-decoded-labeled:102',
+          flipHash: 'flip-regressed',
+          expected: 'right',
+          predicted: 'right',
+          correct: true,
+          rawResponse: 'RIGHT',
+        },
+      ],
+    })
     await fs.writeJson(previousBaselinePath, {results: []})
+    const maliciousParsedResponse = {
+      answer: 'left',
+      longText: 'x'.repeat(800),
+      nested: {
+        level2: {
+          level3: {
+            level4: 'too-deep',
+          },
+        },
+      },
+    }
+    Object.defineProperty(maliciousParsedResponse, '__proto__', {
+      value: {polluted: 'yes'},
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    maliciousParsedResponse.constructor = {bad: true}
+
     await fs.writeJson(currentTrainedPath, {
       results: [
         {
@@ -3051,6 +3308,45 @@ describe('local-ai manager', () => {
           expected: 'left',
           predicted: 'left',
           correct: true,
+          rawResponse: 'LEFT',
+          parsedResponse: maliciousParsedResponse,
+          candidateScores: {
+            left: {avg_logprob: -0.12},
+            right: {avg_logprob: -0.81},
+            extra_01: {avg_logprob: -1.01},
+            extra_02: {avg_logprob: -1.02},
+            extra_03: {avg_logprob: -1.03},
+            extra_04: {avg_logprob: -1.04},
+            extra_05: {avg_logprob: -1.05},
+            extra_06: {avg_logprob: -1.06},
+            extra_07: {avg_logprob: -1.07},
+            extra_08: {avg_logprob: -1.08},
+            extra_09: {avg_logprob: -1.09},
+            extra_10: {avg_logprob: -1.1},
+            extra_11: {avg_logprob: -1.11},
+            extra_12: {avg_logprob: -1.12},
+            extra_13: {avg_logprob: -1.13},
+            extra_14: {avg_logprob: -1.14},
+            extra_15: {avg_logprob: -1.15},
+            extra_16: {avg_logprob: -1.16},
+            extra_17: {avg_logprob: -1.17},
+            extra_18: {avg_logprob: -1.18},
+            extra_19: {avg_logprob: -1.19},
+            extra_20: {avg_logprob: -1.2},
+            extra_21: {avg_logprob: -1.21},
+            extra_22: {avg_logprob: -1.22},
+            extra_23: {avg_logprob: -1.23},
+            extra_24: {avg_logprob: -1.24},
+            extra_25: {avg_logprob: -1.25},
+          },
+          candidateAnalyses: {
+            left: {
+              notes: Array.from(
+                {length: 20},
+                (_, index) => `note-${index + 1}`
+              ),
+            },
+          },
         },
         {
           index: 2,
@@ -3124,9 +3420,44 @@ describe('local-ai manager', () => {
           expect.objectContaining({
             flipHash: 'flip-improved',
             changeType: 'improved',
+            reviewTarget: expect.objectContaining({
+              taskId: 'demo:flip-challenge-test-20-decoded-labeled:101',
+              offset: 100,
+            }),
             current: expect.objectContaining({
               predicted: 'left',
               correct: true,
+            }),
+            baseline: expect.objectContaining({
+              predicted: 'right',
+              correct: false,
+            }),
+            currentDetails: expect.objectContaining({
+              rawResponse: 'LEFT',
+              parsedResponse: expect.objectContaining({
+                answer: 'left',
+                longText: 'x'.repeat(400),
+                nested: expect.objectContaining({
+                  level2: expect.objectContaining({
+                    level3: '[truncated]',
+                  }),
+                }),
+              }),
+              candidateScores: expect.objectContaining({
+                left: expect.objectContaining({
+                  avg_logprob: -0.12,
+                }),
+                __truncated_keys__: 3,
+              }),
+              candidateAnalyses: expect.objectContaining({
+                left: expect.objectContaining({
+                  notes: expect.arrayContaining([
+                    'note-1',
+                    'note-12',
+                    '… 8 more items',
+                  ]),
+                }),
+              }),
             }),
             previous: expect.objectContaining({
               predicted: 'right',
@@ -3151,6 +3482,24 @@ describe('local-ai manager', () => {
     expect(result.current).not.toHaveProperty('resultPath')
     expect(result.previous).not.toHaveProperty('resultPath')
     expect(result.examples).toHaveLength(3)
+    const improvedExample = result.examples.find(
+      (example) => example.flipHash === 'flip-improved'
+    )
+    const firstParsed = improvedExample.currentDetails.parsedResponse
+    expect(firstParsed).toEqual(
+      expect.objectContaining({
+        _constructor: expect.objectContaining({
+          bad: true,
+        }),
+        ___proto__: expect.objectContaining({
+          polluted: 'yes',
+        }),
+      })
+    )
+    expect(firstParsed.polluted).toBeUndefined()
+    expect(Object.prototype.hasOwnProperty.call(firstParsed, '__proto__')).toBe(
+      false
+    )
   })
 
   it('recovers saved benchmark size from legacy comparison result paths', async () => {

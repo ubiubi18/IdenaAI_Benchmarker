@@ -46,9 +46,12 @@ const persistenceStoreNames = {
 const HUMAN_TEACHER_MANAGED_WORKSPACE_LABEL = 'managed local workspace'
 const HUMAN_TEACHER_MANAGED_BUNDLE_LABEL = 'managed local bundle'
 const HUMAN_TEACHER_RESULT_PATH_KEYS = new Set([
+  'bundlePath',
   'packagePath',
   'payloadPath',
   'outputDir',
+  'outputPath',
+  'storedPath',
   'taskManifestPath',
   'annotationsPath',
   'manifestPath',
@@ -66,10 +69,25 @@ const HUMAN_TEACHER_RESULT_PATH_KEYS = new Set([
   'comparisonPath',
   'holdoutPath',
   'adapterPath',
+  'adapterManifestPath',
+  'artifactPath',
   'trainingSummaryPath',
   'preparedDatasetPath',
   'preparedManifestPath',
+  'localIndexPath',
+  'fallbackIndexPath',
+  'sourcePath',
 ])
+
+function normalizeSafeBridgeObjectKey(key) {
+  const normalizedKey = String(key || '').slice(0, 128)
+
+  return normalizedKey === '__proto__' ||
+    normalizedKey === 'prototype' ||
+    normalizedKey === 'constructor'
+    ? `_${normalizedKey}`
+    : normalizedKey
+}
 
 function isPlainObject(value) {
   if (!value || Object.prototype.toString.call(value) !== '[object Object]') {
@@ -158,7 +176,7 @@ function toIpcCloneable(value, seen = new WeakSet()) {
       const normalized = toIpcCloneable(entryValue, seen)
 
       if (typeof normalized !== 'undefined') {
-        result[key] = normalized
+        result[normalizeSafeBridgeObjectKey(key)] = normalized
       }
 
       return result
@@ -693,7 +711,8 @@ function sanitizeHumanTeacherBridgeResult(value, parentKey = '') {
   }
 
   return Object.entries(value).reduce((result, [key, entryValue]) => {
-    result[key] = sanitizeHumanTeacherBridgeResult(entryValue, key)
+    result[normalizeSafeBridgeObjectKey(key)] =
+      sanitizeHumanTeacherBridgeResult(entryValue, key)
     return result
   }, {})
 }
@@ -933,9 +952,54 @@ function sanitizeLocalAiRegisterAdapterPayload(payload = {}) {
 
   return {
     epoch: sanitizeInteger(source.epoch, null, 0),
-    sourcePath: sanitizeOptionalBoundedString(
-      source.sourcePath || source.artifactPath || adapterArtifact.sourcePath,
-      4096
+    artifactToken: sanitizeOptionalBoundedString(
+      source.artifactToken ||
+        source.importedArtifactToken ||
+        adapterArtifact.artifactToken ||
+        adapterArtifact.importedArtifactToken ||
+        adapterArtifact.token,
+      256
+    ),
+    publicModelId: sanitizeOptionalBoundedString(source.publicModelId, 256),
+    publicVisionId: sanitizeOptionalBoundedString(source.publicVisionId, 256),
+    runtimeBackend: sanitizeOptionalBoundedString(source.runtimeBackend, 64),
+    reasonerBackend: sanitizeOptionalBoundedString(source.reasonerBackend, 64),
+    visionBackend: sanitizeOptionalBoundedString(source.visionBackend, 64),
+    contractVersion: sanitizeOptionalBoundedString(source.contractVersion, 64),
+    baseModelId: sanitizeOptionalBoundedString(source.baseModelId, 256),
+    baseModelHash: sanitizeOptionalBoundedString(source.baseModelHash, 256),
+    trainingConfigHash: sanitizeOptionalBoundedString(
+      source.trainingConfigHash,
+      256
+    ),
+  }
+}
+
+function sanitizeLocalAiImportAdapterPayload(payload = {}) {
+  const source = isPlainObject(payload) ? payload : {}
+  const adapterArtifact = isPlainObject(source.adapterArtifact)
+    ? source.adapterArtifact
+    : {}
+
+  return {
+    epoch: sanitizeInteger(source.epoch, null, 0),
+    artifactFileName: sanitizeOptionalBoundedString(
+      source.artifactFileName ||
+        source.fileName ||
+        source.name ||
+        adapterArtifact.file ||
+        adapterArtifact.fileName ||
+        adapterArtifact.name,
+      512
+    ),
+    artifactBase64: sanitizeOptionalBoundedString(
+      source.artifactBase64 ||
+        source.base64 ||
+        source.dataUrl ||
+        adapterArtifact.artifactBase64 ||
+        adapterArtifact.base64 ||
+        adapterArtifact.dataUrl,
+      128 * 1024 * 1024
     ),
     publicModelId: sanitizeOptionalBoundedString(source.publicModelId, 256),
     publicVisionId: sanitizeOptionalBoundedString(source.publicVisionId, 256),
@@ -1340,6 +1404,7 @@ const aiSolverBridge = Object.freeze({
 })
 
 const localAiBridge = Object.freeze({
+  bridgeMode: 'electron',
   status: (payload) =>
     invokeCloneable('localAi.status', sanitizeLocalAiRuntimePayload(payload)),
   getDeveloperTelemetry: () => invokeCloneable('localAi.getDeveloperTelemetry'),
@@ -1363,21 +1428,26 @@ const localAiBridge = Object.freeze({
       'localAi.flipToText',
       sanitizeLocalAiRuntimePayload(payload)
     ),
+  importAdapterArtifact: (payload) =>
+    invokeCloneable(
+      'localAi.importAdapterArtifact',
+      sanitizeLocalAiImportAdapterPayload(payload)
+    ).then(sanitizeHumanTeacherBridgeResult),
   registerAdapterArtifact: (payload) =>
     invokeCloneable(
       'localAi.registerAdapterArtifact',
       sanitizeLocalAiRegisterAdapterPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   loadAdapterArtifact: (payload) =>
     invokeCloneable(
       'localAi.loadAdapterArtifact',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   loadTrainingCandidatePackage: (payload) =>
     invokeCloneable(
       'localAi.loadTrainingCandidatePackage',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   loadHumanTeacherPackage: (payload) =>
     invokeCloneable(
       'localAi.loadHumanTeacherPackage',
@@ -1387,7 +1457,7 @@ const localAiBridge = Object.freeze({
     invokeCloneable(
       'localAi.buildTrainingCandidatePackage',
       sanitizeLocalAiEpochPayload(payload)
-    ),
+    ).then(sanitizeHumanTeacherBridgeResult),
   buildHumanTeacherPackage: (payload) =>
     invokeCloneable(
       'localAi.buildHumanTeacherPackage',
@@ -1507,7 +1577,7 @@ const localAiBridge = Object.freeze({
         payload && payload.reviewStatus,
         64
       ),
-    }),
+    }).then(sanitizeHumanTeacherBridgeResult),
   updateHumanTeacherPackageReview: (payload) =>
     invokeCloneable('localAi.updateHumanTeacherPackageReview', {
       epoch: sanitizeInteger(payload && payload.epoch, null, 0),
@@ -1518,13 +1588,17 @@ const localAiBridge = Object.freeze({
       ),
     }).then(sanitizeHumanTeacherBridgeResult),
   buildBundle: (epoch) =>
-    invokeCloneable('localAi.buildBundle', sanitizeInteger(epoch, null, 0)),
+    invokeCloneable(
+      'localAi.buildBundle',
+      sanitizeInteger(epoch, null, 0)
+    ).then(sanitizeHumanTeacherBridgeResult),
   importBundle: (filePath) =>
     invokeCloneable(
       'localAi.importBundle',
       sanitizeBoundedString(filePath, '', 4096)
-    ),
-  aggregate: () => invokeCloneable('localAi.aggregate'),
+    ).then(sanitizeHumanTeacherBridgeResult),
+  aggregate: () =>
+    invokeCloneable('localAi.aggregate').then(sanitizeHumanTeacherBridgeResult),
   captureFlip: (payload) =>
     ipcRenderer.send(
       'localAi.captureFlip',
