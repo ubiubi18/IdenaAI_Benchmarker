@@ -17,6 +17,8 @@ const {
   DEFAULT_DEVELOPER_AI_DRAFT_CONTEXT_WINDOW_TOKENS,
   DEFAULT_DEVELOPER_AI_DRAFT_QUESTION_WINDOW_CHARS,
   DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS,
+  DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS,
+  DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS,
   DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS,
   DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG,
   DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG,
@@ -39,6 +41,7 @@ const {
   normalizeDeveloperAiDraftContextWindowTokens,
   normalizeDeveloperAiDraftQuestionWindowChars,
   normalizeDeveloperAiDraftAnswerWindowTokens,
+  normalizeDeveloperBenchmarkReviewRequiredFields,
   resolveDeveloperLocalTrainingProfileModelPath,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackModel,
   resolveDeveloperLocalTrainingProfileRuntimeFallbackVisionModel,
@@ -97,6 +100,9 @@ describe('local-ai settings schema', () => {
     )
     expect(settings.developerAiDraftAnswerWindowTokens).toBe(
       DEFAULT_DEVELOPER_AI_DRAFT_ANSWER_WINDOW_TOKENS
+    )
+    expect(settings.developerBenchmarkReviewRequiredFields).toEqual(
+      DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS
     )
     expect(settings.shareHumanTeacherAnnotationsWithNetwork).toBe(false)
     expect(settings.trainEnabled).toBe(false)
@@ -303,6 +309,39 @@ describe('local-ai settings schema', () => {
       modelPath: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
       runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
     })
+  })
+
+  it('normalizes the benchmark review required field list', () => {
+    expect(
+      normalizeDeveloperBenchmarkReviewRequiredFields([
+        'benchmark_review_failure_note',
+        'benchmark_review_failure_note',
+        'nope',
+        'benchmark_review_retraining_hint',
+      ])
+    ).toEqual([
+      'benchmark_review_failure_note',
+      'benchmark_review_retraining_hint',
+    ])
+
+    expect(normalizeDeveloperBenchmarkReviewRequiredFields('')).toEqual(
+      DEFAULT_DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELDS
+    )
+
+    expect(
+      normalizeDeveloperBenchmarkReviewRequiredFields([], {
+        fallbackToDefault: false,
+      })
+    ).toEqual([])
+
+    expect(DEVELOPER_BENCHMARK_REVIEW_REQUIRED_FIELD_OPTIONS).toEqual(
+      expect.arrayContaining([
+        'benchmark_review_issue_type',
+        'benchmark_review_failure_note',
+        'benchmark_review_retraining_hint',
+        'benchmark_review_include_for_training',
+      ])
+    )
   })
 
   it('keeps a persisted developer annotation-sharing consent', () => {

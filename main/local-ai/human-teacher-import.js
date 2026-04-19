@@ -53,6 +53,23 @@ function normalizeConfidence(value) {
   return Math.round(parsed)
 }
 
+function normalizeBenchmarkReviewIssueType(value) {
+  const next = trimText(value, 64).toLowerCase().replace(/\s+/gu, '_')
+
+  return [
+    'wrong_answer',
+    'missed_text',
+    'sequence_confusion',
+    'reportability_miss',
+    'weak_reasoning',
+    'panel_read_failure',
+    'ambiguous_flip',
+    'other',
+  ].includes(next)
+    ? next
+    : ''
+}
+
 function normalizeCaptions(value) {
   const captions = Array.isArray(value)
     ? value.slice(0, 4).map((item) => trimText(item, 400))
@@ -140,6 +157,18 @@ function normalizePanelReferences(value) {
       y: panelIndex === null ? null : normalizePanelReferenceCoordinate(raw.y),
     }
   })
+}
+
+function readAnnotationField(annotationRow, snakeKey, camelKey) {
+  if (Object.prototype.hasOwnProperty.call(annotationRow, snakeKey)) {
+    return annotationRow[snakeKey]
+  }
+
+  if (Object.prototype.hasOwnProperty.call(annotationRow, camelKey)) {
+    return annotationRow[camelKey]
+  }
+
+  return undefined
 }
 
 function validateFinalAnswer(value) {
@@ -368,6 +397,36 @@ function normalizeAnnotation(taskRow, annotationRow) {
   const whyAnswer = trimText(annotationRow.why_answer)
   const confidence = normalizeConfidence(annotationRow.confidence)
   const finalAnswer = validateFinalAnswer(annotationRow.final_answer)
+  const benchmarkReviewIssueType = normalizeBenchmarkReviewIssueType(
+    readAnnotationField(
+      annotationRow,
+      'benchmark_review_issue_type',
+      'benchmarkReviewIssueType'
+    )
+  )
+  const benchmarkReviewFailureNote = trimText(
+    readAnnotationField(
+      annotationRow,
+      'benchmark_review_failure_note',
+      'benchmarkReviewFailureNote'
+    ),
+    900
+  )
+  const benchmarkReviewRetrainingHint = trimText(
+    readAnnotationField(
+      annotationRow,
+      'benchmark_review_retraining_hint',
+      'benchmarkReviewRetrainingHint'
+    ),
+    900
+  )
+  const benchmarkReviewIncludeForTraining = normalizeBool(
+    readAnnotationField(
+      annotationRow,
+      'benchmark_review_include_for_training',
+      'benchmarkReviewIncludeForTraining'
+    )
+  )
 
   assertCompleteHumanTeacherAnnotation({
     textRequired,
@@ -406,6 +465,10 @@ function normalizeAnnotation(taskRow, annotationRow) {
     final_answer: finalAnswer,
     why_answer: whyAnswer,
     confidence,
+    benchmark_review_issue_type: benchmarkReviewIssueType,
+    benchmark_review_failure_note: benchmarkReviewFailureNote,
+    benchmark_review_retraining_hint: benchmarkReviewRetrainingHint,
+    benchmark_review_include_for_training: benchmarkReviewIncludeForTraining,
     consensus_answer: taskRow.final_answer || null,
     consensus_strength: taskRow.consensus_strength || null,
     training_weight:

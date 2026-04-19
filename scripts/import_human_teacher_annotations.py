@@ -62,6 +62,22 @@ def normalize_confidence(value: Any) -> Optional[float]:
     return parsed
 
 
+def normalize_benchmark_review_issue_type(value: Any) -> str:
+    raw = normalize_text(value, max_length=64).lower().replace(" ", "_")
+    if raw in {
+        "wrong_answer",
+        "missed_text",
+        "sequence_confusion",
+        "reportability_miss",
+        "weak_reasoning",
+        "panel_read_failure",
+        "ambiguous_flip",
+        "other",
+    }:
+        return raw
+    return ""
+
+
 def normalize_captions(value: Any) -> List[str]:
     captions = (
         [normalize_text(item, max_length=400) for item in value[:4]]
@@ -262,6 +278,40 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
     final_answer = validate_final_answer(annotation_row.get("final_answer"))
     why_answer = normalize_text(annotation_row.get("why_answer"))
     confidence = normalize_confidence(annotation_row.get("confidence"))
+    benchmark_review_issue_type_value = (
+        annotation_row["benchmark_review_issue_type"]
+        if "benchmark_review_issue_type" in annotation_row
+        else annotation_row.get("benchmarkReviewIssueType")
+    )
+    benchmark_review_issue_type = normalize_benchmark_review_issue_type(
+        benchmark_review_issue_type_value
+    )
+    benchmark_review_failure_note_value = (
+        annotation_row["benchmark_review_failure_note"]
+        if "benchmark_review_failure_note" in annotation_row
+        else annotation_row.get("benchmarkReviewFailureNote")
+    )
+    benchmark_review_failure_note = normalize_text(
+        benchmark_review_failure_note_value,
+        max_length=900,
+    )
+    benchmark_review_retraining_hint_value = (
+        annotation_row["benchmark_review_retraining_hint"]
+        if "benchmark_review_retraining_hint" in annotation_row
+        else annotation_row.get("benchmarkReviewRetrainingHint")
+    )
+    benchmark_review_retraining_hint = normalize_text(
+        benchmark_review_retraining_hint_value,
+        max_length=900,
+    )
+    benchmark_review_include_for_training_value = (
+        annotation_row["benchmark_review_include_for_training"]
+        if "benchmark_review_include_for_training" in annotation_row
+        else annotation_row.get("benchmarkReviewIncludeForTraining")
+    )
+    benchmark_review_include_for_training = normalize_bool(
+        benchmark_review_include_for_training_value
+    )
     assert_complete_annotation(
         text_required=text_required,
         sequence_markers_present=sequence_markers_present,
@@ -293,6 +343,10 @@ def normalize_annotation(task_row: Dict[str, Any], annotation_row: Dict[str, Any
         "final_answer": final_answer,
         "why_answer": why_answer,
         "confidence": confidence,
+        "benchmark_review_issue_type": benchmark_review_issue_type,
+        "benchmark_review_failure_note": benchmark_review_failure_note,
+        "benchmark_review_retraining_hint": benchmark_review_retraining_hint,
+        "benchmark_review_include_for_training": benchmark_review_include_for_training,
         "consensus_answer": task_row.get("final_answer"),
         "consensus_strength": task_row.get("consensus_strength"),
         "training_weight": task_row.get("training_weight"),

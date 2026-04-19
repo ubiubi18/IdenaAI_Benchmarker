@@ -502,8 +502,17 @@ function normalizeLocalAiPayload(payload = {}) {
   const MAX_LOCAL_AI_ARRAY_ITEMS = 32
   const MAX_LOCAL_AI_TEXT_CHARS = 20000
   const MAX_LOCAL_AI_DATA_URL_CHARS = 8 * 1024 * 1024
+  const MAX_LOCAL_AI_BINARY_DATA_CHARS = 128 * 1024 * 1024
 
-  function sanitizeLocalAiValue(value, depth = 0) {
+  function normalizeSafeLocalAiPayloadKey(key) {
+    const normalizedKey = String(key || '').slice(0, 128)
+
+    return ['__proto__', 'constructor', 'prototype'].includes(normalizedKey)
+      ? `_${normalizedKey}`
+      : normalizedKey
+  }
+
+  function sanitizeLocalAiValue(value, depth = 0, key = '') {
     if (depth > MAX_LOCAL_AI_PAYLOAD_DEPTH) {
       return null
     }
@@ -513,9 +522,19 @@ function normalizeLocalAiPayload(payload = {}) {
     }
 
     if (typeof value === 'string') {
-      const trimmed = value.startsWith('data:image/')
-        ? value.slice(0, MAX_LOCAL_AI_DATA_URL_CHARS)
-        : value.slice(0, MAX_LOCAL_AI_TEXT_CHARS)
+      const normalizedKey = String(key || '').trim()
+      let trimmed = value.slice(0, MAX_LOCAL_AI_TEXT_CHARS)
+
+      if (
+        normalizedKey === 'artifactBase64' ||
+        normalizedKey === 'base64' ||
+        normalizedKey === 'dataUrl'
+      ) {
+        trimmed = value.slice(0, MAX_LOCAL_AI_BINARY_DATA_CHARS)
+      } else if (value.startsWith('data:image/')) {
+        trimmed = value.slice(0, MAX_LOCAL_AI_DATA_URL_CHARS)
+      }
+
       return trimmed
     }
 
@@ -534,35 +553,41 @@ function normalizeLocalAiPayload(payload = {}) {
     if (Array.isArray(value)) {
       return value
         .slice(0, MAX_LOCAL_AI_ARRAY_ITEMS)
-        .map((item) => sanitizeLocalAiValue(item, depth + 1))
+        .map((item) => sanitizeLocalAiValue(item, depth + 1, key))
     }
 
     if (value && typeof value === 'object') {
       return Object.entries(value)
         .slice(0, MAX_LOCAL_AI_OBJECT_KEYS)
-        .reduce((result, [key, entryValue]) => {
-          if (typeof key !== 'string') {
+        .reduce((result, [entryKey, entryValue]) => {
+          if (typeof entryKey !== 'string') {
             return result
           }
 
-          const sanitized = sanitizeLocalAiValue(entryValue, depth + 1)
+          const safeEntryKey = normalizeSafeLocalAiPayloadKey(entryKey)
+
+          const sanitized = sanitizeLocalAiValue(
+            entryValue,
+            depth + 1,
+            safeEntryKey
+          )
 
           if (typeof sanitized !== 'undefined') {
-            result[key] = sanitized
+            result[safeEntryKey] = sanitized
           }
 
           return result
-        }, {})
+        }, Object.create(null))
     }
 
     return undefined
   }
 
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return {}
+    return Object.create(null)
   }
 
-  return sanitizeLocalAiValue(payload) || {}
+  return sanitizeLocalAiValue(payload) || Object.create(null)
 }
 
 function pickLocalAiInput(nextPayload) {
@@ -2244,6 +2269,13 @@ handleTrusted(
   'localAi.buildManifest',
   withLocalAiTrainingEnabled('buildManifest', async (_event, payload) =>
     localAiManager.buildManifest(buildLocalAiEpochPayload(payload))
+  )
+)
+
+handleTrusted(
+  'localAi.importAdapterArtifact',
+  withLocalAiTrainingEnabled('importAdapterArtifact', async (_event, payload) =>
+    localAiManager.importAdapterArtifact(buildLocalAiTrainHookPayload(payload))
   )
 )
 
