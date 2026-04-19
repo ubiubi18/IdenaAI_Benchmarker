@@ -46,10 +46,7 @@ const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
 const ACTIVE_VALIDATION_PERIODS = new Set(['ShortSession', 'LongSession'])
 const MAX_DEVELOPER_COMPARISON_HISTORY = 30
 const EXTERNAL_DEVELOPER_TRAINING_BUNDLE_VERSION = 1
-const EXTERNAL_DEVELOPER_RUNTIME_MODEL = 'qwen3.5:9b'
-const EXTERNAL_DEVELOPER_RUNTIME_VISION_MODEL = 'qwen3.5:9b'
-const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL =
-  'mlx-community/Qwen3.5-9B-MLX-4bit'
+const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL = ''
 const EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE = 200
 const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
 const MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE = 500
@@ -1393,9 +1390,13 @@ function normalizeDeveloperTrainingInteger(value, fallback, min, max) {
 function normalizeDeveloperTrainingModelPath(value) {
   const modelPath = String(value || '').trim()
 
+  if (!modelPath) {
+    return null
+  }
+
   return DEVELOPER_LOCAL_TRAINING_MODEL_OPTIONS.has(modelPath)
     ? modelPath
-    : EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL
+    : null
 }
 
 function normalizeDeveloperTrainingProfile(value) {
@@ -4929,7 +4930,9 @@ function createLocalAiManager({
       '1. Rent one GPU computer from any managed jobs provider, GPU pod provider, or cloud VM.',
       '2. Upload this whole folder to that machine.',
       '3. Start with a benchmark-only smoke run before doing a longer training run.',
-      `4. For serious training, use the recommended MLX base ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}.`,
+      EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL
+        ? `4. For serious training, use the recommended MLX base ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}.`
+        : '4. No approved MLX base is bundled right now. Pick and audit your own base model before training.',
       `5. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
       '6. Import only the result files you intend to trust back into IdenaAI later.',
       '',
@@ -7535,14 +7538,8 @@ function createLocalAiManager({
     const developerPrompt = String(
       next.developerHumanTeacherSystemPrompt || ''
     ).trim()
-    const runtimeModel =
-      next.runtimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
-        ? EXTERNAL_DEVELOPER_RUNTIME_MODEL
-        : String(next.model || '').trim() || null
-    const runtimeVisionModel =
-      next.runtimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND
-        ? EXTERNAL_DEVELOPER_RUNTIME_VISION_MODEL
-        : String(next.visionModel || '').trim() || null
+    const runtimeModel = String(next.model || '').trim() || null
+    const runtimeVisionModel = String(next.visionModel || '').trim() || null
 
     await localAiStorage.ensureDir(outputDir)
     await writeJsonlRows(annotationsPath, annotatedRows)
@@ -7574,7 +7571,7 @@ function createLocalAiManager({
         visionModel: runtimeVisionModel,
       },
       training: {
-        recommendedModel: EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL,
+        recommendedModel: EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL || null,
         humanTeacherSystemPrompt: developerPrompt || null,
       },
       benchmark: {

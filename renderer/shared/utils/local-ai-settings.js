@@ -6,11 +6,11 @@ const LEGACY_LOCAL_AI_CONTRACT_VERSION = 'phi-sidecar/v1'
 const LEGACY_LOCAL_AI_BASE_URL = 'http://127.0.0.1:5000'
 const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_LOCAL_AI_SIDECAR_BASE_URL = LEGACY_LOCAL_AI_BASE_URL
-const DEFAULT_LOCAL_AI_OLLAMA_MODEL = 'qwen3.5:9b'
-const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen3.5:9b'
-const RECOMMENDED_LOCAL_AI_OLLAMA_MODEL = 'qwen3.5:9b'
-const RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL = 'qwen3.5:9b'
-const RECOMMENDED_LOCAL_AI_TRAINING_MODEL = 'mlx-community/Qwen3.5-9B-MLX-4bit'
+const DEFAULT_LOCAL_AI_OLLAMA_MODEL = ''
+const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = ''
+const RECOMMENDED_LOCAL_AI_OLLAMA_MODEL = ''
+const RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL = ''
+const RECOMMENDED_LOCAL_AI_TRAINING_MODEL = ''
 const STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL = RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
 const STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL =
   RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
@@ -593,7 +593,6 @@ function buildLocalAiRuntimePreset(runtimeBackend = 'ollama-direct') {
 function buildRecommendedLocalAiMacPreset() {
   return {
     ...buildLocalAiRuntimePreset('ollama-direct'),
-    trainEnabled: true,
     model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
     visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
   }
@@ -644,12 +643,21 @@ function buildLocalAiSettings(settings = {}) {
         ...buildLocalAiRuntimePreset('ollama-direct'),
       }
     : rawSource
+  const normalizedRuntimeBackend = normalizeRuntimeBackend(source)
+  const normalizedModel =
+    normalizedRuntimeBackend === 'ollama-direct'
+      ? trimString(source.model) || DEFAULT_LOCAL_AI_OLLAMA_MODEL
+      : ''
+  const normalizedVisionModel =
+    normalizedRuntimeBackend === 'ollama-direct'
+      ? trimString(source.visionModel) || DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL
+      : ''
 
   const normalizedSettings = {
     ...DEFAULT_LOCAL_AI_SETTINGS,
     ...source,
     enabled: source.enabled === true,
-    runtimeBackend: normalizeRuntimeBackend(source),
+    runtimeBackend: normalizedRuntimeBackend,
     reasonerBackend:
       trimString(source.reasonerBackend) ||
       DEFAULT_LOCAL_AI_SETTINGS.reasonerBackend,
@@ -662,14 +670,8 @@ function buildLocalAiSettings(settings = {}) {
     endpoint: normalizeEndpoint(source),
     runtimeType: trimString(source.runtimeType),
     runtimeFamily: normalizeLegacyRuntimeFamily(source),
-    model:
-      normalizeRuntimeBackend(source) === 'ollama-direct'
-        ? DEFAULT_LOCAL_AI_OLLAMA_MODEL
-        : '',
-    visionModel:
-      normalizeRuntimeBackend(source) === 'ollama-direct'
-        ? DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL
-        : '',
+    model: normalizedModel,
+    visionModel: normalizedVisionModel,
     adapterStrategy:
       trimString(source.adapterStrategy) ||
       DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy,
@@ -731,7 +733,10 @@ function buildLocalAiSettings(settings = {}) {
     shareHumanTeacherAnnotationsWithNetwork:
       source.shareHumanTeacherAnnotationsWithNetwork === true,
     contractVersion: normalizeContractVersion(source.contractVersion),
-    trainEnabled: source.enabled === true,
+    trainEnabled:
+      source.enabled === true &&
+      normalizedRuntimeBackend === 'ollama-direct' &&
+      Boolean(normalizedModel || normalizedVisionModel),
     federated: {
       ...DEFAULT_LOCAL_AI_SETTINGS.federated,
       ...((source && source.federated) || {}),

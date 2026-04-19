@@ -9,11 +9,11 @@ const {
 } = require('./runtime-adapter')
 
 const DEFAULT_BASE_URL = 'http://localhost:5000'
-const DEFAULT_MODEL = 'qwen3.5:9b'
+const DEFAULT_MODEL = ''
 const DEFAULT_RUNTIME = LOCAL_AI_RUNTIME
 const DEFAULT_RUNTIME_TYPE = 'sidecar'
 const DEFAULT_OLLAMA_ENDPOINT = LOCAL_AI_OLLAMA_DEFAULT_BASE_URL
-const DEFAULT_VISION_MODEL = 'qwen3.5:9b'
+const DEFAULT_VISION_MODEL = ''
 const DEFAULT_TIMEOUT_MS = 5000
 const MAX_FLIP_IMAGES = 8
 const MIN_TIMEOUT_MS = 1000
@@ -1439,8 +1439,8 @@ function createLocalAiSidecar({
     const modelValidation = validateModelName(
       selectedModel,
       includesImages
-        ? 'Local AI vision model is required for Ollama image requests'
-        : 'Local AI model is required for Ollama requests'
+        ? 'No local vision base model is configured. IdenaAI is back in embryo stage until a better audited base layer is chosen.'
+        : 'No local base model is configured. IdenaAI is back in embryo stage until a better audited base layer is chosen.'
     )
 
     if (!modelValidation.ok) {

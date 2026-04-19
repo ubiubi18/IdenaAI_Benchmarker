@@ -22,6 +22,24 @@ Still experimental:
 - unattended on-chain automation
 - some Local AI UX and runtime defaults
 
+## Embryo Stage
+
+`IdenaAI` is back in embryo stage for the moment while research for a better
+base layer is ongoing.
+
+> I just pulled the plug on Qwen 3.5 as base model for the moment. Too much
+> opaque pretraining. You can’t grow a trustworthy system on a black box. Back
+> to embryo stage.
+
+Sanitized screenshot of the behavior that triggered this reset:
+
+![Sanitized base-layer review example](docs/assets/base-layer-research-note.jpg)
+
+Current consequence:
+- no approved local base model ships by default
+- benchmarking, annotation, and provider experiments continue
+- any future local base layer should be chosen deliberately and audited first
+
 ## Safety and privacy
 
 Treat this repo as test software.
@@ -100,8 +118,7 @@ For local inference, the app expects a loopback-only runtime.
 
 Typical setup:
 - Ollama on `http://127.0.0.1:11434`
-- local text and multimodal models pulled on the same machine
-- runtime vision model: `qwen2.5vl:7b`
+- manually chosen local text and multimodal models pulled on the same machine
 
 Do not point Local AI at arbitrary remote URLs unless you intentionally want a
 hosted-provider setup and accept the privacy and cost tradeoff.
@@ -117,11 +134,9 @@ It supports:
 - matrix comparison of baseline vs human-assisted modes
 - side-by-side comparison of `best_single` vs `deepfunding`
 
-Model roles stay intentionally split:
-- runtime model: `qwen2.5vl:7b` via Ollama for local image-grounded inference
-- recommended strong-Mac MLX training model: `mlx-community/Qwen3.5-9B-MLX-4bit`
-- stronger training fallback: `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`
-- safe minimum training fallback: `mlx-community/Qwen2-VL-2B-Instruct-4bit`
+There is no approved bundled local base model at the moment. The training stack
+remains in the repo for research, but the base layer has intentionally been
+reset while better candidates are evaluated.
 
 Start here:
 - [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
@@ -139,7 +154,8 @@ python -m pip install -U pip setuptools wheel
 python -m pip install mlx-vlm pyarrow pillow datasets huggingface_hub torch torchvision scipy
 ```
 
-For Qwen3.5 local MLX training, use Python 3.10+.
+If you continue local training research, choose and audit the base model
+yourself first.
 
 ## Related repo
 

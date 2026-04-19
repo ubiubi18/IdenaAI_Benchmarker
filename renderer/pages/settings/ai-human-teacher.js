@@ -181,9 +181,9 @@ function formatChunkRangeLabel(offset, {chunkSize = 5, totalCount = 0} = {}) {
 
 function describeDeveloperLocalTrainingProfile(profile, t) {
   return {
-    label: t('Fixed local Qwen lane'),
+    label: t('Embryo stage'),
     detail: t(
-      'IdenaAI now uses one local lane here only: qwen3.5:9b at runtime and mlx-community/Qwen3.5-9B-MLX-4bit for local training.'
+      'No approved local base layer is configured right now. Keep benchmarks and human-teacher notes, but choose any future local base manually after research settles.'
     ),
   }
 }
@@ -4253,7 +4253,7 @@ function AiAssistantDraftMessage({
 
         <Text color="muted" fontSize="xs" wordBreak="break-all">
           {t(
-            'Current local Qwen3.5-9B lane: runtime {{draftModel}} · local training {{trainingModel}}',
+            'Current local research slot: runtime {{draftModel}} · local training {{trainingModel}}',
             {
               draftModel: currentRuntimeModelLabel,
               trainingModel: trainingModelLabel || t('unknown'),
@@ -4264,7 +4264,7 @@ function AiAssistantDraftMessage({
         {showsLegacyDraftModelHint ? (
           <Text color="muted" fontSize="xs" wordBreak="break-all">
             {t(
-              'This saved draft was generated earlier with {{savedModel}}. Re-run it to refresh the answer in the current Qwen3.5-9B lane.',
+              'This saved draft was generated earlier with {{savedModel}}. Re-run it after you choose a new local base if you want a fresh comparison.',
               {
                 savedModel: savedDraftModelLabel,
               }
@@ -7346,7 +7346,7 @@ export default function AiHumanTeacherPage() {
           requestedModel,
           fallbackModel: '',
           lastError: t(
-            'The current Local AI runtime backend is not Ollama, so the requested Qwen runtime family cannot be verified here.'
+            'The current Local AI runtime backend is not Ollama, so the requested local runtime model cannot be verified here.'
           ),
           installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
         })
@@ -8635,7 +8635,7 @@ export default function AiHumanTeacherPage() {
             <Toast title={t('Unsupported local runtime backend')}>
               {aiDraftRuntimeResolution.lastError ||
                 t(
-                  'The current Local AI backend is not Ollama, so the requested Qwen runtime family cannot be used for AI drafting here.'
+                  'The current Local AI backend is not Ollama, so the requested local runtime model cannot be used for AI drafting here.'
                 )}
             </Toast>
           ),
@@ -8650,7 +8650,7 @@ export default function AiHumanTeacherPage() {
           render: () => (
             <Toast title={t('No runtime model selected')}>
               {t(
-                'The fixed local Qwen training lane is not configured yet on this desktop profile.'
+                'No approved local runtime base is configured on this desktop profile yet.'
               )}
             </Toast>
           ),
@@ -12085,7 +12085,7 @@ export default function AiHumanTeacherPage() {
                         </Text>
                         <Text color="muted" fontSize="xs">
                           {t(
-                            'This local draft path is locked to the requested Qwen3.5 runtime. If that model is missing, drafting should stop instead of silently switching to an older runtime.'
+                            'This local draft path stays pinned to the currently requested runtime. If that model is missing, drafting should stop instead of silently switching to some older runtime.'
                           )}
                         </Text>
                       </Box>
@@ -12599,7 +12599,7 @@ export default function AiHumanTeacherPage() {
                   {isDeveloperMode ? (
                     <Text color="muted" fontSize="sm">
                       {t(
-                        'Current local Qwen3.5-9B lane: requested runtime {{draftModel}}. Active runtime on this Mac: {{activeModel}}. Local training base: {{trainingModel}}.',
+                        'Current local research slot: requested runtime {{draftModel}}. Active runtime on this Mac: {{activeModel}}. Local training base: {{trainingModel}}.',
                         {
                           draftModel: localDraftRequestedRuntimeModelLabel,
                           activeModel: localDraftActiveRuntimeModelLabel,
@@ -13579,7 +13579,7 @@ export default function AiHumanTeacherPage() {
                                     </Text>
                                     <Text color="muted" fontSize="xs" mt={1}>
                                       {t(
-                                        'This draft chat stays on the same local Qwen3.5-9B lane as training. Runtime: {{draftModel}}. Local training base: {{trainingModel}}.',
+                                        'This draft chat stays on the same currently selected local runtime and training slot. Runtime: {{draftModel}}. Local training base: {{trainingModel}}.',
                                         {
                                           draftModel:
                                             localDraftRequestedRuntimeModelLabel,
@@ -14867,13 +14867,17 @@ export default function AiHumanTeacherPage() {
                               )}
                             </Text>
                             <Text fontSize="sm">
-                              {t(
-                                '4. For serious training, use the recommended MLX base {{model}}.',
-                                {
-                                  model:
-                                    externalContributionBundle.recommendedTrainingModel,
-                                }
-                              )}
+                              {externalContributionBundle.recommendedTrainingModel
+                                ? t(
+                                    '4. For serious training, use the recommended MLX base {{model}}.',
+                                    {
+                                      model:
+                                        externalContributionBundle.recommendedTrainingModel,
+                                    }
+                                  )
+                                : t(
+                                    '4. No approved MLX base is bundled right now. Choose and audit your own base model before training.'
+                                  )}
                             </Text>
                             <Text fontSize="sm">
                               {t(

@@ -45,9 +45,6 @@ import {
   DEFAULT_LOCAL_AI_SETTINGS,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
-  RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
-  RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
-  RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
   buildRecommendedLocalAiMacPreset,
   buildLocalAiRuntimePreset,
   buildLocalAiSettings,
@@ -56,7 +53,7 @@ import {
 } from '../../shared/utils/local-ai-settings'
 
 const DEFAULT_MODELS = {
-  'local-ai': RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+  'local-ai': '',
   openai: 'gpt-5.4',
   'openai-compatible': 'gpt-4o-mini',
   gemini: 'gemini-2.0-flash',
@@ -226,10 +223,7 @@ function buildProviderConfigForBridge(aiSolver, provider) {
 
 function resolveDefaultModelForProvider(provider, localAi = {}) {
   if (isLocalAiProvider(provider)) {
-    return (
-      String(localAi && localAi.model ? localAi.model : '').trim() ||
-      RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
-    )
+    return String(localAi && localAi.model ? localAi.model : '').trim()
   }
 
   return DEFAULT_MODELS[provider] || DEFAULT_MODELS.openai
@@ -742,9 +736,9 @@ export default function AiSettingsPage() {
     })
 
     notify(
-      t('Recommended Mac local AI setup applied'),
+      t('Embryo-stage local AI preset applied'),
       t(
-        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434 and uses qwen3.5:9b for both local text and image work. Local MLX training stays on the same Qwen3.5-9B lane with mlx-community/Qwen3.5-9B-MLX-4bit.'
+        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434, but no approved local base model is configured. Local AI is back in embryo stage while base-layer research continues.'
       ),
       'success'
     )
@@ -792,11 +786,12 @@ export default function AiSettingsPage() {
       rankingPolicy: localAi.rankingPolicy,
       baseUrl: localAiRuntimeUrl,
       endpoint: localAiRuntimeUrl,
-      model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
-      visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
+      model: localAi.model || '',
+      visionModel: localAi.visionModel || '',
     }),
     [
       localAi.contractVersion,
+      localAi.model,
       localAi.publicModelId,
       localAi.publicVisionId,
       localAi.rankingPolicy,
@@ -807,6 +802,7 @@ export default function AiSettingsPage() {
       localAi.trainingPolicy,
       localAiWireRuntimeType,
       localAi.visionBackend,
+      localAi.visionModel,
       localAiRuntimeUrl,
     ]
   )
@@ -1725,14 +1721,25 @@ export default function AiSettingsPage() {
     : t(
         'Use this when you want an external AI provider via API instead of a local runtime.'
       )
-  const localAiSummary = localAi.enabled
-    ? t(
-        'Local AI custom settings are active now. The default local runtime is {{model}}. Click Advanced if you need more settings.',
-        {model: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL}
-      )
-    : t(
-        'Use this when you want to run AI locally on this machine instead of through an external API.'
-      )
+  const currentLocalRuntimeLabel = String(
+    localAi.model || localAi.visionModel || ''
+  ).trim()
+  let localAiSummary = t(
+    'Use this when you want to run AI locally on this machine instead of through an external API.'
+  )
+
+  if (localAi.enabled) {
+    localAiSummary = currentLocalRuntimeLabel
+      ? t(
+          'Local AI custom settings are active now. The current local runtime is {{model}}. Click Advanced if you need more settings.',
+          {
+            model: currentLocalRuntimeLabel || t('not configured'),
+          }
+        )
+      : t(
+          'Local AI is enabled, but no approved local base model is configured. IdenaAI is back in embryo stage until base-layer research settles.'
+        )
+  }
   const enableExternalProviderSetup = useCallback(() => {
     updateAiSolverSettings({
       enabled: true,
@@ -3156,11 +3163,7 @@ export default function AiSettingsPage() {
                 <Text color="muted" fontSize="sm" mt={1}>
                   {localAi.runtimeBackend === 'ollama-direct'
                     ? t(
-                        'Recommended local runtime endpoint: http://127.0.0.1:11434. Local text and image runtime: {{runtimeModel}}. Matching local MLX training base: {{trainingModel}}.',
-                        {
-                          runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
-                          trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-                        }
+                        'Recommended local runtime endpoint: http://127.0.0.1:11434. IdenaAI is currently in embryo stage and ships no approved local base model by default.'
                       )
                     : t(
                         'Use a loopback URL for a custom local sidecar, for example http://127.0.0.1:5000.'
@@ -3175,16 +3178,12 @@ export default function AiSettingsPage() {
 
               <Stack isInline spacing={2}>
                 <SecondaryButton onClick={applyRecommendedLocalAiSetup}>
-                  {t('Use recommended Mac VLM setup')}
+                  {t('Use embryo-stage local preset')}
                 </SecondaryButton>
               </Stack>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'Runtime model: Ollama at http://127.0.0.1:11434 with {{visionModel}}. Training model: {{trainingModel}}. Benchmark and matrix runs use that same Qwen3.5-9B lane by default.',
-                  {
-                    visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
-                    trainingModel: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-                  }
+                  'Runtime endpoint: Ollama at http://127.0.0.1:11434. No approved local base model is bundled right now. Choose your own audited runtime and training base if you keep experimenting locally.'
                 )}
               </Text>
 
@@ -3244,10 +3243,7 @@ export default function AiSettingsPage() {
                     />
                     <Text color="muted" fontSize="sm" mt={1}>
                       {t(
-                        'Compatibility override for the current image-aware runtime path. On stronger Macs, {{visionModel}} is the recommended Ollama vision model. Install it with: ollama pull {{visionModel}}',
-                        {
-                          visionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
-                        }
+                        'Compatibility override for the current image-aware runtime path. Leave it blank unless you intentionally want to test a specific local vision runtime yourself.'
                       )}
                     </Text>
                   </SettingsFormControl>

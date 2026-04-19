@@ -8,7 +8,7 @@ const DEFAULT_TRAINING_EPOCHS = 1
 const DEFAULT_TRAINING_BATCH_SIZE = 1
 const DEFAULT_TRAINING_LEARNING_RATE = 1e-4
 const DEFAULT_TRAINING_LORA_RANK = 10
-const DEFAULT_TRAINING_MODEL_PATH = 'mlx-community/Qwen3.5-9B-MLX-4bit'
+const DEFAULT_TRAINING_MODEL_PATH = ''
 const DEFAULT_LOCAL_TRAINING_THERMAL_MODE = 'balanced'
 const DEFAULT_RUN_STOP_MODE = 'run'
 const RUN_STOP_MODE_OPTIONS = new Set(['run', 'cancel_now', 'after_unit'])
@@ -357,7 +357,7 @@ function resolveTrainingModelPath() {
       ''
   ).trim()
 
-  return explicit || DEFAULT_TRAINING_MODEL_PATH
+  return explicit
 }
 
 function resolveApprovedTrainingModelPaths() {
@@ -1714,6 +1714,17 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
     const preferredModelPath =
       String(request.trainingModelPath || '').trim() ||
       resolveTrainingModelPath()
+
+    if (!preferredModelPath) {
+      return {
+        ok: false,
+        status: 'failed',
+        trainingBackend: 'mlx_vlm_local',
+        modelPath: null,
+        failureReason:
+          'No approved local training base is configured. IdenaAI is back in embryo stage while base-layer research continues.',
+      }
+    }
 
     try {
       activeRunControl = runControl
