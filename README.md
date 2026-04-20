@@ -1,40 +1,69 @@
 # IdenaAI
 
-`IdenaAI` is the main experimental desktop fork of `idena-desktop` in the `IdenaAI` repository for:
-- local or hosted AI integration
-- in-app FLIP annotation and human-teacher flows
-- local FLIP training experiments tied to the desktop app
+`IdenaAI` is an experimental desktop fork of `idena-desktop` focused on:
+- local and hosted AI integration
+- FLIP solving, generation, and benchmarking research
+- human-teacher annotation flows
+- local training and runtime experiments tied to the desktop app
 
 This is research software, not a hardened wallet release.
 
-## Current status
+## Warning
 
-Available today:
-- AI settings and local runtime debugging
-- in-app human-teacher annotation, including demo mode
-- local FLIP training scripts in `scripts/`
-- human-assisted prep modes: `weight_boost`, `followup_reasoning`, `hybrid`
-- annotation aggregation modes: `best_single`, `deepfunding`
+This repository is still in development.
 
-Still experimental:
-- packaged builds
-- federated-learning workflow
-- unattended on-chain automation
-- some Local AI UX and runtime defaults
+Use it at your own risk:
+- no warranties
+- no guarantee of safety, correctness, uptime, or fitness for any purpose
+- not audited
+- not suitable for valuable identities, funds, or unattended automation
+- this codebase includes rapid experimental work and vibe-coding risks
 
-## Embryo Stage
+If you are not comfortable debugging broken flows, reviewing diffs, and
+accepting the possibility of wrong behavior, do not rely on this build.
 
-`IdenaAI` is back in embryo stage for the moment while research for a better
-base layer is ongoing.
+## Current stage
 
-Current consequence:
-- no approved local base model ships by default
-- benchmarking, annotation, and provider experiments continue
-- any future local base layer should be chosen deliberately and audited first
+Current project posture:
+- the desktop app is active and usable for research
+- AI features remain explicitly experimental
+- local AI is back in embryo stage as a long-term base-layer project
+- the current managed on-device research candidate is `allenai/Molmo2-O-7B`
+- no local AI path in this repo should be treated as audited or production-safe
+
+What works today:
+- AI settings and runtime controls inside the app
+- provider-based solving, benchmarking, and AI-assisted FLIP generation
+- in-app human-teacher annotation flows and demo/test paths
+- managed on-device runtime bootstrap for the current Molmo2-O research path
+- local FLIP research scripts in `scripts/`
+
+What is still not production-ready:
+- packaged end-user release quality
+- stable local-model defaults
+- unattended on-chain AI automation
+- federated-learning / networked training workflows
+- full polish across local-runtime UX
+
+## Local AI status
+
+Local AI is deliberately conservative right now.
+
+- there is no permanently approved bundled local base model
+- the managed on-device runtime is a research path, not a final endorsement
+- first use now asks for an explicit one-time trust approval before installing
+  pinned packages and running the pinned Molmo2-O runtime locally
+- the managed runtime is loopback-only, token-gated, and verifies trusted
+  pinned runtime files and weight shards before startup
+- advanced users can still point the app at their own local-only Ollama,
+  MLX, Transformers, or `vLLM` runtime
+
+In short: the repo can run local AI experiments, but the broader local-model
+direction is still being re-evaluated.
 
 ## Safety and privacy
 
-Treat this repo as test software.
+Treat this repository as test software.
 
 Recommended precautions:
 - use a low-value or disposable Idena identity
@@ -44,8 +73,8 @@ Recommended precautions:
 - review AI-generated flips manually before publishing on-chain
 
 If human annotations are later used for shared training, those contributions may
-become part of propagated model artifacts. Only share content you have the right
-to contribute.
+become part of propagated model artifacts. Only contribute material you have the
+right to share.
 
 ## Install and run from source
 
@@ -94,60 +123,49 @@ npm run audit:electron
 npm test
 ```
 
+## Training workflow
+
+The local FLIP training stack remains in the repo for research.
+
+It currently supports:
+- FLIP-Challenge dataset prep from Hugging Face
+- human-teacher annotation import
+- local LoRA pilot training experiments
+- matrix comparison of baseline vs human-assisted modes
+- side-by-side comparison of `best_single` vs `deepfunding`
+
+Important limitation:
+- no approved bundled local training base model is currently endorsed by the
+  project
+
+Start here:
+- [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
+
+Related notes:
+- [docs/local-ai-mvp-architecture.md](docs/local-ai-mvp-architecture.md)
+- [docs/federated-model-distribution.md](docs/federated-model-distribution.md)
+- [docs/federated-human-teacher-protocol.md](docs/federated-human-teacher-protocol.md)
+
 ## Large bundled artifacts
 
 This repo intentionally carries large static libraries in
 `idena-wasm-binding/lib/` for reproducible local builds.
 
-For a more polished public release flow:
+If public release packaging becomes more formal later:
 - keep those files under review before every tag
 - consider Git LFS or external release artifacts if the bundle grows further
 - make sure `THIRD_PARTY_NOTICES.md` ships with any redistributed binary bundle
 
-## Local AI runtime
+## Development history
 
-For local inference, the app expects a loopback-only runtime.
-
-Typical setup:
-- Ollama on `http://127.0.0.1:11434`
-- manually chosen local text and multimodal models pulled on the same machine
-
-Do not point Local AI at arbitrary remote URLs unless you intentionally want a
-hosted-provider setup and accept the privacy and cost tradeoff.
-
-## Training workflow
-
-The local FLIP training stack lives in `scripts/`.
-
-It supports:
-- FLIP-Challenge dataset prep from Hugging Face
-- human-teacher annotation import
-- local LoRA pilot training
-- matrix comparison of baseline vs human-assisted modes
-- side-by-side comparison of `best_single` vs `deepfunding`
-
-There is no approved bundled local base model at the moment. The training stack
-remains in the repo for research, but the base layer has intentionally been
-reset while better candidates are evaluated.
-
-Start here:
-- [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
-
-Related protocol/design notes:
-- [docs/federated-model-distribution.md](docs/federated-model-distribution.md)
-- [docs/federated-human-teacher-protocol.md](docs/federated-human-teacher-protocol.md)
-
-Typical Python environment:
-
-```bash
-python3.11 -m venv .tmp/flip-train-venv-py311
-source .tmp/flip-train-venv-py311/bin/activate
-python -m pip install -U pip setuptools wheel
-python -m pip install mlx-vlm pyarrow pillow datasets huggingface_hub torch torchvision scipy
-```
-
-If you continue local training research, choose and audit the base model
-yourself first.
+Very short overview:
+- `Phase 1`: desktop fork created to explore AI inside `idena-desktop`
+- `Phase 2`: human-teacher annotation and local training research were added
+- `Phase 3`: provider benchmarking / solving / generation were separated from
+  local-model-training semantics
+- `Phase 4`: the old local base-model direction was reset; the project returned
+  to embryo stage for local AI while Molmo2-O is evaluated as the current
+  managed research candidate
 
 ## Related repo
 
