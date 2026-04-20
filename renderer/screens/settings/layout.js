@@ -7,12 +7,18 @@ import Layout from '../../shared/components/layout'
 import {Page, PageTitle} from '../../shared/components/components'
 import {SettingsNavLink} from './components'
 
-export default function SettingsLayout({children}) {
+export default function SettingsLayout({
+  children,
+  allowWhenNodeUnavailable = false,
+}) {
   const router = useRouter()
   const {t} = useTranslation()
 
   return (
-    <Layout skipHardForkScreen>
+    <Layout
+      skipHardForkScreen
+      allowWhenNodeUnavailable={allowWhenNodeUnavailable}
+    >
       <Page>
         <PageTitle>{t('Settings')}</PageTitle>
         <HStack value={router.pathname} onChange={router.push}>

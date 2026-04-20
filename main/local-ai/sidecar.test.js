@@ -728,6 +728,30 @@ describe('local-ai sidecar', () => {
           config: {
             url: 'http://127.0.0.1:11434/api/chat',
           },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            model: 'llama3.1:8b',
+            choices: [{text: 'Hello from choices text.'}],
+          },
+          config: {
+            url: 'http://127.0.0.1:11434/api/chat',
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            model: 'llama3.1:8b',
+            choices: [
+              {
+                delta: {
+                  content: [{text: 'Hello'}, {text: 'from delta array.'}],
+                },
+              },
+            ],
+          },
+          config: {
+            url: 'http://127.0.0.1:11434/api/chat',
+          },
         }),
     }
     const sidecar = createLocalAiSidecar({httpClient})
@@ -756,6 +780,32 @@ describe('local-ai sidecar', () => {
       ok: true,
       text: 'Hello\nfrom array.',
       content: 'Hello\nfrom array.',
+    })
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        input: 'Say hello a third time.',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      text: 'Hello from choices text.',
+      content: 'Hello from choices text.',
+    })
+
+    await expect(
+      sidecar.chat({
+        runtimeType: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        model: 'llama3.1:8b',
+        input: 'Say hello a fourth time.',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      text: 'Hello\nfrom delta array.',
+      content: 'Hello\nfrom delta array.',
     })
   })
 

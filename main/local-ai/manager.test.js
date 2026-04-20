@@ -5024,6 +5024,191 @@ describe('local-ai manager', () => {
     )
   })
 
+  it('forwards launcher path overrides to the managed local runtime controller', async () => {
+    const sidecar = {
+      getHealth: jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 'error',
+          reachable: false,
+          runtime: 'sidecar',
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          baseUrl: 'http://127.0.0.1:8080',
+          endpoint: 'http://127.0.0.1:8080/health',
+          lastError: 'connect ECONNREFUSED 127.0.0.1:8080',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 'ok',
+          reachable: true,
+          runtime: 'sidecar',
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          baseUrl: 'http://127.0.0.1:8080',
+          endpoint: 'http://127.0.0.1:8080/health',
+          data: {loaded_model: 'allenai/Molmo2-O-7B'},
+          lastError: null,
+        }),
+      listModels: jest.fn(async () => ({
+        ok: true,
+        reachable: true,
+        runtimeBackend: 'local-runtime-service',
+        runtimeType: 'sidecar',
+        baseUrl: 'http://127.0.0.1:8080',
+        endpoint: 'http://127.0.0.1:8080/v1/models',
+        models: ['allenai/Molmo2-O-7B'],
+        total: 1,
+        lastError: null,
+      })),
+      chat: jest.fn(),
+      flipToText: jest.fn(),
+      checkFlipSequence: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(),
+    }
+    const runtimeController = {
+      start: jest.fn(async () => ({
+        started: true,
+        managed: true,
+        pid: 5252,
+        authToken: 'managed-token',
+      })),
+      resolveAccess: jest.fn(() => ({
+        managed: true,
+        authToken: 'managed-token',
+      })),
+      stop: jest.fn(),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      runtimeController,
+    })
+
+    await manager.start({
+      runtimeBackend: 'local-runtime-service',
+      runtimeType: 'sidecar',
+      runtimeFamily: 'molmo2-o',
+      baseUrl: 'http://127.0.0.1:8080',
+      model: 'allenai/Molmo2-O-7B',
+      visionModel: 'allenai/Molmo2-O-7B',
+      managedRuntimePythonPath: '/opt/custom/python3.11',
+      ollamaCommandPath: '/opt/custom/ollama',
+    })
+
+    expect(runtimeController.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        managedRuntimePythonPath: '/opt/custom/python3.11',
+        ollamaCommandPath: '/opt/custom/ollama',
+      })
+    )
+  })
+
+  it('exposes runtime startup progress while the managed local runtime is still booting', async () => {
+    let releaseStart
+    const startDeferred = new Promise((resolve) => {
+      releaseStart = resolve
+    })
+    const sidecar = {
+      getHealth: jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 'error',
+          reachable: false,
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          lastError: 'connect ECONNREFUSED 127.0.0.1:8080',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 'ok',
+          reachable: true,
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          lastError: null,
+        }),
+      listModels: jest.fn(async () => ({
+        ok: true,
+        models: ['allenai/Molmo2-O-7B'],
+        total: 1,
+        lastError: null,
+      })),
+      chat: jest.fn(),
+      flipToText: jest.fn(),
+      checkFlipSequence: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(),
+    }
+    const runtimeController = {
+      start: jest.fn(async ({onProgress}) => {
+        if (typeof onProgress === 'function') {
+          onProgress({
+            active: true,
+            status: 'installing',
+            stage: 'install_runtime_packages',
+            message: 'Installing the local runtime packages.',
+            progressPercent: 38,
+          })
+        }
+
+        await startDeferred
+
+        return {
+          started: true,
+          managed: true,
+          pid: 5252,
+          authToken: 'managed-token',
+        }
+      }),
+      resolveAccess: jest.fn(() => ({
+        managed: true,
+        authToken: 'managed-token',
+      })),
+      stop: jest.fn(),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      runtimeController,
+    })
+
+    const startPromise = manager.start({
+      runtimeBackend: 'local-runtime-service',
+      runtimeType: 'sidecar',
+      runtimeFamily: 'molmo2-o',
+      baseUrl: 'http://127.0.0.1:8080',
+      model: 'allenai/Molmo2-O-7B',
+      visionModel: 'allenai/Molmo2-O-7B',
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(manager.status()).resolves.toMatchObject({
+      runtimeProgress: expect.objectContaining({
+        active: true,
+        status: expect.any(String),
+        stage: expect.any(String),
+      }),
+    })
+
+    releaseStart()
+
+    await expect(startPromise).resolves.toMatchObject({
+      ok: true,
+      runtimeManaged: true,
+      sidecarReachable: true,
+      runtimeProgress: null,
+    })
+  })
+
   it('derives the legacy runtime type from runtimeBackend for Local AI flip text requests', async () => {
     const sidecar = {
       getHealth: jest.fn(async () => ({

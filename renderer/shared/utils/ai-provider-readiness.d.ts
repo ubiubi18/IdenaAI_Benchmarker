@@ -5,11 +5,15 @@ export type LocalAiSettingsLike = {
   runtimeMode?: string
   runtimeType?: string
   runtimeBackend?: string
+  runtimeFamily?: string
   reasonerBackend?: string
   visionBackend?: string
   publicModelId?: string
   publicVisionId?: string
   contractVersion?: string
+  adapterStrategy?: string
+  trainingPolicy?: string
+  rankingPolicy?: any
   model?: string
   visionModel?: string
 }
@@ -31,11 +35,15 @@ export type LocalAiRuntimePayload = {
   mode: string
   runtimeType: string
   runtimeBackend: string
+  runtimeFamily: string
   reasonerBackend: string
   visionBackend: string
   publicModelId: string
   publicVisionId: string
   contractVersion: string
+  adapterStrategy: string
+  trainingPolicy: string
+  rankingPolicy: any
   baseUrl: string
   endpoint: string
   model: string

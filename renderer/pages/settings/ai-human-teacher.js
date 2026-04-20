@@ -183,7 +183,7 @@ function describeDeveloperLocalTrainingProfile(profile, t) {
   return {
     label: t('Embryo stage'),
     detail: t(
-      'No approved local base layer is configured right now. Keep benchmarks and human-teacher notes, but choose any future local base manually after research settles.'
+      'No bundled local training base is approved right now. Keep benchmarks and human-teacher notes locally, and treat Molmo2-O as the current research runtime candidate rather than a finished one-click training lane.'
     ),
   }
 }
@@ -333,15 +333,36 @@ function createAiDraftRuntimeResolution(overrides = {}) {
   }
 }
 
+function isOllamaLocalRuntimeBackend(value) {
+  return (
+    String(value || '')
+      .trim()
+      .toLowerCase() === 'ollama-direct'
+  )
+}
+
+function supportsAiDraftRuntimeBackend(value) {
+  const runtimeBackend = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return (
+    runtimeBackend === 'ollama-direct' ||
+    runtimeBackend === 'local-runtime-service'
+  )
+}
+
 function resolveAiDraftRuntimeResolution({
   requestedModel = '',
   fallbackModel: _fallbackModel = '',
   availableModels = [],
+  runtimeBackend = '',
 } = {}) {
   const requested = String(requestedModel || '').trim()
   const models = Array.isArray(availableModels)
     ? availableModels.map((item) => String(item || '').trim()).filter(Boolean)
     : []
+  const ollamaBackend = isOllamaLocalRuntimeBackend(runtimeBackend)
 
   if (requested && models.includes(requested)) {
     return createAiDraftRuntimeResolution({
@@ -350,7 +371,19 @@ function resolveAiDraftRuntimeResolution({
       activeModel: requested,
       fallbackModel: '',
       availableModels: models,
-      installHint: `ollama pull ${requested}`,
+      installHint: ollamaBackend ? `ollama pull ${requested}` : '',
+    })
+  }
+
+  if (requested && !ollamaBackend && models.length === 0) {
+    return createAiDraftRuntimeResolution({
+      status: 'ready',
+      requestedModel: requested,
+      activeModel: requested,
+      fallbackModel: '',
+      availableModels: models,
+      fallbackReason: '',
+      installHint: '',
     })
   }
 
@@ -359,10 +392,18 @@ function resolveAiDraftRuntimeResolution({
     requestedModel: requested,
     activeModel: '',
     fallbackModel: '',
-    fallbackReason: requested
-      ? `${requested} is not installed in Ollama on this machine yet.`
-      : '',
-    installHint: requested ? `ollama pull ${requested}` : '',
+    fallbackReason: (() => {
+      if (!requested) {
+        return ''
+      }
+
+      if (ollamaBackend) {
+        return `${requested} is not installed in Ollama on this machine yet.`
+      }
+
+      return `${requested} was not advertised by the current local runtime service.`
+    })(),
+    installHint: requested && ollamaBackend ? `ollama pull ${requested}` : '',
     availableModels: models,
   })
 }
@@ -6957,6 +6998,8 @@ export default function AiHumanTeacherPage() {
     )
   const developerLocalTrainingModelPath =
     resolveDeveloperLocalTrainingProfileModelPath(developerLocalTrainingProfile)
+  const developerLocalTrainingBaseLabel =
+    developerLocalTrainingModelPath || t('no bundled local training base')
   const developerRequestedRuntimeModel =
     resolveDeveloperLocalTrainingProfileRuntimeModel(
       developerLocalTrainingProfile
@@ -7285,7 +7328,7 @@ export default function AiHumanTeacherPage() {
     if (
       !isDeveloperMode ||
       localAi?.enabled !== true ||
-      runtimeBackend !== 'ollama-direct'
+      !supportsAiDraftRuntimeBackend(runtimeBackend)
     ) {
       return
     }
@@ -7320,6 +7363,8 @@ export default function AiHumanTeacherPage() {
 
     const requestedModel =
       developerRequestedRuntimeVisionModel || developerRequestedRuntimeModel
+    const runtimeBackend = String(localAi?.runtimeBackend || '').trim()
+    const ollamaBackend = isOllamaLocalRuntimeBackend(runtimeBackend)
 
     if (!isDeveloperMode) {
       setAiDraftRuntimeResolution(createAiDraftRuntimeResolution())
@@ -7333,22 +7378,28 @@ export default function AiHumanTeacherPage() {
           requestedModel,
           fallbackModel: '',
           fallbackReason: '',
-          installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
+          installHint:
+            requestedModel && ollamaBackend
+              ? `ollama pull ${requestedModel}`
+              : '',
         })
       )
       return undefined
     }
 
-    if (String(localAi?.runtimeBackend || '').trim() !== 'ollama-direct') {
+    if (!supportsAiDraftRuntimeBackend(runtimeBackend)) {
       setAiDraftRuntimeResolution(
         createAiDraftRuntimeResolution({
           status: 'unsupported_backend',
           requestedModel,
           fallbackModel: '',
           lastError: t(
-            'The current Local AI runtime backend is not Ollama, so the requested local runtime model cannot be verified here.'
+            'The current Local AI runtime backend does not expose a supported local draft chat path here.'
           ),
-          installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
+          installHint:
+            requestedModel && ollamaBackend
+              ? `ollama pull ${requestedModel}`
+              : '',
         })
       )
       return undefined
@@ -7360,7 +7411,10 @@ export default function AiHumanTeacherPage() {
         status: 'loading',
         requestedModel,
         fallbackModel: '',
-        installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
+        installHint:
+          requestedModel && ollamaBackend
+            ? `ollama pull ${requestedModel}`
+            : '',
       })
     )
     ;(async () => {
@@ -7380,17 +7434,28 @@ export default function AiHumanTeacherPage() {
 
         if (!modelListResult?.ok) {
           setAiDraftRuntimeResolution(
-            createAiDraftRuntimeResolution({
-              status: 'unavailable',
-              requestedModel,
-              fallbackModel: '',
-              lastError: String(
-                modelListResult?.lastError || modelListResult?.error || ''
-              ).trim(),
-              installHint: requestedModel
-                ? `ollama pull ${requestedModel}`
-                : '',
-            })
+            ollamaBackend
+              ? createAiDraftRuntimeResolution({
+                  status: 'unavailable',
+                  requestedModel,
+                  fallbackModel: '',
+                  lastError: String(
+                    modelListResult?.lastError || modelListResult?.error || ''
+                  ).trim(),
+                  installHint: requestedModel
+                    ? `ollama pull ${requestedModel}`
+                    : '',
+                })
+              : createAiDraftRuntimeResolution({
+                  status: requestedModel ? 'ready' : 'idle',
+                  requestedModel,
+                  activeModel: requestedModel,
+                  fallbackModel: '',
+                  availableModels: [],
+                  lastError: String(
+                    modelListResult?.lastError || modelListResult?.error || ''
+                  ).trim(),
+                })
           )
           return
         }
@@ -7399,6 +7464,7 @@ export default function AiHumanTeacherPage() {
           resolveAiDraftRuntimeResolution({
             requestedModel,
             availableModels: modelListResult.models,
+            runtimeBackend,
           })
         )
       } catch (runtimeError) {
@@ -7407,15 +7473,28 @@ export default function AiHumanTeacherPage() {
         }
 
         setAiDraftRuntimeResolution(
-          createAiDraftRuntimeResolution({
-            status: 'error',
-            requestedModel,
-            fallbackModel: '',
-            lastError: String(
-              (runtimeError && runtimeError.message) || runtimeError || ''
-            ).trim(),
-            installHint: requestedModel ? `ollama pull ${requestedModel}` : '',
-          })
+          ollamaBackend
+            ? createAiDraftRuntimeResolution({
+                status: 'error',
+                requestedModel,
+                fallbackModel: '',
+                lastError: String(
+                  (runtimeError && runtimeError.message) || runtimeError || ''
+                ).trim(),
+                installHint: requestedModel
+                  ? `ollama pull ${requestedModel}`
+                  : '',
+              })
+            : createAiDraftRuntimeResolution({
+                status: requestedModel ? 'ready' : 'idle',
+                requestedModel,
+                activeModel: requestedModel,
+                fallbackModel: '',
+                availableModels: [],
+                lastError: String(
+                  (runtimeError && runtimeError.message) || runtimeError || ''
+                ).trim(),
+              })
         )
       }
     })()
@@ -8635,7 +8714,7 @@ export default function AiHumanTeacherPage() {
             <Toast title={t('Unsupported local runtime backend')}>
               {aiDraftRuntimeResolution.lastError ||
                 t(
-                  'The current Local AI backend is not Ollama, so the requested local runtime model cannot be used for AI drafting here.'
+                  'The current Local AI backend does not expose a supported local draft chat path here.'
                 )}
             </Toast>
           ),
@@ -8650,7 +8729,7 @@ export default function AiHumanTeacherPage() {
           render: () => (
             <Toast title={t('No runtime model selected')}>
               {t(
-                'No approved local runtime base is configured on this desktop profile yet.'
+                'No local runtime research model is configured on this desktop profile yet.'
               )}
             </Toast>
           ),
@@ -8667,7 +8746,7 @@ export default function AiHumanTeacherPage() {
             <Toast title={t('Requested runtime model is unavailable')}>
               {aiDraftRuntimeResolution.fallbackReason ||
                 t(
-                  'The requested runtime model is not installed yet. Install it locally, then try again.'
+                  'The requested runtime model is not available on the current local runtime yet.'
                 )}{' '}
               {aiDraftRuntimeResolution.installHint || ''}
             </Toast>
@@ -8730,6 +8809,7 @@ export default function AiHumanTeacherPage() {
           const runtimeResolution = resolveAiDraftRuntimeResolution({
             requestedModel: requestedRuntimeModel,
             availableModels: modelListResult.models,
+            runtimeBackend: localAi?.runtimeBackend,
           })
 
           setAiDraftRuntimeResolution(runtimeResolution)
@@ -8738,7 +8818,7 @@ export default function AiHumanTeacherPage() {
             throw new Error(
               runtimeResolution.fallbackReason ||
                 t(
-                  'The requested runtime model is not installed yet. Install it locally, then try again.'
+                  'The requested runtime model is not available on the current local runtime yet.'
                 )
             )
           }
@@ -12129,7 +12209,7 @@ export default function AiHumanTeacherPage() {
                           {t('Next training model')}
                         </Text>
                         <Text fontWeight={700}>
-                          {developerLocalTrainingModelPath}
+                          {developerLocalTrainingBaseLabel}
                         </Text>
                         <Text color="muted" fontSize="xs">
                           {developerLocalTrainingProfileSummary.label}
@@ -12245,7 +12325,7 @@ export default function AiHumanTeacherPage() {
                     <Text color="muted" fontSize="xs">
                       {t('Current local pilot preset')}:{' '}
                       {developerLocalTrainingProfileSummary.label} ·{' '}
-                      {developerLocalTrainingModelPath}
+                      {developerLocalTrainingBaseLabel}
                     </Text>
                     <Text color="muted" fontSize="xs">
                       {t('Current training heat mode')}:{' '}
@@ -12603,7 +12683,7 @@ export default function AiHumanTeacherPage() {
                         {
                           draftModel: localDraftRequestedRuntimeModelLabel,
                           activeModel: localDraftActiveRuntimeModelLabel,
-                          trainingModel: developerLocalTrainingModelPath,
+                          trainingModel: developerLocalTrainingBaseLabel,
                         }
                       )}
                     </Text>
@@ -13584,7 +13664,7 @@ export default function AiHumanTeacherPage() {
                                           draftModel:
                                             localDraftRequestedRuntimeModelLabel,
                                           trainingModel:
-                                            developerLocalTrainingModelPath,
+                                            developerLocalTrainingBaseLabel,
                                         }
                                       )}
                                     </Text>
@@ -13839,7 +13919,7 @@ export default function AiHumanTeacherPage() {
                                           localDraftActiveRuntimeModelLabel
                                         }
                                         trainingModelLabel={
-                                          developerLocalTrainingModelPath
+                                          developerLocalTrainingBaseLabel
                                         }
                                         onRate={rateCurrentAiDraft}
                                         t={t}
@@ -15066,7 +15146,7 @@ export default function AiHumanTeacherPage() {
                             wordBreak="break-all"
                           >
                             {t('Training model')}:{' '}
-                            {developerLocalTrainingModelPath}
+                            {developerLocalTrainingBaseLabel}
                           </Text>
                           <Text
                             color="muted"

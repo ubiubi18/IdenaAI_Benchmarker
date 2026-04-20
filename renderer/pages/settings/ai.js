@@ -22,7 +22,11 @@ import {
   SettingsSection,
 } from '../../screens/settings/components'
 import {
+  Dialog,
+  DialogBody,
+  DialogFooter,
   Input,
+  Progress,
   Select,
   Textarea,
   Toast,
@@ -34,6 +38,7 @@ import {
 } from '../../shared/providers/settings-context'
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
 import {
+  buildLocalAiRuntimePayload,
   checkAiProviderReadiness,
   formatAiProviderLabel,
   formatMissingAiProviders,
@@ -45,7 +50,10 @@ import {
   DEFAULT_LOCAL_AI_SETTINGS,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
+  MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+  buildLocalAiRepairPreset,
   buildRecommendedLocalAiMacPreset,
+  buildMolmo2OResearchPreset,
   buildLocalAiRuntimePreset,
   buildLocalAiSettings,
   getLocalAiEndpointSafety,
@@ -132,7 +140,10 @@ const LOCAL_AI_RUNTIME_OPTIONS = [
     value: 'ollama-direct',
     label: 'Local runtime via Ollama (recommended on Mac)',
   },
-  {value: 'sidecar-http', label: 'Legacy HTTP sidecar'},
+  {
+    value: 'local-runtime-service',
+    label: 'Local runtime service (Molmo / MLX / vLLM)',
+  },
 ]
 
 const DEFAULT_AI_SETTINGS = {
@@ -246,6 +257,16 @@ function formatLocalAiRuntimeRequirement(error, t) {
     return t('The configured Local AI runtime is not reachable yet.')
   }
 
+  if (/ECONNREFUSED|EHOSTUNREACH|ENOTFOUND/i.test(message)) {
+    return t('The local runtime is not running yet. Start it and try again.')
+  }
+
+  if (/assistant text|invalid_response/i.test(message)) {
+    return t(
+      'The local model answered in an empty or unsupported format. Try a simpler local model or restart the runtime.'
+    )
+  }
+
   return message || t('The configured Local AI runtime is not reachable yet.')
 }
 
@@ -262,12 +283,156 @@ function formatErrorForToast(error) {
     return `${message}. OpenAI returned 429: check API billing/credits, project budget limits, and retry after a short delay.`
   }
 
+  if (/ResolutionImpossible|cannot install/i.test(message)) {
+    return 'The managed local runtime could not finish installing its Python packages. Try Fix automatically once, then restart the app and try again.'
+  }
+
+  if (/runtime_start_timeout|not responding yet/i.test(message)) {
+    return 'The managed local runtime is still preparing the on-device model. The first launch can take several more minutes after package installation.'
+  }
+
   return message
 }
 
-function formatLocalAiStatusDescription(result, t) {
+function isManagedMolmo2Runtime(localAi = {}) {
+  return (
+    String(localAi?.runtimeBackend || '')
+      .trim()
+      .toLowerCase() === 'local-runtime-service' &&
+    String(localAi?.runtimeFamily || '')
+      .trim()
+      .toLowerCase() === 'molmo2-o'
+  )
+}
+
+function humanizeLocalAiRuntimeError(
+  message,
+  t,
+  {managedRuntime = false} = {}
+) {
+  const text = String(message || '').trim()
+
+  if (!text) {
+    return managedRuntime
+      ? t('The managed local runtime is not responding yet.')
+      : t('The configured local runtime is not reachable yet.')
+  }
+
+  if (/ECONNREFUSED|EHOSTUNREACH|ENOTFOUND/i.test(text)) {
+    return managedRuntime
+      ? t(
+          'The managed local runtime is not running yet. Start it here and give the first launch a little time.'
+        )
+      : t(
+          'Nothing is listening on the configured local endpoint yet. Start the local runtime and try again.'
+        )
+  }
+
+  if (/runtime_start_timeout|not responding yet/i.test(text)) {
+    return managedRuntime
+      ? t(
+          'The managed local runtime is still preparing the on-device model. The first launch can take several more minutes after package installation.'
+        )
+      : t('The local runtime is still starting. Give it a little more time.')
+  }
+
+  if (/ResolutionImpossible|cannot install/i.test(text)) {
+    return managedRuntime
+      ? t(
+          'IdenaAI could not finish installing the managed local runtime packages. Try Fix automatically once, then restart the app and try again.'
+        )
+      : t('The local runtime package install failed.')
+  }
+
+  if (/assistant text|invalid_response/i.test(text)) {
+    return t(
+      'The local model answered in an unsupported or empty format. Try a different local model or a shorter prompt.'
+    )
+  }
+
+  if (/idle/i.test(text)) {
+    return managedRuntime
+      ? t('The managed local runtime is currently stopped.')
+      : t('The local runtime is currently stopped.')
+  }
+
+  return text
+}
+
+function normalizeRuntimeProgress(progress) {
+  if (!progress || typeof progress !== 'object' || Array.isArray(progress)) {
+    return null
+  }
+
+  const progressPercent = Number(progress.progressPercent)
+  const stageIndex = Number(progress.stageIndex)
+  const stageCount = Number(progress.stageCount)
+
+  return {
+    active: progress.active !== false,
+    status: String(progress.status || '').trim() || 'starting',
+    stage: String(progress.stage || '').trim() || null,
+    message: String(progress.message || '').trim() || null,
+    detail: String(progress.detail || '').trim() || null,
+    progressPercent: Number.isFinite(progressPercent)
+      ? Math.max(0, Math.min(100, Math.round(progressPercent)))
+      : null,
+    stageIndex: Number.isFinite(stageIndex)
+      ? Math.max(1, Math.round(stageIndex))
+      : null,
+    stageCount: Number.isFinite(stageCount)
+      ? Math.max(1, Math.round(stageCount))
+      : null,
+  }
+}
+
+function describeRuntimeProgress(progress, t, {managedRuntime = false} = {}) {
+  const next = normalizeRuntimeProgress(progress)
+
+  if (!next || !next.active) {
+    return null
+  }
+
+  let title = t('Starting local runtime')
+
+  if (next.status === 'installing') {
+    title = managedRuntime
+      ? t('Installing managed local runtime')
+      : t('Installing local runtime')
+  } else if (
+    managedRuntime &&
+    String(next.stage || '').trim() === 'wait_for_runtime_model_load'
+  ) {
+    title = t('Loading on-device model')
+  } else if (managedRuntime) {
+    title = t('Starting managed local runtime')
+  }
+
+  const description =
+    next.message ||
+    (managedRuntime
+      ? t('IdenaAI is preparing the managed local runtime on this device.')
+      : t('IdenaAI is preparing the local runtime on this device.'))
+
+  return {
+    ...next,
+    title,
+    description,
+  }
+}
+
+function formatLocalAiStatusDescription(result, t, options = {}) {
+  const progress = describeRuntimeProgress(
+    result && result.runtimeProgress,
+    t,
+    options
+  )
   const modelCount = Number(result && result.sidecarModelCount) || 0
   const baseUrl = String(result && result.baseUrl ? result.baseUrl : '').trim()
+
+  if (progress) {
+    return progress.description
+  }
 
   if (result && result.sidecarReachable) {
     return t('{{count}} model(s) discovered at {{baseUrl}}.', {
@@ -277,7 +442,7 @@ function formatLocalAiStatusDescription(result, t) {
   }
 
   return (
-    String(result && result.lastError).trim() ||
+    humanizeLocalAiRuntimeError(result && result.lastError, t, options) ||
     t('No Local AI runtime responded at {{baseUrl}}.', {
       baseUrl: baseUrl || 'the configured Local AI URL',
     })
@@ -289,6 +454,9 @@ function normalizeLocalAiStatusResult(result, fallbackBaseUrl) {
     result && typeof result.sidecarReachable === 'boolean'
       ? result.sidecarReachable
       : null
+  const runtimeProgress = normalizeRuntimeProgress(
+    result && result.runtimeProgress
+  )
 
   return {
     enabled: result ? result.enabled !== false : true,
@@ -308,6 +476,7 @@ function normalizeLocalAiStatusResult(result, fallbackBaseUrl) {
       ).trim() || String(fallbackBaseUrl || '').trim(),
     sidecarReachable: reachable === true,
     sidecarModelCount: Number(result && result.sidecarModelCount) || 0,
+    runtimeProgress,
     error:
       String((result && (result.error || result.lastError)) || '').trim() ||
       null,
@@ -528,6 +697,7 @@ function describeLocalAiRuntimeStatus({
   isChecking,
   result,
   baseUrl,
+  managedRuntime = false,
   t,
 }) {
   if (!enabled) {
@@ -535,6 +705,20 @@ function describeLocalAiRuntimeStatus({
       tone: 'muted',
       title: t('Local AI disabled'),
       description: t('Enable Local AI to allow local runtime health checks.'),
+    }
+  }
+
+  const progress = describeRuntimeProgress(
+    result && result.runtimeProgress,
+    t,
+    {managedRuntime}
+  )
+
+  if (progress) {
+    return {
+      tone: 'blue.500',
+      title: progress.title,
+      description: progress.description,
     }
   }
 
@@ -552,16 +736,68 @@ function describeLocalAiRuntimeStatus({
     return {
       tone: 'green.500',
       title: t('Local AI runtime available'),
-      description: formatLocalAiStatusDescription(result, t),
+      description: formatLocalAiStatusDescription(result, t, {managedRuntime}),
     }
   }
 
   return {
     tone: 'red.500',
     title: t('Local AI runtime unavailable'),
-    description:
-      (result && (result.error || result.lastError)) ||
-      t('Check the local runtime URL and try again.'),
+    description: humanizeLocalAiRuntimeError(
+      result && (result.error || result.lastError),
+      t,
+      {managedRuntime}
+    ),
+  }
+}
+
+function describeLocalAiSelection(localAi, runtimeUrl, t) {
+  const managedRuntime = isManagedMolmo2Runtime(localAi)
+  const backend = String(localAi?.runtimeBackend || '')
+    .trim()
+    .toLowerCase()
+
+  if (managedRuntime) {
+    return {
+      title: t('Managed Molmo2-O research runtime'),
+      description: t(
+        'IdenaAI can prepare, install, and start this local-only runtime on first use. The first startup can take several minutes.'
+      ),
+      endpointLabel: t('Managed local endpoint'),
+      endpointHelper: t(
+        'This loopback endpoint is used internally by the managed runtime on this device.'
+      ),
+      endpointReadOnly: true,
+      startLabel: t('Install / start managed runtime'),
+    }
+  }
+
+  if (backend === 'ollama-direct') {
+    return {
+      title: t('Ollama local runtime'),
+      description: t(
+        'Best for simple local chat. IdenaAI talks to your own Ollama runtime on this device.'
+      ),
+      endpointLabel: t('Ollama endpoint'),
+      endpointHelper: t(
+        'Recommended: http://127.0.0.1:11434. Use a loopback-only Ollama URL here.'
+      ),
+      endpointReadOnly: false,
+      startLabel: t('Start local runtime'),
+    }
+  }
+
+  return {
+    title: t('Custom local runtime service'),
+    description: t(
+      'Use this only if you intentionally run your own compatible local runtime service.'
+    ),
+    endpointLabel: t('Local runtime endpoint'),
+    endpointHelper: t(
+      'Use a loopback-only URL. Keep this on localhost, 127.0.0.1, or ::1.'
+    ),
+    endpointReadOnly: false,
+    startLabel: t('Start local runtime'),
   }
 }
 
@@ -600,6 +836,10 @@ export default function AiSettingsPage() {
     () => getLocalAiEndpointSafety(localAiRuntimeUrl),
     [localAiRuntimeUrl]
   )
+  const localAiSelection = useMemo(
+    () => describeLocalAiSelection(localAi, localAiRuntimeUrl, t),
+    [localAi, localAiRuntimeUrl, t]
+  )
 
   const [apiKey, setApiKey] = useState('')
   const [isUpdatingKey, setIsUpdatingKey] = useState(false)
@@ -621,6 +861,12 @@ export default function AiSettingsPage() {
   const [isCheckingLocalAi, setIsCheckingLocalAi] = useState(false)
   const [isStartingLocalAi, setIsStartingLocalAi] = useState(false)
   const [isStoppingLocalAi, setIsStoppingLocalAi] = useState(false)
+  const [isRuntimePathDialogOpen, setIsRuntimePathDialogOpen] = useState(false)
+  const [runtimePathDraft, setRuntimePathDraft] = useState({
+    endpoint: '',
+    managedRuntimePythonPath: '',
+    ollamaCommandPath: '',
+  })
   const [localAiStatusResult, setLocalAiStatusResult] = useState(() =>
     normalizeLocalAiStatusResult(
       {
@@ -772,39 +1018,212 @@ export default function AiSettingsPage() {
   }
 
   const localAiRuntimePayload = useMemo(
-    () => ({
-      mode: localAi.runtimeMode,
-      runtimeType: localAiWireRuntimeType,
-      runtimeBackend: localAi.runtimeBackend,
-      reasonerBackend: localAi.reasonerBackend,
-      visionBackend: localAi.visionBackend,
-      publicModelId: localAi.publicModelId,
-      publicVisionId: localAi.publicVisionId,
-      contractVersion: localAi.contractVersion,
-      adapterStrategy: localAi.adapterStrategy,
-      trainingPolicy: localAi.trainingPolicy,
-      rankingPolicy: localAi.rankingPolicy,
-      baseUrl: localAiRuntimeUrl,
+    () => buildLocalAiRuntimePayload(localAi),
+    [localAi]
+  )
+
+  const startLocalAiWithSettings = useCallback(
+    async ({
+      localAiPatch = {},
+      enableLocalProvider = false,
+      openSetup = true,
+      preparingMessage = '',
+    } = {}) => {
+      const nextSettingsPatch = {
+        enabled: true,
+        ...(localAiPatch && typeof localAiPatch === 'object'
+          ? localAiPatch
+          : {}),
+      }
+      const nextLocalAi = buildLocalAiSettings({
+        ...localAi,
+        ...nextSettingsPatch,
+      })
+      const nextPayload = buildLocalAiRuntimePayload(nextLocalAi)
+      const managedRuntime = isManagedMolmo2Runtime(nextLocalAi)
+
+      if (openSetup) {
+        setShowLocalAiSetup(true)
+        setShowProviderSetup(false)
+      }
+
+      updateLocalAiSettings(nextSettingsPatch)
+
+      if (enableLocalProvider) {
+        updateAiSolverSettings({
+          enabled: true,
+          provider: 'local-ai',
+          model: resolveDefaultModelForProvider('local-ai', nextLocalAi),
+        })
+      }
+
+      setLocalAiStatusResult(
+        normalizeLocalAiStatusResult(
+          {
+            enabled: true,
+            status: 'starting',
+            runtime: nextLocalAi.runtimeBackend,
+            runtimeBackend: nextLocalAi.runtimeBackend,
+            runtimeType: resolveLocalAiWireRuntimeType(nextLocalAi),
+            baseUrl: nextPayload.baseUrl,
+            runtimeProgress: {
+              active: true,
+              status: managedRuntime ? 'installing' : 'starting',
+              stage: 'prepare_runtime_request',
+              message:
+                String(preparingMessage || '').trim() ||
+                (managedRuntime
+                  ? 'Preparing the managed local runtime on this device.'
+                  : 'Preparing the local runtime on this device.'),
+              progressPercent: 2,
+            },
+          },
+          nextPayload.baseUrl
+        )
+      )
+
+      setIsStartingLocalAi(true)
+
+      try {
+        const result = normalizeLocalAiStatusResult(
+          await ensureLocalAiBridge().start(nextPayload),
+          nextPayload.baseUrl
+        )
+        setLocalAiStatusResult(result)
+        return result
+      } catch (error) {
+        const message = formatErrorForToast(error)
+        const result = normalizeLocalAiStatusResult(
+          {
+            enabled: true,
+            status: 'error',
+            runtime: nextLocalAi.runtimeBackend,
+            runtimeBackend: nextLocalAi.runtimeBackend,
+            runtimeType: resolveLocalAiWireRuntimeType(nextLocalAi),
+            baseUrl: nextPayload.baseUrl,
+            error: message,
+            lastError: message,
+          },
+          nextPayload.baseUrl
+        )
+        setLocalAiStatusResult(result)
+        notify(t('Unable to start Local AI'), message, 'error')
+        return result
+      } finally {
+        setIsStartingLocalAi(false)
+      }
+    },
+    [localAi, notify, t, updateAiSolverSettings, updateLocalAiSettings]
+  )
+
+  const openRuntimePathDialog = useCallback(() => {
+    setRuntimePathDraft({
       endpoint: localAiRuntimeUrl,
-      model: localAi.model || '',
-      visionModel: localAi.visionModel || '',
-    }),
+      managedRuntimePythonPath: String(
+        localAi.managedRuntimePythonPath || ''
+      ).trim(),
+      ollamaCommandPath: String(localAi.ollamaCommandPath || '').trim(),
+    })
+    setIsRuntimePathDialogOpen(true)
+  }, [
+    localAi.managedRuntimePythonPath,
+    localAi.ollamaCommandPath,
+    localAiRuntimeUrl,
+  ])
+
+  const closeRuntimePathDialog = useCallback(() => {
+    setIsRuntimePathDialogOpen(false)
+  }, [])
+
+  const resetRuntimePathDraft = useCallback(() => {
+    const recommendedPreset = buildLocalAiRuntimePreset(localAi.runtimeBackend)
+    setRuntimePathDraft({
+      endpoint: recommendedPreset.endpoint,
+      managedRuntimePythonPath: '',
+      ollamaCommandPath: '',
+    })
+  }, [localAi.runtimeBackend])
+
+  const fixLocalAiAutomatically = useCallback(
+    () =>
+      startLocalAiWithSettings({
+        localAiPatch: buildLocalAiRepairPreset(localAi, {
+          preferManaged: !localAi.enabled || isManagedMolmo2Runtime(localAi),
+        }),
+        preparingMessage: t(
+          'Resetting the local runtime path to the recommended value and retrying now.'
+        ),
+      }),
+    [localAi, startLocalAiWithSettings, t]
+  )
+
+  const saveRuntimePathDraft = useCallback(
+    async ({retry = false} = {}) => {
+      const endpoint = String(runtimePathDraft.endpoint || '').trim()
+      const endpointSafety = getLocalAiEndpointSafety(endpoint)
+
+      if (!endpointSafety.safe) {
+        notify(t('Invalid local runtime path'), endpointSafety.message, 'error')
+        return
+      }
+
+      const localAiPatch = {
+        baseUrl: endpointSafety.normalizedBaseUrl,
+        endpoint: endpointSafety.normalizedBaseUrl,
+        managedRuntimePythonPath: String(
+          runtimePathDraft.managedRuntimePythonPath || ''
+        ).trim(),
+        ollamaCommandPath: String(
+          runtimePathDraft.ollamaCommandPath || ''
+        ).trim(),
+      }
+
+      if (retry) {
+        await startLocalAiWithSettings({
+          localAiPatch,
+          preparingMessage: t(
+            'Retrying the local runtime with the updated path settings.'
+          ),
+        })
+      } else {
+        updateLocalAiSettings(localAiPatch)
+      }
+
+      setIsRuntimePathDialogOpen(false)
+      notify(
+        retry
+          ? t('Updated runtime path and retrying')
+          : t('Runtime path saved'),
+        retry
+          ? t(
+              'IdenaAI is retrying local runtime startup with the updated endpoint and path overrides.'
+            )
+          : t(
+              'The updated local runtime endpoint and path overrides were saved.'
+            ),
+        'success'
+      )
+    },
     [
-      localAi.contractVersion,
-      localAi.model,
-      localAi.publicModelId,
-      localAi.publicVisionId,
-      localAi.rankingPolicy,
-      localAi.reasonerBackend,
-      localAi.runtimeMode,
-      localAi.runtimeBackend,
-      localAi.adapterStrategy,
-      localAi.trainingPolicy,
-      localAiWireRuntimeType,
-      localAi.visionBackend,
-      localAi.visionModel,
-      localAiRuntimeUrl,
+      notify,
+      runtimePathDraft.endpoint,
+      runtimePathDraft.managedRuntimePythonPath,
+      runtimePathDraft.ollamaCommandPath,
+      startLocalAiWithSettings,
+      t,
+      updateLocalAiSettings,
     ]
+  )
+
+  const applyMolmo2OResearchSetup = useCallback(
+    () =>
+      startLocalAiWithSettings({
+        localAiPatch: buildMolmo2OResearchPreset(),
+        preparingMessage: t(
+          'Preparing the managed on-device runtime now. Progress will appear below.'
+        ),
+      }),
+    [startLocalAiWithSettings, t]
   )
 
   const requestLocalAiStatus = useCallback(async () => {
@@ -862,6 +1281,58 @@ export default function AiSettingsPage() {
     localAiRuntimeUrl,
   ])
 
+  const localAiRuntimeProgress = useMemo(
+    () => normalizeRuntimeProgress(localAiStatusResult?.runtimeProgress),
+    [localAiStatusResult]
+  )
+
+  useEffect(() => {
+    if (!isStartingLocalAi && !localAiRuntimeProgress?.active) {
+      return undefined
+    }
+
+    let cancelled = false
+    let timerId = null
+
+    const pollProgress = async () => {
+      try {
+        if (!global.localAi) {
+          return
+        }
+
+        const result = normalizeLocalAiStatusResult(
+          await global.localAi.status(localAiRuntimePayload),
+          localAiRuntimeUrl
+        )
+
+        if (!cancelled) {
+          setLocalAiStatusResult(result)
+        }
+      } catch {
+        // Keep the last visible progress state until the start call resolves.
+      } finally {
+        if (!cancelled) {
+          timerId = setTimeout(pollProgress, 900)
+        }
+      }
+    }
+
+    pollProgress()
+
+    return () => {
+      cancelled = true
+
+      if (timerId) {
+        clearTimeout(timerId)
+      }
+    }
+  }, [
+    isStartingLocalAi,
+    localAiRuntimePayload,
+    localAiRuntimeProgress?.active,
+    localAiRuntimeUrl,
+  ])
+
   const ensureInteractiveLocalAiRuntime = useCallback(async () => {
     if (!localAi.enabled) {
       throw new Error(t('Enable Local AI first.'))
@@ -879,13 +1350,14 @@ export default function AiSettingsPage() {
 
     if (result.sidecarReachable !== true) {
       throw new Error(
-        formatLocalAiStatusDescription(result, t) ||
-          t('The configured Local AI runtime is not reachable yet.')
+        formatLocalAiStatusDescription(result, t, {
+          managedRuntime: isManagedMolmo2Runtime(localAi),
+        }) || t('The configured Local AI runtime is not reachable yet.')
       )
     }
 
     return result
-  }, [localAi.enabled, localAiRuntimePayload, localAiRuntimeUrl, t])
+  }, [localAi, localAiRuntimePayload, localAiRuntimeUrl, t])
 
   useEffect(() => {
     if (!localAi.enabled) {
@@ -967,16 +1439,21 @@ export default function AiSettingsPage() {
         isChecking: isCheckingLocalAi,
         result: localAiStatusResult,
         baseUrl: localAiRuntimeUrl,
+        managedRuntime: isManagedMolmo2Runtime(localAi),
         t,
       }),
-    [
-      isCheckingLocalAi,
-      localAi.enabled,
-      localAiRuntimeUrl,
-      localAiStatusResult,
-      t,
-    ]
+    [isCheckingLocalAi, localAiRuntimeUrl, localAiStatusResult, localAi, t]
   )
+  const localAiRuntimeProgressDisplay = useMemo(
+    () =>
+      describeRuntimeProgress(localAiRuntimeProgress, t, {
+        managedRuntime: isManagedMolmo2Runtime(localAi),
+      }),
+    [localAi, localAiRuntimeProgress, t]
+  )
+  const localAiStartButtonLabel = localAiRuntimeProgressDisplay?.title
+    ? localAiRuntimeProgressDisplay.title
+    : localAiSelection.startLabel
 
   const runLocalAiChatTest = useCallback(async () => {
     const prompt = String(localAiDebugChatPrompt || '').trim()
@@ -1721,25 +2198,6 @@ export default function AiSettingsPage() {
     : t(
         'Use this when you want an external AI provider via API instead of a local runtime.'
       )
-  const currentLocalRuntimeLabel = String(
-    localAi.model || localAi.visionModel || ''
-  ).trim()
-  let localAiSummary = t(
-    'Use this when you want to run AI locally on this machine instead of through an external API.'
-  )
-
-  if (localAi.enabled) {
-    localAiSummary = currentLocalRuntimeLabel
-      ? t(
-          'Local AI custom settings are active now. The current local runtime is {{model}}. Click Advanced if you need more settings.',
-          {
-            model: currentLocalRuntimeLabel || t('not configured'),
-          }
-        )
-      : t(
-          'Local AI is enabled, but no approved local base model is configured. IdenaAI is back in embryo stage until base-layer research settles.'
-        )
-  }
   const enableExternalProviderSetup = useCallback(() => {
     updateAiSolverSettings({
       enabled: true,
@@ -1749,19 +2207,17 @@ export default function AiSettingsPage() {
     setShowProviderSetup(true)
     setShowLocalAiSetup(false)
   }, [externalProviderChoice, localAi, updateAiSolverSettings])
-  const enableLocalAiSetup = useCallback(() => {
-    updateLocalAiSettings({enabled: true})
-    updateAiSolverSettings({
-      enabled: true,
-      provider: 'local-ai',
-      model: resolveDefaultModelForProvider('local-ai', {
-        ...localAi,
-        enabled: true,
+  const enableLocalAiSetup = useCallback(
+    () =>
+      startLocalAiWithSettings({
+        localAiPatch: buildMolmo2OResearchPreset(),
+        enableLocalProvider: true,
+        preparingMessage: t(
+          'Preparing the managed on-device runtime now. Progress will appear below.'
+        ),
       }),
-    })
-    setShowLocalAiSetup(true)
-    setShowProviderSetup(false)
-  }, [localAi, updateAiSolverSettings, updateLocalAiSettings])
+    [startLocalAiWithSettings, t]
+  )
   const toggleProviderSetup = useCallback(() => {
     setShowProviderSetup((value) => {
       const nextValue = !value
@@ -1784,6 +2240,34 @@ export default function AiSettingsPage() {
       return nextValue
     })
   }, [])
+
+  const hasHandledAutoLocalAiStartRef = React.useRef(false)
+
+  useEffect(() => {
+    if (String(router.query?.startLocalAi || '').trim() !== '1') {
+      hasHandledAutoLocalAiStartRef.current = false
+      return
+    }
+
+    if (hasHandledAutoLocalAiStartRef.current) {
+      return
+    }
+
+    hasHandledAutoLocalAiStartRef.current = true
+    enableLocalAiSetup()
+
+    const nextQuery = {...router.query}
+    delete nextQuery.startLocalAi
+    router.replace(
+      {
+        pathname: router.pathname,
+        query: nextQuery,
+      },
+      undefined,
+      {shallow: true}
+    )
+  }, [enableLocalAiSetup, router])
+
   const localAiPackageReviewStatusUi = useMemo(
     () =>
       describeLocalAiTrainingPackageReviewStatus(
@@ -1852,7 +2336,7 @@ export default function AiSettingsPage() {
   }, [localAiAdapterManifest, localAiPackagePreview])
 
   return (
-    <SettingsLayout>
+    <SettingsLayout allowWhenNodeUnavailable>
       <Stack spacing={8} mt={8} maxW="2xl">
         <SettingsSection title={t('AI')}>
           <Stack spacing={4}>
@@ -1867,10 +2351,10 @@ export default function AiSettingsPage() {
               <Stack spacing={4}>
                 <Flex align="center" justify="space-between">
                   <Box>
-                    <Text fontWeight={600}>{t('Choose AI access')}</Text>
+                    <Text fontWeight={600}>{t('Turn on AI')}</Text>
                     <Text color="muted" fontSize="sm">
                       {t(
-                        'Start with one simple path. Open advanced settings only when you really need them.'
+                        'New users should start with the managed local runtime on this device. External API providers stay available if you want them later.'
                       )}
                     </Text>
                   </Box>
@@ -1889,6 +2373,43 @@ export default function AiSettingsPage() {
                 <Stack spacing={3}>
                   <Box
                     borderWidth="1px"
+                    borderColor="green.100"
+                    borderRadius="md"
+                    p={3}
+                    bg="white"
+                  >
+                    <Stack spacing={3}>
+                      <Box>
+                        <Text fontWeight={600}>
+                          {t('Recommended: local AI on this device')}
+                        </Text>
+                        <Text color="muted" fontSize="sm" mt={1}>
+                          {t(
+                            'IdenaAI can prepare and start the local runtime for you. Click once here and follow the progress below. No API key is required for this path.'
+                          )}
+                        </Text>
+                      </Box>
+                      <Text color="muted" fontSize="xs">
+                        {t('Current runtime')}: {localAiRuntimeStatus.title}
+                      </Text>
+                      <Stack isInline spacing={2} flexWrap="wrap">
+                        <PrimaryButton
+                          onClick={enableLocalAiSetup}
+                          isLoading={isStartingLocalAi}
+                        >
+                          {t('Install local AI on this device')}
+                        </PrimaryButton>
+                        <SecondaryButton onClick={toggleLocalAiSetup}>
+                          {showLocalAiSetup
+                            ? t('Hide local AI')
+                            : t('Local AI settings')}
+                        </SecondaryButton>
+                      </Stack>
+                    </Stack>
+                  </Box>
+
+                  <Box
+                    borderWidth="1px"
                     borderColor="blue.100"
                     borderRadius="md"
                     p={3}
@@ -1897,7 +2418,7 @@ export default function AiSettingsPage() {
                     <Stack spacing={3}>
                       <Box>
                         <Text fontWeight={600}>
-                          {t('Enable external AI provider via API')}
+                          {t('External AI provider via API')}
                         </Text>
                         <Text color="muted" fontSize="sm" mt={1}>
                           {externalAiSummary}
@@ -1909,42 +2430,12 @@ export default function AiSettingsPage() {
                         {providerKeyStatusUi.label}
                       </Text>
                       <Stack isInline spacing={2} flexWrap="wrap">
-                        <PrimaryButton onClick={enableExternalProviderSetup}>
-                          {t('Enable external AI provider via API')}
-                        </PrimaryButton>
+                        <SecondaryButton onClick={enableExternalProviderSetup}>
+                          {t('Use external API provider')}
+                        </SecondaryButton>
                         <SecondaryButton onClick={toggleProviderSetup}>
                           {showProviderSetup
                             ? t('Hide provider setup')
-                            : t('Advanced')}
-                        </SecondaryButton>
-                      </Stack>
-                    </Stack>
-                  </Box>
-
-                  <Box
-                    borderWidth="1px"
-                    borderColor="green.100"
-                    borderRadius="md"
-                    p={3}
-                    bg="white"
-                  >
-                    <Stack spacing={3}>
-                      <Box>
-                        <Text fontWeight={600}>{t('Enable local AI')}</Text>
-                        <Text color="muted" fontSize="sm" mt={1}>
-                          {localAiSummary}
-                        </Text>
-                      </Box>
-                      <Text color="muted" fontSize="xs">
-                        {t('Current runtime')}: {localAiRuntimeStatus.title}
-                      </Text>
-                      <Stack isInline spacing={2} flexWrap="wrap">
-                        <PrimaryButton onClick={enableLocalAiSetup}>
-                          {t('Enable local AI')}
-                        </PrimaryButton>
-                        <SecondaryButton onClick={toggleLocalAiSetup}>
-                          {showLocalAiSetup
-                            ? t('Hide local AI')
                             : t('Advanced')}
                         </SecondaryButton>
                       </Stack>
@@ -3014,7 +3505,7 @@ export default function AiSettingsPage() {
             <Stack spacing={4}>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'These settings are local-only and opt-in. IdenaAI should expose its own branded text and multimodal identities here; the runtime backend below is only the local transport and compatibility layer.'
+                  'Choose one local path first. Keep the low-level runtime fields hidden unless you are deliberately debugging a custom setup.'
                 )}
               </Text>
 
@@ -3029,128 +3520,41 @@ export default function AiSettingsPage() {
                 </Box>
                 <Switch
                   isChecked={!!localAi.enabled}
-                  onChange={() =>
-                    updateLocalAiSettings({enabled: !localAi.enabled})
-                  }
+                  onChange={() => {
+                    if (localAi.enabled) {
+                      updateLocalAiSettings({enabled: false})
+                      return
+                    }
+
+                    updateLocalAiSettings({
+                      enabled: true,
+                      ...buildMolmo2OResearchPreset(),
+                    })
+                  }}
                 />
               </Flex>
 
-              <SettingsFormControl>
-                <SettingsFormLabel>{t('Runtime mode')}</SettingsFormLabel>
-                <Select
-                  value={localAi.runtimeMode || 'sidecar'}
-                  onChange={(e) =>
-                    updateLocalAiSettings({runtimeMode: e.target.value})
-                  }
-                  w="xs"
-                >
-                  <option value="sidecar">{t('Sidecar')}</option>
-                </Select>
-              </SettingsFormControl>
-
-              <SettingsFormControl>
-                <SettingsFormLabel>{t('Runtime backend')}</SettingsFormLabel>
-                <Select
-                  value={
-                    localAi.runtimeBackend ||
-                    DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
-                  }
-                  onChange={(e) => applyLocalAiRuntimeBackend(e.target.value)}
-                  w="xl"
-                >
-                  {LOCAL_AI_RUNTIME_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {t(option.label)}
-                    </option>
-                  ))}
-                </Select>
-                <Text color="muted" fontSize="sm" mt={1}>
-                  {t(
-                    'Use Ollama for local Mac inference unless you are intentionally running a custom legacy sidecar on another local port.'
-                  )}
-                </Text>
-              </SettingsFormControl>
-
-              <SettingsFormControl>
-                <SettingsFormLabel>{t('Reasoner backend')}</SettingsFormLabel>
-                <Input
-                  value={localAi.reasonerBackend || ''}
-                  onChange={(e) =>
-                    updateLocalAiSettings({reasonerBackend: e.target.value})
-                  }
-                  placeholder="local-reasoner"
-                  w="xl"
-                />
-              </SettingsFormControl>
-
-              <SettingsFormControl>
-                <SettingsFormLabel>{t('Vision backend')}</SettingsFormLabel>
-                <Input
-                  value={localAi.visionBackend || ''}
-                  onChange={(e) =>
-                    updateLocalAiSettings({visionBackend: e.target.value})
-                  }
-                  placeholder="local-vision"
-                  w="xl"
-                />
-              </SettingsFormControl>
+              <Box
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="md"
+                p={3}
+              >
+                <Stack spacing={2}>
+                  <Text fontWeight={600}>{localAiSelection.title}</Text>
+                  <Text color="muted" fontSize="sm">
+                    {localAiSelection.description}
+                  </Text>
+                </Stack>
+              </Box>
 
               <SettingsFormControl>
                 <SettingsFormLabel>
-                  {t('Branded text model name')}
-                </SettingsFormLabel>
-                <Input
-                  value={localAi.publicModelId || ''}
-                  onChange={(e) =>
-                    updateLocalAiSettings({publicModelId: e.target.value})
-                  }
-                  placeholder={DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID}
-                  w="xl"
-                />
-                <Text color="muted" fontSize="sm" mt={1}>
-                  {t(
-                    'This is the product-facing text identity exposed by IdenaAI, independent of the backend model override.'
-                  )}
-                </Text>
-              </SettingsFormControl>
-
-              <SettingsFormControl>
-                <SettingsFormLabel>
-                  {t('Branded multimodal model name')}
-                </SettingsFormLabel>
-                <Input
-                  value={localAi.publicVisionId || ''}
-                  onChange={(e) =>
-                    updateLocalAiSettings({publicVisionId: e.target.value})
-                  }
-                  placeholder={DEFAULT_LOCAL_AI_PUBLIC_VISION_ID}
-                  w="xl"
-                />
-                <Text color="muted" fontSize="sm" mt={1}>
-                  {t(
-                    'Use this for the image-aware and flip-aware IdenaAI identity that sits above the local transport.'
-                  )}
-                </Text>
-              </SettingsFormControl>
-
-              <SettingsFormControl>
-                <SettingsFormLabel>{t('Contract version')}</SettingsFormLabel>
-                <Input
-                  value={localAi.contractVersion || ''}
-                  onChange={(e) =>
-                    updateLocalAiSettings({contractVersion: e.target.value})
-                  }
-                  placeholder="idena-local/v1"
-                  w="xl"
-                />
-              </SettingsFormControl>
-
-              <SettingsFormControl>
-                <SettingsFormLabel>
-                  {t('Local runtime endpoint')}
+                  {localAiSelection.endpointLabel}
                 </SettingsFormLabel>
                 <Input
                   value={localAiRuntimeUrl}
+                  isReadOnly={localAiSelection.endpointReadOnly}
                   onChange={(e) =>
                     updateLocalAiSettings({
                       baseUrl: e.target.value,
@@ -3161,14 +3565,16 @@ export default function AiSettingsPage() {
                   w="xl"
                 />
                 <Text color="muted" fontSize="sm" mt={1}>
-                  {localAi.runtimeBackend === 'ollama-direct'
-                    ? t(
-                        'Recommended local runtime endpoint: http://127.0.0.1:11434. IdenaAI is currently in embryo stage and ships no approved local base model by default.'
-                      )
-                    : t(
-                        'Use a loopback URL for a custom local sidecar, for example http://127.0.0.1:5000.'
-                      )}
+                  {localAiSelection.endpointHelper}
                 </Text>
+                {isManagedMolmo2Runtime(localAi) ? (
+                  <Text color="muted" fontSize="sm" mt={1}>
+                    {t(
+                      'Managed research model: {{model}}. IdenaAI prepares this local-only runtime on first use.',
+                      {model: MOLMO2_O_RESEARCH_RUNTIME_MODEL}
+                    )}
+                  </Text>
+                ) : null}
                 {!localAiEndpointSafety.safe && (
                   <Text color="red.500" fontSize="sm" mt={1}>
                     {localAiEndpointSafety.message}
@@ -3176,14 +3582,31 @@ export default function AiSettingsPage() {
                 )}
               </SettingsFormControl>
 
-              <Stack isInline spacing={2}>
+              <Stack isInline spacing={2} flexWrap="wrap">
+                <PrimaryButton
+                  onClick={applyMolmo2OResearchSetup}
+                  isLoading={isStartingLocalAi}
+                >
+                  {t('Install recommended on-device AI')}
+                </PrimaryButton>
+                <SecondaryButton
+                  onClick={fixLocalAiAutomatically}
+                  isLoading={isStartingLocalAi}
+                >
+                  {t('Fix automatically')}
+                </SecondaryButton>
                 <SecondaryButton onClick={applyRecommendedLocalAiSetup}>
-                  {t('Use embryo-stage local preset')}
+                  {t('Use Ollama instead')}
                 </SecondaryButton>
               </Stack>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'Runtime endpoint: Ollama at http://127.0.0.1:11434. No approved local base model is bundled right now. Choose your own audited runtime and training base if you keep experimenting locally.'
+                  'Recommended for most people: let IdenaAI prepare the managed on-device runtime now and follow the progress bar below. Pick Ollama only if you already run your own local model runtime.'
+                )}
+              </Text>
+              <Text color="muted" fontSize="sm">
+                {t(
+                  'Only if automatic repair fails: use the custom path dialog in the runtime box below.'
                 )}
               </Text>
 
@@ -3194,18 +3617,108 @@ export default function AiSettingsPage() {
                   }
                 >
                   {showLocalAiCompatibilityOverrides
-                    ? t('Hide runtime compatibility overrides')
-                    : t('Show runtime compatibility overrides')}
+                    ? t('Hide advanced local runtime settings')
+                    : t('Show advanced local runtime settings')}
                 </SecondaryButton>
                 <Text color="muted" fontSize="sm">
                   {t(
-                    'These legacy override fields are only for wire/runtime compatibility. They are not the public Idena product identity.'
+                    'Only open this if you intentionally need custom runtime wiring, branded IDs, or compatibility overrides.'
                   )}
                 </Text>
               </Stack>
 
               {showLocalAiCompatibilityOverrides ? (
                 <>
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Runtime backend')}
+                    </SettingsFormLabel>
+                    <Select
+                      value={
+                        localAi.runtimeBackend ||
+                        DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend
+                      }
+                      onChange={(e) =>
+                        applyLocalAiRuntimeBackend(e.target.value)
+                      }
+                      w="xl"
+                    >
+                      {LOCAL_AI_RUNTIME_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {t(option.label)}
+                        </option>
+                      ))}
+                    </Select>
+                  </SettingsFormControl>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Reasoner backend')}
+                    </SettingsFormLabel>
+                    <Input
+                      value={localAi.reasonerBackend || ''}
+                      onChange={(e) =>
+                        updateLocalAiSettings({reasonerBackend: e.target.value})
+                      }
+                      placeholder="local-reasoner"
+                      w="xl"
+                    />
+                  </SettingsFormControl>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>{t('Vision backend')}</SettingsFormLabel>
+                    <Input
+                      value={localAi.visionBackend || ''}
+                      onChange={(e) =>
+                        updateLocalAiSettings({visionBackend: e.target.value})
+                      }
+                      placeholder="local-vision"
+                      w="xl"
+                    />
+                  </SettingsFormControl>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Branded text model name')}
+                    </SettingsFormLabel>
+                    <Input
+                      value={localAi.publicModelId || ''}
+                      onChange={(e) =>
+                        updateLocalAiSettings({publicModelId: e.target.value})
+                      }
+                      placeholder={DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID}
+                      w="xl"
+                    />
+                  </SettingsFormControl>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Branded multimodal model name')}
+                    </SettingsFormLabel>
+                    <Input
+                      value={localAi.publicVisionId || ''}
+                      onChange={(e) =>
+                        updateLocalAiSettings({publicVisionId: e.target.value})
+                      }
+                      placeholder={DEFAULT_LOCAL_AI_PUBLIC_VISION_ID}
+                      w="xl"
+                    />
+                  </SettingsFormControl>
+
+                  <SettingsFormControl>
+                    <SettingsFormLabel>
+                      {t('Contract version')}
+                    </SettingsFormLabel>
+                    <Input
+                      value={localAi.contractVersion || ''}
+                      onChange={(e) =>
+                        updateLocalAiSettings({contractVersion: e.target.value})
+                      }
+                      placeholder="idena-local/v1"
+                      w="xl"
+                    />
+                  </SettingsFormControl>
+
                   <SettingsFormControl>
                     <SettingsFormLabel>
                       {t('Reasoner model override')}
@@ -3502,13 +4015,54 @@ export default function AiSettingsPage() {
                     )}
                   </Text>
                   <Box bg="gray.50" borderRadius="md" p={3}>
-                    <Stack spacing={1}>
+                    <Stack spacing={2}>
                       <Text color={localAiRuntimeStatus.tone} fontWeight={500}>
                         {localAiRuntimeStatus.title}
                       </Text>
                       <Text color="muted" fontSize="sm">
                         {localAiRuntimeStatus.description}
                       </Text>
+                      {localAiRuntimeProgressDisplay ? (
+                        <Box pt={1}>
+                          <Progress
+                            value={
+                              localAiRuntimeProgressDisplay.progressPercent ??
+                              undefined
+                            }
+                            isIndeterminate={
+                              !Number.isFinite(
+                                localAiRuntimeProgressDisplay.progressPercent
+                              )
+                            }
+                            hasStripe
+                            isAnimated
+                          />
+                          <Flex
+                            align="center"
+                            justify="space-between"
+                            mt={2}
+                            gap={3}
+                          >
+                            <Text color="muted" fontSize="xs">
+                              {localAiRuntimeProgressDisplay.detail ||
+                                t(
+                                  'The first setup can take several minutes while Python packages and model files are prepared.'
+                                )}
+                            </Text>
+                            {Number.isFinite(
+                              localAiRuntimeProgressDisplay.progressPercent
+                            ) ? (
+                              <Text
+                                color="muted"
+                                fontSize="xs"
+                                fontWeight={600}
+                              >
+                                {localAiRuntimeProgressDisplay.progressPercent}%
+                              </Text>
+                            ) : null}
+                          </Flex>
+                        </Box>
+                      ) : null}
                     </Stack>
                   </Box>
                   <Stack isInline spacing={2}>
@@ -3528,7 +4082,9 @@ export default function AiSettingsPage() {
 
                           notify(
                             t('Local AI runtime updated'),
-                            formatLocalAiStatusDescription(result, t),
+                            formatLocalAiStatusDescription(result, t, {
+                              managedRuntime: isManagedMolmo2Runtime(localAi),
+                            }),
                             result && result.status === 'ok'
                               ? 'success'
                               : 'warning'
@@ -3544,7 +4100,16 @@ export default function AiSettingsPage() {
                         }
                       }}
                     >
-                      {t('Start local runtime')}
+                      {localAiStartButtonLabel}
+                    </SecondaryButton>
+                    <SecondaryButton
+                      isLoading={isStartingLocalAi}
+                      onClick={fixLocalAiAutomatically}
+                    >
+                      {t('Fix automatically')}
+                    </SecondaryButton>
+                    <SecondaryButton onClick={openRuntimePathDialog}>
+                      {t('Custom path')}
                     </SecondaryButton>
                     <SecondaryButton
                       isDisabled={!localAi.enabled || isStoppingLocalAi}
@@ -3599,7 +4164,9 @@ export default function AiSettingsPage() {
                             result && result.status === 'ok'
                               ? t('Local AI runtime reachable')
                               : t('Local AI runtime unavailable'),
-                            formatLocalAiStatusDescription(result, t),
+                            formatLocalAiStatusDescription(result, t, {
+                              managedRuntime: isManagedMolmo2Runtime(localAi),
+                            }),
                             result && result.status === 'ok'
                               ? 'success'
                               : 'warning'
@@ -4614,17 +5181,120 @@ export default function AiSettingsPage() {
           </SettingsSection>
         ) : null}
       </Stack>
+      <Dialog
+        isOpen={isRuntimePathDialogOpen}
+        onClose={closeRuntimePathDialog}
+        size="lg"
+        title={t('Repair local runtime path')}
+        shouldShowCloseButton
+      >
+        <DialogBody>
+          <Stack spacing={4}>
+            <Text color="muted" fontSize="sm">
+              {t(
+                'Usually you do not need this. IdenaAI can reset to the recommended path automatically. Use this only if a future update changed the local path, Ollama lives elsewhere, or you need a custom Python binary.'
+              )}
+            </Text>
+
+            <Box>
+              <Text fontWeight={600} mb={2}>
+                {t('Loopback runtime endpoint')}
+              </Text>
+              <Input
+                value={runtimePathDraft.endpoint}
+                onChange={(e) =>
+                  setRuntimePathDraft((current) => ({
+                    ...current,
+                    endpoint: e.target.value,
+                  }))
+                }
+                placeholder={
+                  localAi.runtimeBackend === 'local-runtime-service'
+                    ? 'http://127.0.0.1:8080'
+                    : 'http://127.0.0.1:11434'
+                }
+              />
+              <Text color="muted" fontSize="sm" mt={2}>
+                {t(
+                  'Keep this on localhost, 127.0.0.1, or ::1. If the recommended endpoint changed in a future build, enter the updated loopback address here.'
+                )}
+              </Text>
+            </Box>
+
+            <Box>
+              <Text fontWeight={600} mb={2}>
+                {t('Managed runtime Python path')}
+              </Text>
+              <Input
+                value={runtimePathDraft.managedRuntimePythonPath}
+                onChange={(e) =>
+                  setRuntimePathDraft((current) => ({
+                    ...current,
+                    managedRuntimePythonPath: e.target.value,
+                  }))
+                }
+                placeholder="python3.11"
+              />
+              <Text color="muted" fontSize="sm" mt={2}>
+                {t(
+                  'Optional. Only use this if IdenaAI cannot find the right Python 3.10+ binary for the managed on-device runtime.'
+                )}
+              </Text>
+            </Box>
+
+            <Box>
+              <Text fontWeight={600} mb={2}>
+                {t('Ollama app / binary path')}
+              </Text>
+              <Input
+                value={runtimePathDraft.ollamaCommandPath}
+                onChange={(e) =>
+                  setRuntimePathDraft((current) => ({
+                    ...current,
+                    ollamaCommandPath: e.target.value,
+                  }))
+                }
+                placeholder="/opt/homebrew/bin/ollama"
+              />
+              <Text color="muted" fontSize="sm" mt={2}>
+                {t(
+                  'Optional. Use this if Ollama was installed in a non-standard location and the default app path is outdated.'
+                )}
+              </Text>
+            </Box>
+          </Stack>
+        </DialogBody>
+        <DialogFooter>
+          <SecondaryButton onClick={closeRuntimePathDialog}>
+            {t('Cancel')}
+          </SecondaryButton>
+          <SecondaryButton onClick={resetRuntimePathDraft}>
+            {t('Use recommended path')}
+          </SecondaryButton>
+          <PrimaryButton
+            isLoading={isStartingLocalAi}
+            onClick={() => saveRuntimePathDraft({retry: true})}
+          >
+            {t('Save custom path and retry')}
+          </PrimaryButton>
+        </DialogFooter>
+      </Dialog>
       <AiEnableDialog
         isOpen={isEnableDialogOpen}
         onClose={() => setIsEnableDialogOpen(false)}
-        defaultProvider={activeProvider}
+        defaultProvider="local-ai"
         providerOptions={MAIN_PROVIDER_OPTIONS}
         onComplete={async ({provider}) => {
-          updateAiSolverSettings({
-            enabled: true,
-            provider,
-            model: resolveDefaultModelForProvider(provider, localAi),
-          })
+          if (provider === 'local-ai') {
+            enableLocalAiSetup()
+          } else {
+            const nextLocalAi = localAi
+            updateAiSolverSettings({
+              enabled: true,
+              provider,
+              model: resolveDefaultModelForProvider(provider, nextLocalAi),
+            })
+          }
           setIsEnableDialogOpen(false)
           await refreshProviderKeyStatus()
         }}

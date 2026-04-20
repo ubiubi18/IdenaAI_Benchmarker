@@ -43,6 +43,17 @@ export function AiEnableDialog({
   const [savedProviders, setSavedProviders] = useState([])
   const [isSaving, setIsSaving] = useState(false)
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
+  const [showExternalProviders, setShowExternalProviders] = useState(false)
+  const hasLocalProviderOption = useMemo(
+    () => providerOptions.some((item) => isLocalAiProvider(item.value)),
+    [providerOptions]
+  )
+  const firstExternalProvider = useMemo(
+    () =>
+      providerOptions.find((item) => !isLocalAiProvider(item.value))?.value ||
+      'openai',
+    [providerOptions]
+  )
 
   useEffect(() => {
     if (!isOpen) return
@@ -50,6 +61,7 @@ export function AiEnableDialog({
     setApiKey('')
     setSavedProviders([])
     setIsApiKeyVisible(false)
+    setShowExternalProviders(!isLocalAiProvider(defaultProvider))
   }, [defaultProvider, isOpen])
 
   const notify = (title, description, status = 'info') => {
@@ -94,25 +106,23 @@ export function AiEnableDialog({
     try {
       let providers = savedProviders
 
-      if (!isLocalProvider && trimmedApiKey) {
+      if (isLocalProvider) {
+        providers = [provider]
+      } else if (trimmedApiKey) {
         await persistCurrentProviderKey()
         providers = savedProviders.includes(provider)
           ? savedProviders
           : [...savedProviders, provider]
       }
 
-      if (providers.length === 0) {
+      if (!isLocalProvider && providers.length === 0) {
         const bridge = ensureBridge()
-        if (isLocalProvider) {
-          await bridge.testProvider({provider})
-        } else {
-          const result = await bridge.hasProviderKey({provider})
-          if (!result || !result.hasKey) {
-            throw new Error(
-              'Load at least one provider key before enabling AI.'
-            )
-          }
+
+        const result = await bridge.hasProviderKey({provider})
+        if (!result || !result.hasKey) {
+          throw new Error('Load at least one provider key before enabling AI.')
         }
+
         providers = [provider]
       }
 
@@ -141,41 +151,100 @@ export function AiEnableDialog({
         <ModalBody>
           <Stack spacing={4}>
             <Text color="muted" fontSize="sm">
-              {t(
-                'Choose one or more AI providers. Cloud providers need a session API key for this desktop session. Local AI uses the runtime configured on the AI settings page.'
-              )}
+              {hasLocalProviderOption
+                ? t(
+                    'Recommended for new installs: let IdenaAI prepare the local runtime on this device. You only need an external API key if you explicitly want a cloud provider instead.'
+                  )
+                : t(
+                    'Choose one or more AI providers. Cloud providers need a session API key for this desktop session.'
+                  )}
             </Text>
 
-            <Box
-              borderWidth="1px"
-              borderColor="blue.050"
-              borderRadius="md"
-              p={3}
-            >
-              <Stack spacing={2}>
-                <Text fontWeight={500}>{t('Provider')}</Text>
-                <Select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  w="sm"
-                >
-                  {providerOptions.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </Select>
-                <Text color="muted" fontSize="xs">
-                  {isLocalProvider
-                    ? t(
-                        'Local AI does not need a session key. Finish setup, then make sure the Local AI runtime is enabled and reachable on the AI settings page.'
-                      )
-                    : t(
-                        'You can save one provider now, then switch provider and add another before finishing.'
+            {isLocalProvider ? (
+              <Box
+                borderWidth="1px"
+                borderColor="green.100"
+                borderRadius="md"
+                p={3}
+                bg="green.010"
+              >
+                <Stack spacing={3}>
+                  <Box>
+                    <Text fontWeight={600}>
+                      {t('Recommended: local AI on this device')}
+                    </Text>
+                    <Text color="muted" fontSize="sm" mt={1}>
+                      {t(
+                        'IdenaAI will prepare the managed local runtime for you. The model stays on this machine. First startup can take several minutes and uses local disk space.'
                       )}
-                </Text>
-              </Stack>
-            </Box>
+                    </Text>
+                  </Box>
+                  <Text color="muted" fontSize="xs">
+                    {t(
+                      'You do not need to paste any API key for this path. One confirmation is enough.'
+                    )}
+                  </Text>
+                  {hasLocalProviderOption ? (
+                    <Stack isInline spacing={2} flexWrap="wrap">
+                      <SecondaryButton
+                        onClick={() => {
+                          setProvider(firstExternalProvider)
+                          setShowExternalProviders(true)
+                        }}
+                      >
+                        {t('Use external provider API instead')}
+                      </SecondaryButton>
+                    </Stack>
+                  ) : null}
+                </Stack>
+              </Box>
+            ) : null}
+
+            {showExternalProviders || !isLocalProvider ? (
+              <Box
+                borderWidth="1px"
+                borderColor="blue.050"
+                borderRadius="md"
+                p={3}
+              >
+                <Stack spacing={2}>
+                  <Text fontWeight={500}>{t('Provider')}</Text>
+                  <Select
+                    value={provider}
+                    onChange={(e) => setProvider(e.target.value)}
+                    w="sm"
+                  >
+                    {providerOptions
+                      .filter(
+                        (item) =>
+                          showExternalProviders ||
+                          !isLocalAiProvider(item.value)
+                      )
+                      .map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                  </Select>
+                  <Text color="muted" fontSize="xs">
+                    {t(
+                      'Cloud providers need a session API key. Use this only when you intentionally want an external API instead of local AI on this device.'
+                    )}
+                  </Text>
+                  {hasLocalProviderOption ? (
+                    <SecondaryButton
+                      alignSelf="flex-start"
+                      onClick={() => {
+                        setProvider('local-ai')
+                        setShowExternalProviders(false)
+                      }}
+                    >
+                      {t('Back to local AI')}
+                    </SecondaryButton>
+                  ) : null}
+                </Stack>
+              </Box>
+            ) : null}
 
             {!isLocalProvider ? (
               <Box
@@ -240,28 +309,32 @@ export function AiEnableDialog({
               </Box>
             ) : null}
 
-            <Box
-              borderWidth="1px"
-              borderColor="gray.100"
-              borderRadius="md"
-              p={3}
-            >
-              <Stack spacing={1}>
-                <Text fontWeight={500}>
-                  {t('Ready providers for this setup')}
-                </Text>
-                <Text color="muted" fontSize="sm">
-                  {selectedProvidersLabel || t('None saved yet')}
-                </Text>
-              </Stack>
-            </Box>
+            {!isLocalProvider ? (
+              <Box
+                borderWidth="1px"
+                borderColor="gray.100"
+                borderRadius="md"
+                p={3}
+              >
+                <Stack spacing={1}>
+                  <Text fontWeight={500}>
+                    {t('Ready providers for this setup')}
+                  </Text>
+                  <Text color="muted" fontSize="sm">
+                    {selectedProvidersLabel || t('None saved yet')}
+                  </Text>
+                </Stack>
+              </Box>
+            ) : null}
           </Stack>
         </ModalBody>
         <ModalFooter>
           <Stack isInline spacing={2}>
             <SecondaryButton onClick={onClose}>{t('Cancel')}</SecondaryButton>
             <PrimaryButton isLoading={isSaving} onClick={finishSetup}>
-              {t('Enable AI')}
+              {isLocalProvider
+                ? t('Prepare local AI')
+                : t('Enable API provider')}
             </PrimaryButton>
           </Stack>
         </ModalFooter>

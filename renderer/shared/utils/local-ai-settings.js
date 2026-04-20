@@ -6,6 +6,10 @@ const LEGACY_LOCAL_AI_CONTRACT_VERSION = 'phi-sidecar/v1'
 const LEGACY_LOCAL_AI_BASE_URL = 'http://127.0.0.1:5000'
 const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_LOCAL_AI_SIDECAR_BASE_URL = LEGACY_LOCAL_AI_BASE_URL
+const LOCAL_RUNTIME_SERVICE_BACKEND = 'local-runtime-service'
+const MOLMO2_O_RESEARCH_BASE_URL = 'http://127.0.0.1:8080'
+const MOLMO2_O_RESEARCH_RUNTIME_MODEL = 'allenai/Molmo2-O-7B'
+const MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL = 'allenai/Molmo2-O-7B'
 const DEFAULT_LOCAL_AI_OLLAMA_MODEL = ''
 const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = ''
 const RECOMMENDED_LOCAL_AI_OLLAMA_MODEL = ''
@@ -46,24 +50,24 @@ const DEVELOPER_LOCAL_BENCHMARK_SIZE_OPTIONS = [25, 50, 100, 200, 500]
 const DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG = {
   safe: {
     modelPath: FALLBACK_LOCAL_AI_TRAINING_MODEL,
-    runtimeModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
-    runtimeVisionModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeModel: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+    runtimeVisionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
     runtimeFallbackModel: '',
     runtimeFallbackVisionModel: '',
   },
   balanced: {
     modelPath: STRONG_FALLBACK_LOCAL_AI_TRAINING_MODEL,
-    runtimeModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
-    runtimeVisionModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
-    runtimeFallbackModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
-    runtimeFallbackVisionModel: SAFE_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeModel: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+    runtimeVisionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
+    runtimeFallbackModel: '',
+    runtimeFallbackVisionModel: '',
   },
   strong: {
     modelPath: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-    runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
-    runtimeVisionModel: RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL,
-    runtimeFallbackModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_MODEL,
-    runtimeFallbackVisionModel: STRONG_FALLBACK_LOCAL_AI_OLLAMA_VISION_MODEL,
+    runtimeModel: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+    runtimeVisionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
+    runtimeFallbackModel: '',
+    runtimeFallbackVisionModel: '',
   },
 }
 const DEVELOPER_LOCAL_TRAINING_THERMAL_MODE_CONFIG = {
@@ -100,6 +104,8 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   publicVisionId: DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+  managedRuntimePythonPath: '',
+  ollamaCommandPath: '',
   runtimeType: '',
   runtimeFamily: '',
   model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
@@ -152,6 +158,10 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
 
 function trimString(value) {
   return String(value || '').trim()
+}
+
+function normalizeOptionalCommandPath(value) {
+  return trimString(value).slice(0, 4096)
 }
 
 function trimTrailingSlash(value) {
@@ -250,11 +260,12 @@ function normalizeRuntimeBackend(source = {}) {
     case 'ollama-http':
     case 'ollama-direct':
       return 'ollama-direct'
+    case LOCAL_RUNTIME_SERVICE_BACKEND:
     case 'sidecar':
     case 'sidecar-http':
     case 'local-ai-sidecar':
     case LEGACY_LOCAL_AI_RUNTIME_TYPE:
-      return 'sidecar-http'
+      return LOCAL_RUNTIME_SERVICE_BACKEND
     default:
       if (explicit) {
         return explicit
@@ -305,7 +316,7 @@ function normalizeBaseUrl(source = {}) {
   }
 
   if (
-    runtimeBackend === 'sidecar-http' &&
+    runtimeBackend === LOCAL_RUNTIME_SERVICE_BACKEND &&
     explicit === DEFAULT_LOCAL_AI_OLLAMA_BASE_URL
   ) {
     return defaultBaseUrl
@@ -500,11 +511,11 @@ function resolveDeveloperLocalTrainingProfileModelPath(_value) {
 }
 
 function resolveDeveloperLocalTrainingProfileRuntimeModel(_value) {
-  return RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+  return MOLMO2_O_RESEARCH_RUNTIME_MODEL
 }
 
 function resolveDeveloperLocalTrainingProfileRuntimeVisionModel(_value) {
-  return RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
+  return MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL
 }
 
 function resolveDeveloperLocalTrainingProfileRuntimeFallbackModel(_value) {
@@ -558,7 +569,7 @@ function resolveLocalAiWireRuntimeType(settings = {}) {
     case 'ollama-http':
     case 'ollama-direct':
       return 'ollama'
-    case 'sidecar-http':
+    case LOCAL_RUNTIME_SERVICE_BACKEND:
     default:
       return 'sidecar'
   }
@@ -567,7 +578,7 @@ function resolveLocalAiWireRuntimeType(settings = {}) {
 function buildLocalAiRuntimePreset(runtimeBackend = 'ollama-direct') {
   const nextRuntimeBackend = normalizeRuntimeBackend({runtimeBackend})
 
-  if (nextRuntimeBackend === 'sidecar-http') {
+  if (nextRuntimeBackend === LOCAL_RUNTIME_SERVICE_BACKEND) {
     return {
       runtimeBackend: nextRuntimeBackend,
       baseUrl: DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
@@ -598,6 +609,36 @@ function buildRecommendedLocalAiMacPreset() {
   }
 }
 
+function buildMolmo2OResearchPreset() {
+  return {
+    ...buildLocalAiRuntimePreset(LOCAL_RUNTIME_SERVICE_BACKEND),
+    baseUrl: MOLMO2_O_RESEARCH_BASE_URL,
+    endpoint: MOLMO2_O_RESEARCH_BASE_URL,
+    runtimeFamily: 'molmo2-o',
+    model: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+    visionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
+  }
+}
+
+function buildLocalAiRepairPreset(source = {}, {preferManaged = false} = {}) {
+  const runtimeBackend = normalizeRuntimeBackend(source)
+  const runtimeFamily = trimString(source.runtimeFamily).toLowerCase()
+  const useManaged =
+    preferManaged ||
+    runtimeBackend === LOCAL_RUNTIME_SERVICE_BACKEND ||
+    runtimeFamily === 'molmo2-o'
+
+  const preset = useManaged
+    ? buildMolmo2OResearchPreset()
+    : buildLocalAiRuntimePreset(runtimeBackend)
+
+  return {
+    ...preset,
+    managedRuntimePythonPath: '',
+    ollamaCommandPath: '',
+  }
+}
+
 function isLegacySidecarDefaultConfig(source = {}) {
   const runtimeBackend = trimString(source.runtimeBackend).toLowerCase()
   const runtimeType = trimString(source.runtimeType).toLowerCase()
@@ -608,6 +649,7 @@ function isLegacySidecarDefaultConfig(source = {}) {
   const contractVersion = trimString(source.contractVersion).toLowerCase()
   const usesLegacyRuntimeBackend =
     !runtimeBackend ||
+    runtimeBackend === LOCAL_RUNTIME_SERVICE_BACKEND ||
     runtimeBackend === 'sidecar' ||
     runtimeBackend === 'sidecar-http' ||
     runtimeBackend === 'local-ai-sidecar'
@@ -644,14 +686,8 @@ function buildLocalAiSettings(settings = {}) {
       }
     : rawSource
   const normalizedRuntimeBackend = normalizeRuntimeBackend(source)
-  const normalizedModel =
-    normalizedRuntimeBackend === 'ollama-direct'
-      ? trimString(source.model) || DEFAULT_LOCAL_AI_OLLAMA_MODEL
-      : ''
-  const normalizedVisionModel =
-    normalizedRuntimeBackend === 'ollama-direct'
-      ? trimString(source.visionModel) || DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL
-      : ''
+  const normalizedModel = trimString(source.model)
+  const normalizedVisionModel = trimString(source.visionModel)
 
   const normalizedSettings = {
     ...DEFAULT_LOCAL_AI_SETTINGS,
@@ -668,10 +704,22 @@ function buildLocalAiSettings(settings = {}) {
     publicVisionId: normalizePublicVisionId(source.publicVisionId),
     baseUrl: normalizeBaseUrl(source),
     endpoint: normalizeEndpoint(source),
+    managedRuntimePythonPath: normalizeOptionalCommandPath(
+      source.managedRuntimePythonPath
+    ),
+    ollamaCommandPath: normalizeOptionalCommandPath(source.ollamaCommandPath),
     runtimeType: trimString(source.runtimeType),
     runtimeFamily: normalizeLegacyRuntimeFamily(source),
-    model: normalizedModel,
-    visionModel: normalizedVisionModel,
+    model:
+      normalizedModel ||
+      (normalizedRuntimeBackend === 'ollama-direct'
+        ? DEFAULT_LOCAL_AI_OLLAMA_MODEL
+        : ''),
+    visionModel:
+      normalizedVisionModel ||
+      (normalizedRuntimeBackend === 'ollama-direct'
+        ? DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL
+        : ''),
     adapterStrategy:
       trimString(source.adapterStrategy) ||
       DEFAULT_LOCAL_AI_SETTINGS.adapterStrategy,
@@ -813,10 +861,15 @@ module.exports = {
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
+  MOLMO2_O_RESEARCH_BASE_URL,
+  MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+  MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
   getLocalAiEndpointSafety,
   resolveLocalAiWireRuntimeType,
   buildLocalAiRuntimePreset,
   buildRecommendedLocalAiMacPreset,
+  buildMolmo2OResearchPreset,
+  buildLocalAiRepairPreset,
   normalizeDeveloperLocalTrainingProfile,
   normalizeDeveloperLocalTrainingThermalMode,
   normalizeDeveloperLocalBenchmarkThermalMode,

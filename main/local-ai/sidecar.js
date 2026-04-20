@@ -771,64 +771,76 @@ function shouldPreferOcrFirst(messages = []) {
   )
 }
 
+function normalizeAssistantTextCandidate(value) {
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeAssistantTextCandidate(item))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+  }
+
+  if (!value || typeof value !== 'object') {
+    return ''
+  }
+
+  const directKeys = ['text', 'content', 'response', 'output_text', 'result']
+
+  for (const key of directKeys) {
+    if (typeof value[key] === 'string' && value[key].trim()) {
+      return value[key].trim()
+    }
+  }
+
+  const nestedCandidates = [value.message, value.delta, value.content]
+
+  for (const candidate of nestedCandidates) {
+    const normalized = normalizeAssistantTextCandidate(candidate)
+
+    if (normalized) {
+      return normalized
+    }
+  }
+
+  return ''
+}
+
 function normalizeOllamaContent(data) {
   if (!data || typeof data !== 'object') {
     return null
   }
 
   const directContentCandidates = [
-    data &&
-    data.message &&
-    typeof data.message === 'object' &&
-    typeof data.message.content === 'string'
-      ? data.message.content
-      : '',
-    typeof data.response === 'string' ? data.response : '',
-    typeof data.content === 'string' ? data.content : '',
-    typeof data.output_text === 'string' ? data.output_text : '',
-    Array.isArray(data.choices) &&
-    data.choices[0] &&
-    data.choices[0].message &&
-    typeof data.choices[0].message.content === 'string'
-      ? data.choices[0].message.content
-      : '',
+    normalizeAssistantTextCandidate(data.message),
+    normalizeAssistantTextCandidate(data.message && data.message.content),
+    normalizeAssistantTextCandidate(data.response),
+    normalizeAssistantTextCandidate(data.content),
+    normalizeAssistantTextCandidate(data.output_text),
+    normalizeAssistantTextCandidate(data.generated_text),
+    normalizeAssistantTextCandidate(data.result),
+    normalizeAssistantTextCandidate(
+      Array.isArray(data.choices) ? data.choices[0] : null
+    ),
+    normalizeAssistantTextCandidate(
+      Array.isArray(data.choices) && data.choices[0]
+        ? data.choices[0].message
+        : null
+    ),
+    normalizeAssistantTextCandidate(
+      Array.isArray(data.choices) && data.choices[0]
+        ? data.choices[0].delta
+        : null
+    ),
   ]
     .map((value) => String(value || '').trim())
     .filter(Boolean)
 
   if (directContentCandidates.length > 0) {
     return directContentCandidates[0]
-  }
-
-  const structuredMessageContent =
-    data && data.message && typeof data.message === 'object'
-      ? data.message.content
-      : null
-
-  if (Array.isArray(structuredMessageContent)) {
-    const joined = structuredMessageContent
-      .map((item) => {
-        if (typeof item === 'string') {
-          return item.trim()
-        }
-
-        if (item && typeof item === 'object') {
-          if (typeof item.text === 'string') {
-            return item.text.trim()
-          }
-
-          if (typeof item.content === 'string') {
-            return item.content.trim()
-          }
-        }
-
-        return ''
-      })
-      .filter(Boolean)
-      .join('\n')
-      .trim()
-
-    return joined || null
   }
 
   return null

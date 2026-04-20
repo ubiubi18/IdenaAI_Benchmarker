@@ -36,6 +36,7 @@ import {
   ErrorAlert,
   Page,
   PageTitle,
+  Progress,
   SuccessAlert,
   Toast,
   Tooltip,
@@ -56,7 +57,9 @@ import {
   formatAiProviderLabel,
 } from '../shared/utils/ai-provider-readiness'
 import {
-  buildRecommendedLocalAiMacPreset,
+  DEFAULT_LOCAL_AI_SETTINGS,
+  buildLocalAiRepairPreset,
+  buildMolmo2OResearchPreset,
   buildLocalAiSettings,
 } from '../shared/utils/local-ai-settings'
 import {
@@ -329,6 +332,18 @@ function persistStoredChatPreferences(preferences = {}) {
 }
 
 function formatRuntimeStatusError(result, t) {
+  const progress =
+    result &&
+    result.runtimeProgress &&
+    typeof result.runtimeProgress === 'object' &&
+    result.runtimeProgress.active !== false
+      ? result.runtimeProgress
+      : null
+
+  if (progress && String(progress.message || '').trim()) {
+    return String(progress.message || '').trim()
+  }
+
   const message = String(
     (result && (result.lastError || result.error)) || ''
   ).trim()
@@ -345,10 +360,35 @@ function formatRuntimeStatusError(result, t) {
     return t('The configured Local AI runtime is not reachable yet.')
   }
 
-  if (message === 'invalid_response') {
+  if (
+    message === 'invalid_response' ||
+    /assistant text|unsupported or empty format|empty reply/i.test(message)
+  ) {
     return t(
-      'The Local AI runtime returned an empty reply. Try sending the images again or ask a shorter follow-up.'
+      'The local model answered in an empty or unsupported format. Try a simpler prompt, a different local model, or restart the local runtime.'
     )
+  }
+
+  if (/ECONNREFUSED|EHOSTUNREACH|ENOTFOUND/i.test(message)) {
+    return t(
+      'The local runtime is not running yet. Start it here, then try again.'
+    )
+  }
+
+  if (/runtime_start_timeout|not responding yet/i.test(message)) {
+    return t(
+      'The managed local runtime is still preparing the on-device model. The first launch can take several more minutes after package installation.'
+    )
+  }
+
+  if (/ResolutionImpossible|cannot install/i.test(message)) {
+    return t(
+      'IdenaAI could not finish installing the managed local runtime packages. Try Fix automatically once, then restart the app and try again.'
+    )
+  }
+
+  if (/idle/i.test(message)) {
+    return t('The local runtime is currently stopped.')
   }
 
   return message || t('The configured Local AI runtime is not reachable yet.')
@@ -357,6 +397,66 @@ function formatRuntimeStatusError(result, t) {
 function formatChatError(error, t) {
   const message = String((error && error.message) || error || '').trim()
   return message || t('Local AI chat request failed.')
+}
+
+function normalizeRuntimeProgress(progress) {
+  if (!progress || typeof progress !== 'object' || Array.isArray(progress)) {
+    return null
+  }
+
+  const progressPercent = Number(progress.progressPercent)
+  const stageIndex = Number(progress.stageIndex)
+  const stageCount = Number(progress.stageCount)
+
+  return {
+    active: progress.active !== false,
+    status: String(progress.status || '').trim() || 'starting',
+    stage: String(progress.stage || '').trim() || null,
+    message: String(progress.message || '').trim() || null,
+    detail: String(progress.detail || '').trim() || null,
+    progressPercent: Number.isFinite(progressPercent)
+      ? Math.max(0, Math.min(100, Math.round(progressPercent)))
+      : null,
+    stageIndex: Number.isFinite(stageIndex)
+      ? Math.max(1, Math.round(stageIndex))
+      : null,
+    stageCount: Number.isFinite(stageCount)
+      ? Math.max(1, Math.round(stageCount))
+      : null,
+  }
+}
+
+function describeRuntimeProgress(progress, t, {managedRuntime = false} = {}) {
+  const next = normalizeRuntimeProgress(progress)
+
+  if (!next || !next.active) {
+    return null
+  }
+
+  let title = t('Starting local runtime')
+
+  if (next.status === 'installing') {
+    title = managedRuntime
+      ? t('Installing managed runtime')
+      : t('Installing local runtime')
+  } else if (
+    managedRuntime &&
+    String(next.stage || '').trim() === 'wait_for_runtime_model_load'
+  ) {
+    title = t('Loading on-device model')
+  } else if (managedRuntime) {
+    title = t('Starting managed runtime')
+  }
+
+  return {
+    ...next,
+    title,
+    description:
+      next.message ||
+      (managedRuntime
+        ? t('IdenaAI is preparing the managed local runtime on this device.')
+        : t('IdenaAI is preparing the local runtime on this device.')),
+  }
 }
 
 function extractChatContent(result) {
@@ -1121,7 +1221,7 @@ export default function AiChatPage() {
     })
   }, [messages, isSending])
 
-  React.useLayoutEffect(() => {
+  React.useEffect(() => {
     const node = composerRef.current
 
     if (!node) {
@@ -1197,6 +1297,50 @@ export default function AiChatPage() {
   React.useEffect(() => {
     refreshRuntimeStatus()
   }, [refreshRuntimeStatus])
+
+  const runtimeProgress = React.useMemo(
+    () => normalizeRuntimeProgress(statusResult?.runtimeProgress),
+    [statusResult]
+  )
+
+  React.useEffect(() => {
+    if (!isStartingRuntime && !runtimeProgress?.active) {
+      return undefined
+    }
+
+    let cancelled = false
+    let timerId = null
+
+    const pollProgress = async () => {
+      try {
+        if (!global.localAi) {
+          return
+        }
+
+        const result = await global.localAi.status(runtimePayload)
+
+        if (!cancelled) {
+          setStatusResult(result)
+        }
+      } catch {
+        // Keep the latest visible progress state until start settles.
+      } finally {
+        if (!cancelled) {
+          timerId = setTimeout(pollProgress, 900)
+        }
+      }
+    }
+
+    pollProgress()
+
+    return () => {
+      cancelled = true
+
+      if (timerId) {
+        clearTimeout(timerId)
+      }
+    }
+  }, [isStartingRuntime, runtimePayload, runtimeProgress?.active])
 
   const ensureInteractiveRuntimeReady = React.useCallback(async () => {
     if (!localAi.enabled) {
@@ -1499,25 +1643,56 @@ export default function AiChatPage() {
     setLastError('')
   }, [])
 
-  const handleEnableLocalAi = React.useCallback(() => {
-    updateLocalAiSettings({
-      enabled: true,
-      ...buildRecommendedLocalAiMacPreset(),
-    })
-  }, [updateLocalAiSettings])
+  const shouldBootstrapManagedLocalAi = React.useMemo(() => {
+    const currentEndpoint = String(
+      localAi.endpoint || localAi.baseUrl || ''
+    ).trim()
 
-  const startRuntimeLabel = t('Start local runtime')
+    return (
+      !localAi.enabled &&
+      localAi.runtimeBackend !== 'local-runtime-service' &&
+      String(localAi.model || '').trim() === '' &&
+      String(localAi.visionModel || '').trim() === '' &&
+      currentEndpoint === DEFAULT_LOCAL_AI_SETTINGS.endpoint
+    )
+  }, [
+    localAi.baseUrl,
+    localAi.enabled,
+    localAi.endpoint,
+    localAi.model,
+    localAi.runtimeBackend,
+    localAi.visionModel,
+  ])
+
+  const handleEnableLocalAi = React.useCallback(() => {
+    updateLocalAiSettings(
+      localAi.runtimeBackend === 'local-runtime-service' ||
+        (localAi.runtimeBackend === 'ollama-direct' &&
+          !shouldBootstrapManagedLocalAi)
+        ? {enabled: true}
+        : {
+            enabled: true,
+            ...buildMolmo2OResearchPreset(),
+          }
+    )
+  }, [
+    localAi.runtimeBackend,
+    shouldBootstrapManagedLocalAi,
+    updateLocalAiSettings,
+  ])
 
   const handleStartLocalAi = React.useCallback(async () => {
     setIsStartingRuntime(true)
     setLastError('')
 
     const nextSettingsPatch =
-      localAi.runtimeBackend === 'ollama-direct'
+      localAi.runtimeBackend === 'local-runtime-service' ||
+      (localAi.runtimeBackend === 'ollama-direct' &&
+        !shouldBootstrapManagedLocalAi)
         ? {enabled: true}
         : {
             enabled: true,
-            ...buildRecommendedLocalAiMacPreset(),
+            ...buildMolmo2OResearchPreset(),
           }
     const nextLocalAi = buildLocalAiSettings({
       ...localAi,
@@ -1530,24 +1705,96 @@ export default function AiChatPage() {
       const bridge = getLocalAiBridge()
       const result = await bridge.start(nextPayload)
       setStatusResult(result)
-      setLastError(
-        result && result.sidecarReachable === true
-          ? ''
-          : formatRuntimeStatusError(result, t)
-      )
+      const ready = result && result.sidecarReachable === true
+      setLastError(ready ? '' : formatRuntimeStatusError(result, t))
+      return ready
     } catch (error) {
       const nextError = formatChatError(error, t)
       setLastError(nextError)
       appendAssistantErrorToast(nextError)
+      return false
     } finally {
       setIsStartingRuntime(false)
     }
-  }, [appendAssistantErrorToast, localAi, t, updateLocalAiSettings])
+  }, [
+    appendAssistantErrorToast,
+    localAi,
+    shouldBootstrapManagedLocalAi,
+    t,
+    updateLocalAiSettings,
+  ])
+
+  const handleFixLocalAiAutomatically = React.useCallback(async () => {
+    setIsStartingRuntime(true)
+    setLastError('')
+
+    const nextSettingsPatch = {
+      enabled: true,
+      ...buildLocalAiRepairPreset(localAi, {
+        preferManaged:
+          shouldBootstrapManagedLocalAi ||
+          localAi.runtimeBackend === 'local-runtime-service',
+      }),
+    }
+    const nextLocalAi = buildLocalAiSettings({
+      ...localAi,
+      ...nextSettingsPatch,
+    })
+    const nextPayload = buildLocalAiRuntimePayload(nextLocalAi)
+
+    try {
+      updateLocalAiSettings(nextSettingsPatch)
+      const bridge = getLocalAiBridge()
+      const result = await bridge.start(nextPayload)
+      setStatusResult(result)
+      const ready = result && result.sidecarReachable === true
+      setLastError(ready ? '' : formatRuntimeStatusError(result, t))
+      return ready
+    } catch (error) {
+      const nextError = formatChatError(error, t)
+      setLastError(nextError)
+      appendAssistantErrorToast(nextError)
+      return false
+    } finally {
+      setIsStartingRuntime(false)
+    }
+  }, [
+    appendAssistantErrorToast,
+    localAi,
+    shouldBootstrapManagedLocalAi,
+    t,
+    updateLocalAiSettings,
+  ])
 
   const handleEnableAndStartLocalAi = React.useCallback(async () => {
     handleEnableLocalAi()
-    await handleStartLocalAi()
+    return handleStartLocalAi()
   }, [handleEnableLocalAi, handleStartLocalAi])
+
+  const handleOpenChatMode = React.useCallback(async () => {
+    const readyNow = Boolean(
+      localAi.enabled && statusResult && statusResult.sidecarReachable === true
+    )
+
+    if (readyNow) {
+      router.push('/ai-chat?mode=chat')
+      return
+    }
+
+    const ready = localAi.enabled
+      ? await handleStartLocalAi()
+      : await handleEnableAndStartLocalAi()
+
+    if (ready) {
+      router.push('/ai-chat?mode=chat')
+    }
+  }, [
+    handleEnableAndStartLocalAi,
+    handleStartLocalAi,
+    localAi.enabled,
+    router,
+    statusResult,
+  ])
 
   const handleToggleStoredChat = React.useCallback(
     (event) => {
@@ -1584,14 +1831,46 @@ export default function AiChatPage() {
   const isRuntimeReady = Boolean(
     localAi.enabled && statusResult && statusResult.sidecarReachable === true
   )
+  const runtimeProgressDisplay = React.useMemo(
+    () =>
+      describeRuntimeProgress(runtimeProgress, t, {
+        managedRuntime: localAi.runtimeBackend === 'local-runtime-service',
+      }),
+    [localAi.runtimeBackend, runtimeProgress, t]
+  )
   const runtimeErrorMessage = formatRuntimeStatusError(statusResult, t)
-  const backendLabel =
-    localAi.runtimeBackend === 'ollama-direct'
-      ? t('Local runtime')
-      : t('Legacy sidecar')
+  const startRuntimeLabel =
+    runtimeProgressDisplay?.title ||
+    (localAi.runtimeBackend === 'local-runtime-service'
+      ? t('Start managed runtime')
+      : t('Start local runtime'))
+  let backendLabel = t('Custom local runtime')
+
+  if (shouldBootstrapManagedLocalAi) {
+    backendLabel = t('Managed on-device runtime')
+  } else if (localAi.runtimeBackend === 'ollama-direct') {
+    backendLabel = t('Ollama local runtime')
+  } else if (localAi.runtimeBackend === 'local-runtime-service') {
+    backendLabel = t('Managed Molmo2-O runtime')
+  }
+
+  let openChatButtonLabel = t('Start local AI and open chat')
+
+  if (!localAi.enabled) {
+    openChatButtonLabel = t('Enable local AI and open chat')
+  } else if (isRuntimeReady) {
+    openChatButtonLabel = t('Chat with IdenaAI')
+  }
   let runtimeStatusLabel = t('Disabled')
 
-  if (isCheckingStatus) {
+  if (shouldBootstrapManagedLocalAi && !localAi.enabled) {
+    runtimeStatusLabel = t('Ready to set up')
+  } else if (runtimeProgressDisplay) {
+    runtimeStatusLabel =
+      runtimeProgressDisplay.status === 'installing'
+        ? t('Installing')
+        : t('Starting')
+  } else if (isCheckingStatus) {
     runtimeStatusLabel = t('Checking runtime')
   } else if (isRuntimeReady) {
     runtimeStatusLabel = t('Ready')
@@ -1612,7 +1891,13 @@ export default function AiChatPage() {
     )
   }
 
-  const runtimeStatusTone = isRuntimeReady ? 'green' : 'orange'
+  let runtimeStatusTone = 'orange'
+
+  if (isRuntimeReady) {
+    runtimeStatusTone = 'green'
+  } else if (runtimeProgressDisplay) {
+    runtimeStatusTone = 'blue'
+  }
 
   let runtimeAlert = null
 
@@ -1627,30 +1912,64 @@ export default function AiChatPage() {
       </SuccessAlert>
     ) : (
       <ErrorAlert>
-        <Flex
-          direction={['column', 'row']}
-          gap={3}
-          justify="space-between"
-          align={['flex-start', 'center']}
-          w="full"
-        >
-          <Text>{runtimeErrorMessage}</Text>
-          <HStack spacing={2}>
-            <SecondaryButton
-              minW="fit-content"
-              isLoading={isStartingRuntime}
-              onClick={handleStartLocalAi}
-            >
-              {startRuntimeLabel}
-            </SecondaryButton>
-            <SecondaryButton
-              minW="fit-content"
-              onClick={() => router.push('/settings/ai')}
-            >
-              {t('Fix in settings')}
-            </SecondaryButton>
-          </HStack>
-        </Flex>
+        <Stack spacing={3} w="full">
+          <Flex
+            direction={['column', 'row']}
+            gap={3}
+            justify="space-between"
+            align={['flex-start', 'center']}
+            w="full"
+          >
+            <Text>{runtimeErrorMessage}</Text>
+            <HStack spacing={2}>
+              <SecondaryButton
+                minW="fit-content"
+                isLoading={isStartingRuntime}
+                onClick={handleStartLocalAi}
+              >
+                {startRuntimeLabel}
+              </SecondaryButton>
+              <SecondaryButton
+                minW="fit-content"
+                isLoading={isStartingRuntime}
+                onClick={handleFixLocalAiAutomatically}
+              >
+                {t('Fix automatically')}
+              </SecondaryButton>
+              <SecondaryButton
+                minW="fit-content"
+                onClick={() => router.push('/settings/ai')}
+              >
+                {t('Custom path')}
+              </SecondaryButton>
+            </HStack>
+          </Flex>
+          {runtimeProgressDisplay ? (
+            <Box>
+              <Progress
+                value={runtimeProgressDisplay.progressPercent ?? undefined}
+                isIndeterminate={
+                  !Number.isFinite(runtimeProgressDisplay.progressPercent)
+                }
+                hasStripe
+                isAnimated
+              />
+              <Flex align="center" justify="space-between" mt={2} gap={3}>
+                <Text color="muted" fontSize="xs">
+                  {runtimeProgressDisplay.detail ||
+                    t(
+                      'The first setup can take several minutes while runtime packages and model files are prepared.'
+                    )}
+                </Text>
+                {Number.isFinite(runtimeProgressDisplay.progressPercent) ? (
+                  <Text color="muted" fontSize="xs" fontWeight={600}>
+                    {runtimeProgressDisplay.progressPercent}%
+                  </Text>
+                ) : null}
+              </Flex>
+            </Box>
+          ) : null}
+        </Stack>
       </ErrorAlert>
     )
   } else {
@@ -1665,19 +1984,16 @@ export default function AiChatPage() {
         >
           <Text>
             {t(
-              'Local AI is disabled. Enable it first to use the dedicated AI chat view.'
+              'Local AI is off. Turn it on once and IdenaAI will prepare the on-device runtime for you.'
             )}
           </Text>
           <HStack spacing={2}>
-            <SecondaryButton onClick={handleEnableLocalAi}>
-              {t('Enable Local AI')}
-            </SecondaryButton>
-            <SecondaryButton
+            <PrimaryButton
               isLoading={isStartingRuntime}
               onClick={handleEnableAndStartLocalAi}
             >
-              {t('Enable and start local AI')}
-            </SecondaryButton>
+              {t('Turn on local AI')}
+            </PrimaryButton>
             <SecondaryButton onClick={() => router.push('/settings/ai')}>
               {t('Open settings')}
             </SecondaryButton>
@@ -1689,7 +2005,12 @@ export default function AiChatPage() {
 
   if (showModeChooser) {
     return (
-      <Layout loading={loading} syncing={syncing} offline={offline}>
+      <Layout
+        loading={loading}
+        syncing={syncing}
+        offline={offline}
+        allowWhenNodeUnavailable
+      >
         <Page minW={0}>
           <Stack spacing={6} maxW="4xl">
             <Stack spacing={2}>
@@ -1699,7 +2020,7 @@ export default function AiChatPage() {
               </HStack>
               <Text color="muted" maxW="3xl">
                 {t(
-                  'Pick the fastest path: open local chat now or teach the model on 5-flip chunks.'
+                  'Open local chat or teach the model on 5-flip chunks. On a fresh install, IdenaAI can prepare the local runtime for you automatically.'
                 )}
               </Text>
             </Stack>
@@ -1720,7 +2041,7 @@ export default function AiChatPage() {
                   {formatAiProviderLabel('local-ai')}
                 </Badge>
                 <Text color="muted" fontSize="sm" noOfLines={1}>
-                  {t('Endpoint')}: {runtimePayload.baseUrl}
+                  {backendLabel}
                 </Text>
               </HStack>
             </Box>
@@ -1743,14 +2064,15 @@ export default function AiChatPage() {
                   </Text>
                   <Text color="muted" flex={1}>
                     {t(
-                      'Open direct local chat, attach images, and ask for FLIP reasoning or general Idena help.'
+                      'Open direct local chat, attach images, and ask for FLIP reasoning or general Idena help. On first use, IdenaAI can prepare the local runtime automatically.'
                     )}
                   </Text>
                   <PrimaryButton
                     variant="solid"
-                    onClick={() => router.push('/ai-chat?mode=chat')}
+                    isLoading={isStartingRuntime}
+                    onClick={handleOpenChatMode}
                   >
-                    {t('Chat with IdenaAI')}
+                    {openChatButtonLabel}
                   </PrimaryButton>
                 </Stack>
               </Box>
@@ -1804,7 +2126,12 @@ export default function AiChatPage() {
   }
 
   return (
-    <Layout loading={loading} syncing={syncing} offline={offline}>
+    <Layout
+      loading={loading}
+      syncing={syncing}
+      offline={offline}
+      allowWhenNodeUnavailable
+    >
       <Page minW={0} px={[4, 6, 8]} py={4} overflow="hidden">
         <Input
           ref={fileInputRef}

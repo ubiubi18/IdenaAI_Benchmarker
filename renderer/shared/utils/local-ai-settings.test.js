@@ -25,7 +25,12 @@ const {
   DEFAULT_HUMAN_TEACHER_SYSTEM_PROMPT,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
+  MOLMO2_O_RESEARCH_BASE_URL,
+  MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+  MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
   buildLocalAiSettings,
+  buildMolmo2OResearchPreset,
+  buildLocalAiRepairPreset,
   buildRecommendedLocalAiMacPreset,
   buildLocalAiRuntimePreset,
   getLocalAiEndpointSafety,
@@ -64,6 +69,8 @@ describe('local-ai settings schema', () => {
     expect(settings.contractVersion).toBe('idena-local/v1')
     expect(settings.baseUrl).toBe(DEFAULT_LOCAL_AI_OLLAMA_BASE_URL)
     expect(settings.endpoint).toBe(DEFAULT_LOCAL_AI_OLLAMA_BASE_URL)
+    expect(settings.managedRuntimePythonPath).toBe('')
+    expect(settings.ollamaCommandPath).toBe('')
     expect(settings.model).toBe(DEFAULT_LOCAL_AI_OLLAMA_MODEL)
     expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
     expect(settings.runtimeType).toBe('ollama')
@@ -144,18 +151,22 @@ describe('local-ai settings schema', () => {
   it('keeps explicit neutral fields and nested preferences when merging', () => {
     const settings = mergeLocalAiSettings(
       buildLocalAiSettings({
-        runtimeBackend: 'sidecar-http',
+        runtimeBackend: 'local-runtime-service',
+        managedRuntimePythonPath: 'python3.11',
         federated: {enabled: false, minExamples: 5},
       }),
       {
         runtimeBackend: 'adapter-gateway',
         publicModelId: 'Idena-text-v2',
+        ollamaCommandPath: '/custom/bin/ollama',
         federated: {enabled: true},
       }
     )
 
     expect(settings.runtimeBackend).toBe('adapter-gateway')
     expect(settings.publicModelId).toBe('Idena-text-v2')
+    expect(settings.managedRuntimePythonPath).toBe('python3.11')
+    expect(settings.ollamaCommandPath).toBe('/custom/bin/ollama')
     expect(settings.federated.enabled).toBe(true)
     expect(settings.federated.minExamples).toBe(5)
   })
@@ -171,7 +182,7 @@ describe('local-ai settings schema', () => {
     expect(
       resolveLocalAiWireRuntimeType({
         ...DEFAULT_LOCAL_AI_SETTINGS,
-        runtimeBackend: 'sidecar-http',
+        runtimeBackend: 'local-runtime-service',
       })
     ).toBe('sidecar')
 
@@ -203,8 +214,8 @@ describe('local-ai settings schema', () => {
       visionModel: DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
     })
 
-    expect(buildLocalAiRuntimePreset('sidecar-http')).toMatchObject({
-      runtimeBackend: 'sidecar-http',
+    expect(buildLocalAiRuntimePreset('local-runtime-service')).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
       baseUrl: 'http://127.0.0.1:5000',
       endpoint: 'http://127.0.0.1:5000',
       runtimeType: 'sidecar',
@@ -228,6 +239,48 @@ describe('local-ai settings schema', () => {
     )
   })
 
+  it('builds a Molmo2-O research preset on the local runtime service', () => {
+    expect(buildMolmo2OResearchPreset()).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
+      baseUrl: MOLMO2_O_RESEARCH_BASE_URL,
+      endpoint: MOLMO2_O_RESEARCH_BASE_URL,
+      runtimeType: 'sidecar',
+      runtimeFamily: 'molmo2-o',
+      model: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+      visionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
+    })
+  })
+
+  it('builds a one-click repair preset with cleared path overrides', () => {
+    expect(
+      buildLocalAiRepairPreset({
+        runtimeBackend: 'local-runtime-service',
+        runtimeFamily: 'molmo2-o',
+        managedRuntimePythonPath: '/custom/python',
+      })
+    ).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
+      baseUrl: MOLMO2_O_RESEARCH_BASE_URL,
+      endpoint: MOLMO2_O_RESEARCH_BASE_URL,
+      runtimeFamily: 'molmo2-o',
+      managedRuntimePythonPath: '',
+      ollamaCommandPath: '',
+    })
+
+    expect(
+      buildLocalAiRepairPreset({
+        runtimeBackend: 'ollama-direct',
+        ollamaCommandPath: '/custom/ollama',
+      })
+    ).toMatchObject({
+      runtimeBackend: 'ollama-direct',
+      baseUrl: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+      endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
+      managedRuntimePythonPath: '',
+      ollamaCommandPath: '',
+    })
+  })
+
   it('keeps local training disabled until a local base model is configured', () => {
     const settings = buildLocalAiSettings({
       enabled: true,
@@ -241,12 +294,34 @@ describe('local-ai settings schema', () => {
   it('keeps persisted explicit local runtime picks instead of forcing a fixed lane', () => {
     const settings = buildLocalAiSettings({
       runtimeBackend: 'ollama-direct',
-      model: 'qwen2.5vl:7b',
-      visionModel: 'qwen2.5vl:7b',
+      model: 'vision-lab:latest',
+      visionModel: 'vision-lab:latest',
     })
 
-    expect(settings.model).toBe('qwen2.5vl:7b')
-    expect(settings.visionModel).toBe('qwen2.5vl:7b')
+    expect(settings.model).toBe('vision-lab:latest')
+    expect(settings.visionModel).toBe('vision-lab:latest')
+  })
+
+  it('keeps explicit sidecar runtime model overrides for custom local research runtimes', () => {
+    const settings = buildLocalAiSettings({
+      runtimeBackend: 'local-runtime-service',
+      model: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+      visionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
+    })
+
+    expect(settings.model).toBe(MOLMO2_O_RESEARCH_RUNTIME_MODEL)
+    expect(settings.visionModel).toBe(MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL)
+    expect(settings.trainEnabled).toBe(false)
+  })
+
+  it('upgrades the legacy sidecar-http backend alias to the local runtime service backend', () => {
+    const settings = buildLocalAiSettings({
+      runtimeBackend: 'sidecar-http',
+      model: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+    })
+
+    expect(settings.runtimeBackend).toBe('local-runtime-service')
+    expect(settings.model).toBe(MOLMO2_O_RESEARCH_RUNTIME_MODEL)
   })
 
   it('keeps a persisted custom developer human-teacher system prompt', () => {
@@ -272,10 +347,10 @@ describe('local-ai settings schema', () => {
       DEFAULT_DEVELOPER_LOCAL_TRAINING_PROFILE
     )
     expect(resolveDeveloperLocalTrainingProfileRuntimeModel('safe')).toBe(
-      RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+      MOLMO2_O_RESEARCH_RUNTIME_MODEL
     )
     expect(resolveDeveloperLocalTrainingProfileRuntimeVisionModel('safe')).toBe(
-      RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL
+      MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL
     )
     expect(
       resolveDeveloperLocalTrainingProfileRuntimeFallbackModel('safe')
@@ -287,11 +362,11 @@ describe('local-ai settings schema', () => {
       RECOMMENDED_LOCAL_AI_TRAINING_MODEL
     )
     expect(resolveDeveloperLocalTrainingProfileRuntimeModel('strong')).toBe(
-      RECOMMENDED_LOCAL_AI_OLLAMA_MODEL
+      MOLMO2_O_RESEARCH_RUNTIME_MODEL
     )
     expect(
       resolveDeveloperLocalTrainingProfileRuntimeVisionModel('strong')
-    ).toBe(RECOMMENDED_LOCAL_AI_OLLAMA_VISION_MODEL)
+    ).toBe(MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL)
     expect(
       resolveDeveloperLocalTrainingProfileRuntimeFallbackModel('strong')
     ).toBe('')
@@ -303,7 +378,8 @@ describe('local-ai settings schema', () => {
     )
     expect(DEVELOPER_LOCAL_TRAINING_PROFILE_CONFIG.strong).toMatchObject({
       modelPath: RECOMMENDED_LOCAL_AI_TRAINING_MODEL,
-      runtimeModel: RECOMMENDED_LOCAL_AI_OLLAMA_MODEL,
+      runtimeModel: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+      runtimeVisionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
     })
   })
 

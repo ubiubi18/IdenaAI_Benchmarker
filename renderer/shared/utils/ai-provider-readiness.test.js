@@ -75,6 +75,9 @@ describe('ai-provider-readiness', () => {
         runtimeBackend: 'ollama-direct',
         baseUrl: 'http://127.0.0.1:11434',
         model: 'llama3.1:8b',
+        adapterStrategy: 'lora',
+        trainingPolicy: 'manual',
+        rankingPolicy: {allowPublicIndexerFallback: false},
       })
     ).toMatchObject({
       enabled: true,
@@ -82,6 +85,30 @@ describe('ai-provider-readiness', () => {
       baseUrl: 'http://127.0.0.1:11434',
       endpoint: 'http://127.0.0.1:11434',
       model: 'llama3.1:8b',
+      adapterStrategy: 'lora',
+      trainingPolicy: 'manual',
+      rankingPolicy: {allowPublicIndexerFallback: false},
+    })
+  })
+
+  it('preserves the managed runtime family in the runtime payload', () => {
+    expect(
+      buildLocalAiRuntimePayload({
+        enabled: true,
+        runtimeBackend: 'local-runtime-service',
+        runtimeFamily: 'molmo2-o',
+        baseUrl: 'http://127.0.0.1:8080',
+        model: 'allenai/Molmo2-O-7B',
+        visionModel: 'allenai/Molmo2-O-7B',
+      })
+    ).toMatchObject({
+      enabled: true,
+      runtimeBackend: 'local-runtime-service',
+      runtimeFamily: 'molmo2-o',
+      baseUrl: 'http://127.0.0.1:8080',
+      endpoint: 'http://127.0.0.1:8080',
+      model: 'allenai/Molmo2-O-7B',
+      visionModel: 'allenai/Molmo2-O-7B',
     })
   })
 

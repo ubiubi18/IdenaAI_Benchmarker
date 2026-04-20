@@ -78,6 +78,7 @@ import {viewVotingHref} from '../../screens/oracles/utils'
 import {useHardFork} from '../../screens/hardfork/hooks'
 import {ChevronRightIcon, GithubIcon} from './icons'
 import {AiEnableDialog} from './ai-enable-dialog'
+import {buildMolmo2OResearchPreset} from '../utils/local-ai-settings'
 import {
   useAutoStartLottery,
   useAutoStartValidation,
@@ -100,6 +101,7 @@ export default function Layout({
   syncing,
   offline,
   skipHardForkScreen = false,
+  allowWhenNodeUnavailable = false,
   ...props
 }) {
   const {t} = useTranslation()
@@ -224,7 +226,7 @@ export default function Layout({
         onResetForkVoting={resetForkVoting}
       />
 
-      {loading && <LoadingApp />}
+      {loading && !allowWhenNodeUnavailable && <LoadingApp />}
 
       {((isFork && !isSyncing && !isOffline) ||
         (isFork && isSyncing && didActivateFork)) && (
@@ -237,9 +239,13 @@ export default function Layout({
         />
       )}
 
-      {isSyncing && (!isFork || (isFork && !didActivateFork)) && <SyncingApp />}
-      {isOffline && <OfflineApp />}
-      {isReady && !isFork && <NormalApp {...props} />}
+      {isSyncing &&
+        (!isFork || (isFork && !didActivateFork)) &&
+        !allowWhenNodeUnavailable && <SyncingApp />}
+      {isOffline && !allowWhenNodeUnavailable && <OfflineApp />}
+      {(isReady || allowWhenNodeUnavailable) && !isFork && (
+        <NormalApp {...props} />
+      )}
 
       {Boolean(authenticationEndpoint) && (
         <DnaSignInDialog
@@ -412,7 +418,7 @@ function BenchmarkResearchBanner() {
   const {t} = useTranslation()
   const router = useRouter()
   const settings = useSettingsState()
-  const [, {updateAiSolverSettings}] = useSettings()
+  const [, {updateAiSolverSettings, updateLocalAiSettings}] = useSettings()
   const aiEnabled = Boolean(settings?.aiSolver?.enabled)
   const aiSetupDisclosure = useDisclosure()
 
@@ -438,7 +444,7 @@ function BenchmarkResearchBanner() {
         >
           <Text fontSize="sm" color={aiEnabled ? 'orange.700' : 'blue.700'}>
             {t(
-              'Enable experimental AI features if you want AI solving or AI-assisted flip generation.'
+              'Turn on AI if you want AI solving or AI-assisted flip generation. New installs can start with the managed local runtime on this device.'
             )}
           </Text>
           <Stack isInline spacing={3} align="center">
@@ -473,8 +479,9 @@ function BenchmarkResearchBanner() {
       <AiEnableDialog
         isOpen={aiSetupDisclosure.isOpen}
         onClose={aiSetupDisclosure.onClose}
-        defaultProvider={String(settings?.aiSolver?.provider || 'openai')}
+        defaultProvider="local-ai"
         providerOptions={[
+          {value: 'local-ai', label: 'Local AI on this device'},
           {value: 'openai', label: 'OpenAI'},
           {value: 'anthropic', label: 'Anthropic Claude'},
           {value: 'gemini', label: 'Google Gemini'},
@@ -486,11 +493,21 @@ function BenchmarkResearchBanner() {
           {value: 'openai-compatible', label: 'OpenAI-compatible (custom)'},
         ]}
         onComplete={async ({provider}) => {
+          if (provider === 'local-ai') {
+            updateLocalAiSettings({
+              enabled: true,
+              ...buildMolmo2OResearchPreset(),
+            })
+          }
           updateAiSolverSettings({
             enabled: true,
             provider,
           })
-          router.push('/settings/ai?setup=1')
+          router.push(
+            provider === 'local-ai'
+              ? '/settings/ai?setup=1&startLocalAi=1'
+              : '/settings/ai?setup=1'
+          )
         }}
       />
     </>

@@ -1,7 +1,8 @@
 const {LOCAL_AI_RUNTIME, LOCAL_AI_RUNTIME_BACKEND} = require('./constants')
 
 const LOCAL_AI_OLLAMA_RUNTIME_BACKEND = 'ollama-direct'
-const LOCAL_AI_SIDECAR_RUNTIME_BACKEND = 'sidecar-http'
+const LOCAL_AI_LOCAL_RUNTIME_SERVICE_BACKEND = 'local-runtime-service'
+const LOCAL_AI_SIDECAR_RUNTIME_BACKEND = LOCAL_AI_LOCAL_RUNTIME_SERVICE_BACKEND
 const LOCAL_AI_OLLAMA_RUNTIME_TYPE = 'ollama'
 const LOCAL_AI_SIDECAR_RUNTIME_TYPE = 'sidecar'
 const LOCAL_AI_OLLAMA_RUNTIME = 'ollama'
@@ -109,6 +110,7 @@ function normalizeLocalAiRuntimeBackend(value) {
     case 'ollama-http':
     case LOCAL_AI_OLLAMA_RUNTIME_BACKEND:
       return LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+    case LOCAL_AI_LOCAL_RUNTIME_SERVICE_BACKEND:
     case 'sidecar':
     case 'sidecar-http':
     case 'local-ai-sidecar':
@@ -215,6 +217,7 @@ module.exports = {
   LOCAL_AI_OLLAMA_RUNTIME,
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
   LOCAL_AI_OLLAMA_RUNTIME_TYPE,
+  LOCAL_AI_LOCAL_RUNTIME_SERVICE_BACKEND,
   LOCAL_AI_SIDECAR_DEFAULT_BASE_URL,
   LOCAL_AI_SIDECAR_RUNTIME_BACKEND,
   LOCAL_AI_SIDECAR_RUNTIME_TYPE,

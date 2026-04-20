@@ -4246,6 +4246,7 @@ function createLocalAiManager({
     running: false,
     runtimeManaged: false,
     managedRuntimeAuthToken: null,
+    runtimeProgress: null,
     mode: 'sidecar',
     runtime: initialRuntime.runtime,
     runtimeBackend: initialRuntime.runtimeBackend,
@@ -4265,6 +4266,43 @@ function createLocalAiManager({
   let hydrationPromise = null
   let persistQueue = Promise.resolve()
 
+  function normalizeRuntimeProgress(progress) {
+    if (!progress || typeof progress !== 'object' || Array.isArray(progress)) {
+      return null
+    }
+
+    const progressPercent = Number(progress.progressPercent)
+    const stageIndex = Number(progress.stageIndex)
+    const stageCount = Number(progress.stageCount)
+
+    return {
+      active: progress.active !== false,
+      status: String(progress.status || '').trim() || 'starting',
+      stage: String(progress.stage || '').trim() || null,
+      message: String(progress.message || '').trim() || null,
+      detail: String(progress.detail || '').trim() || null,
+      progressPercent: Number.isFinite(progressPercent)
+        ? Math.max(0, Math.min(100, Math.round(progressPercent)))
+        : null,
+      stageIndex: Number.isFinite(stageIndex)
+        ? Math.max(1, Math.round(stageIndex))
+        : null,
+      stageCount: Number.isFinite(stageCount)
+        ? Math.max(1, Math.round(stageCount))
+        : null,
+      updatedAt:
+        String(progress.updatedAt || '').trim() || new Date().toISOString(),
+    }
+  }
+
+  function setRuntimeProgress(progress) {
+    state.runtimeProgress = normalizeRuntimeProgress(progress)
+  }
+
+  function clearRuntimeProgress() {
+    state.runtimeProgress = null
+  }
+
   function currentStatus() {
     return {
       available: state.available,
@@ -4280,6 +4318,7 @@ function createLocalAiManager({
       sidecarReachable: state.sidecarReachable,
       sidecarCheckedAt: state.sidecarCheckedAt,
       sidecarModelCount: state.sidecarModels.length,
+      runtimeProgress: state.runtimeProgress,
     }
   }
 
@@ -5523,6 +5562,14 @@ function createLocalAiManager({
     applyRuntimeState(next)
     state.running = true
     state.lastError = null
+    setRuntimeProgress({
+      active: true,
+      status: 'starting',
+      stage: 'check_existing_runtime',
+      message: 'Checking whether the local runtime is already reachable.',
+      progressPercent: 5,
+      updatedAt: new Date().toISOString(),
+    })
 
     if (isDev && logger && typeof logger.debug === 'function') {
       logger.debug('Local AI runtime marked as started', {
@@ -5539,6 +5586,7 @@ function createLocalAiManager({
       initialStatus.status === 'config_error' ||
       !usesManagedInteractiveRuntime(next)
     ) {
+      clearRuntimeProgress()
       state.runtimeManaged = false
       state.running = Boolean(initialStatus.ok)
       return {
@@ -5548,13 +5596,29 @@ function createLocalAiManager({
     }
 
     try {
-      const runtimeStart = await localAiRuntimeController.start(next)
+      const runtimeStart = await localAiRuntimeController.start({
+        ...next,
+        onProgress(progress) {
+          setRuntimeProgress(progress)
+        },
+      })
       state.runtimeManaged = Boolean(runtimeStart && runtimeStart.managed)
       state.managedRuntimeAuthToken =
         String(
           runtimeStart && runtimeStart.authToken ? runtimeStart.authToken : ''
         ).trim() || state.managedRuntimeAuthToken
 
+      setRuntimeProgress({
+        active: true,
+        status: 'starting',
+        stage: 'wait_for_runtime_model_load',
+        message:
+          'The local runtime process is up. On first use it may still be downloading and loading the model before the health check succeeds.',
+        detail:
+          'Keep this window open. The first on-device model load can take several more minutes after package installation finishes.',
+        progressPercent: 96,
+        updatedAt: new Date().toISOString(),
+      })
       const readyStatus = await waitForRuntimeReady({
         ...next,
         timeoutMs: 5000,
@@ -5565,6 +5629,7 @@ function createLocalAiManager({
       )
 
       if (!readyStatus.ok && runtimeStart && runtimeStart.started) {
+        clearRuntimeProgress()
         return {
           ...readyStatus,
           ...currentStatus(),
@@ -5575,6 +5640,7 @@ function createLocalAiManager({
         }
       }
 
+      clearRuntimeProgress()
       return {
         ...readyStatus,
         ...currentStatus(),
@@ -5587,6 +5653,16 @@ function createLocalAiManager({
       state.sidecarReachable = false
       state.sidecarCheckedAt = new Date().toISOString()
       state.sidecarModels = []
+      setRuntimeProgress({
+        active: false,
+        status: 'error',
+        stage: 'runtime_start_failed',
+        message: 'The local runtime could not be started.',
+        detail:
+          state.lastError || 'Unable to start the configured Local AI runtime.',
+        progressPercent: 0,
+        updatedAt: new Date().toISOString(),
+      })
 
       return {
         ok: false,
@@ -5650,6 +5726,7 @@ function createLocalAiManager({
     state.runtimeManaged = false
     state.managedRuntimeAuthToken = null
     state.lastError = null
+    clearRuntimeProgress()
     state.sidecarReachable = null
     state.sidecarCheckedAt = new Date().toISOString()
     state.sidecarModels = []

@@ -359,7 +359,8 @@ export function Toast({
           lineHeight="base"
           textAlign="left"
           w="full"
-          isTruncated
+          whiteSpace="normal"
+          wordBreak="break-word"
         >
           {body}
         </AlertDescription>

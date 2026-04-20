@@ -7,11 +7,15 @@
  * @property {string} mode
  * @property {string} runtimeType
  * @property {string} runtimeBackend
+ * @property {string} runtimeFamily
  * @property {string} reasonerBackend
  * @property {string} visionBackend
  * @property {string} publicModelId
  * @property {string} publicVisionId
  * @property {string} contractVersion
+ * @property {string} adapterStrategy
+ * @property {string} trainingPolicy
+ * @property {any} rankingPolicy
  * @property {string} baseUrl
  * @property {string} endpoint
  * @property {string} model
@@ -26,11 +30,15 @@
  * @property {string=} runtimeMode
  * @property {string=} runtimeType
  * @property {string=} runtimeBackend
+ * @property {string=} runtimeFamily
  * @property {string=} reasonerBackend
  * @property {string=} visionBackend
  * @property {string=} publicModelId
  * @property {string=} publicVisionId
  * @property {string=} contractVersion
+ * @property {string=} adapterStrategy
+ * @property {string=} trainingPolicy
+ * @property {any=} rankingPolicy
  * @property {string=} model
  * @property {string=} visionModel
  */
@@ -173,6 +181,9 @@ function buildLocalAiRuntimePayload(localAi = {}) {
     runtimeType: resolveLocalAiWireRuntimeType(source),
     runtimeBackend:
       source.runtimeBackend || DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
+    runtimeFamily: String(
+      source.runtimeFamily || DEFAULT_LOCAL_AI_SETTINGS.runtimeFamily
+    ).trim(),
     reasonerBackend:
       source.reasonerBackend || DEFAULT_LOCAL_AI_SETTINGS.reasonerBackend,
     visionBackend:
@@ -183,6 +194,16 @@ function buildLocalAiRuntimePayload(localAi = {}) {
       source.publicVisionId || DEFAULT_LOCAL_AI_SETTINGS.publicVisionId,
     contractVersion:
       source.contractVersion || DEFAULT_LOCAL_AI_SETTINGS.contractVersion,
+    adapterStrategy: String(source.adapterStrategy || '').trim(),
+    trainingPolicy: String(source.trainingPolicy || '').trim(),
+    rankingPolicy:
+      source.rankingPolicy && typeof source.rankingPolicy === 'object'
+        ? source.rankingPolicy
+        : null,
+    managedRuntimePythonPath: String(
+      source.managedRuntimePythonPath || ''
+    ).trim(),
+    ollamaCommandPath: String(source.ollamaCommandPath || '').trim(),
     baseUrl,
     endpoint: baseUrl,
     model: String(source.model || '').trim(),

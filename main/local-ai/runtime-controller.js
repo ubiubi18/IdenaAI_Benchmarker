@@ -29,7 +29,6 @@ const PYTHON_COMMAND_CANDIDATES = [
 ]
 const MANAGED_MLX_VLM_REQUIREMENTS = [
   {name: 'mlx-vlm', version: '0.4.4'},
-  {name: 'huggingface-hub', version: '1.11.0'},
   {name: 'pillow', version: '12.2.0'},
 ]
 const MANAGED_TRANSFORMERS_REQUIREMENTS = [
@@ -41,7 +40,6 @@ const MANAGED_TRANSFORMERS_REQUIREMENTS = [
   {name: 'einops', version: '0.8.2'},
   {name: 'molmo_utils', version: '0.0.1'},
   {name: 'decord2', version: '3.3.0'},
-  {name: 'huggingface-hub', version: '1.11.0'},
 ]
 
 function trimString(value) {
@@ -53,8 +51,8 @@ function normalizeBaseUrl(value, fallback = 'http://localhost:5000') {
   return baseUrl || fallback
 }
 
-function resolveOllamaCommand() {
-  const explicit = trimString(process.env.OLLAMA_PATH)
+function resolveOllamaCommand(explicitOverride = '') {
+  const explicit = trimString(explicitOverride || process.env.OLLAMA_PATH)
 
   if (explicit) {
     return explicit
@@ -105,9 +103,19 @@ function isManagedLocalHttpRuntime(payload = {}) {
 }
 
 function resolveManagedMolmo2RuntimeFlavor() {
-  return process.platform === 'darwin' && process.arch === 'arm64'
-    ? 'mlx-vlm'
-    : 'transformers'
+  if (process.platform !== 'darwin') {
+    return 'transformers'
+  }
+
+  if (process.arch === 'arm64') {
+    return 'mlx-vlm'
+  }
+
+  const cpuModel = String(
+    (os.cpus() && os.cpus()[0] && os.cpus()[0].model) || ''
+  )
+
+  return /apple/i.test(cpuModel) ? 'mlx-vlm' : 'transformers'
 }
 
 function buildPythonVariants(configured, preferArm64 = false) {
@@ -155,13 +163,24 @@ function probePythonVariant(variant) {
   return probe.status === 0
 }
 
-function resolvePythonCommandParts({preferArm64 = false} = {}) {
-  for (const candidate of PYTHON_COMMAND_CANDIDATES) {
-    const variants = buildPythonVariants(candidate, preferArm64)
+function resolvePythonCommandParts({
+  preferArm64 = false,
+  configured = '',
+} = {}) {
+  const candidates = [trimString(configured)]
+    .concat(PYTHON_COMMAND_CANDIDATES)
+    .filter(Boolean)
+  const seen = new Set()
 
-    for (const variant of variants) {
-      if (probePythonVariant(variant)) {
-        return variant
+  for (const candidate of candidates) {
+    if (!seen.has(candidate)) {
+      seen.add(candidate)
+      const variants = buildPythonVariants(candidate, preferArm64)
+
+      for (const variant of variants) {
+        if (probePythonVariant(variant)) {
+          return variant
+        }
       }
     }
   }
@@ -194,6 +213,46 @@ function createOutputCollector(maxChars = 16000) {
   }
 }
 
+function clampProgressPercent(value) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+
+  return Math.max(0, Math.min(100, Math.round(parsed)))
+}
+
+function emitRuntimeProgress(onProgress, patch = {}) {
+  if (typeof onProgress !== 'function') {
+    return null
+  }
+
+  const progress = {
+    active: patch.active !== false,
+    status: trimString(patch.status) || 'starting',
+    stage: trimString(patch.stage) || null,
+    message: trimString(patch.message) || null,
+    detail: trimString(patch.detail) || null,
+    progressPercent: clampProgressPercent(patch.progressPercent),
+    stageIndex: Number.isFinite(Number(patch.stageIndex))
+      ? Math.max(1, Number(patch.stageIndex))
+      : null,
+    stageCount: Number.isFinite(Number(patch.stageCount))
+      ? Math.max(1, Number(patch.stageCount))
+      : null,
+    updatedAt: new Date().toISOString(),
+  }
+
+  try {
+    onProgress(progress)
+  } catch {
+    // Best effort progress propagation.
+  }
+
+  return progress
+}
+
 function runCommand({
   command,
   args = [],
@@ -201,6 +260,7 @@ function runCommand({
   env = process.env,
   timeoutMs = MANAGED_RUNTIME_INSTALL_TIMEOUT_MS,
   label = 'Managed Local AI command',
+  onOutput = null,
 }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -251,11 +311,31 @@ function runCommand({
     }
 
     if (child.stdout) {
-      child.stdout.on('data', (chunk) => stdout.append(chunk))
+      child.stdout.on('data', (chunk) => {
+        stdout.append(chunk)
+
+        if (typeof onOutput === 'function') {
+          try {
+            onOutput(String(chunk || ''), 'stdout')
+          } catch {
+            // Best effort progress propagation.
+          }
+        }
+      })
     }
 
     if (child.stderr) {
-      child.stderr.on('data', (chunk) => stderr.append(chunk))
+      child.stderr.on('data', (chunk) => {
+        stderr.append(chunk)
+
+        if (typeof onOutput === 'function') {
+          try {
+            onOutput(String(chunk || ''), 'stderr')
+          } catch {
+            // Best effort progress propagation.
+          }
+        }
+      })
     }
 
     child.once('error', (error) => {
@@ -463,17 +543,40 @@ async function ensureManagedRuntimeAuthToken(runtimeRoot) {
   return token
 }
 
-async function ensureManagedPythonVenv(runtimeRoot, preferArm64 = false) {
+async function ensureManagedPythonVenv(
+  runtimeRoot,
+  preferArm64 = false,
+  {onProgress, pythonPath = ''} = {}
+) {
   const venvDir = path.join(runtimeRoot, 'venv')
   const venvPython = getVenvPythonPath(venvDir)
 
   if (await fs.pathExists(venvPython)) {
+    emitRuntimeProgress(onProgress, {
+      status: 'installing',
+      stage: 'create_python_env',
+      message: 'Using the existing Python environment for the local runtime.',
+      progressPercent: 18,
+      stageIndex: 2,
+      stageCount: 6,
+    })
     return venvPython
   }
 
   await fs.ensureDir(runtimeRoot)
+  emitRuntimeProgress(onProgress, {
+    status: 'installing',
+    stage: 'create_python_env',
+    message: 'Creating the Python environment for the local runtime.',
+    progressPercent: 18,
+    stageIndex: 2,
+    stageCount: 6,
+  })
 
-  const variant = resolvePythonCommandParts({preferArm64})
+  const variant = resolvePythonCommandParts({
+    preferArm64,
+    configured: pythonPath,
+  })
 
   await runCommand({
     command: variant.command,
@@ -484,9 +587,16 @@ async function ensureManagedPythonVenv(runtimeRoot, preferArm64 = false) {
   return venvPython
 }
 
-async function ensureManagedMolmo2RuntimeInstalled(runtimeRoot, flavor) {
+async function ensureManagedMolmo2RuntimeInstalled(
+  runtimeRoot,
+  flavor,
+  {onProgress, pythonPath = ''} = {}
+) {
   const preferArm64 = flavor === 'mlx-vlm'
-  const venvPython = await ensureManagedPythonVenv(runtimeRoot, preferArm64)
+  const venvPython = await ensureManagedPythonVenv(runtimeRoot, preferArm64, {
+    onProgress,
+    pythonPath,
+  })
   const env = buildManagedRuntimeEnv(runtimeRoot)
   const requirements =
     flavor === 'mlx-vlm'
@@ -494,8 +604,27 @@ async function ensureManagedMolmo2RuntimeInstalled(runtimeRoot, flavor) {
       : MANAGED_TRANSFORMERS_REQUIREMENTS
 
   if (probeInstalledPackages(venvPython, requirements)) {
+    emitRuntimeProgress(onProgress, {
+      status: 'installing',
+      stage: 'verify_runtime_packages',
+      message:
+        'The local runtime packages are already installed on this device.',
+      progressPercent: 58,
+      stageIndex: 4,
+      stageCount: 6,
+    })
     return {pythonPath: venvPython, flavor}
   }
+
+  emitRuntimeProgress(onProgress, {
+    status: 'installing',
+    stage: 'install_runtime_packages',
+    message:
+      'Installing the local runtime packages. This can take several minutes on first use.',
+    progressPercent: 38,
+    stageIndex: 3,
+    stageCount: 6,
+  })
 
   await runCommand({
     command: venvPython,
@@ -505,6 +634,37 @@ async function ensureManagedMolmo2RuntimeInstalled(runtimeRoot, flavor) {
       flavor === 'mlx-vlm'
         ? 'Managed Local AI MLX runtime install'
         : 'Managed Local AI transformers runtime install',
+    onOutput(chunk) {
+      const detail = String(chunk || '')
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(-1)[0]
+
+      if (!detail) {
+        return
+      }
+
+      emitRuntimeProgress(onProgress, {
+        status: 'installing',
+        stage: 'install_runtime_packages',
+        message:
+          'Installing the local runtime packages. This can take several minutes on first use.',
+        detail,
+        progressPercent: 38,
+        stageIndex: 3,
+        stageCount: 6,
+      })
+    },
+  })
+
+  emitRuntimeProgress(onProgress, {
+    status: 'installing',
+    stage: 'verify_runtime_packages',
+    message: 'Verifying the installed local runtime packages.',
+    progressPercent: 58,
+    stageIndex: 4,
+    stageCount: 6,
   })
 
   if (!probeInstalledPackages(venvPython, requirements)) {
@@ -638,6 +798,10 @@ function createDefaultRuntimeController({
   }
 
   async function startManagedMolmoRuntime(payload = {}) {
+    const onProgress =
+      payload && typeof payload.onProgress === 'function'
+        ? payload.onProgress
+        : null
     const context = resolveManagedMolmo2RuntimeContext(baseDir, payload)
 
     if (!context.ok) {
@@ -651,6 +815,15 @@ function createDefaultRuntimeController({
     }
 
     const {endpoint, flavor, model, runtimeRoot} = context
+    const pythonPath = trimString(payload.managedRuntimePythonPath)
+    emitRuntimeProgress(onProgress, {
+      status: 'installing',
+      stage: 'prepare_runtime_files',
+      message: 'Preparing the managed local runtime on this device.',
+      progressPercent: 8,
+      stageIndex: 1,
+      stageCount: 6,
+    })
     const authToken = await ensureManagedRuntimeAuthToken(runtimeRoot)
     const env = buildManagedRuntimeEnv(runtimeRoot, {
       [MANAGED_RUNTIME_AUTH_ENV]: authToken,
@@ -669,6 +842,15 @@ function createDefaultRuntimeController({
       !managedProcess.killed &&
       sameManagedSpec(managedSpec, spec)
     ) {
+      emitRuntimeProgress(onProgress, {
+        active: false,
+        status: 'ready',
+        stage: 'runtime_already_running',
+        message: 'The managed local runtime is already running.',
+        progressPercent: 100,
+        stageIndex: 6,
+        stageCount: 6,
+      })
       return {
         started: false,
         managed: true,
@@ -684,6 +866,14 @@ function createDefaultRuntimeController({
       managedProcess.exitCode == null &&
       !managedProcess.killed
     ) {
+      emitRuntimeProgress(onProgress, {
+        status: 'starting',
+        stage: 'restart_runtime_service',
+        message: 'Restarting the managed local runtime service.',
+        progressPercent: 68,
+        stageIndex: 5,
+        stageCount: 6,
+      })
       stopManagedProcess(managedProcess)
       managedProcess = null
       managedSpec = null
@@ -691,8 +881,17 @@ function createDefaultRuntimeController({
 
     const install = await ensureManagedMolmo2RuntimeInstalled(
       runtimeRoot,
-      flavor
+      flavor,
+      {onProgress, pythonPath}
     )
+    emitRuntimeProgress(onProgress, {
+      status: 'starting',
+      stage: 'start_runtime_service',
+      message: 'Starting the managed local runtime service.',
+      progressPercent: 78,
+      stageIndex: 5,
+      stageCount: 6,
+    })
     const child = await spawnManagedProcess(
       install.pythonPath,
       [
@@ -713,6 +912,14 @@ function createDefaultRuntimeController({
     )
 
     rememberManagedProcess(child, spec)
+    emitRuntimeProgress(onProgress, {
+      status: 'starting',
+      stage: 'wait_for_runtime_process',
+      message: 'Waiting for the local runtime process to come online.',
+      progressPercent: 90,
+      stageIndex: 6,
+      stageCount: 6,
+    })
     await ensureProcessSurvivesStartup(child)
 
     if (isDev && logger && typeof logger.debug === 'function') {
@@ -723,6 +930,19 @@ function createDefaultRuntimeController({
         model,
       })
     }
+
+    emitRuntimeProgress(onProgress, {
+      active: false,
+      status: 'starting',
+      stage: 'wait_for_runtime_model_load',
+      message:
+        'The local runtime process is up. On first use it may still be downloading and loading the model before the health check succeeds.',
+      detail:
+        'Keep this window open. The first on-device model load can take several more minutes after package installation finishes.',
+      progressPercent: 96,
+      stageIndex: 6,
+      stageCount: 6,
+    })
 
     return {
       started: true,
@@ -768,6 +988,10 @@ function createDefaultRuntimeController({
 
     async start(payload = {}) {
       const managedKind = managedRuntimeKindFromPayload(payload)
+      const onProgress =
+        payload && typeof payload.onProgress === 'function'
+          ? payload.onProgress
+          : null
 
       if (managedKind === 'ollama') {
         if (
@@ -777,6 +1001,15 @@ function createDefaultRuntimeController({
           managedSpec &&
           managedSpec.kind === 'ollama'
         ) {
+          emitRuntimeProgress(onProgress, {
+            active: false,
+            status: 'ready',
+            stage: 'runtime_already_running',
+            message: 'The Ollama local runtime is already running.',
+            progressPercent: 100,
+            stageIndex: 2,
+            stageCount: 2,
+          })
           return {
             started: false,
             managed: true,
@@ -784,7 +1017,7 @@ function createDefaultRuntimeController({
           }
         }
 
-        const command = resolveOllamaCommand()
+        const command = resolveOllamaCommand(payload.ollamaCommandPath)
         const env = {...process.env}
         const baseUrlValidation = validateLocalAiBaseUrl(payload.baseUrl)
 
@@ -805,6 +1038,14 @@ function createDefaultRuntimeController({
           managedProcess.exitCode == null &&
           !managedProcess.killed
         ) {
+          emitRuntimeProgress(onProgress, {
+            status: 'starting',
+            stage: 'restart_runtime_service',
+            message: 'Restarting the Ollama local runtime.',
+            progressPercent: 65,
+            stageIndex: 1,
+            stageCount: 2,
+          })
           stopManagedProcess(managedProcess)
           managedProcess = null
           managedSpec = null
@@ -816,6 +1057,14 @@ function createDefaultRuntimeController({
           env.OLLAMA_HOST = host
         }
 
+        emitRuntimeProgress(onProgress, {
+          status: 'starting',
+          stage: 'start_runtime_service',
+          message: 'Starting the Ollama local runtime.',
+          progressPercent: 70,
+          stageIndex: 1,
+          stageCount: 2,
+        })
         const child = await spawnManagedProcess(command, ['serve'], {env})
 
         rememberManagedProcess(child, {
@@ -823,6 +1072,15 @@ function createDefaultRuntimeController({
           baseUrl: baseUrlValidation.normalizedBaseUrl,
           model: '',
           flavor: 'ollama',
+        })
+        emitRuntimeProgress(onProgress, {
+          status: 'starting',
+          stage: 'wait_for_runtime_process',
+          message:
+            'Waiting for the Ollama local runtime process to come online.',
+          progressPercent: 90,
+          stageIndex: 2,
+          stageCount: 2,
         })
         await ensureProcessSurvivesStartup(child)
 
@@ -890,4 +1148,5 @@ module.exports = {
   MANAGED_MOLMO2_RUNTIME_START_TIMEOUT_MS,
   createDefaultRuntimeController,
   isManagedLocalHttpRuntime,
+  resolveManagedMolmo2RuntimeFlavor,
 }
