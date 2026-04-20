@@ -451,6 +451,65 @@ function normalizeRuntimeProgress(progress) {
   }
 }
 
+function getRuntimePayloadKey(payload = {}) {
+  const source =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {}
+
+  return JSON.stringify({
+    enabled: source.enabled === true,
+    runtimeBackend: String(source.runtimeBackend || '').trim(),
+    runtimeType: String(source.runtimeType || '').trim(),
+    runtimeFamily: String(source.runtimeFamily || '').trim(),
+    baseUrl: String(source.baseUrl || source.endpoint || '').trim(),
+    model: String(source.model || '').trim(),
+    visionModel: String(source.visionModel || '').trim(),
+    managedRuntimeTrustVersion:
+      Number.parseInt(source.managedRuntimeTrustVersion, 10) || 0,
+    managedRuntimePythonPath: String(
+      source.managedRuntimePythonPath || ''
+    ).trim(),
+    ollamaCommandPath: String(source.ollamaCommandPath || '').trim(),
+  })
+}
+
+function shouldIgnoreStaleRuntimeStatusResult(
+  currentResult,
+  nextResult,
+  {activePayloadKey = '', payloadKey = ''} = {}
+) {
+  if (!activePayloadKey) {
+    return false
+  }
+
+  if (payloadKey && payloadKey !== activePayloadKey) {
+    return true
+  }
+
+  const currentProgress = normalizeRuntimeProgress(
+    currentResult && currentResult.runtimeProgress
+  )
+
+  if (!currentProgress || currentProgress.active === false) {
+    return false
+  }
+
+  const nextProgress = normalizeRuntimeProgress(
+    nextResult && nextResult.runtimeProgress
+  )
+
+  if (nextProgress && nextProgress.active !== false) {
+    return false
+  }
+
+  if (nextResult && nextResult.sidecarReachable === true) {
+    return false
+  }
+
+  return true
+}
+
 function describeRuntimeProgress(progress, t, {managedRuntime = false} = {}) {
   const next = normalizeRuntimeProgress(progress)
 
@@ -1192,6 +1251,9 @@ export default function AiChatPage() {
     () => buildLocalAiRuntimePayload(localAi),
     [localAi]
   )
+  const [activeRuntimePayload, setActiveRuntimePayload] = React.useState(null)
+  const activeRuntimePayloadKeyRef = React.useRef('')
+  const runtimeProgressPollingPayload = activeRuntimePayload || runtimePayload
 
   const [messages, setMessages] = React.useState([])
   const [draft, setDraft] = React.useState('')
@@ -1207,6 +1269,54 @@ export default function AiChatPage() {
     React.useState(false)
   const [managedRuntimeTrustPatch, setManagedRuntimeTrustPatch] =
     React.useState(null)
+  const applyBackgroundStatusResult = React.useCallback(
+    (nextResult, payload) => {
+      const payloadKey = getRuntimePayloadKey(payload)
+      setStatusResult((current) =>
+        shouldIgnoreStaleRuntimeStatusResult(current, nextResult, {
+          activePayloadKey: activeRuntimePayloadKeyRef.current,
+          payloadKey,
+        })
+          ? current
+          : nextResult
+      )
+    },
+    []
+  )
+  const applyBackgroundStatusError = React.useCallback(
+    (nextError, payload) => {
+      const payloadKey = getRuntimePayloadKey(payload)
+      const nextResult = {
+        ok: false,
+        enabled: Boolean(localAi.enabled),
+        sidecarReachable: false,
+        lastError: nextError,
+      }
+
+      let ignored = false
+
+      setStatusResult((current) => {
+        if (
+          shouldIgnoreStaleRuntimeStatusResult(current, nextResult, {
+            activePayloadKey: activeRuntimePayloadKeyRef.current,
+            payloadKey,
+          })
+        ) {
+          ignored = true
+          return current
+        }
+
+        return nextResult
+      })
+
+      if (!ignored) {
+        setLastError(nextError)
+      }
+
+      return !ignored
+    },
+    [localAi.enabled]
+  )
 
   const scrollAnchorRef = React.useRef(null)
   const fileInputRef = React.useRef(null)
@@ -1305,23 +1415,22 @@ export default function AiChatPage() {
     try {
       const bridge = getLocalAiBridge()
       const result = await bridge.status(runtimePayload)
-      setStatusResult(result)
+      applyBackgroundStatusResult(result, runtimePayload)
       setLastError('')
       return result
     } catch (error) {
       const nextError = formatChatError(error, t)
-      setStatusResult({
-        ok: false,
-        enabled: Boolean(localAi.enabled),
-        sidecarReachable: false,
-        lastError: nextError,
-      })
-      setLastError(nextError)
+      applyBackgroundStatusError(nextError, runtimePayload)
       return null
     } finally {
       setIsCheckingStatus(false)
     }
-  }, [localAi.enabled, runtimePayload, t])
+  }, [
+    applyBackgroundStatusError,
+    applyBackgroundStatusResult,
+    runtimePayload,
+    t,
+  ])
 
   React.useEffect(() => {
     refreshRuntimeStatus()
@@ -1346,10 +1455,12 @@ export default function AiChatPage() {
           return
         }
 
-        const result = await global.localAi.status(runtimePayload)
+        const result = await global.localAi.status(
+          runtimeProgressPollingPayload
+        )
 
         if (!cancelled) {
-          setStatusResult(result)
+          applyBackgroundStatusResult(result, runtimeProgressPollingPayload)
         }
       } catch {
         // Keep the latest visible progress state until start settles.
@@ -1369,7 +1480,12 @@ export default function AiChatPage() {
         clearTimeout(timerId)
       }
     }
-  }, [isStartingRuntime, runtimePayload, runtimeProgress?.active])
+  }, [
+    applyBackgroundStatusResult,
+    isStartingRuntime,
+    runtimeProgress?.active,
+    runtimeProgressPollingPayload,
+  ])
 
   const ensureInteractiveRuntimeReady = React.useCallback(async () => {
     if (!localAi.enabled) {
@@ -1736,6 +1852,22 @@ export default function AiChatPage() {
       }
 
       try {
+        activeRuntimePayloadKeyRef.current = getRuntimePayloadKey(nextPayload)
+        setActiveRuntimePayload(nextPayload)
+        setStatusResult((current) => ({
+          ...(current || {}),
+          enabled: true,
+          status: 'starting',
+          runtimeProgress: {
+            active: true,
+            status: managedRuntime ? 'installing' : 'starting',
+            stage: 'prepare_runtime_request',
+            message: managedRuntime
+              ? 'Preparing the managed local runtime on this device.'
+              : 'Preparing the local runtime on this device.',
+            progressPercent: 2,
+          },
+        }))
         updateLocalAiSettings(nextSettingsPatch)
         const bridge = getLocalAiBridge()
         const result = await bridge.start(nextPayload)
@@ -1750,6 +1882,8 @@ export default function AiChatPage() {
         return false
       } finally {
         setIsStartingRuntime(false)
+        activeRuntimePayloadKeyRef.current = ''
+        setActiveRuntimePayload(null)
       }
     },
     [appendAssistantErrorToast, localAi, t, updateLocalAiSettings]

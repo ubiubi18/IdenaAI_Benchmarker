@@ -417,6 +417,65 @@ function normalizeRuntimeProgress(progress) {
   }
 }
 
+function getLocalAiRuntimePayloadKey(payload = {}) {
+  const source =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {}
+
+  return JSON.stringify({
+    enabled: source.enabled === true,
+    runtimeBackend: String(source.runtimeBackend || '').trim(),
+    runtimeType: String(source.runtimeType || '').trim(),
+    runtimeFamily: String(source.runtimeFamily || '').trim(),
+    baseUrl: String(source.baseUrl || source.endpoint || '').trim(),
+    model: String(source.model || '').trim(),
+    visionModel: String(source.visionModel || '').trim(),
+    managedRuntimeTrustVersion:
+      Number.parseInt(source.managedRuntimeTrustVersion, 10) || 0,
+    managedRuntimePythonPath: String(
+      source.managedRuntimePythonPath || ''
+    ).trim(),
+    ollamaCommandPath: String(source.ollamaCommandPath || '').trim(),
+  })
+}
+
+function shouldIgnoreStaleRuntimeStatusResult(
+  currentResult,
+  nextResult,
+  {activePayloadKey = '', payloadKey = ''} = {}
+) {
+  if (!activePayloadKey) {
+    return false
+  }
+
+  if (payloadKey && payloadKey !== activePayloadKey) {
+    return true
+  }
+
+  const currentProgress = normalizeRuntimeProgress(
+    currentResult && currentResult.runtimeProgress
+  )
+
+  if (!currentProgress || currentProgress.active === false) {
+    return false
+  }
+
+  const nextProgress = normalizeRuntimeProgress(
+    nextResult && nextResult.runtimeProgress
+  )
+
+  if (nextProgress && nextProgress.active !== false) {
+    return false
+  }
+
+  if (nextResult && nextResult.sidecarReachable === true) {
+    return false
+  }
+
+  return true
+}
+
 function describeRuntimeProgress(progress, t, {managedRuntime = false} = {}) {
   const next = normalizeRuntimeProgress(progress)
 
@@ -1058,6 +1117,36 @@ export default function AiSettingsPage() {
     () => buildLocalAiRuntimePayload(localAi),
     [localAi]
   )
+  const [activeLocalAiRuntimePayload, setActiveLocalAiRuntimePayload] =
+    useState(null)
+  const activeLocalAiRuntimePayloadKeyRef = React.useRef('')
+  const localAiProgressPollingPayload =
+    activeLocalAiRuntimePayload || localAiRuntimePayload
+  const applyBackgroundLocalAiStatusResult = useCallback(
+    (nextResult, payload) => {
+      const payloadKey = getLocalAiRuntimePayloadKey(payload)
+      setLocalAiStatusResult((current) =>
+        shouldIgnoreStaleRuntimeStatusResult(current, nextResult, {
+          activePayloadKey: activeLocalAiRuntimePayloadKeyRef.current,
+          payloadKey,
+        })
+          ? current
+          : nextResult
+      )
+    },
+    []
+  )
+  const hasActiveLocalAiStartAttempt = useCallback((currentResult) => {
+    if (!activeLocalAiRuntimePayloadKeyRef.current) {
+      return false
+    }
+
+    const currentProgress = normalizeRuntimeProgress(
+      currentResult && currentResult.runtimeProgress
+    )
+
+    return Boolean(currentProgress && currentProgress.active !== false)
+  }, [])
 
   const startLocalAiWithSettings = useCallback(
     async ({
@@ -1144,6 +1233,9 @@ export default function AiSettingsPage() {
       )
 
       setIsStartingLocalAi(true)
+      activeLocalAiRuntimePayloadKeyRef.current =
+        getLocalAiRuntimePayloadKey(nextPayload)
+      setActiveLocalAiRuntimePayload(nextPayload)
 
       try {
         const result = normalizeLocalAiStatusResult(
@@ -1172,6 +1264,8 @@ export default function AiSettingsPage() {
         return result
       } finally {
         setIsStartingLocalAi(false)
+        activeLocalAiRuntimePayloadKeyRef.current = ''
+        setActiveLocalAiRuntimePayload(null)
       }
     },
     [localAi, notify, t, updateAiSolverSettings, updateLocalAiSettings]
@@ -1341,7 +1435,7 @@ export default function AiSettingsPage() {
         }),
         localAiRuntimeUrl
       )
-      setLocalAiStatusResult(result)
+      applyBackgroundLocalAiStatusResult(result, localAiRuntimePayload)
       return result
     } catch (error) {
       const result = normalizeLocalAiStatusResult(
@@ -1356,12 +1450,13 @@ export default function AiSettingsPage() {
         },
         localAiRuntimeUrl
       )
-      setLocalAiStatusResult(result)
+      applyBackgroundLocalAiStatusResult(result, localAiRuntimePayload)
       return result
     } finally {
       setIsCheckingLocalAi(false)
     }
   }, [
+    applyBackgroundLocalAiStatusResult,
     localAi.enabled,
     localAiRuntimePayload,
     localAi.runtimeBackend,
@@ -1388,12 +1483,15 @@ export default function AiSettingsPage() {
         }
 
         const result = normalizeLocalAiStatusResult(
-          await global.localAi.status(localAiRuntimePayload),
-          localAiRuntimeUrl
+          await global.localAi.status(localAiProgressPollingPayload),
+          localAiProgressPollingPayload?.baseUrl || localAiRuntimeUrl
         )
 
         if (!cancelled) {
-          setLocalAiStatusResult(result)
+          applyBackgroundLocalAiStatusResult(
+            result,
+            localAiProgressPollingPayload
+          )
         }
       } catch {
         // Keep the last visible progress state until the start call resolves.
@@ -1414,8 +1512,9 @@ export default function AiSettingsPage() {
       }
     }
   }, [
+    applyBackgroundLocalAiStatusResult,
     isStartingLocalAi,
-    localAiRuntimePayload,
+    localAiProgressPollingPayload,
     localAiRuntimeProgress?.active,
     localAiRuntimeUrl,
   ])
@@ -1448,8 +1547,12 @@ export default function AiSettingsPage() {
 
   useEffect(() => {
     if (!localAi.enabled) {
-      setLocalAiStatusResult(
-        normalizeLocalAiStatusResult(
+      setLocalAiStatusResult((current) => {
+        if (hasActiveLocalAiStartAttempt(current)) {
+          return current
+        }
+
+        return normalizeLocalAiStatusResult(
           {
             enabled: false,
             status: 'disabled',
@@ -1462,12 +1565,16 @@ export default function AiSettingsPage() {
           },
           localAiRuntimeUrl
         )
-      )
+      })
       return
     }
 
     if (!localAiEndpointSafety.safe) {
       setLocalAiStatusResult((current) => {
+        if (hasActiveLocalAiStartAttempt(current)) {
+          return current
+        }
+
         if (
           current &&
           current.enabled !== false &&
@@ -1494,6 +1601,10 @@ export default function AiSettingsPage() {
     }
 
     setLocalAiStatusResult((current) => {
+      if (hasActiveLocalAiStartAttempt(current)) {
+        return current
+      }
+
       if (current && current.enabled !== false) {
         return current
       }
@@ -1512,6 +1623,7 @@ export default function AiSettingsPage() {
       )
     })
   }, [
+    hasActiveLocalAiStartAttempt,
     localAi.enabled,
     localAi.runtimeBackend,
     localAiEndpointSafety.message,
@@ -1541,6 +1653,23 @@ export default function AiSettingsPage() {
   const localAiStartButtonLabel = localAiRuntimeProgressDisplay?.title
     ? localAiRuntimeProgressDisplay.title
     : localAiSelection.startLabel
+  const localAiTopSummaryTitle = localAiRuntimeProgressDisplay?.title
+    ? localAiRuntimeProgressDisplay.title
+    : localAiRuntimeStatus.title
+  let localAiSetupStatusBorderColor = 'gray.100'
+  let localAiSetupStatusBackgroundColor = 'gray.50'
+  let localAiSetupStatusTitleColor = localAiRuntimeStatus.tone
+
+  if (localAiRuntimeStatus.tone === 'red.500') {
+    localAiSetupStatusBorderColor = 'red.100'
+    localAiSetupStatusBackgroundColor = 'red.50'
+  }
+
+  if (localAiRuntimeProgressDisplay) {
+    localAiSetupStatusBorderColor = 'blue.100'
+    localAiSetupStatusBackgroundColor = 'blue.50'
+    localAiSetupStatusTitleColor = 'blue.700'
+  }
 
   const runLocalAiChatTest = useCallback(async () => {
     const prompt = String(localAiDebugChatPrompt || '').trim()
@@ -2477,7 +2606,7 @@ export default function AiSettingsPage() {
                         </Text>
                       </Box>
                       <Text color="muted" fontSize="xs">
-                        {t('Current runtime')}: {localAiRuntimeStatus.title}
+                        {t('Current runtime')}: {localAiTopSummaryTitle}
                       </Text>
                       <Stack isInline spacing={2} flexWrap="wrap">
                         <PrimaryButton
@@ -3691,6 +3820,63 @@ export default function AiSettingsPage() {
                   'Recommended for most people: let IdenaAI prepare the managed on-device runtime now and follow the progress bar below. Pick Ollama only if you already run your own local model runtime.'
                 )}
               </Text>
+              <Box
+                borderWidth="1px"
+                borderColor={localAiSetupStatusBorderColor}
+                bg={localAiSetupStatusBackgroundColor}
+                borderRadius="md"
+                p={3}
+              >
+                <Stack spacing={2}>
+                  <Text color={localAiSetupStatusTitleColor} fontWeight={600}>
+                    {localAiRuntimeProgressDisplay
+                      ? localAiRuntimeProgressDisplay.title
+                      : localAiRuntimeStatus.title}
+                  </Text>
+                  <Text color="muted" fontSize="sm">
+                    {localAiRuntimeProgressDisplay
+                      ? localAiRuntimeProgressDisplay.description
+                      : localAiRuntimeStatus.description}
+                  </Text>
+                  {localAiRuntimeProgressDisplay ? (
+                    <Box pt={1}>
+                      <Progress
+                        value={
+                          localAiRuntimeProgressDisplay.progressPercent ??
+                          undefined
+                        }
+                        isIndeterminate={
+                          !Number.isFinite(
+                            localAiRuntimeProgressDisplay.progressPercent
+                          )
+                        }
+                        hasStripe
+                        isAnimated
+                      />
+                      <Flex
+                        align="center"
+                        justify="space-between"
+                        mt={2}
+                        gap={3}
+                      >
+                        <Text color="muted" fontSize="xs">
+                          {localAiRuntimeProgressDisplay.detail ||
+                            t(
+                              'The first setup can take several minutes while Python packages and model files are prepared.'
+                            )}
+                        </Text>
+                        {Number.isFinite(
+                          localAiRuntimeProgressDisplay.progressPercent
+                        ) ? (
+                          <Text color="muted" fontSize="xs" fontWeight={600}>
+                            {localAiRuntimeProgressDisplay.progressPercent}%
+                          </Text>
+                        ) : null}
+                      </Flex>
+                    </Box>
+                  ) : null}
+                </Stack>
+              </Box>
               <Text color="muted" fontSize="sm">
                 {t(
                   'Only if automatic repair fails: use the custom path dialog in the runtime box below.'
@@ -4156,14 +4342,46 @@ export default function AiSettingsPage() {
                     <SecondaryButton
                       isDisabled={!localAi.enabled || isStartingLocalAi}
                       onClick={async () => {
+                        const nextPayload = localAiRuntimePayload
                         setIsStartingLocalAi(true)
+                        activeLocalAiRuntimePayloadKeyRef.current =
+                          getLocalAiRuntimePayloadKey(nextPayload)
+                        setActiveLocalAiRuntimePayload(nextPayload)
+                        setLocalAiStatusResult((current) =>
+                          normalizeLocalAiStatusResult(
+                            {
+                              ...(current || {}),
+                              enabled: true,
+                              status: 'starting',
+                              runtime:
+                                localAi.runtimeBackend ||
+                                DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
+                              runtimeBackend:
+                                localAi.runtimeBackend ||
+                                DEFAULT_LOCAL_AI_SETTINGS.runtimeBackend,
+                              runtimeType:
+                                resolveLocalAiWireRuntimeType(localAi),
+                              baseUrl: nextPayload.baseUrl || localAiRuntimeUrl,
+                              runtimeProgress: {
+                                active: true,
+                                status: isManagedMolmo2Runtime(localAi)
+                                  ? 'installing'
+                                  : 'starting',
+                                stage: 'prepare_runtime_request',
+                                message: isManagedMolmo2Runtime(localAi)
+                                  ? 'Preparing the managed local runtime on this device.'
+                                  : 'Preparing the local runtime on this device.',
+                                progressPercent: 2,
+                              },
+                            },
+                            nextPayload.baseUrl || localAiRuntimeUrl
+                          )
+                        )
 
                         try {
                           const result = normalizeLocalAiStatusResult(
-                            await ensureLocalAiBridge().start(
-                              localAiRuntimePayload
-                            ),
-                            localAiRuntimeUrl
+                            await ensureLocalAiBridge().start(nextPayload),
+                            nextPayload.baseUrl || localAiRuntimeUrl
                           )
                           setLocalAiStatusResult(result)
 
@@ -4184,6 +4402,8 @@ export default function AiSettingsPage() {
                           )
                         } finally {
                           setIsStartingLocalAi(false)
+                          activeLocalAiRuntimePayloadKeyRef.current = ''
+                          setActiveLocalAiRuntimePayload(null)
                         }
                       }}
                     >

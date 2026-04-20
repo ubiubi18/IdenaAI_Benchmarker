@@ -28,12 +28,28 @@ function withLegacyOpenSsl(env) {
   const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10)
   const needsLegacyProvider =
     nodeMajor >= 17 && !baseNodeOptions.includes('--openssl-legacy-provider')
+  const requestedHeapMb = Number.parseInt(
+    env.IDENA_DESKTOP_DEV_HEAP_MB || '8192',
+    10
+  )
+  const needsHeapIncrease =
+    Number.isFinite(requestedHeapMb) &&
+    requestedHeapMb > 0 &&
+    !/--max-old-space-size=\d+/.test(baseNodeOptions)
+
+  const nodeOptions = [baseNodeOptions]
+
+  if (needsLegacyProvider) {
+    nodeOptions.push('--openssl-legacy-provider')
+  }
+
+  if (needsHeapIncrease) {
+    nodeOptions.push(`--max-old-space-size=${requestedHeapMb}`)
+  }
 
   return {
     ...env,
-    NODE_OPTIONS: needsLegacyProvider
-      ? `${baseNodeOptions} --openssl-legacy-provider`.trim()
-      : baseNodeOptions,
+    NODE_OPTIONS: nodeOptions.join(' ').trim(),
   }
 }
 
