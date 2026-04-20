@@ -1,6 +1,9 @@
 const os = require('os')
 
-const {resolveManagedMolmo2RuntimeFlavor} = require('./runtime-controller')
+const {
+  createDefaultRuntimeController,
+  resolveManagedMolmo2RuntimeFlavor,
+} = require('./runtime-controller')
 
 describe('managed local runtime flavor selection', () => {
   const originalPlatform = process.platform
@@ -44,5 +47,20 @@ describe('managed local runtime flavor selection', () => {
     jest.spyOn(os, 'cpus').mockReturnValue([{model: 'Intel(R) Core(TM) i9'}])
 
     expect(resolveManagedMolmo2RuntimeFlavor()).toBe('transformers')
+  })
+
+  it('requires explicit trust approval before starting the managed Molmo2 runtime', async () => {
+    const controller = createDefaultRuntimeController()
+
+    await expect(
+      controller.start({
+        runtimeBackend: 'local-runtime-service',
+        runtimeFamily: 'molmo2-o',
+        baseUrl: 'http://127.0.0.1:8080',
+        model: 'allenai/Molmo2-O-7B',
+      })
+    ).rejects.toMatchObject({
+      code: 'managed_runtime_trust_required',
+    })
   })
 })

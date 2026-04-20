@@ -1,5 +1,6 @@
 const {
   DEFAULT_LOCAL_AI_SETTINGS,
+  MANAGED_LOCAL_RUNTIME_TRUST_VERSION,
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
@@ -30,11 +31,14 @@ const {
   MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
   buildLocalAiSettings,
   buildMolmo2OResearchPreset,
+  buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   buildRecommendedLocalAiMacPreset,
   buildLocalAiRuntimePreset,
   getLocalAiEndpointSafety,
   mergeLocalAiSettings,
+  hasManagedLocalAiTrustApproval,
+  normalizeManagedRuntimeTrustVersion,
   normalizeDeveloperLocalTrainingProfile,
   normalizeDeveloperLocalTrainingThermalMode,
   normalizeDeveloperLocalBenchmarkThermalMode,
@@ -71,6 +75,7 @@ describe('local-ai settings schema', () => {
     expect(settings.endpoint).toBe(DEFAULT_LOCAL_AI_OLLAMA_BASE_URL)
     expect(settings.managedRuntimePythonPath).toBe('')
     expect(settings.ollamaCommandPath).toBe('')
+    expect(settings.managedRuntimeTrustVersion).toBe(0)
     expect(settings.model).toBe(DEFAULT_LOCAL_AI_OLLAMA_MODEL)
     expect(settings.visionModel).toBe(DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL)
     expect(settings.runtimeType).toBe('ollama')
@@ -222,6 +227,22 @@ describe('local-ai settings schema', () => {
       model: '',
       visionModel: '',
     })
+  })
+
+  it('tracks one-time trust approval for the managed runtime', () => {
+    expect(normalizeManagedRuntimeTrustVersion(undefined)).toBe(0)
+    expect(hasManagedLocalAiTrustApproval(buildLocalAiSettings())).toBe(false)
+
+    const approved = buildLocalAiSettings({
+      runtimeBackend: 'local-runtime-service',
+      runtimeFamily: 'molmo2-o',
+      ...buildManagedLocalAiTrustApprovalPatch(),
+    })
+
+    expect(approved.managedRuntimeTrustVersion).toBe(
+      MANAGED_LOCAL_RUNTIME_TRUST_VERSION
+    )
+    expect(hasManagedLocalAiTrustApproval(approved)).toBe(true)
   })
 
   it('builds an embryo-stage Mac Ollama preset without a bundled base model', () => {

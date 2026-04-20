@@ -10,6 +10,7 @@ const LOCAL_RUNTIME_SERVICE_BACKEND = 'local-runtime-service'
 const MOLMO2_O_RESEARCH_BASE_URL = 'http://127.0.0.1:8080'
 const MOLMO2_O_RESEARCH_RUNTIME_MODEL = 'allenai/Molmo2-O-7B'
 const MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL = 'allenai/Molmo2-O-7B'
+const MANAGED_LOCAL_RUNTIME_TRUST_VERSION = 1
 const DEFAULT_LOCAL_AI_OLLAMA_MODEL = ''
 const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = ''
 const RECOMMENDED_LOCAL_AI_OLLAMA_MODEL = ''
@@ -106,6 +107,7 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
   endpoint: DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   managedRuntimePythonPath: '',
   ollamaCommandPath: '',
+  managedRuntimeTrustVersion: 0,
   runtimeType: '',
   runtimeFamily: '',
   model: DEFAULT_LOCAL_AI_OLLAMA_MODEL,
@@ -154,6 +156,24 @@ const DEFAULT_LOCAL_AI_SETTINGS = {
     excludeRepeatReportOffenders: false,
     maxRepeatReportOffenses: 1,
   },
+}
+
+function normalizeManagedRuntimeTrustVersion(value) {
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+function hasManagedLocalAiTrustApproval(source = {}) {
+  return (
+    normalizeManagedRuntimeTrustVersion(source.managedRuntimeTrustVersion) >=
+    MANAGED_LOCAL_RUNTIME_TRUST_VERSION
+  )
+}
+
+function buildManagedLocalAiTrustApprovalPatch() {
+  return {
+    managedRuntimeTrustVersion: MANAGED_LOCAL_RUNTIME_TRUST_VERSION,
+  }
 }
 
 function trimString(value) {
@@ -708,6 +728,9 @@ function buildLocalAiSettings(settings = {}) {
       source.managedRuntimePythonPath
     ),
     ollamaCommandPath: normalizeOptionalCommandPath(source.ollamaCommandPath),
+    managedRuntimeTrustVersion: normalizeManagedRuntimeTrustVersion(
+      source.managedRuntimeTrustVersion
+    ),
     runtimeType: trimString(source.runtimeType),
     runtimeFamily: normalizeLegacyRuntimeFamily(source),
     model:
@@ -828,6 +851,7 @@ module.exports = {
   LEGACY_LOCAL_AI_VISION_MODEL,
   LEGACY_LOCAL_AI_CONTRACT_VERSION,
   DEFAULT_LOCAL_AI_SETTINGS,
+  MANAGED_LOCAL_RUNTIME_TRUST_VERSION,
   DEFAULT_LOCAL_AI_OLLAMA_BASE_URL,
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL,
@@ -869,7 +893,9 @@ module.exports = {
   buildLocalAiRuntimePreset,
   buildRecommendedLocalAiMacPreset,
   buildMolmo2OResearchPreset,
+  buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
+  hasManagedLocalAiTrustApproval,
   normalizeDeveloperLocalTrainingProfile,
   normalizeDeveloperLocalTrainingThermalMode,
   normalizeDeveloperLocalBenchmarkThermalMode,
@@ -891,4 +917,5 @@ module.exports = {
   resolveDeveloperLocalBenchmarkThermalModeCooldowns,
   buildLocalAiSettings,
   mergeLocalAiSettings,
+  normalizeManagedRuntimeTrustVersion,
 }

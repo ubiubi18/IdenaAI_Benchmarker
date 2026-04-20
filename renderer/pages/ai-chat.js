@@ -46,6 +46,7 @@ import {
   PrimaryButton,
   SecondaryButton,
 } from '../shared/components/button'
+import {ManagedRuntimeTrustDialog} from '../shared/components/managed-runtime-trust-dialog'
 import {useChainState} from '../shared/providers/chain-context'
 import {EpochPeriod, useEpochState} from '../shared/providers/epoch-context'
 import {
@@ -58,9 +59,11 @@ import {
 } from '../shared/utils/ai-provider-readiness'
 import {
   DEFAULT_LOCAL_AI_SETTINGS,
+  buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   buildMolmo2OResearchPreset,
   buildLocalAiSettings,
+  hasManagedLocalAiTrustApproval,
 } from '../shared/utils/local-ai-settings'
 import {
   ChatIcon,
@@ -387,6 +390,18 @@ function formatRuntimeStatusError(result, t) {
     )
   }
 
+  if (/managed_runtime_trust_required/i.test(message)) {
+    return t(
+      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot locally.'
+    )
+  }
+
+  if (/unsupported_managed_model/i.test(message)) {
+    return t(
+      'The managed on-device runtime is locked to the pinned Molmo2-O model. Use a custom local runtime if you need a different base model.'
+    )
+  }
+
   if (/idle/i.test(message)) {
     return t('The local runtime is currently stopped.')
   }
@@ -396,6 +411,16 @@ function formatRuntimeStatusError(result, t) {
 
 function formatChatError(error, t) {
   const message = String((error && error.message) || error || '').trim()
+  if (/managed_runtime_trust_required/i.test(message)) {
+    return t(
+      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot locally.'
+    )
+  }
+  if (/unsupported_managed_model/i.test(message)) {
+    return t(
+      'The managed on-device runtime is locked to the pinned Molmo2-O model. Use a custom local runtime if you need a different base model.'
+    )
+  }
   return message || t('Local AI chat request failed.')
 }
 
@@ -1178,6 +1203,10 @@ export default function AiChatPage() {
   const [isSending, setIsSending] = React.useState(false)
   const [isComposerFocused, setIsComposerFocused] = React.useState(false)
   const [lastError, setLastError] = React.useState('')
+  const [isManagedRuntimeTrustDialogOpen, setIsManagedRuntimeTrustDialogOpen] =
+    React.useState(false)
+  const [managedRuntimeTrustPatch, setManagedRuntimeTrustPatch] =
+    React.useState(null)
 
   const scrollAnchorRef = React.useRef(null)
   const fileInputRef = React.useRef(null)
@@ -1681,10 +1710,52 @@ export default function AiChatPage() {
     updateLocalAiSettings,
   ])
 
-  const handleStartLocalAi = React.useCallback(async () => {
-    setIsStartingRuntime(true)
-    setLastError('')
+  const startLocalAiRuntime = React.useCallback(
+    async (nextSettingsPatch) => {
+      setIsStartingRuntime(true)
+      setLastError('')
 
+      const nextLocalAi = buildLocalAiSettings({
+        ...localAi,
+        ...nextSettingsPatch,
+      })
+      const nextPayload = buildLocalAiRuntimePayload(nextLocalAi)
+      const managedRuntime =
+        String(nextLocalAi.runtimeBackend || '')
+          .trim()
+          .toLowerCase() === 'local-runtime-service' &&
+        String(nextLocalAi.runtimeFamily || '')
+          .trim()
+          .toLowerCase() === 'molmo2-o'
+
+      if (managedRuntime && !hasManagedLocalAiTrustApproval(nextLocalAi)) {
+        setManagedRuntimeTrustPatch(nextSettingsPatch)
+        setIsManagedRuntimeTrustDialogOpen(true)
+        setIsStartingRuntime(false)
+        return false
+      }
+
+      try {
+        updateLocalAiSettings(nextSettingsPatch)
+        const bridge = getLocalAiBridge()
+        const result = await bridge.start(nextPayload)
+        setStatusResult(result)
+        const ready = result && result.sidecarReachable === true
+        setLastError(ready ? '' : formatRuntimeStatusError(result, t))
+        return ready
+      } catch (error) {
+        const nextError = formatChatError(error, t)
+        setLastError(nextError)
+        appendAssistantErrorToast(nextError)
+        return false
+      } finally {
+        setIsStartingRuntime(false)
+      }
+    },
+    [appendAssistantErrorToast, localAi, t, updateLocalAiSettings]
+  )
+
+  const handleStartLocalAi = React.useCallback(async () => {
     const nextSettingsPatch =
       localAi.runtimeBackend === 'local-runtime-service' ||
       (localAi.runtimeBackend === 'ollama-direct' &&
@@ -1694,40 +1765,15 @@ export default function AiChatPage() {
             enabled: true,
             ...buildMolmo2OResearchPreset(),
           }
-    const nextLocalAi = buildLocalAiSettings({
-      ...localAi,
-      ...nextSettingsPatch,
-    })
-    const nextPayload = buildLocalAiRuntimePayload(nextLocalAi)
 
-    try {
-      updateLocalAiSettings(nextSettingsPatch)
-      const bridge = getLocalAiBridge()
-      const result = await bridge.start(nextPayload)
-      setStatusResult(result)
-      const ready = result && result.sidecarReachable === true
-      setLastError(ready ? '' : formatRuntimeStatusError(result, t))
-      return ready
-    } catch (error) {
-      const nextError = formatChatError(error, t)
-      setLastError(nextError)
-      appendAssistantErrorToast(nextError)
-      return false
-    } finally {
-      setIsStartingRuntime(false)
-    }
+    return startLocalAiRuntime(nextSettingsPatch)
   }, [
-    appendAssistantErrorToast,
-    localAi,
+    localAi.runtimeBackend,
     shouldBootstrapManagedLocalAi,
-    t,
-    updateLocalAiSettings,
+    startLocalAiRuntime,
   ])
 
   const handleFixLocalAiAutomatically = React.useCallback(async () => {
-    setIsStartingRuntime(true)
-    setLastError('')
-
     const nextSettingsPatch = {
       enabled: true,
       ...buildLocalAiRepairPreset(localAi, {
@@ -1736,35 +1782,25 @@ export default function AiChatPage() {
           localAi.runtimeBackend === 'local-runtime-service',
       }),
     }
-    const nextLocalAi = buildLocalAiSettings({
-      ...localAi,
-      ...nextSettingsPatch,
-    })
-    const nextPayload = buildLocalAiRuntimePayload(nextLocalAi)
 
-    try {
-      updateLocalAiSettings(nextSettingsPatch)
-      const bridge = getLocalAiBridge()
-      const result = await bridge.start(nextPayload)
-      setStatusResult(result)
-      const ready = result && result.sidecarReachable === true
-      setLastError(ready ? '' : formatRuntimeStatusError(result, t))
-      return ready
-    } catch (error) {
-      const nextError = formatChatError(error, t)
-      setLastError(nextError)
-      appendAssistantErrorToast(nextError)
-      return false
-    } finally {
-      setIsStartingRuntime(false)
+    return startLocalAiRuntime(nextSettingsPatch)
+  }, [localAi, shouldBootstrapManagedLocalAi, startLocalAiRuntime])
+
+  const closeManagedRuntimeTrustDialog = React.useCallback(() => {
+    setIsManagedRuntimeTrustDialogOpen(false)
+    setManagedRuntimeTrustPatch(null)
+  }, [])
+
+  const approveManagedRuntimeTrust = React.useCallback(async () => {
+    const nextSettingsPatch = {
+      ...((managedRuntimeTrustPatch && managedRuntimeTrustPatch) || {}),
+      ...buildManagedLocalAiTrustApprovalPatch(),
     }
-  }, [
-    appendAssistantErrorToast,
-    localAi,
-    shouldBootstrapManagedLocalAi,
-    t,
-    updateLocalAiSettings,
-  ])
+
+    setIsManagedRuntimeTrustDialogOpen(false)
+    setManagedRuntimeTrustPatch(null)
+    await startLocalAiRuntime(nextSettingsPatch)
+  }, [managedRuntimeTrustPatch, startLocalAiRuntime])
 
   const handleEnableAndStartLocalAi = React.useCallback(async () => {
     handleEnableLocalAi()
@@ -2556,6 +2592,14 @@ export default function AiChatPage() {
           </Box>
         </Flex>
       </Page>
+      <ManagedRuntimeTrustDialog
+        isOpen={isManagedRuntimeTrustDialogOpen}
+        onClose={closeManagedRuntimeTrustDialog}
+        onConfirm={approveManagedRuntimeTrust}
+        isLoading={isStartingRuntime}
+        title={t('Trust managed on-device AI')}
+        confirmLabel={t('Trust and start')}
+      />
     </Layout>
   )
 }

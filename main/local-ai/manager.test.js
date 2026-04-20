@@ -92,6 +92,51 @@ describe('local-ai manager', () => {
     await fs.remove(tempDir)
   })
 
+  it('preserves managed runtime trust errors from the runtime controller', async () => {
+    const logger = mockLogger()
+    const runtimeController = {
+      start: jest.fn(async () => {
+        const error = new Error(
+          'Approve the managed runtime before installation starts.'
+        )
+        error.code = 'managed_runtime_trust_required'
+        throw error
+      }),
+      stop: jest.fn(async () => ({stopped: false, managed: false})),
+      resolveAccess: jest.fn(() => ({managed: false, authToken: null})),
+    }
+    const sidecar = {
+      getHealth: jest.fn(async () => ({
+        ok: false,
+        status: 'error',
+        error: 'runtime_unavailable',
+        lastError: 'Local runtime is unavailable',
+      })),
+      listModels: jest.fn(async () => ({
+        ok: true,
+        models: [],
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger,
+      storage,
+      runtimeController,
+      sidecar,
+    })
+
+    const result = await manager.start({
+      runtimeBackend: 'local-runtime-service',
+      runtimeFamily: 'molmo2-o',
+      baseUrl: 'http://127.0.0.1:8080',
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'managed_runtime_trust_required',
+    })
+    expect(runtimeController.start).toHaveBeenCalled()
+  })
+
   it('skips explicitly ineligible captures when consensus signals are available', async () => {
     const logger = mockLogger()
     const manager = createLocalAiManager({logger, storage, isDev: true})

@@ -32,6 +32,7 @@ import {
   Toast,
 } from '../../shared/components/components'
 import {PrimaryButton, SecondaryButton} from '../../shared/components/button'
+import {ManagedRuntimeTrustDialog} from '../../shared/components/managed-runtime-trust-dialog'
 import {
   useSettingsDispatch,
   useSettingsState,
@@ -51,12 +52,14 @@ import {
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+  buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   buildRecommendedLocalAiMacPreset,
   buildMolmo2OResearchPreset,
   buildLocalAiRuntimePreset,
   buildLocalAiSettings,
   getLocalAiEndpointSafety,
+  hasManagedLocalAiTrustApproval,
   resolveLocalAiWireRuntimeType,
 } from '../../shared/utils/local-ai-settings'
 
@@ -291,6 +294,14 @@ function formatErrorForToast(error) {
     return 'The managed local runtime is still preparing the on-device model. The first launch can take several more minutes after package installation.'
   }
 
+  if (/managed_runtime_trust_required/i.test(message)) {
+    return 'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot locally.'
+  }
+
+  if (/unsupported_managed_model/i.test(message)) {
+    return 'The managed on-device runtime is locked to the pinned Molmo2-O model. Use a custom local runtime if you need a different base model.'
+  }
+
   return message
 }
 
@@ -303,6 +314,14 @@ function isManagedMolmo2Runtime(localAi = {}) {
       .trim()
       .toLowerCase() === 'molmo2-o'
   )
+}
+
+function buildRecommendedRuntimePresetForBackend(runtimeBackend) {
+  return String(runtimeBackend || '')
+    .trim()
+    .toLowerCase() === 'local-runtime-service'
+    ? buildMolmo2OResearchPreset()
+    : buildLocalAiRuntimePreset(runtimeBackend)
 }
 
 function humanizeLocalAiRuntimeError(
@@ -326,6 +345,18 @@ function humanizeLocalAiRuntimeError(
       : t(
           'Nothing is listening on the configured local endpoint yet. Start the local runtime and try again.'
         )
+  }
+
+  if (/managed_runtime_trust_required/i.test(text)) {
+    return t(
+      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot locally.'
+    )
+  }
+
+  if (/unsupported_managed_model/i.test(text)) {
+    return t(
+      'The managed on-device runtime is locked to the pinned Molmo2-O model. Use a custom local runtime if you need a different base model.'
+    )
   }
 
   if (/runtime_start_timeout|not responding yet/i.test(text)) {
@@ -862,6 +893,10 @@ export default function AiSettingsPage() {
   const [isStartingLocalAi, setIsStartingLocalAi] = useState(false)
   const [isStoppingLocalAi, setIsStoppingLocalAi] = useState(false)
   const [isRuntimePathDialogOpen, setIsRuntimePathDialogOpen] = useState(false)
+  const [isManagedRuntimeTrustDialogOpen, setIsManagedRuntimeTrustDialogOpen] =
+    useState(false)
+  const [managedRuntimeTrustRequest, setManagedRuntimeTrustRequest] =
+    useState(null)
   const [runtimePathDraft, setRuntimePathDraft] = useState({
     endpoint: '',
     managedRuntimePythonPath: '',
@@ -970,7 +1005,9 @@ export default function AiSettingsPage() {
 
   const applyLocalAiRuntimeBackend = useCallback(
     (runtimeBackend) => {
-      updateLocalAiSettings(buildLocalAiRuntimePreset(runtimeBackend))
+      updateLocalAiSettings(
+        buildRecommendedRuntimePresetForBackend(runtimeBackend)
+      )
     },
     [updateLocalAiSettings]
   )
@@ -1045,6 +1082,30 @@ export default function AiSettingsPage() {
       if (openSetup) {
         setShowLocalAiSetup(true)
         setShowProviderSetup(false)
+      }
+
+      if (managedRuntime && !hasManagedLocalAiTrustApproval(nextLocalAi)) {
+        setManagedRuntimeTrustRequest({
+          localAiPatch: nextSettingsPatch,
+          enableLocalProvider,
+          openSetup,
+          preparingMessage,
+        })
+        setIsManagedRuntimeTrustDialogOpen(true)
+        return normalizeLocalAiStatusResult(
+          {
+            enabled: true,
+            status: 'stopped',
+            runtime: nextLocalAi.runtimeBackend,
+            runtimeBackend: nextLocalAi.runtimeBackend,
+            runtimeType: resolveLocalAiWireRuntimeType(nextLocalAi),
+            baseUrl: nextPayload.baseUrl,
+            error: 'managed_runtime_trust_required',
+            lastError:
+              'Approve the managed local runtime before installation starts.',
+          },
+          nextPayload.baseUrl
+        )
       }
 
       updateLocalAiSettings(nextSettingsPatch)
@@ -1135,8 +1196,34 @@ export default function AiSettingsPage() {
     setIsRuntimePathDialogOpen(false)
   }, [])
 
+  const closeManagedRuntimeTrustDialog = useCallback(() => {
+    setIsManagedRuntimeTrustDialogOpen(false)
+    setManagedRuntimeTrustRequest(null)
+  }, [])
+
+  const approveManagedRuntimeTrust = useCallback(async () => {
+    if (!managedRuntimeTrustRequest) {
+      setIsManagedRuntimeTrustDialogOpen(false)
+      return
+    }
+
+    const pending = managedRuntimeTrustRequest
+    setIsManagedRuntimeTrustDialogOpen(false)
+    setManagedRuntimeTrustRequest(null)
+
+    await startLocalAiWithSettings({
+      ...pending,
+      localAiPatch: {
+        ...((pending && pending.localAiPatch) || {}),
+        ...buildManagedLocalAiTrustApprovalPatch(),
+      },
+    })
+  }, [managedRuntimeTrustRequest, startLocalAiWithSettings])
+
   const resetRuntimePathDraft = useCallback(() => {
-    const recommendedPreset = buildLocalAiRuntimePreset(localAi.runtimeBackend)
+    const recommendedPreset = buildRecommendedRuntimePresetForBackend(
+      localAi.runtimeBackend
+    )
     setRuntimePathDraft({
       endpoint: recommendedPreset.endpoint,
       managedRuntimePythonPath: '',
@@ -5279,6 +5366,14 @@ export default function AiSettingsPage() {
           </PrimaryButton>
         </DialogFooter>
       </Dialog>
+      <ManagedRuntimeTrustDialog
+        isOpen={isManagedRuntimeTrustDialogOpen}
+        onClose={closeManagedRuntimeTrustDialog}
+        onConfirm={approveManagedRuntimeTrust}
+        isLoading={isStartingLocalAi}
+        title={t('Trust managed on-device AI')}
+        confirmLabel={t('Trust and install')}
+      />
       <AiEnableDialog
         isOpen={isEnableDialogOpen}
         onClose={() => setIsEnableDialogOpen(false)}

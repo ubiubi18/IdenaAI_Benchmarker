@@ -306,6 +306,7 @@ class TransformersChatBackend:
     def __init__(
         self,
         model_id,
+        display_model_id="",
         trust_remote_code=False,
         model_revision="",
         allow_local_image_paths=False,
@@ -313,12 +314,15 @@ class TransformersChatBackend:
         from transformers import AutoModelForImageTextToText, AutoProcessor
         import torch
 
-        self.model_id = str(model_id or "").strip()
-        if not self.model_id:
+        self.model_source_id = str(model_id or "").strip()
+        if not self.model_source_id:
             raise ValueError("model_id_required")
+        self.model_id = str(display_model_id or self.model_source_id).strip()
         self.model_revision = str(model_revision or "").strip()
         self.allow_local_image_paths = allow_local_image_paths
-        self.model_source = resolve_model_source(self.model_id, self.model_revision)
+        self.model_source = resolve_model_source(
+            self.model_source_id, self.model_revision
+        )
 
         self.torch = torch
         self.processor = AutoProcessor.from_pretrained(
@@ -444,6 +448,7 @@ class MlxVlmChatBackend:
     def __init__(
         self,
         model_id,
+        display_model_id="",
         trust_remote_code=False,
         model_revision="",
         allow_local_image_paths=False,
@@ -454,15 +459,18 @@ class MlxVlmChatBackend:
             from mlx_vlm.generate import generate
             from mlx_vlm.utils import load, prepare_inputs
 
-        self.model_id = str(model_id or "").strip()
-        if not self.model_id:
+        self.model_source_id = str(model_id or "").strip()
+        if not self.model_source_id:
             raise ValueError("model_id_required")
+        self.model_id = str(display_model_id or self.model_source_id).strip()
 
         self.model_revision = str(model_revision or "").strip()
         self.allow_local_image_paths = allow_local_image_paths
         self.generate = generate
         self.prepare_inputs = prepare_inputs
-        self.model_source = resolve_model_source(self.model_id, self.model_revision)
+        self.model_source = resolve_model_source(
+            self.model_source_id, self.model_revision
+        )
         load_kwargs = {
             "trust_remote_code": trust_remote_code,
             "use_fast": False,
@@ -601,6 +609,7 @@ def create_backend(args):
     if args.backend == "mlx-vlm":
         return MlxVlmChatBackend(
             args.model,
+            display_model_id=args.display_model_id,
             trust_remote_code=args.trust_remote_code,
             model_revision=args.model_revision,
             allow_local_image_paths=args.allow_local_image_paths,
@@ -609,6 +618,7 @@ def create_backend(args):
     if args.backend == "transformers":
         return TransformersChatBackend(
             args.model,
+            display_model_id=args.display_model_id,
             trust_remote_code=args.trust_remote_code,
             model_revision=args.model_revision,
             allow_local_image_paths=args.allow_local_image_paths,
@@ -799,6 +809,7 @@ def main():
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--display-model-id", default="")
     parser.add_argument("--model-revision", default="")
     parser.add_argument(
         "--max-request-bytes",
@@ -835,7 +846,9 @@ def main():
     server.auth_token = str(args.auth_token or os.environ.get(AUTH_TOKEN_ENV) or "").strip()
 
     print(
-        f"Local AI server ({args.backend}) listening on http://{args.host}:{args.port} with model {args.model}",
+        "Local AI server "
+        f"({args.backend}) listening on http://{args.host}:{args.port} with model "
+        f"{args.display_model_id or args.model}",
         flush=True,
     )
     try:

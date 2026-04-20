@@ -16,6 +16,7 @@
  * @property {string} adapterStrategy
  * @property {string} trainingPolicy
  * @property {any} rankingPolicy
+ * @property {number} managedRuntimeTrustVersion
  * @property {string} baseUrl
  * @property {string} endpoint
  * @property {string} model
@@ -200,6 +201,8 @@ function buildLocalAiRuntimePayload(localAi = {}) {
       source.rankingPolicy && typeof source.rankingPolicy === 'object'
         ? source.rankingPolicy
         : null,
+    managedRuntimeTrustVersion:
+      Number.parseInt(source.managedRuntimeTrustVersion, 10) || 0,
     managedRuntimePythonPath: String(
       source.managedRuntimePythonPath || ''
     ).trim(),

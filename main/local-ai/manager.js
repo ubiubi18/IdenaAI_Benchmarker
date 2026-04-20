@@ -5646,6 +5646,7 @@ function createLocalAiManager({
         ...currentStatus(),
       }
     } catch (error) {
+      const errorCode = String((error && error.code) || '').trim()
       state.running = false
       state.runtimeManaged = false
       state.managedRuntimeAuthToken = null
@@ -5667,7 +5668,7 @@ function createLocalAiManager({
       return {
         ok: false,
         status: 'error',
-        error: 'runtime_start_failed',
+        error: errorCode || 'runtime_start_failed',
         lastError:
           state.lastError || 'Unable to start the configured Local AI runtime.',
         ...currentStatus(),
