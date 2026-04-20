@@ -23,7 +23,7 @@ let rendererProcess = null
 let electronProcess = null
 let shuttingDown = false
 
-function withLegacyOpenSsl(env) {
+function resolveRendererNodeLaunch(env) {
   const baseNodeOptions = env.NODE_OPTIONS || ''
   const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10)
   const needsLegacyProvider =
@@ -48,8 +48,18 @@ function withLegacyOpenSsl(env) {
   }
 
   return {
-    ...env,
-    NODE_OPTIONS: nodeOptions.join(' ').trim(),
+    env: {
+      ...env,
+      NODE_OPTIONS: nodeOptions.join(' ').trim(),
+    },
+    nodeArgs: [
+      ...(needsLegacyProvider ? ['--openssl-legacy-provider'] : []),
+      ...(needsHeapIncrease ? [`--max-old-space-size=${requestedHeapMb}`] : []),
+    ],
+    heapMb:
+      Number.isFinite(requestedHeapMb) && requestedHeapMb > 0
+        ? requestedHeapMb
+        : null,
   }
 }
 
@@ -132,13 +142,30 @@ function shutdown(code = 0) {
 }
 
 async function main() {
+  const rendererNodeLaunch = resolveRendererNodeLaunch(process.env)
+
+  if (rendererNodeLaunch.heapMb) {
+    console.log(
+      `[IdenaAI] Starting renderer dev server with Node heap ${rendererNodeLaunch.heapMb} MB`
+    )
+  }
+
   rendererProcess = spawn(
     process.execPath,
-    [NEXT_BIN, 'dev', 'renderer', '-p', String(DEV_PORT), '-H', DEV_HOST],
+    [
+      ...rendererNodeLaunch.nodeArgs,
+      NEXT_BIN,
+      'dev',
+      'renderer',
+      '-p',
+      String(DEV_PORT),
+      '-H',
+      DEV_HOST,
+    ],
     {
       cwd: ROOT,
       env: {
-        ...withLegacyOpenSsl(process.env),
+        ...rendererNodeLaunch.env,
         NEXT_TELEMETRY_DISABLED: '1',
       },
       stdio: 'inherit',
