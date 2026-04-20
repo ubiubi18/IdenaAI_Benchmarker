@@ -1346,8 +1346,8 @@ describe('local-ai manager', () => {
           generated_at: '2026-04-17T12:00:00.000Z',
           runtime_backend: 'ollama-direct',
           runtime_type: 'ollama',
-          model: 'qwen3.5:9b',
-          vision_model: 'qwen3.5:9b',
+          model: 'reasoner-lab:latest',
+          vision_model: 'reasoner-lab:latest',
           ordered_panel_descriptions: [
             'man looks at car',
             'man opens door',
@@ -1418,7 +1418,7 @@ describe('local-ai manager', () => {
         annotation: expect.objectContaining({
           ai_annotation: expect.objectContaining({
             task_id: 'flip-a::human-teacher',
-            model: 'qwen3.5:9b',
+            model: 'reasoner-lab:latest',
             final_answer: 'right',
             rating: 'wrong',
             text_required: false,
@@ -1620,6 +1620,8 @@ describe('local-ai manager', () => {
           annotator: 'offline-demo',
           final_answer: 'left',
           why_answer: `demo reason for ${task.taskId}`,
+          text_required: false,
+          sequence_markers_present: false,
           report_required: false,
           confidence: 5,
         },
@@ -1917,7 +1919,7 @@ describe('local-ai manager', () => {
       sampleName: 'flip-challenge-test-20-decoded-labeled',
       runtimeBackend: 'ollama-direct',
       model: 'llama3.1:8b',
-      visionModel: 'qwen2.5vl:7b',
+      visionModel: 'vision-lab:latest',
       developerHumanTeacherSystemPrompt:
         'Use human-teacher guidance without collapsing into one side.',
     })
@@ -1931,7 +1933,7 @@ describe('local-ai manager', () => {
       annotatedCount: 5,
       pendingCount: 5,
       trainedCount: 0,
-      recommendedTrainingModel: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+      recommendedTrainingModel: 'allenai/Molmo2-O-7B',
       recommendedBenchmarkFlips: 200,
     })
     expect(normalizedRows).toHaveLength(5)
@@ -1942,11 +1944,11 @@ describe('local-ai manager', () => {
       }),
       runtime: expect.objectContaining({
         runtimeBackend: 'ollama-direct',
-        model: 'qwen3.5:9b',
-        visionModel: 'qwen3.5:9b',
+        model: 'llama3.1:8b',
+        visionModel: 'vision-lab:latest',
       }),
       training: expect.objectContaining({
-        recommendedModel: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+        recommendedModel: 'allenai/Molmo2-O-7B',
       }),
       files: expect.objectContaining({
         annotations: expect.objectContaining({
@@ -2024,7 +2026,7 @@ describe('local-ai manager', () => {
       offset: 0,
       trainNow: true,
       advance: true,
-      trainingModelPath: 'mlx-community/Qwen2.5-VL-7B-Instruct-4bit',
+      trainingModelPath: 'mlx-community/open-vision-3b-4bit',
       localTrainingProfile: 'balanced',
       localTrainingThermalMode: 'cool',
       localTrainingEpochs: 3,
@@ -2038,7 +2040,6 @@ describe('local-ai manager', () => {
         input: expect.objectContaining({
           developerHumanTeacher: true,
           sampleName: 'flip-challenge-test-20-decoded-labeled',
-          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
           localTrainingProfile: 'balanced',
           localTrainingThermalMode: 'cool',
           localTrainingEpochs: 3,
@@ -2256,9 +2257,7 @@ describe('local-ai manager', () => {
     expect(sidecar.trainEpoch).toHaveBeenCalledTimes(1)
     const forwarded = sidecar.trainEpoch.mock.calls[0][0].input
 
-    expect(forwarded.trainingModelPath).toBe(
-      'mlx-community/Qwen3.5-9B-MLX-4bit'
-    )
+    expect(forwarded.trainingModelPath).toBeUndefined()
     expect(forwarded.localTrainingProfile).toBe('strong')
     expect(forwarded.localTrainingThermalMode).toBe('balanced')
     expect(forwarded.localTrainingEpochs).toBe(6)
@@ -2301,16 +2300,14 @@ describe('local-ai manager', () => {
 
     const forwarded = sidecar.trainEpoch.mock.calls[0][0]
 
-    expect(forwarded.trainingModelPath).toBe(
-      'mlx-community/Qwen3.5-9B-MLX-4bit'
-    )
-    expect(forwarded.modelPath).toBe('mlx-community/Qwen3.5-9B-MLX-4bit')
+    expect(forwarded.trainingModelPath).toBeUndefined()
+    expect(forwarded.modelPath).toBeUndefined()
     expect(forwarded.localTrainingProfile).toBe('strong')
     expect(forwarded.localTrainingThermalMode).toBe('balanced')
     expect(forwarded.localTrainingEpochs).toBe(6)
     expect(forwarded.localTrainingBatchSize).toBe(1)
     expect(forwarded.localTrainingLoraRank).toBe(16)
-    expect(forwarded.evaluationFlips).toBe(100)
+    expect(forwarded.evaluationFlips).toBe(123)
   })
 
   it('blocks developer local training when telemetry reports a hard stop and no override is present', async () => {
@@ -2562,7 +2559,7 @@ describe('local-ai manager', () => {
       offset: 0,
       trainNow: true,
       advance: true,
-      trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+      trainingModelPath: 'mlx-community/open-vision-7b-4bit',
       localTrainingProfile: 'strong',
       localTrainingThermalMode: 'balanced',
       localTrainingEpochs: 4,
@@ -2577,7 +2574,6 @@ describe('local-ai manager', () => {
         input: expect.objectContaining({
           developerHumanTeacher: true,
           sampleName: 'flip-challenge-test-20-decoded-labeled',
-          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
           localTrainingProfile: 'strong',
           localTrainingThermalMode: 'balanced',
           localTrainingEpochs: 4,
@@ -4649,7 +4645,7 @@ describe('local-ai manager', () => {
       })),
       listModels: jest.fn(async () => ({
         ok: true,
-        models: ['qwen3.5:9b'],
+        models: ['reasoner-lab:latest'],
         total: 1,
         lastError: null,
       })),
@@ -4918,6 +4914,116 @@ describe('local-ai manager', () => {
     expect(runtimeController.start).toHaveBeenCalledTimes(1)
   })
 
+  it('starts the managed Molmo2-O runtime for the loopback HTTP research preset', async () => {
+    const sidecar = {
+      getHealth: jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 'error',
+          reachable: false,
+          runtime: 'sidecar',
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          baseUrl: 'http://127.0.0.1:8080',
+          endpoint: 'http://127.0.0.1:8080/health',
+          lastError: 'connect ECONNREFUSED 127.0.0.1:8080',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 'ok',
+          reachable: true,
+          runtime: 'sidecar',
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          baseUrl: 'http://127.0.0.1:8080',
+          endpoint: 'http://127.0.0.1:8080/health',
+          data: {loaded_model: 'allenai/Molmo2-O-7B'},
+          lastError: null,
+        }),
+      listModels: jest.fn(async () => ({
+        ok: true,
+        reachable: true,
+        runtimeBackend: 'local-runtime-service',
+        runtimeType: 'sidecar',
+        baseUrl: 'http://127.0.0.1:8080',
+        endpoint: 'http://127.0.0.1:8080/v1/models',
+        models: ['allenai/Molmo2-O-7B'],
+        total: 1,
+        lastError: null,
+      })),
+      chat: jest.fn(),
+      flipToText: jest.fn(),
+      checkFlipSequence: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(),
+    }
+    const runtimeController = {
+      start: jest.fn(async () => ({
+        started: true,
+        managed: true,
+        pid: 5252,
+        authToken: 'managed-token',
+      })),
+      resolveAccess: jest.fn(() => ({
+        managed: true,
+        authToken: 'managed-token',
+      })),
+      stop: jest.fn(async () => ({
+        stopped: true,
+        managed: true,
+        pid: 5252,
+      })),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      runtimeController,
+    })
+
+    await expect(
+      manager.start({
+        runtimeBackend: 'local-runtime-service',
+        runtimeType: 'sidecar',
+        runtimeFamily: 'molmo2-o',
+        baseUrl: 'http://127.0.0.1:8080',
+        model: 'allenai/Molmo2-O-7B',
+        visionModel: 'allenai/Molmo2-O-7B',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      runtimeBackend: 'local-runtime-service',
+      runtimeType: 'sidecar',
+      baseUrl: 'http://127.0.0.1:8080',
+      sidecarReachable: true,
+      sidecarModelCount: 1,
+      runtimeManaged: true,
+    })
+
+    expect(runtimeController.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeBackend: 'local-runtime-service',
+        runtimeType: 'sidecar',
+        runtimeFamily: 'molmo2-o',
+        baseUrl: 'http://127.0.0.1:8080',
+        model: 'allenai/Molmo2-O-7B',
+        visionModel: 'allenai/Molmo2-O-7B',
+      })
+    )
+    expect(sidecar.getHealth).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        runtimeAuthToken: 'managed-token',
+      })
+    )
+    expect(sidecar.listModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeAuthToken: 'managed-token',
+      })
+    )
+  })
+
   it('derives the legacy runtime type from runtimeBackend for Local AI flip text requests', async () => {
     const sidecar = {
       getHealth: jest.fn(async () => ({
@@ -4929,7 +5035,7 @@ describe('local-ai manager', () => {
       })),
       listModels: jest.fn(async () => ({
         ok: true,
-        models: ['qwen3.5:9b'],
+        models: ['reasoner-lab:latest'],
         total: 1,
         lastError: null,
       })),
@@ -5010,13 +5116,13 @@ describe('local-ai manager', () => {
         .fn()
         .mockResolvedValueOnce({
           ok: true,
-          models: ['qwen3.5:9b'],
+          models: ['reasoner-lab:latest'],
           total: 1,
           lastError: null,
         })
         .mockResolvedValueOnce({
           ok: true,
-          models: ['qwen3.5:9b'],
+          models: ['reasoner-lab:latest'],
           total: 1,
           lastError: null,
         }),
@@ -5049,7 +5155,7 @@ describe('local-ai manager', () => {
     await expect(
       manager.chat({
         runtimeBackend: 'ollama-direct',
-        model: 'qwen3.5:9b',
+        model: 'reasoner-lab:latest',
         prompt: 'hello',
       })
     ).resolves.toMatchObject({
@@ -5065,7 +5171,105 @@ describe('local-ai manager', () => {
       expect.objectContaining({
         runtimeBackend: 'ollama-direct',
         runtimeType: 'ollama',
-        model: 'qwen3.5:9b',
+        model: 'reasoner-lab:latest',
+      })
+    )
+  })
+
+  it('auto-starts the managed Molmo2-O runtime before local chat when the research runtime is down', async () => {
+    const sidecar = {
+      getHealth: jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          reachable: false,
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          lastError: 'connect ECONNREFUSED 127.0.0.1:8080',
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          reachable: false,
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          lastError: 'connect ECONNREFUSED 127.0.0.1:8080',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          reachable: true,
+          runtimeBackend: 'local-runtime-service',
+          runtimeType: 'sidecar',
+          lastError: null,
+        }),
+      listModels: jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          models: ['allenai/Molmo2-O-7B'],
+          total: 1,
+          lastError: null,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          models: ['allenai/Molmo2-O-7B'],
+          total: 1,
+          lastError: null,
+        }),
+      chat: jest.fn(async () => ({
+        ok: true,
+        text: 'Molmo2-O local chat is alive.',
+        lastError: null,
+      })),
+      flipToText: jest.fn(),
+      checkFlipSequence: jest.fn(),
+      captionFlip: jest.fn(),
+      ocrImage: jest.fn(),
+      trainEpoch: jest.fn(),
+    }
+    const runtimeController = {
+      start: jest.fn(async () => ({
+        started: true,
+        managed: true,
+        pid: 5252,
+        authToken: 'managed-token',
+      })),
+      resolveAccess: jest.fn(() => ({
+        managed: true,
+        authToken: 'managed-token',
+      })),
+      stop: jest.fn(),
+    }
+    const manager = createLocalAiManager({
+      logger: mockLogger(),
+      storage,
+      sidecar,
+      runtimeController,
+    })
+
+    await expect(
+      manager.chat({
+        runtimeBackend: 'local-runtime-service',
+        runtimeFamily: 'molmo2-o',
+        model: 'allenai/Molmo2-O-7B',
+        visionModel: 'allenai/Molmo2-O-7B',
+        prompt: 'hello',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      text: 'Molmo2-O local chat is alive.',
+      runtimeBackend: 'local-runtime-service',
+      runtimeType: 'sidecar',
+      sidecarReachable: true,
+    })
+
+    expect(runtimeController.start).toHaveBeenCalledTimes(1)
+    expect(sidecar.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeBackend: 'local-runtime-service',
+        runtimeType: 'sidecar',
+        runtimeAuthToken: 'managed-token',
+        model: 'allenai/Molmo2-O-7B',
+        visionModel: 'allenai/Molmo2-O-7B',
       })
     )
   })
@@ -5099,19 +5303,19 @@ describe('local-ai manager', () => {
         .fn()
         .mockResolvedValueOnce({
           ok: true,
-          models: ['qwen3.5:9b'],
+          models: ['reasoner-lab:latest'],
           total: 1,
           lastError: null,
         })
         .mockResolvedValueOnce({
           ok: true,
-          models: ['qwen3.5:9b'],
+          models: ['reasoner-lab:latest'],
           total: 1,
           lastError: null,
         })
         .mockResolvedValueOnce({
           ok: true,
-          models: ['qwen3.5:9b'],
+          models: ['reasoner-lab:latest'],
           total: 1,
           lastError: null,
         }),
@@ -5143,7 +5347,7 @@ describe('local-ai manager', () => {
       })
     ).resolves.toMatchObject({
       ok: true,
-      models: ['qwen3.5:9b'],
+      models: ['reasoner-lab:latest'],
       runtimeBackend: 'ollama-direct',
       runtimeType: 'ollama',
       sidecarReachable: true,
@@ -5213,7 +5417,7 @@ describe('local-ai manager', () => {
       })),
       listModels: jest.fn(async () => ({
         ok: true,
-        models: ['qwen3.5:9b'],
+        models: ['reasoner-lab:latest'],
         total: 1,
         lastError: null,
       })),

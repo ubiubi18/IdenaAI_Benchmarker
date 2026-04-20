@@ -68,6 +68,18 @@ function buildEndpoint(baseUrl, endpointPath) {
   return `${normalizeBaseUrl(baseUrl)}${normalizePath(endpointPath)}`
 }
 
+function buildLocalRuntimeHeaders(runtimeAuthToken) {
+  const token = String(runtimeAuthToken || '').trim()
+
+  if (!token) {
+    return undefined
+  }
+
+  return {
+    'X-IdenaAI-Local-Token': token,
+  }
+}
+
 function resolveRuntimeAdapter(source, fallbackRuntimeBackend) {
   const nextSource =
     source && typeof source === 'object' && !Array.isArray(source) ? source : {}
@@ -574,10 +586,7 @@ function supportsOllamaThinkingToggle(model) {
   }
 
   return (
-    nextModel.startsWith('qwen3') ||
-    nextModel.startsWith('deepseek-r1') ||
-    nextModel.includes('/qwen3') ||
-    nextModel.includes('/deepseek-r1')
+    nextModel.startsWith('deepseek-r1') || nextModel.includes('/deepseek-r1')
   )
 }
 
@@ -823,6 +832,76 @@ function normalizeOllamaContent(data) {
   }
 
   return null
+}
+
+function asOpenAiCompatibleImageUrl(value) {
+  const imageBase64 =
+    toBase64Image(value) ||
+    (typeof value === 'string' && isLikelyBase64(value)
+      ? value.replace(/\s+/g, '')
+      : null)
+
+  if (!imageBase64) {
+    return null
+  }
+
+  return `data:image/png;base64,${imageBase64}`
+}
+
+function normalizeOpenAiCompatibleMessages(messages = []) {
+  return (Array.isArray(messages) ? messages : []).map((message) => {
+    const role = String(message && message.role ? message.role : 'user').trim()
+    const content = String(message && message.content ? message.content : '')
+    const imageUrls = Array.isArray(message && message.images)
+      ? message.images
+          .map((image) => asOpenAiCompatibleImageUrl(image))
+          .filter(Boolean)
+      : []
+
+    if (imageUrls.length === 0) {
+      return {
+        role,
+        content,
+      }
+    }
+
+    return {
+      role,
+      content: [
+        {
+          type: 'text',
+          text: content,
+        },
+      ].concat(
+        imageUrls.map((url) => ({
+          type: 'image_url',
+          image_url: {
+            url,
+          },
+        }))
+      ),
+    }
+  })
+}
+
+function normalizeOpenAiCompatibleGenerationOptions(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {}
+  }
+
+  const options = {}
+  const temperature = Number.parseFloat(input.temperature)
+  const maxTokens = Number.parseInt(input.num_predict ?? input.numPredict, 10)
+
+  if (Number.isFinite(temperature)) {
+    options.temperature = Math.min(1, Math.max(0, temperature))
+  }
+
+  if (Number.isFinite(maxTokens) && maxTokens > 0) {
+    options.max_tokens = Math.min(2048, Math.max(1, maxTokens))
+  }
+
+  return options
 }
 
 function normalizeVisionModel(value, fallback = DEFAULT_VISION_MODEL) {
@@ -1169,6 +1248,7 @@ function createLocalAiSidecar({
     baseUrl,
     runtimeBackend,
     runtimeType,
+    runtimeAuthToken,
     visionModel,
     input,
     timeoutMs,
@@ -1216,10 +1296,11 @@ function createLocalAiSidecar({
 
     for (const [index, image] of images.entries()) {
       // eslint-disable-next-line no-await-in-loop
-      const result = await requestOllamaChat({
+      const result = await requestRuntimeChat({
         baseUrl: runtimeAdapter.baseUrl,
         runtimeBackend: nextRuntimeBackend,
         runtimeType: nextRuntimeType,
+        runtimeAuthToken,
         model: nextVisionModel,
         messages: buildPanelCaptionMessages(image, index),
         timeoutMs,
@@ -1256,6 +1337,7 @@ function createLocalAiSidecar({
     baseUrl,
     runtimeBackend,
     runtimeType,
+    runtimeAuthToken,
     visionModel,
     model,
     captions,
@@ -1283,10 +1365,11 @@ function createLocalAiSidecar({
       })
     }
 
-    return requestOllamaChat({
+    return requestRuntimeChat({
       baseUrl: runtimeAdapter.baseUrl,
       runtimeBackend: nextRuntimeBackend,
       runtimeType: nextRuntimeType,
+      runtimeAuthToken,
       model: nextModel,
       messages: buildSequenceReductionMessages(captions),
       timeoutMs,
@@ -1297,6 +1380,7 @@ function createLocalAiSidecar({
     baseUrl,
     runtimeBackend,
     runtimeType,
+    runtimeAuthToken,
     visionModel,
     model,
     input,
@@ -1314,6 +1398,7 @@ function createLocalAiSidecar({
       baseUrl: runtimeAdapter.baseUrl,
       runtimeBackend: nextRuntimeBackend,
       runtimeType: nextRuntimeType,
+      runtimeAuthToken,
       visionModel: nextVisionModel,
       input,
       timeoutMs,
@@ -1331,6 +1416,7 @@ function createLocalAiSidecar({
       baseUrl: runtimeAdapter.baseUrl,
       runtimeBackend: nextRuntimeBackend,
       runtimeType: nextRuntimeType,
+      runtimeAuthToken,
       visionModel: nextVisionModel,
       model: nextModel,
       captions: captioning.captions,
@@ -1555,10 +1641,200 @@ function createLocalAiSidecar({
     }
   }
 
+  async function requestLocalHttpChat({
+    baseUrl,
+    runtimeBackend,
+    runtimeType,
+    runtimeAuthToken,
+    model = '',
+    visionModel = '',
+    messages = [],
+    timeoutMs = 15 * 1000,
+    responseFormat = null,
+    generationOptions = null,
+  } = {}) {
+    const runtimeAdapter = resolveRuntimeAdapter(
+      {baseUrl, runtimeBackend, runtimeType},
+      LOCAL_AI_RUNTIME_BACKEND
+    )
+    const nextRuntimeBackend = runtimeAdapter.runtimeBackend
+    const nextRuntimeType = runtimeAdapter.runtimeType
+    const nextBaseUrl = runtimeAdapter.baseUrl
+    const nextModel = String(model || '').trim()
+    const nextVisionModel = normalizeVisionModel(visionModel, '')
+    const nextMessages = Array.isArray(messages) ? messages : []
+    const includesImages = nextMessages.some(
+      (item) => Array.isArray(item && item.images) && item.images.length > 0
+    )
+    const selectedModel =
+      includesImages && nextVisionModel ? nextVisionModel : nextModel
+    const normalizedTimeoutMs = normalizeTimeoutMs(timeoutMs, 15 * 1000)
+    const normalizedGenerationOptions =
+      normalizeOpenAiCompatibleGenerationOptions(generationOptions)
+    const normalizedMessages = normalizeOpenAiCompatibleMessages(nextMessages)
+    const baseUrlValidation = validateLocalAiBaseUrl(nextBaseUrl)
+
+    if (nextRuntimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
+      return buildValidationError({
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        model: selectedModel,
+        baseUrl: nextBaseUrl,
+        endpoint: null,
+        error: 'unsupported_runtime_type',
+        lastError: 'Ollama requests must use the Ollama chat transport.',
+      })
+    }
+
+    if (!baseUrlValidation.ok) {
+      return buildUnsafeEndpointError({
+        baseUrl: nextBaseUrl,
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        visionModel: nextVisionModel,
+        model: selectedModel,
+        validation: baseUrlValidation,
+      })
+    }
+
+    const modelValidation = validateModelName(
+      selectedModel,
+      includesImages
+        ? 'No local vision research model is configured for the current local runtime service.'
+        : 'No local research model is configured for the current local runtime service.'
+    )
+
+    if (!modelValidation.ok) {
+      return buildValidationError({
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        model: '',
+        baseUrl: nextBaseUrl,
+        endpoint: null,
+        error: modelValidation.reason,
+        lastError: modelValidation.message,
+      })
+    }
+
+    const messageValidation = validateChatMessages(nextMessages)
+
+    if (!messageValidation.ok) {
+      return buildValidationError({
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        model: modelValidation.model,
+        baseUrl: nextBaseUrl,
+        endpoint: null,
+        error: messageValidation.error,
+        lastError: messageValidation.lastError,
+      })
+    }
+
+    const endpointCandidates = [
+      '/v1/chat/completions',
+      '/chat/completions',
+    ].map((candidate) => buildEndpoint(nextBaseUrl, candidate))
+
+    const payload = {
+      model: modelValidation.model,
+      messages: normalizedMessages,
+      stream: false,
+      ...normalizedGenerationOptions,
+    }
+
+    if (responseFormat === 'json') {
+      payload.response_format = {type: 'json_object'}
+    }
+
+    try {
+      const response = await requestWithFallback(
+        endpointCandidates,
+        (endpoint) =>
+          httpClient.post(endpoint, payload, {
+            headers: buildLocalRuntimeHeaders(runtimeAuthToken),
+            timeout: normalizedTimeoutMs,
+          })
+      )
+      const data =
+        response && response.data && typeof response.data === 'object'
+          ? response.data
+          : null
+      const text = normalizeOllamaContent(data)
+
+      if (!text) {
+        return {
+          ok: false,
+          status: 'parse_error',
+          provider: 'local-ai',
+          runtimeBackend: nextRuntimeBackend,
+          runtimeType: nextRuntimeType,
+          model: modelValidation.model,
+          baseUrl: nextBaseUrl,
+          endpoint: response && response.config && response.config.url,
+          text: null,
+          error: 'invalid_response',
+          lastError:
+            'Local AI HTTP runtime response did not include assistant text',
+        }
+      }
+
+      return {
+        ok: true,
+        status: 'ok',
+        provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        model:
+          String(
+            data && data.model ? data.model : modelValidation.model
+          ).trim() || modelValidation.model,
+        baseUrl: nextBaseUrl,
+        endpoint: response && response.config && response.config.url,
+        text,
+        lastError: null,
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        status: 'unavailable',
+        provider: 'local-ai',
+        runtimeBackend: nextRuntimeBackend,
+        runtimeType: nextRuntimeType,
+        model: modelValidation.model,
+        baseUrl: nextBaseUrl,
+        endpoint: null,
+        text: null,
+        error: 'unavailable',
+        lastError: createErrorMessage(
+          error,
+          'Local AI HTTP runtime request failed'
+        ),
+      }
+    }
+  }
+
+  async function requestRuntimeChat(payload = {}) {
+    const runtimeAdapter = resolveRuntimeAdapter(
+      {
+        baseUrl: payload.baseUrl,
+        runtimeBackend: payload.runtimeBackend,
+        runtimeType: payload.runtimeType,
+      },
+      LOCAL_AI_RUNTIME_BACKEND
+    )
+
+    if (runtimeAdapter.runtimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
+      return requestOllamaChat(payload)
+    }
+
+    return requestLocalHttpChat(payload)
+  }
+
   async function getHealth({
     baseUrl,
     runtimeBackend,
     runtimeType,
+    runtimeAuthToken,
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = {}) {
     const runtimeAdapter = resolveRuntimeAdapter(
@@ -1599,6 +1875,7 @@ function createLocalAiSidecar({
 
     try {
       const response = await httpClient.get(endpoint, {
+        headers: buildLocalRuntimeHeaders(runtimeAuthToken),
         timeout: normalizedTimeoutMs,
       })
 
@@ -1644,6 +1921,7 @@ function createLocalAiSidecar({
     baseUrl,
     runtimeBackend,
     runtimeType,
+    runtimeAuthToken,
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = {}) {
     const runtimeAdapter = resolveRuntimeAdapter(
@@ -1686,6 +1964,7 @@ function createLocalAiSidecar({
               ),
               (endpoint) =>
                 httpClient.get(endpoint, {
+                  headers: buildLocalRuntimeHeaders(runtimeAuthToken),
                   timeout: normalizedTimeoutMs,
                 })
             )
@@ -1724,6 +2003,7 @@ function createLocalAiSidecar({
     baseUrl,
     runtimeBackend,
     runtimeType,
+    runtimeAuthToken,
     model = '',
     visionModel = '',
     messages = [],
@@ -1761,10 +2041,11 @@ function createLocalAiSidecar({
         return null
       }
 
-      return requestOllamaChat({
+      return requestRuntimeChat({
         baseUrl,
         runtimeBackend,
         runtimeType,
+        runtimeAuthToken,
         model,
         visionModel: '',
         messages: buildOcrRetryMessages(nextMessages, ocrResult.text),
@@ -1817,10 +2098,11 @@ function createLocalAiSidecar({
         ? candidateVisionModel
         : String(candidateVisionModel || '').trim()
       // eslint-disable-next-line no-await-in-loop
-      result = await requestOllamaChat({
+      result = await requestRuntimeChat({
         baseUrl,
         runtimeBackend,
         runtimeType,
+        runtimeAuthToken,
         model: includesImages ? model : candidateModel,
         visionModel: includesImages ? candidateVisionModel : '',
         messages: nextMessages,
@@ -1889,6 +2171,7 @@ function createLocalAiSidecar({
     baseUrl,
     runtimeBackend,
     runtimeType,
+    runtimeAuthToken,
     visionModel,
     model = '',
     input,
@@ -1898,6 +2181,7 @@ function createLocalAiSidecar({
       baseUrl,
       runtimeBackend,
       runtimeType,
+      runtimeAuthToken,
       visionModel,
       model,
       input,
@@ -1914,6 +2198,7 @@ function createLocalAiSidecar({
     baseUrl,
     runtimeBackend,
     runtimeType,
+    runtimeAuthToken,
     visionModel,
     model = '',
     input,
@@ -1923,6 +2208,7 @@ function createLocalAiSidecar({
       baseUrl,
       runtimeBackend,
       runtimeType,
+      runtimeAuthToken,
       visionModel,
       model,
       input,
@@ -1938,10 +2224,11 @@ function createLocalAiSidecar({
       }
     }
 
-    const checkerResult = await requestOllamaChat({
+    const checkerResult = await requestRuntimeChat({
       baseUrl,
       runtimeBackend,
       runtimeType,
+      runtimeAuthToken,
       model: pipeline.model,
       messages: buildFlipSequenceCheckerMessages({
         captions: pipeline.captions,
@@ -2006,6 +2293,7 @@ function createLocalAiSidecar({
 
   async function callLocalEndpoint({
     baseUrl,
+    runtimeAuthToken,
     endpointPath,
     payload,
     timeoutMs = 20 * 1000,
@@ -2035,6 +2323,7 @@ function createLocalAiSidecar({
         endpoint,
         payload && typeof payload === 'object' ? payload : {},
         {
+          headers: buildLocalRuntimeHeaders(runtimeAuthToken),
           timeout: normalizedTimeoutMs,
         }
       )
@@ -2108,6 +2397,7 @@ function createLocalAiSidecar({
     captionFlip: (payload = {}) =>
       callLocalEndpoint({
         baseUrl: payload.baseUrl,
+        runtimeAuthToken: payload.runtimeAuthToken,
         endpointPath: '/caption',
         payload,
         action: 'Local AI caption request',
@@ -2115,6 +2405,7 @@ function createLocalAiSidecar({
     ocrImage: (payload = {}) =>
       callLocalEndpoint({
         baseUrl: payload.baseUrl,
+        runtimeAuthToken: payload.runtimeAuthToken,
         endpointPath: '/ocr',
         payload,
         action: 'Local AI OCR request',
@@ -2122,6 +2413,7 @@ function createLocalAiSidecar({
     trainEpoch: (payload = {}) =>
       callLocalEndpoint({
         baseUrl: payload.baseUrl,
+        runtimeAuthToken: payload.runtimeAuthToken,
         endpointPath: '/train',
         payload: sanitizeTrainEndpointPayload(payload),
         timeoutMs: payload.timeoutMs,

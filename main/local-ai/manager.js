@@ -1,4 +1,4 @@
-const {spawn, spawnSync} = require('child_process')
+const {spawnSync} = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
@@ -22,9 +22,13 @@ const {resolveModelReference} = require('./model-reference')
 const {createModernTrainingCollector} = require('./modern-training')
 const {createDeveloperTrainingRunner} = require('./developer-training-runner')
 const {
+  createDefaultRuntimeController,
+  isManagedLocalHttpRuntime,
+  MANAGED_MOLMO2_RUNTIME_START_TIMEOUT_MS,
+} = require('./runtime-controller')
+const {
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
   resolveLocalAiRuntimeAdapter,
-  validateLocalAiBaseUrl,
 } = require('./runtime-adapter')
 
 const CAPTURE_INDEX_VERSION = 1
@@ -46,7 +50,7 @@ const DEFAULT_RUNTIME_START_RETRY_DELAY_MS = 400
 const ACTIVE_VALIDATION_PERIODS = new Set(['ShortSession', 'LongSession'])
 const MAX_DEVELOPER_COMPARISON_HISTORY = 30
 const EXTERNAL_DEVELOPER_TRAINING_BUNDLE_VERSION = 1
-const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL = ''
+const EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL = 'allenai/Molmo2-O-7B'
 const EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE = 200
 const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_SIZE = 100
 const MAX_DEVELOPER_LOCAL_BENCHMARK_SIZE = 500
@@ -73,11 +77,6 @@ const DEFAULT_DEVELOPER_LOCAL_BENCHMARK_THERMAL_MODE = 'balanced'
 const HUMAN_TEACHER_WORKSPACE_METADATA_FILE = 'workspace-metadata.json'
 const HUMAN_TEACHER_WORKSPACE_TYPE =
   'local-ai-human-teacher-annotation-workspace'
-const OLLAMA_COMMAND_CANDIDATES = [
-  '/opt/homebrew/bin/ollama',
-  '/usr/local/bin/ollama',
-  'ollama',
-]
 const ELIGIBLE_CONSENSUS_ANSWERS = new Set(['left', 'right'])
 
 function roundTelemetryValue(value, precision = 1) {
@@ -639,147 +638,6 @@ function delay(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-}
-
-function resolveOllamaCommand() {
-  const explicit = String(process.env.OLLAMA_PATH || '').trim()
-
-  if (explicit) {
-    return explicit
-  }
-
-  return (
-    OLLAMA_COMMAND_CANDIDATES.find(
-      (candidate) => candidate === 'ollama' || fs.existsSync(candidate)
-    ) || 'ollama'
-  )
-}
-
-function resolveOllamaHostEnv(baseUrl) {
-  const nextBaseUrl = normalizeBaseUrl(baseUrl, '')
-
-  if (!nextBaseUrl) {
-    return null
-  }
-
-  try {
-    const parsed = new URL(nextBaseUrl)
-    return parsed.host || null
-  } catch {
-    return null
-  }
-}
-
-function createDefaultRuntimeController({logger, isDev = false} = {}) {
-  let managedProcess = null
-
-  return {
-    async start(payload = {}) {
-      if (payload.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
-        return {started: false, managed: false}
-      }
-
-      if (
-        managedProcess &&
-        managedProcess.exitCode == null &&
-        !managedProcess.killed
-      ) {
-        return {
-          started: false,
-          managed: true,
-          pid: managedProcess.pid,
-        }
-      }
-
-      const command = resolveOllamaCommand()
-      const env = {...process.env}
-      const baseUrlValidation = validateLocalAiBaseUrl(payload.baseUrl)
-
-      if (!baseUrlValidation.ok) {
-        return {
-          started: false,
-          managed: false,
-          error: baseUrlValidation.reason,
-          lastError: baseUrlValidation.message,
-          baseUrl:
-            baseUrlValidation.normalizedBaseUrl ||
-            String(payload.baseUrl || ''),
-        }
-      }
-
-      const host = resolveOllamaHostEnv(baseUrlValidation.normalizedBaseUrl)
-
-      if (host) {
-        env.OLLAMA_HOST = host
-      }
-
-      const child = await new Promise((resolve, reject) => {
-        const nextChild = spawn(command, ['serve'], {
-          detached: true,
-          stdio: 'ignore',
-          env,
-        })
-
-        nextChild.once('error', reject)
-        nextChild.once('spawn', () => resolve(nextChild))
-      })
-
-      child.unref()
-      managedProcess = child
-      child.once('exit', () => {
-        if (managedProcess === child) {
-          managedProcess = null
-        }
-      })
-
-      if (isDev && logger && typeof logger.debug === 'function') {
-        logger.debug('Managed Local AI runtime spawned', {
-          command,
-          host,
-          pid: child.pid,
-        })
-      }
-
-      return {
-        started: true,
-        managed: true,
-        pid: child.pid,
-        command,
-        host,
-      }
-    },
-
-    async stop(payload = {}) {
-      if (
-        payload.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND ||
-        !managedProcess ||
-        managedProcess.exitCode != null ||
-        managedProcess.killed
-      ) {
-        return {stopped: false, managed: false}
-      }
-
-      const {pid} = managedProcess
-
-      try {
-        process.kill(pid, 'SIGTERM')
-      } finally {
-        managedProcess = null
-      }
-
-      if (isDev && logger && typeof logger.debug === 'function') {
-        logger.debug('Managed Local AI runtime stopped', {
-          pid,
-        })
-      }
-
-      return {
-        stopped: true,
-        managed: true,
-        pid,
-      }
-    },
-  }
 }
 
 function normalizeRuntimePayload(payload, fallbackRuntime = {}) {
@@ -4365,7 +4223,12 @@ function createLocalAiManager({
       isDev,
     })
   const localAiRuntimeController =
-    runtimeController || createDefaultRuntimeController({logger, isDev})
+    runtimeController ||
+    createDefaultRuntimeController({
+      logger,
+      isDev,
+      baseDir: localAiStorage.resolveLocalAiPath('managed-runtime'),
+    })
   const localAiModernTrainingCollector =
     modernTrainingCollector ||
     createModernTrainingCollector({
@@ -4382,6 +4245,7 @@ function createLocalAiManager({
     available: true,
     running: false,
     runtimeManaged: false,
+    managedRuntimeAuthToken: null,
     mode: 'sidecar',
     runtime: initialRuntime.runtime,
     runtimeBackend: initialRuntime.runtimeBackend,
@@ -4433,31 +4297,72 @@ function createLocalAiManager({
     state.runtimeBackend = next.runtimeBackend || state.runtimeBackend
     state.runtimeType = next.runtimeType || state.runtimeType
     state.baseUrl = normalizeBaseUrl(next.baseUrl, state.baseUrl)
+
+    if (!isManagedLocalHttpRuntime(next)) {
+      state.managedRuntimeAuthToken = null
+    }
+  }
+
+  function resolveManagedRuntimeAuthToken(next = {}) {
+    if (!isManagedLocalHttpRuntime(next)) {
+      return null
+    }
+
+    if (
+      localAiRuntimeController &&
+      typeof localAiRuntimeController.resolveAccess === 'function'
+    ) {
+      const access = localAiRuntimeController.resolveAccess(next)
+      const token = String(
+        access && access.authToken ? access.authToken : ''
+      ).trim()
+
+      if (token) {
+        state.managedRuntimeAuthToken = token
+        return token
+      }
+    }
+
+    return String(state.managedRuntimeAuthToken || '').trim() || null
+  }
+
+  function usesManagedInteractiveRuntime(next = {}) {
+    return (
+      next.runtimeBackend === LOCAL_AI_OLLAMA_RUNTIME_BACKEND ||
+      isManagedLocalHttpRuntime(next)
+    )
+  }
+
+  function resolveInteractiveRuntimeStartTimeoutMs(payload = {}) {
+    const nextPayload =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload
+        : {}
+    const fallbackTimeoutMs = isManagedLocalHttpRuntime(nextPayload)
+      ? MANAGED_MOLMO2_RUNTIME_START_TIMEOUT_MS
+      : DEFAULT_RUNTIME_START_TIMEOUT_MS
+    const rawValue =
+      nextPayload.runtimeStartTimeoutMs ?? nextPayload.startTimeoutMs
+    const parsed = Number.parseInt(rawValue, 10)
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return fallbackTimeoutMs
+    }
+
+    return Math.min(parsed, fallbackTimeoutMs)
   }
 
   async function waitForRuntimeReady(payload) {
     const startedAt = Date.now()
+    const timeoutMs = resolveInteractiveRuntimeStartTimeoutMs(payload)
     let result = await refreshSidecarStatus(payload)
 
-    while (
-      !result.ok &&
-      Date.now() - startedAt < DEFAULT_RUNTIME_START_TIMEOUT_MS
-    ) {
+    while (!result.ok && Date.now() - startedAt < timeoutMs) {
       await delay(DEFAULT_RUNTIME_START_RETRY_DELAY_MS)
       result = await refreshSidecarStatus(payload)
     }
 
     return result
-  }
-
-  function resolveInteractiveRuntimeTimeoutMs(value) {
-    const parsed = Number.parseInt(value, 10)
-
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      return DEFAULT_RUNTIME_START_TIMEOUT_MS
-    }
-
-    return Math.min(parsed, DEFAULT_RUNTIME_START_TIMEOUT_MS)
   }
 
   function normalizeSidecarHealthResult(rawHealth) {
@@ -4491,13 +4396,14 @@ function createLocalAiManager({
   }
 
   async function ensureInteractiveRuntimeReady(next) {
-    if (next.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND) {
+    if (!usesManagedInteractiveRuntime(next)) {
       return null
     }
 
     const readinessPayload = {
       ...next,
-      timeoutMs: resolveInteractiveRuntimeTimeoutMs(next.timeoutMs),
+      timeoutMs: 5000,
+      runtimeStartTimeoutMs: resolveInteractiveRuntimeStartTimeoutMs(next),
     }
     const refreshed = await refreshSidecarStatus(readinessPayload)
 
@@ -4931,8 +4837,8 @@ function createLocalAiManager({
       '2. Upload this whole folder to that machine.',
       '3. Start with a benchmark-only smoke run before doing a longer training run.',
       EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL
-        ? `4. For serious training, use the recommended MLX base ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}.`
-        : '4. No approved MLX base is bundled right now. Pick and audit your own base model before training.',
+        ? `4. Current research candidate: ${EXTERNAL_DEVELOPER_RECOMMENDED_TRAINING_MODEL}. Treat it as an explicit base choice to audit yourself, not as a bundled default.`
+        : '4. No approved local research base is bundled right now. Pick and audit your own base model before training.',
       `5. After training, run the fixed held-out comparison on ${EXTERNAL_DEVELOPER_RECOMMENDED_BENCHMARK_SIZE} unseen flips and keep the result JSON plus the adapter artifact together.`,
       '6. Import only the result files you intend to trust back into IdenaAI later.',
       '',
@@ -5554,6 +5460,7 @@ function createLocalAiManager({
 
   async function refreshSidecarStatus(payload = {}) {
     const next = normalizeRuntimePayload(payload, state)
+    const runtimeAuthToken = resolveManagedRuntimeAuthToken(next)
 
     applyRuntimeState(next)
 
@@ -5561,6 +5468,7 @@ function createLocalAiManager({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
+      runtimeAuthToken,
       timeoutMs: next.timeoutMs,
     })
     const health = normalizeSidecarHealthResult(rawHealth)
@@ -5572,6 +5480,7 @@ function createLocalAiManager({
         baseUrl: state.baseUrl,
         runtimeBackend: next.runtimeBackend,
         runtimeType: next.runtimeType,
+        runtimeAuthToken,
         timeoutMs: next.timeoutMs,
       })
       models = normalizeSidecarModelsResult(rawModels)
@@ -5628,7 +5537,7 @@ function createLocalAiManager({
     if (
       initialStatus.ok ||
       initialStatus.status === 'config_error' ||
-      next.runtimeBackend !== LOCAL_AI_OLLAMA_RUNTIME_BACKEND
+      !usesManagedInteractiveRuntime(next)
     ) {
       state.runtimeManaged = false
       state.running = Boolean(initialStatus.ok)
@@ -5641,8 +5550,16 @@ function createLocalAiManager({
     try {
       const runtimeStart = await localAiRuntimeController.start(next)
       state.runtimeManaged = Boolean(runtimeStart && runtimeStart.managed)
+      state.managedRuntimeAuthToken =
+        String(
+          runtimeStart && runtimeStart.authToken ? runtimeStart.authToken : ''
+        ).trim() || state.managedRuntimeAuthToken
 
-      const readyStatus = await waitForRuntimeReady(next)
+      const readyStatus = await waitForRuntimeReady({
+        ...next,
+        timeoutMs: 5000,
+        runtimeStartTimeoutMs: resolveInteractiveRuntimeStartTimeoutMs(next),
+      })
       state.running = Boolean(
         readyStatus.ok || (runtimeStart && runtimeStart.started)
       )
@@ -5654,7 +5571,7 @@ function createLocalAiManager({
           error: readyStatus.error || 'runtime_start_timeout',
           lastError:
             readyStatus.lastError ||
-            'Ollama was started but is not responding yet.',
+            'The managed Local AI runtime was started but is not responding yet.',
         }
       }
 
@@ -5665,6 +5582,7 @@ function createLocalAiManager({
     } catch (error) {
       state.running = false
       state.runtimeManaged = false
+      state.managedRuntimeAuthToken = null
       state.lastError = String((error && error.message) || error || '').trim()
       state.sidecarReachable = false
       state.sidecarCheckedAt = new Date().toISOString()
@@ -5730,6 +5648,7 @@ function createLocalAiManager({
 
     state.running = false
     state.runtimeManaged = false
+    state.managedRuntimeAuthToken = null
     state.lastError = null
     state.sidecarReachable = null
     state.sidecarCheckedAt = new Date().toISOString()
@@ -5748,6 +5667,7 @@ function createLocalAiManager({
     await hydrate()
 
     const next = normalizeRuntimePayload(payload, state)
+    const runtimeAuthToken = resolveManagedRuntimeAuthToken(next)
 
     applyRuntimeState(next)
 
@@ -5769,6 +5689,7 @@ function createLocalAiManager({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
+      runtimeAuthToken,
       timeoutMs: next.timeoutMs,
     })
     const result = normalizeSidecarModelsResult(rawResult)
@@ -5790,6 +5711,7 @@ function createLocalAiManager({
     await hydrate()
 
     const next = normalizeRuntimePayload(payload, state)
+    const runtimeAuthToken = resolveManagedRuntimeAuthToken(next)
 
     applyRuntimeState(next)
 
@@ -5811,6 +5733,7 @@ function createLocalAiManager({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
+      runtimeAuthToken,
       model: next.model,
       visionModel: next.visionModel,
       messages: next.messages,
@@ -5845,6 +5768,7 @@ function createLocalAiManager({
     await hydrate()
 
     const next = normalizeRuntimePayload(payload, state)
+    const runtimeAuthToken = resolveManagedRuntimeAuthToken(next)
 
     applyRuntimeState(next)
 
@@ -5866,6 +5790,7 @@ function createLocalAiManager({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
+      runtimeAuthToken,
       visionModel: next.visionModel,
       model: next.model,
       input: pickRuntimeInput(next),
@@ -5893,6 +5818,7 @@ function createLocalAiManager({
     await hydrate()
 
     const next = normalizeRuntimePayload(payload, state)
+    const runtimeAuthToken = resolveManagedRuntimeAuthToken(next)
 
     applyRuntimeState(next)
 
@@ -5917,6 +5843,7 @@ function createLocalAiManager({
       baseUrl: state.baseUrl,
       runtimeBackend: next.runtimeBackend,
       runtimeType: next.runtimeType,
+      runtimeAuthToken,
       visionModel: next.visionModel,
       model: next.model,
       input: pickRuntimeInput(next),
@@ -5947,12 +5874,14 @@ function createLocalAiManager({
     await hydrate()
 
     const next = normalizeRuntimePayload(payload, state)
+    const runtimeAuthToken = resolveManagedRuntimeAuthToken(next)
 
     applyRuntimeState(next)
 
     const result = await localAiSidecar.captionFlip({
       ...next,
       baseUrl: state.baseUrl,
+      runtimeAuthToken,
     })
 
     updateSidecarState({
@@ -5971,12 +5900,14 @@ function createLocalAiManager({
     await hydrate()
 
     const next = normalizeRuntimePayload(payload, state)
+    const runtimeAuthToken = resolveManagedRuntimeAuthToken(next)
 
     applyRuntimeState(next)
 
     const result = await localAiSidecar.ocrImage({
       ...next,
       baseUrl: state.baseUrl,
+      runtimeAuthToken,
     })
 
     updateSidecarState({
@@ -5997,6 +5928,7 @@ function createLocalAiManager({
     const next = sanitizeDeveloperHumanTeacherTrainingPayload(
       normalizeRuntimePayload(payload, state)
     )
+    const runtimeAuthToken = resolveManagedRuntimeAuthToken(next)
     const developerHumanTeacher = isDeveloperHumanTeacherTrainingRequest(next)
     const allowSystemPressureOverride =
       developerHumanTeacher && hasDeveloperTrainingSystemPressureOverride(next)
@@ -6037,6 +5969,7 @@ function createLocalAiManager({
     const sidecarPayload = {
       ...next,
       baseUrl: state.baseUrl,
+      runtimeAuthToken,
     }
     delete sidecarPayload.onDeveloperHumanTeacherProgress
 

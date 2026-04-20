@@ -40,6 +40,13 @@ describe('local-ai sidecar', () => {
         service: 'local-ai-sidecar-stub',
       },
     })
+
+    expect(httpClient.get).toHaveBeenCalledWith(
+      'http://localhost:5000/health',
+      expect.objectContaining({
+        timeout: 5000,
+      })
+    )
   })
 
   it('fails gracefully when the sidecar is absent', async () => {
@@ -98,6 +105,65 @@ describe('local-ai sidecar', () => {
       models: ['local-stub-chat'],
       total: 1,
     })
+  })
+
+  it('adds the managed auth token to local runtime service requests', async () => {
+    const httpClient = {
+      get: jest
+        .fn()
+        .mockResolvedValueOnce({
+          data: {ok: true, service: 'local-ai-sidecar-stub'},
+        })
+        .mockResolvedValueOnce({
+          data: {
+            data: [{id: 'allenai/Molmo2-O-7B'}],
+          },
+          config: {
+            url: 'http://127.0.0.1:8080/v1/models',
+          },
+        }),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.getHealth({
+        runtimeBackend: 'local-runtime-service',
+        runtimeType: 'sidecar',
+        baseUrl: 'http://127.0.0.1:8080',
+        runtimeAuthToken: 'managed-token',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      endpoint: 'http://127.0.0.1:8080/health',
+    })
+
+    await expect(
+      sidecar.listModels({
+        runtimeBackend: 'local-runtime-service',
+        runtimeType: 'sidecar',
+        baseUrl: 'http://127.0.0.1:8080',
+        runtimeAuthToken: 'managed-token',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      endpoint: 'http://127.0.0.1:8080/v1/models',
+      models: ['allenai/Molmo2-O-7B'],
+    })
+
+    expect(httpClient.get).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8080/health',
+      expect.objectContaining({
+        headers: {'X-IdenaAI-Local-Token': 'managed-token'},
+      })
+    )
+    expect(httpClient.get).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8080/v1/models',
+      expect.objectContaining({
+        headers: {'X-IdenaAI-Local-Token': 'managed-token'},
+      })
+    )
   })
 
   it('returns explicit not_implemented for optional sidecar endpoints', async () => {
@@ -162,13 +228,13 @@ describe('local-ai sidecar', () => {
       sidecar.trainEpoch({
         baseUrl: 'http://localhost:5000',
         timeoutMs: 999999,
-        runtimeBackend: 'sidecar-http',
+        runtimeBackend: 'local-runtime-service',
         runtimeType: 'sidecar',
         developerHumanTeacherSystemPrompt: 'x'.repeat(9000),
         input: {
           developerHumanTeacher: true,
           sampleName: 'flip-sample',
-          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+          trainingModelPath: 'mlx-community/open-vision-7b-4bit',
           localTrainingProfile: 'invalid-profile',
           localTrainingThermalMode: 'lava',
           localTrainingEpochs: 99,
@@ -193,14 +259,14 @@ describe('local-ai sidecar', () => {
     expect(httpClient.post).toHaveBeenCalledWith(
       'http://localhost:5000/train',
       expect.objectContaining({
-        runtimeBackend: 'sidecar-http',
+        runtimeBackend: 'local-runtime-service',
         runtimeType: 'sidecar',
         developerHumanTeacherSystemPrompt: 'x'.repeat(8000),
         input: expect.objectContaining({
           developerHumanTeacher: true,
           sampleName: 'flip-sample',
-          trainingModelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
-          modelPath: 'mlx-community/Qwen3.5-9B-MLX-4bit',
+          trainingModelPath: 'mlx-community/open-vision-7b-4bit',
+          modelPath: 'mlx-community/open-vision-7b-4bit',
           localTrainingProfile: 'strong',
           localTrainingThermalMode: 'balanced',
           localTrainingEpochs: 6,
@@ -368,7 +434,7 @@ describe('local-ai sidecar', () => {
     const httpClient = {
       post: jest.fn(async () => ({
         data: {
-          model: 'qwen3.5:9b',
+          model: 'reasoner-lab:latest',
           message: {
             role: 'assistant',
             content: '{"final_answer":"left"}',
@@ -396,7 +462,7 @@ describe('local-ai sidecar', () => {
       sidecar.chat({
         runtimeType: 'ollama',
         baseUrl: 'http://127.0.0.1:11434',
-        model: 'qwen3.5:9b',
+        model: 'reasoner-lab:latest',
         input: 'Answer with JSON.',
         responseFormat,
       })
@@ -408,7 +474,7 @@ describe('local-ai sidecar', () => {
     expect(httpClient.post).toHaveBeenCalledWith(
       'http://127.0.0.1:11434/api/chat',
       expect.objectContaining({
-        model: 'qwen3.5:9b',
+        model: 'reasoner-lab:latest',
         format: responseFormat,
       }),
       expect.any(Object)
@@ -508,11 +574,99 @@ describe('local-ai sidecar', () => {
     )
   })
 
-  it('disables Ollama thinking for qwen3 local chat requests', async () => {
+  it('posts chat to a local runtime service and preserves multimodal content', async () => {
     const httpClient = {
       post: jest.fn(async () => ({
         data: {
-          model: 'qwen3.5:9b',
+          model: 'allenai/Molmo2-O-7B',
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: '{"final_answer":"left"}',
+              },
+            },
+          ],
+        },
+        config: {
+          url: 'http://127.0.0.1:8080/v1/chat/completions',
+        },
+      })),
+    }
+    const sidecar = createLocalAiSidecar({httpClient})
+
+    await expect(
+      sidecar.chat({
+        runtimeBackend: 'local-runtime-service',
+        runtimeType: 'sidecar',
+        baseUrl: 'http://127.0.0.1:8080',
+        runtimeAuthToken: 'managed-token',
+        model: 'allenai/Molmo2-O-7B',
+        visionModel: 'allenai/Molmo2-O-7B',
+        responseFormat: {
+          type: 'object',
+          properties: {
+            final_answer: {type: 'string'},
+          },
+        },
+        messages: [
+          {
+            role: 'user',
+            content: 'Describe this flip.',
+            images: ['data:image/png;base64,QUJD'],
+          },
+        ],
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      status: 'ok',
+      provider: 'local-ai',
+      runtimeBackend: 'local-runtime-service',
+      runtimeType: 'sidecar',
+      model: 'allenai/Molmo2-O-7B',
+      endpoint: 'http://127.0.0.1:8080/v1/chat/completions',
+      content: '{"final_answer":"left"}',
+      lastError: null,
+    })
+
+    expect(httpClient.post).toHaveBeenCalledWith(
+      'http://127.0.0.1:8080/v1/chat/completions',
+      expect.objectContaining({
+        model: 'allenai/Molmo2-O-7B',
+        stream: false,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Describe this flip.',
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: 'data:image/png;base64,QUJD',
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      expect.objectContaining({
+        headers: {'X-IdenaAI-Local-Token': 'managed-token'},
+        timeout: 15000,
+      })
+    )
+
+    const postedBody = httpClient.post.mock.calls[0][1]
+    expect(postedBody.response_format).toBeUndefined()
+  })
+
+  it('disables Ollama thinking for deepseek local chat requests', async () => {
+    const httpClient = {
+      post: jest.fn(async () => ({
+        data: {
+          model: 'deepseek-r1:8b',
           message: {
             role: 'assistant',
             content: 'Fast local chat.',
@@ -529,19 +683,19 @@ describe('local-ai sidecar', () => {
       sidecar.chat({
         runtimeType: 'ollama',
         baseUrl: 'http://127.0.0.1:11434',
-        model: 'qwen3.5:9b',
+        model: 'deepseek-r1:8b',
         input: 'Say hello.',
       })
     ).resolves.toMatchObject({
       ok: true,
-      model: 'qwen3.5:9b',
+      model: 'deepseek-r1:8b',
       text: 'Fast local chat.',
     })
 
     expect(httpClient.post).toHaveBeenCalledWith(
       'http://127.0.0.1:11434/api/chat',
       expect.objectContaining({
-        model: 'qwen3.5:9b',
+        model: 'deepseek-r1:8b',
         think: false,
       }),
       expect.objectContaining({
@@ -697,7 +851,7 @@ describe('local-ai sidecar', () => {
     const httpClient = {
       post: jest.fn(async () => ({
         data: {
-          model: 'qwen3.5:9b',
+          model: 'reasoner-lab:latest',
           message: {
             role: 'assistant',
             content: 'Image answer.',
@@ -715,7 +869,7 @@ describe('local-ai sidecar', () => {
         runtimeType: 'ollama',
         baseUrl: 'http://127.0.0.1:11434',
         model: 'llama3.1:8b',
-        visionModel: 'qwen3.5:9b',
+        visionModel: 'reasoner-lab:latest',
         timeoutMs: 120000,
         messages: [
           {
@@ -733,7 +887,7 @@ describe('local-ai sidecar', () => {
     expect(httpClient.post).toHaveBeenCalledWith(
       'http://127.0.0.1:11434/api/chat',
       expect.objectContaining({
-        model: 'qwen3.5:9b',
+        model: 'reasoner-lab:latest',
       }),
       expect.objectContaining({
         timeout: 90000,
@@ -772,13 +926,14 @@ describe('local-ai sidecar', () => {
     const httpClient = {
       post: jest.fn(async () => {
         const error = new Error(
-          'model "qwen3.5:9b" not found, try pulling it first'
+          'model "reasoner-lab:latest" not found, try pulling it first'
         )
         error.response = {
           status: 404,
           data: {
             error: {
-              message: 'model "qwen3.5:9b" not found, try pulling it first',
+              message:
+                'model "reasoner-lab:latest" not found, try pulling it first',
             },
           },
         }
@@ -792,7 +947,7 @@ describe('local-ai sidecar', () => {
         runtimeType: 'ollama',
         baseUrl: 'http://127.0.0.1:11434',
         model: 'llama3.1:8b',
-        visionModel: 'qwen3.5:9b',
+        visionModel: 'reasoner-lab:latest',
         messages: [
           {
             role: 'user',
@@ -804,7 +959,7 @@ describe('local-ai sidecar', () => {
     ).resolves.toMatchObject({
       ok: false,
       status: 'unavailable',
-      lastError: expect.stringContaining('ollama pull qwen3.5:9b'),
+      lastError: expect.stringContaining('ollama pull reasoner-lab:latest'),
     })
   })
 

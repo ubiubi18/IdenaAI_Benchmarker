@@ -4,7 +4,8 @@ const path = require('path')
 const {spawn} = require('child_process')
 
 const SCRIPT_PATH = path.join(__dirname, 'local_ai_server.py')
-const MAX_REQUEST_BYTES = 1024 * 1024
+const MAX_REQUEST_BYTES = 4096
+const AUTH_TOKEN_ENV = 'IDENAAI_LOCAL_RUNTIME_TOKEN'
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -84,10 +85,10 @@ function request({
   })
 }
 
-async function waitForHealth(port) {
+async function waitForHealth(port, headers = {}) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
-      const response = await request({port, requestPath: '/health'})
+      const response = await request({port, requestPath: '/health', headers})
 
       if (response.statusCode === 200) {
         return
@@ -102,14 +103,26 @@ async function waitForHealth(port) {
   throw new Error('Local AI stub did not start in time')
 }
 
-function spawnStub(args = []) {
-  const child = spawn('python3', [SCRIPT_PATH, ...args], {
-    cwd: path.resolve(__dirname, '..'),
-    env: {
-      ...process.env,
-      PYTHONUNBUFFERED: '1',
-    },
-  })
+function spawnStub(args = [], extraEnv = {}) {
+  const child = spawn(
+    'python3',
+    [
+      SCRIPT_PATH,
+      '--backend',
+      'stub',
+      '--max-request-bytes',
+      String(MAX_REQUEST_BYTES),
+      ...args,
+    ],
+    {
+      cwd: path.resolve(__dirname, '..'),
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        ...extraEnv,
+      },
+    }
+  )
 
   let stdout = ''
   let stderr = ''
@@ -191,6 +204,61 @@ describe('local_ai_server.py', () => {
     expect(JSON.parse(response.body)).toMatchObject({
       error: {
         message: 'request_too_large',
+        type: 'invalid_request',
+      },
+    })
+  })
+
+  it('requires the managed local auth token when configured', async () => {
+    const port = await findFreePort()
+    const authToken = 'managed-local-token'
+    running = spawnStub(['--port', String(port)], {
+      [AUTH_TOKEN_ENV]: authToken,
+    })
+
+    await waitForHealth(port, {'X-IdenaAI-Local-Token': authToken})
+
+    const unauthorized = await request({
+      port,
+      requestPath: '/health',
+    })
+    const authorized = await request({
+      port,
+      requestPath: '/v1/models',
+      headers: {'X-IdenaAI-Local-Token': authToken},
+    })
+
+    expect(unauthorized.statusCode).toBe(401)
+    expect(JSON.parse(unauthorized.body)).toMatchObject({
+      error: {
+        message: 'unauthorized',
+        type: 'auth_error',
+      },
+    })
+    expect(authorized.statusCode).toBe(200)
+    expect(JSON.parse(authorized.body)).toMatchObject({
+      object: 'list',
+    })
+  })
+
+  it('rejects non-JSON POST bodies with HTTP 415', async () => {
+    const port = await findFreePort()
+    running = spawnStub(['--port', String(port)])
+
+    await waitForHealth(port)
+
+    const response = await request({
+      port,
+      requestPath: '/chat/completions',
+      method: 'POST',
+      body: '{}',
+      headers: {'Content-Type': 'text/plain'},
+    })
+
+    expect(response.statusCode).toBe(415)
+    expect(JSON.parse(response.body)).toMatchObject({
+      error: {
+        message: 'unsupported_media_type',
         type: 'invalid_request',
       },
     })
