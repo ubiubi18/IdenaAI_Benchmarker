@@ -11,7 +11,13 @@ export function ManagedRuntimeTrustDialog({
   isLoading = false,
   title = 'Trust managed on-device AI',
   confirmLabel = 'Trust and continue',
+  runtimeName = 'managed on-device runtime',
+  extraNote = '',
 }) {
+  const nextRuntimeName = String(runtimeName || 'managed on-device runtime')
+    .trim()
+    .replace(/\s+/gu, ' ')
+
   return (
     <Dialog
       isOpen={isOpen}
@@ -25,9 +31,9 @@ export function ManagedRuntimeTrustDialog({
       <DialogBody>
         <Stack spacing={4}>
           <Text>
-            IdenaAI can prepare the managed Molmo2-O runtime on this device, but
-            that setup still installs pinned Python packages and runs pinned
-            model code locally.
+            IdenaAI can prepare the {nextRuntimeName} on this device, but that
+            setup still installs pinned Python packages and runs pinned model
+            code locally.
           </Text>
 
           <Box
@@ -39,22 +45,28 @@ export function ManagedRuntimeTrustDialog({
           >
             <UnorderedList spacing={2} pl={4} m={0}>
               <ListItem>
-                downloads pinned runtime packages and a pinned Molmo2-O model
-                revision into a private local cache
+                downloads pinned runtime packages and the pinned{' '}
+                {nextRuntimeName} snapshot into a private local cache
               </ListItem>
               <ListItem>
-                verifies the trusted Molmo2 executable files before startup
+                verifies the trusted runtime files before startup
               </ListItem>
               <ListItem>
                 runs the runtime on loopback only (`127.0.0.1`) behind a local
                 auth token
               </ListItem>
               <ListItem>
-                still executes the pinned Molmo2 Python code locally, so only
-                continue if you want this managed runtime on this machine
+                still executes the pinned model code locally, so only continue
+                if you want this managed runtime on this machine
               </ListItem>
             </UnorderedList>
           </Box>
+
+          {extraNote ? (
+            <Text color="orange.600" fontSize="sm">
+              {extraNote}
+            </Text>
+          ) : null}
 
           <Text color="muted" fontSize="sm">
             This approval is stored only on this device.

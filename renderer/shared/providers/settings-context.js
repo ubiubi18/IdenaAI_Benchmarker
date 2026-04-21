@@ -20,6 +20,8 @@ const SET_CONNECTION_DETAILS = 'SET_CONNECTION_DETAILS'
 const TOGGLE_AUTO_ACTIVATE_MINING = 'TOGGLE_AUTO_ACTIVATE_MINING'
 const UPDATE_AI_SOLVER_SETTINGS = 'UPDATE_AI_SOLVER_SETTINGS'
 const UPDATE_LOCAL_AI_SETTINGS = 'UPDATE_LOCAL_AI_SETTINGS'
+const EPHEMERAL_EXTERNAL_NODE_STORAGE_KEY =
+  'idena-ephemeral-external-node-connection'
 
 const randomKey = () =>
   Math.random().toString(36).substring(2, 13) +
@@ -32,6 +34,9 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
   provider: 'openai',
   model: 'gpt-5.4',
+  memoryBudgetGiB: 32,
+  systemReserveGiB: 6,
+  localAiMemoryReference: 'molmo2-o-7b',
   mode: 'manual',
   autoReportEnabled: false,
   autoReportDelayMinutes: 10,
@@ -68,11 +73,118 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
+function normalizeEphemeralExternalNode(value) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const url = String(value.url || '').trim()
+  const apiKey = String(value.apiKey || '').trim()
+  const label = String(value.label || '').trim()
+
+  if (!url || !apiKey) {
+    return null
+  }
+
+  return {
+    url,
+    apiKey,
+    label: label || 'Validation rehearsal node',
+  }
+}
+
+function loadEphemeralExternalNode() {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return null
+  }
+
+  try {
+    return normalizeEphemeralExternalNode(
+      JSON.parse(
+        window.sessionStorage.getItem(EPHEMERAL_EXTERNAL_NODE_STORAGE_KEY) ||
+          'null'
+      )
+    )
+  } catch {
+    return null
+  }
+}
+
+function persistEphemeralExternalNode(value) {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return
+  }
+
+  try {
+    const normalized = normalizeEphemeralExternalNode(value)
+
+    if (!normalized) {
+      window.sessionStorage.removeItem(EPHEMERAL_EXTERNAL_NODE_STORAGE_KEY)
+      return
+    }
+
+    window.sessionStorage.setItem(
+      EPHEMERAL_EXTERNAL_NODE_STORAGE_KEY,
+      JSON.stringify(normalized)
+    )
+  } catch {
+    // ignore session-only persistence failures
+  }
+}
+
+export function buildEffectiveSettingsState(
+  state,
+  ephemeralExternalNode = null
+) {
+  const ephemeralConnection = normalizeEphemeralExternalNode(
+    ephemeralExternalNode
+  )
+
+  if (!ephemeralConnection) {
+    return {
+      ...state,
+      externalNodeMode: state.useExternalNode ? 'persistent' : 'internal',
+      ephemeralExternalNodeConnected: false,
+    }
+  }
+
+  return {
+    ...state,
+    useExternalNode: true,
+    url: ephemeralConnection.url,
+    externalApiKey: ephemeralConnection.apiKey,
+    externalNodeLabel: ephemeralConnection.label,
+    externalNodeMode: 'ephemeral',
+    ephemeralExternalNodeConnected: true,
+  }
+}
+
 function buildAiSolverSettings(settings = {}) {
   const nextSettings = {
     ...DEFAULT_AI_SOLVER_SETTINGS,
     ...(settings || {}),
   }
+
+  const normalizedMemoryBudgetGiB = Number.parseInt(
+    nextSettings.memoryBudgetGiB,
+    10
+  )
+  nextSettings.memoryBudgetGiB =
+    Number.isFinite(normalizedMemoryBudgetGiB) && normalizedMemoryBudgetGiB > 0
+      ? normalizedMemoryBudgetGiB
+      : DEFAULT_AI_SOLVER_SETTINGS.memoryBudgetGiB
+  const normalizedSystemReserveGiB = Number.parseInt(
+    nextSettings.systemReserveGiB,
+    10
+  )
+  nextSettings.systemReserveGiB =
+    Number.isFinite(normalizedSystemReserveGiB) &&
+    normalizedSystemReserveGiB >= 0
+      ? Math.min(64, normalizedSystemReserveGiB)
+      : DEFAULT_AI_SOLVER_SETTINGS.systemReserveGiB
+  nextSettings.localAiMemoryReference =
+    String(nextSettings.localAiMemoryReference || '').trim() ||
+    DEFAULT_AI_SOLVER_SETTINGS.localAiMemoryReference
 
   if (nextSettings.provider === 'local-ai') {
     nextSettings.model = DEFAULT_LOCAL_AI_OLLAMA_MODEL
@@ -188,6 +300,9 @@ const SettingsDispatchContext = React.createContext()
 // eslint-disable-next-line react/prop-types
 export function SettingsProvider({children}) {
   const persistedSettings = loadPersistentState('settings') || {}
+  const [ephemeralExternalNode, setEphemeralExternalNode] = React.useState(() =>
+    loadEphemeralExternalNode()
+  )
 
   const [state, dispatch] = usePersistence(
     useLogger(
@@ -200,6 +315,10 @@ export function SettingsProvider({children}) {
     ),
     'settings'
   )
+
+  useEffect(() => {
+    persistEphemeralExternalNode(ephemeralExternalNode)
+  }, [ephemeralExternalNode])
 
   useEffect(() => {
     if (!state.initialized) {
@@ -227,6 +346,7 @@ export function SettingsProvider({children}) {
 
   const toggleUseExternalNode = useCallback(
     (enable) => {
+      setEphemeralExternalNode(null)
       dispatch({type: TOGGLE_USE_EXTERNAL_NODE, data: enable})
     },
     [dispatch]
@@ -234,6 +354,7 @@ export function SettingsProvider({children}) {
 
   const toggleRunInternalNode = useCallback(
     (run) => {
+      setEphemeralExternalNode(null)
       dispatch({type: TOGGLE_RUN_INTERNAL_NODE, data: run})
     },
     [dispatch]
@@ -250,9 +371,23 @@ export function SettingsProvider({children}) {
 
   const setConnectionDetails = useCallback(
     ({url, apiKey}) => {
+      setEphemeralExternalNode(null)
       dispatch({type: SET_CONNECTION_DETAILS, url, apiKey})
     },
     [dispatch]
+  )
+
+  const connectEphemeralExternalNode = useCallback((payload) => {
+    setEphemeralExternalNode(normalizeEphemeralExternalNode(payload))
+  }, [])
+
+  const clearEphemeralExternalNode = useCallback(() => {
+    setEphemeralExternalNode(null)
+  }, [])
+
+  const effectiveState = useMemo(
+    () => buildEffectiveSettingsState(state, ephemeralExternalNode),
+    [ephemeralExternalNode, state]
   )
 
   const updateAiSolverSettings = useCallback(
@@ -270,7 +405,7 @@ export function SettingsProvider({children}) {
   )
 
   return (
-    <SettingsStateContext.Provider value={state}>
+    <SettingsStateContext.Provider value={effectiveState}>
       <SettingsDispatchContext.Provider
         value={useMemo(
           () => ({
@@ -278,12 +413,16 @@ export function SettingsProvider({children}) {
             toggleRunInternalNode,
             changeLanguage,
             setConnectionDetails,
+            connectEphemeralExternalNode,
+            clearEphemeralExternalNode,
             toggleAutoActivateMining,
             updateAiSolverSettings,
             updateLocalAiSettings,
           }),
           [
             changeLanguage,
+            clearEphemeralExternalNode,
+            connectEphemeralExternalNode,
             setConnectionDetails,
             toggleAutoActivateMining,
             toggleRunInternalNode,
@@ -298,6 +437,8 @@ export function SettingsProvider({children}) {
     </SettingsStateContext.Provider>
   )
 }
+
+export {buildAiSolverSettings}
 
 export function useSettingsState() {
   const context = React.useContext(SettingsStateContext)

@@ -1,0 +1,125 @@
+{
+  "modelId": "allenai/Molmo2-4B",
+  "revision": "042abfa7a38879a376cec03d949eff0aefaa0600",
+  "trustVersion": 1,
+  "allowPatterns": [
+    ".gitattributes",
+    "added_tokens.json",
+    "chat_template.jinja",
+    "config.json",
+    "configuration_molmo2.py",
+    "generation_config.json",
+    "image_processing_molmo2.py",
+    "merges.txt",
+    "model-00001-of-00004.safetensors",
+    "model-00002-of-00004.safetensors",
+    "model-00003-of-00004.safetensors",
+    "model-00004-of-00004.safetensors",
+    "model.safetensors.index.json",
+    "preprocessor_config.json",
+    "processing_molmo2.py",
+    "processor_config.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "video_preprocessor_config.json",
+    "video_processing_molmo2.py",
+    "vocab.json"
+  ],
+  "weightFiles": [
+    "model-00001-of-00004.safetensors",
+    "model-00002-of-00004.safetensors",
+    "model-00003-of-00004.safetensors",
+    "model-00004-of-00004.safetensors"
+  ],
+  "verifyFiles": {
+    ".gitattributes": {
+      "sha256": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930",
+      "size": 1570
+    },
+    "added_tokens.json": {
+      "sha256": "8bc892fbf3933cf0c00794b0f0fa638ca22429db58d427f71ea953accabbf1e7",
+      "size": 9919
+    },
+    "chat_template.jinja": {
+      "sha256": "ec66862fda57dc1aef90a21b2a0f64c18a280e2483206449bd251a73b8993101",
+      "size": 3169
+    },
+    "config.json": {
+      "sha256": "17e072e3c3b29d9be7a348c74b88658e67ccce094c31b21f87646f6cecd2a76f",
+      "size": 2538
+    },
+    "configuration_molmo2.py": {
+      "sha256": "e75a5ab18c298f91d81b2b1e68369812b655a573b4a6a52d59ab8535d791bf39",
+      "size": 13906
+    },
+    "generation_config.json": {
+      "sha256": "103506d168927632c8f627d470611ec14e5bc38246470173713b5c28762026b0",
+      "size": 117
+    },
+    "image_processing_molmo2.py": {
+      "sha256": "613bc2436936cebb1ebf0bfddda666b5c979573ba503fb904eed6eb56a706181",
+      "size": 21116
+    },
+    "merges.txt": {
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+      "size": 1671853
+    },
+    "model-00001-of-00004.safetensors": {
+      "sha256": "065ed844edb74cc3f3992415dc412cfae4c2f6e324de76dc84fffe3a652f6fd3",
+      "size": 4891799000
+    },
+    "model-00002-of-00004.safetensors": {
+      "sha256": "ac1506897468e69d5af2f46127d30274eecb71c60745e7d27ea0319a27addbb4",
+      "size": 4844690992
+    },
+    "model-00003-of-00004.safetensors": {
+      "sha256": "da71a15c961f92361b64c3b45f5465d370c9992f032f0f4adf544d0b208ed573",
+      "size": 4844691024
+    },
+    "model-00004-of-00004.safetensors": {
+      "sha256": "519e694862a7d6d82e539424733f6f55fd8118c3c37e328c2dd942a6d4a16120",
+      "size": 4822393416
+    },
+    "model.safetensors.index.json": {
+      "sha256": "bc043f680e16ecd6f936ef55bf1979781772d37005192d2f3382385f79e42045",
+      "size": 75780
+    },
+    "preprocessor_config.json": {
+      "sha256": "026ee03897ff86cb0d3f7c638145a04a253d4c0722fc5bcc3cf996bb0ebed211",
+      "size": 555
+    },
+    "processing_molmo2.py": {
+      "sha256": "61ef1329d8a02caebaa5e5acd07a329fdbf9772e18ff32cd7256c09a3231360b",
+      "size": 16627
+    },
+    "processor_config.json": {
+      "sha256": "1a976bcab088bcc4601906c345898558daa18f5e69ec4b1df8ab23a389db8bf2",
+      "size": 301
+    },
+    "special_tokens_map.json": {
+      "sha256": "a4922e884f1f6d82a2ff339c39b2b4e15c437dc85b87816e7c1504d5645e6cd8",
+      "size": 7908
+    },
+    "tokenizer.json": {
+      "sha256": "95e80901c901584f416b8fd4349fd60022774b89ba4377626511f0562cc599f7",
+      "size": 11477017
+    },
+    "tokenizer_config.json": {
+      "sha256": "090037776ede9d6522fbac368c1ce9141518a461828eefac1ab8660bd904fa1e",
+      "size": 64390
+    },
+    "video_preprocessor_config.json": {
+      "sha256": "ab16df7a17cb94cf57daeab7c6760a8be8cfad1fa37258cb86ad48d09ffd1815",
+      "size": 984
+    },
+    "video_processing_molmo2.py": {
+      "sha256": "91c4c6404f58dde3213b060874ce35c7f3695002f761fadf5af3f2515f770ba3",
+      "size": 37045
+    },
+    "vocab.json": {
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "size": 2776833
+    }
+  }
+}

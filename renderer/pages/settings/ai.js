@@ -4,6 +4,10 @@ import {
   Box,
   Flex,
   ListItem,
+  Slider,
+  SliderFilledTrack,
+  SliderThumb,
+  SliderTrack,
   UnorderedList,
   Stack,
   Text,
@@ -30,6 +34,7 @@ import {
   Select,
   Textarea,
   Toast,
+  Tooltip,
 } from '../../shared/components/components'
 import {PrimaryButton, SecondaryButton} from '../../shared/components/button'
 import {ManagedRuntimeTrustDialog} from '../../shared/components/managed-runtime-trust-dialog'
@@ -37,7 +42,7 @@ import {
   useSettingsDispatch,
   useSettingsState,
 } from '../../shared/providers/settings-context'
-import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
+import {EyeIcon, EyeOffIcon, InfoIcon} from '../../shared/components/icons'
 import {
   buildLocalAiRuntimePayload,
   checkAiProviderReadiness,
@@ -51,17 +56,30 @@ import {
   DEFAULT_LOCAL_AI_SETTINGS,
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL,
   MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+  MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+  MOLMO2_4B_RESEARCH_RUNTIME_MODEL,
+  MANAGED_LOCAL_RUNTIME_FAMILIES,
   buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   buildRecommendedLocalAiMacPreset,
+  buildInternVl351BLightPreset,
+  buildInternVl358BExperimentalPreset,
+  buildManagedLocalRuntimePreset,
   buildMolmo2OResearchPreset,
+  buildMolmo24BCompactPreset,
   buildLocalAiRuntimePreset,
   buildLocalAiSettings,
   getLocalAiEndpointSafety,
   hasManagedLocalAiTrustApproval,
+  resolveManagedLocalRuntimeMemoryReference,
   resolveLocalAiWireRuntimeType,
 } from '../../shared/utils/local-ai-settings'
+import {getSharedGlobal} from '../../shared/utils/shared-global'
 
 const DEFAULT_MODELS = {
   'local-ai': '',
@@ -153,6 +171,8 @@ const DEFAULT_AI_SETTINGS = {
   enabled: false,
   provider: 'openai',
   model: DEFAULT_MODELS.openai,
+  memoryBudgetGiB: 32,
+  systemReserveGiB: 6,
   mode: 'manual',
   autoReportEnabled: false,
   autoReportDelayMinutes: 10,
@@ -200,6 +220,108 @@ const DEFAULT_LOCAL_AI_DEBUG_FLIP_INPUT = `{
 }`
 
 const MAX_LOCAL_AI_ADAPTER_IMPORT_BYTES = 96 * 1024 * 1024
+const MIN_AI_MEMORY_BUDGET_GIB = 4
+const DEFAULT_AI_MEMORY_BUDGET_GIB = 32
+const MAX_AI_MEMORY_BUDGET_GIB = 128
+const LIVE_SESSION_STACK_MIN_GIB = 4
+const DEFAULT_SYSTEM_RESERVE_GIB = 6
+const MIN_SYSTEM_RESERVE_GIB = 0
+const MAX_SYSTEM_RESERVE_GIB = 32
+const EXTERNAL_PROVIDER_SESSION_TARGET_GIB = 8
+const DEFAULT_LOCAL_AI_MEMORY_REFERENCE = 'molmo2-o-7b'
+const LOCAL_AI_MEMORY_REFERENCE_PROFILES = [
+  {
+    value: 'molmo2-o-7b',
+    label: `Managed ${MOLMO2_O_RESEARCH_RUNTIME_MODEL} (default target)`,
+    shortLabel: 'Molmo2-O 7B',
+    minimumGiB: 16,
+    comfortableGiB: 32,
+    detail:
+      'Pinned multimodal research runtime. This is the main local-AI target IdenaAI currently aims to support well.',
+  },
+  {
+    value: 'molmo2-4b',
+    label: `Managed ${MOLMO2_4B_RESEARCH_RUNTIME_MODEL} (compact target)`,
+    shortLabel: 'Molmo2 4B',
+    minimumGiB: 12,
+    comfortableGiB: 18,
+    detail:
+      'Closest smaller same-family Molmo option. There is no managed 3B Molmo release in this lane right now.',
+  },
+  {
+    value: 'internvl3.5-1b',
+    label: `Managed ${INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL} (light target)`,
+    shortLabel: 'InternVL3.5 1B',
+    minimumGiB: 8,
+    comfortableGiB: 12,
+    detail:
+      'Smallest official same-provider InternVL option. Much lighter than the 8B build, but likely weaker than Molmo2-4B on harder flip reasoning.',
+  },
+  {
+    value: 'internvl3.5-8b',
+    label: `Experimental ${INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL}`,
+    shortLabel: 'InternVL3.5 8B',
+    minimumGiB: 24,
+    comfortableGiB: 32,
+    detail:
+      'Pinned experimental alternative via the generic transformers runtime. Heavier than Molmo2-4B and likely tight on 32 GB desktops unless other apps are closed.',
+  },
+  {
+    value: 'compact-3b',
+    label: 'Compact local model (~3B class)',
+    shortLabel: '3B-class local model',
+    minimumGiB: 8,
+    comfortableGiB: 12,
+    detail:
+      'Small local models are the easiest way to experiment on lower-RAM desktops, but quality can drop sharply.',
+  },
+  {
+    value: 'compact-7b',
+    label: 'General local model (~7B class)',
+    shortLabel: '7B-class local model',
+    minimumGiB: 16,
+    comfortableGiB: 24,
+    detail:
+      'A rough guide for lighter 7B local runtimes that are smaller or simpler than Molmo2-O.',
+  },
+  {
+    value: 'medium-13b',
+    label: 'Larger local model (~13B class)',
+    shortLabel: '13B-class local model',
+    minimumGiB: 24,
+    comfortableGiB: 48,
+    detail:
+      '13B-class local models need much more headroom once the desktop app, node, and session image handling are active.',
+  },
+  {
+    value: 'large-34b',
+    label: 'Heavy local model (~34B class)',
+    shortLabel: '34B-class local model',
+    minimumGiB: 64,
+    comfortableGiB: 96,
+    detail:
+      'This is already in workstation territory. Real live-session use will be fragile below the comfortable range.',
+  },
+  {
+    value: 'xl-70b',
+    label: 'Very large local model (~70B class)',
+    shortLabel: '70B-class local model',
+    minimumGiB: 96,
+    comfortableGiB: 128,
+    detail:
+      'Only relevant for unusually large local setups. Most users should stay well below this class.',
+  },
+]
+const LOCAL_AI_MODEL_CEILING_GUIDE = [
+  {label: 'below 3B-class local models', comfortableGiB: 0},
+  {label: 'around 3B-class local models', comfortableGiB: 12},
+  {label: 'around compact 4B local models', comfortableGiB: 18},
+  {label: 'around 7B-class local models', comfortableGiB: 24},
+  {label: 'around Molmo2-O / heavier 7B multimodal models', comfortableGiB: 32},
+  {label: 'around 13B-class local models', comfortableGiB: 48},
+  {label: 'around 34B-class local models', comfortableGiB: 96},
+  {label: 'around 70B-class local models', comfortableGiB: 128},
+]
 
 function numberOrFallback(value, fallback) {
   const parsed = Number.parseInt(value, 10)
@@ -217,6 +339,306 @@ function weightOrFallback(value, fallback = 1) {
     return fallback
   }
   return Math.min(10, Math.max(0.05, parsed))
+}
+
+function bytesToRoundedGiB(value) {
+  const numericValue = Number(value)
+
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return 0
+  }
+
+  return Math.max(1, Math.round(numericValue / 1024 ** 3))
+}
+
+function formatGiBMetric(value) {
+  const numericValue = Number(value)
+
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    return null
+  }
+
+  return numericValue >= 10
+    ? `${numericValue.toFixed(0)} GB`
+    : `${numericValue.toFixed(1)} GB`
+}
+
+function clampValue(min, max, value) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function normalizeAiMemoryBudgetGiB(value, options = {}) {
+  const fallback =
+    Number.isFinite(options.fallback) && options.fallback > 0
+      ? Math.trunc(options.fallback)
+      : DEFAULT_AI_MEMORY_BUDGET_GIB
+  const dynamicMax =
+    Number.isFinite(options.max) && options.max > 0
+      ? Math.trunc(options.max)
+      : MAX_AI_MEMORY_BUDGET_GIB
+  const normalizedMax = Math.max(
+    MIN_AI_MEMORY_BUDGET_GIB,
+    Math.min(MAX_AI_MEMORY_BUDGET_GIB, dynamicMax)
+  )
+  const parsed = Number.parseInt(value, 10)
+
+  return Number.isFinite(parsed)
+    ? clampValue(MIN_AI_MEMORY_BUDGET_GIB, normalizedMax, parsed)
+    : clampValue(MIN_AI_MEMORY_BUDGET_GIB, normalizedMax, fallback)
+}
+
+function normalizeSystemReserveGiB(value, options = {}) {
+  const fallback =
+    Number.isFinite(options.fallback) && options.fallback >= 0
+      ? Math.trunc(options.fallback)
+      : DEFAULT_SYSTEM_RESERVE_GIB
+  const dynamicMax =
+    Number.isFinite(options.max) && options.max >= MIN_SYSTEM_RESERVE_GIB
+      ? Math.trunc(options.max)
+      : MAX_SYSTEM_RESERVE_GIB
+  const normalizedMax = Math.max(
+    MIN_SYSTEM_RESERVE_GIB,
+    Math.min(MAX_SYSTEM_RESERVE_GIB, dynamicMax)
+  )
+  const parsed = Number.parseInt(value, 10)
+
+  return Number.isFinite(parsed) && parsed >= MIN_SYSTEM_RESERVE_GIB
+    ? clampValue(MIN_SYSTEM_RESERVE_GIB, normalizedMax, parsed)
+    : clampValue(MIN_SYSTEM_RESERVE_GIB, normalizedMax, fallback)
+}
+
+function getLocalAiMemoryReferenceProfile(value) {
+  const normalizedValue = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return (
+    LOCAL_AI_MEMORY_REFERENCE_PROFILES.find(
+      (profile) => profile.value === normalizedValue
+    ) ||
+    LOCAL_AI_MEMORY_REFERENCE_PROFILES.find(
+      (profile) => profile.value === DEFAULT_LOCAL_AI_MEMORY_REFERENCE
+    ) ||
+    LOCAL_AI_MEMORY_REFERENCE_PROFILES[0]
+  )
+}
+
+function getLiveSessionRamTarget(profile, systemReserveGiB) {
+  const selectedProfile =
+    profile ||
+    getLocalAiMemoryReferenceProfile(DEFAULT_LOCAL_AI_MEMORY_REFERENCE)
+  const reserveGiB = normalizeSystemReserveGiB(systemReserveGiB)
+
+  return {
+    reserveGiB,
+    minimumGiB: selectedProfile.minimumGiB + reserveGiB,
+    comfortableGiB: selectedProfile.comfortableGiB + reserveGiB,
+  }
+}
+
+function describeLocalAiBudgetFeasibility(
+  profile,
+  budgetGiB,
+  systemReserveGiB,
+  t
+) {
+  if (!profile) {
+    return {
+      color: 'muted',
+      title: t('No local model reference selected'),
+      detail: '',
+      minimumTotalGiB: 0,
+      comfortableTotalGiB: 0,
+      reserveGiB: normalizeSystemReserveGiB(systemReserveGiB),
+    }
+  }
+
+  const liveSessionTarget = getLiveSessionRamTarget(profile, systemReserveGiB)
+
+  if (budgetGiB < liveSessionTarget.minimumGiB) {
+    return {
+      color: 'red.500',
+      title: t('Below live-session minimum'),
+      detail: t(
+        'Need about {{minimum}} GB total for {{model}} with {{reserve}} GB reserved.',
+        {
+          minimum: liveSessionTarget.minimumGiB,
+          model: profile.shortLabel,
+          reserve: liveSessionTarget.reserveGiB,
+        }
+      ),
+      minimumTotalGiB: liveSessionTarget.minimumGiB,
+      comfortableTotalGiB: liveSessionTarget.comfortableGiB,
+      reserveGiB: liveSessionTarget.reserveGiB,
+    }
+  }
+
+  if (budgetGiB < liveSessionTarget.comfortableGiB) {
+    return {
+      color: 'orange.500',
+      title: t('Possible, but still tight'),
+      detail: t(
+        'Safer target: about {{comfortable}} GB total with {{reserve}} GB reserved.',
+        {
+          comfortable: liveSessionTarget.comfortableGiB,
+          reserve: liveSessionTarget.reserveGiB,
+        }
+      ),
+      minimumTotalGiB: liveSessionTarget.minimumGiB,
+      comfortableTotalGiB: liveSessionTarget.comfortableGiB,
+      reserveGiB: liveSessionTarget.reserveGiB,
+    }
+  }
+
+  return {
+    color: 'green.500',
+    title: t('Meets the selected reserve target'),
+    detail: t(
+      'Safer target: about {{comfortable}} GB total with {{reserve}} GB reserved.',
+      {
+        comfortable: liveSessionTarget.comfortableGiB,
+        reserve: liveSessionTarget.reserveGiB,
+      }
+    ),
+    minimumTotalGiB: liveSessionTarget.minimumGiB,
+    comfortableTotalGiB: liveSessionTarget.comfortableGiB,
+    reserveGiB: liveSessionTarget.reserveGiB,
+  }
+}
+
+function estimateLocalAiCeiling(budgetGiB, systemReserveGiB) {
+  const aiOnlyBudgetGiB = Math.max(
+    0,
+    budgetGiB - normalizeSystemReserveGiB(systemReserveGiB)
+  )
+  let match = LOCAL_AI_MODEL_CEILING_GUIDE[0]
+
+  for (const profile of LOCAL_AI_MODEL_CEILING_GUIDE) {
+    if (aiOnlyBudgetGiB >= profile.comfortableGiB) {
+      match = profile
+    }
+  }
+
+  return match
+}
+
+function describeAiMemoryBudget({
+  budgetGiB,
+  totalSystemMemoryGiB,
+  referenceProfile,
+  systemReserveGiB,
+  t,
+}) {
+  const installedRamDetail =
+    totalSystemMemoryGiB > 0
+      ? t('Installed system RAM: {{count}} GB.', {
+          count: totalSystemMemoryGiB,
+        })
+      : t('Installed system RAM could not be detected in this build.')
+  const localReference =
+    referenceProfile ||
+    getLocalAiMemoryReferenceProfile(DEFAULT_LOCAL_AI_MEMORY_REFERENCE)
+  const localBudgetFit = describeLocalAiBudgetFeasibility(
+    localReference,
+    budgetGiB,
+    systemReserveGiB,
+    t
+  )
+  const localBudgetCeiling = estimateLocalAiCeiling(budgetGiB, systemReserveGiB)
+
+  return {
+    color: localBudgetFit.color,
+    title: localBudgetFit.title,
+    detail: localBudgetFit.detail,
+    ceilingLabel: localBudgetCeiling.label,
+    installedRamDetail,
+  }
+}
+
+function describeLiveSessionAvailability(budgetGiB, availableGiB, t) {
+  if (!Number.isFinite(availableGiB) || availableGiB < 0) {
+    return {
+      color: 'muted',
+      title: t('Current free RAM unknown'),
+      detail: t(
+        'Live telemetry is unavailable, so only the reserve-based estimate can be shown right now.'
+      ),
+    }
+  }
+
+  const availableLabel = formatGiBMetric(availableGiB) || '0 GB'
+  const shortfallLabel =
+    formatGiBMetric(Math.max(0, budgetGiB - availableGiB)) || '0 GB'
+
+  if (availableGiB + 0.25 < budgetGiB) {
+    return {
+      color: 'orange.500',
+      title: t('Not enough free RAM right now'),
+      detail: t(
+        '{{available}} is open to this session now. Free about {{shortfall}} more or lower the budget.',
+        {
+          available: availableLabel,
+          shortfall: shortfallLabel,
+        }
+      ),
+    }
+  }
+
+  if (availableGiB < budgetGiB + 2) {
+    return {
+      color: 'orange.500',
+      title: t('Fits current free RAM, but tightly'),
+      detail: t(
+        '{{available}} is open to this session now, so live headroom is thin.',
+        {
+          available: availableLabel,
+        }
+      ),
+    }
+  }
+
+  return {
+    color: 'green.500',
+    title: t('Fits current free RAM'),
+    detail: t(
+      '{{available}} is open to this session with the current desktop load.',
+      {
+        available: availableLabel,
+      }
+    ),
+  }
+}
+
+function describeExternalProviderBudgetFeasibility(
+  budgetGiB,
+  systemReserveGiB,
+  t
+) {
+  const reserveGiB = normalizeSystemReserveGiB(systemReserveGiB)
+  const minimumBudgetGiB = Math.max(LIVE_SESSION_STACK_MIN_GIB, reserveGiB)
+  const comfortableBudgetGiB = Math.max(
+    EXTERNAL_PROVIDER_SESSION_TARGET_GIB,
+    reserveGiB
+  )
+
+  if (budgetGiB < minimumBudgetGiB) {
+    return {
+      color: 'red.500',
+      title: t('Too low even for API-provider-only usage'),
+    }
+  }
+
+  if (budgetGiB < comfortableBudgetGiB) {
+    return {
+      color: 'orange.500',
+      title: t('Tight for API-provider-only usage'),
+    }
+  }
+
+  return {
+    color: 'green.500',
+    title: t('Viable for API-provider-only usage'),
+  }
 }
 
 function isCustomConfigProvider(provider) {
@@ -295,32 +717,145 @@ function formatErrorForToast(error) {
   }
 
   if (/managed_runtime_trust_required/i.test(message)) {
-    return 'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot locally.'
+    return 'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified pinned local model snapshot locally.'
   }
 
   if (/unsupported_managed_model/i.test(message)) {
-    return 'The managed on-device runtime is locked to the pinned Molmo2-O model. Use a custom local runtime if you need a different base model.'
+    return 'The managed on-device runtime is locked to its pinned model family. Use Ollama or a custom local runtime if you need a different base model.'
   }
 
   return message
 }
 
-function isManagedMolmo2Runtime(localAi = {}) {
+function getManagedLocalRuntimeFamily(localAi = {}) {
+  const runtimeBackend = String(localAi?.runtimeBackend || '')
+    .trim()
+    .toLowerCase()
+  const runtimeFamily = String(localAi?.runtimeFamily || '')
+    .trim()
+    .toLowerCase()
+
+  if (runtimeBackend !== 'local-runtime-service') {
+    return ''
+  }
+
+  return MANAGED_LOCAL_RUNTIME_FAMILIES.includes(runtimeFamily)
+    ? runtimeFamily
+    : ''
+}
+
+function isManagedLocalRuntime(localAi = {}) {
+  return Boolean(getManagedLocalRuntimeFamily(localAi))
+}
+
+function isExperimentalManagedLocalRuntime(runtimeFamily = '') {
   return (
-    String(localAi?.runtimeBackend || '')
+    String(runtimeFamily || '')
       .trim()
-      .toLowerCase() === 'local-runtime-service' &&
-    String(localAi?.runtimeFamily || '')
-      .trim()
-      .toLowerCase() === 'molmo2-o'
+      .toLowerCase() === INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY
   )
 }
 
-function buildRecommendedRuntimePresetForBackend(runtimeBackend) {
+function buildManagedLocalRuntimeInstallPreset(runtimeFamily = '') {
+  return buildManagedLocalRuntimePreset(runtimeFamily)
+}
+
+function getManagedLocalRuntimeModel(runtimeFamily = '') {
+  switch (
+    String(runtimeFamily || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
+      return INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL
+    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
+      return MOLMO2_4B_RESEARCH_RUNTIME_MODEL
+    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
+      return INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL
+    case 'molmo2-o':
+    default:
+      return MOLMO2_O_RESEARCH_RUNTIME_MODEL
+  }
+}
+
+function getManagedLocalRuntimeName(t, runtimeFamily = '') {
+  switch (
+    String(runtimeFamily || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
+      return t('InternVL3.5-1B light runtime')
+    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
+      return t('Molmo2-4B compact runtime')
+    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
+      return t('InternVL3.5-8B experimental runtime')
+    case 'molmo2-o':
+    default:
+      return t('Molmo2-O research runtime')
+  }
+}
+
+function getManagedLocalRuntimeTitle(t, runtimeFamily = '') {
+  switch (
+    String(runtimeFamily || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
+      return t('Managed InternVL3.5-1B light runtime')
+    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
+      return t('Managed Molmo2-4B compact runtime')
+    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
+      return t('Experimental InternVL3.5-8B runtime')
+    case 'molmo2-o':
+    default:
+      return t('Managed Molmo2-O research runtime')
+  }
+}
+
+function getManagedLocalRuntimeDescription(t, runtimeFamily = '') {
+  switch (
+    String(runtimeFamily || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
+      return t(
+        'Smallest official same-provider InternVL path IdenaAI can prepare today. This is the closest managed same-family option to your earlier 3 GB-class request, but real desktop usage still needs more headroom than the raw snapshot size.'
+      )
+    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
+      return t(
+        'Smaller same-family Molmo option. IdenaAI can prepare, install, and start this local-only runtime on first use. There is no managed 3B Molmo release in this lane right now.'
+      )
+    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
+      return t(
+        'Experimental pinned alternative through the generic transformers runtime. Expect substantially higher RAM pressure than Molmo2-4B, and on 32 GB desktops this can still be tight even when the estimator stays green.'
+      )
+    case 'molmo2-o':
+    default:
+      return t(
+        'IdenaAI can prepare, install, and start this local-only runtime on first use. The first startup can take several minutes.'
+      )
+  }
+}
+
+function getManagedLocalRuntimeTrustNote(t, runtimeFamily = '') {
+  return isExperimentalManagedLocalRuntime(runtimeFamily)
+    ? t(
+        'Experimental path: this pinned InternVL build uses the generic transformers runtime and can still be too heavy for a 32 GB desktop once the node and other apps are open.'
+      )
+    : ''
+}
+
+function buildRecommendedRuntimePresetForBackend(
+  runtimeBackend,
+  runtimeFamily = ''
+) {
   return String(runtimeBackend || '')
     .trim()
     .toLowerCase() === 'local-runtime-service'
-    ? buildMolmo2OResearchPreset()
+    ? buildManagedLocalRuntimeInstallPreset(runtimeFamily)
     : buildLocalAiRuntimePreset(runtimeBackend)
 }
 
@@ -349,13 +884,13 @@ function humanizeLocalAiRuntimeError(
 
   if (/managed_runtime_trust_required/i.test(text)) {
     return t(
-      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot locally.'
+      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified pinned local model snapshot locally.'
     )
   }
 
   if (/unsupported_managed_model/i.test(text)) {
     return t(
-      'The managed on-device runtime is locked to the pinned Molmo2-O model. Use a custom local runtime if you need a different base model.'
+      'The managed on-device runtime is locked to its pinned model family. Use Ollama or a custom local runtime if you need a different base model.'
     )
   }
 
@@ -842,17 +1377,16 @@ function describeLocalAiRuntimeStatus({
 }
 
 function describeLocalAiSelection(localAi, runtimeUrl, t) {
-  const managedRuntime = isManagedMolmo2Runtime(localAi)
+  const managedRuntimeFamily = getManagedLocalRuntimeFamily(localAi)
+  const managedRuntime = Boolean(managedRuntimeFamily)
   const backend = String(localAi?.runtimeBackend || '')
     .trim()
     .toLowerCase()
 
   if (managedRuntime) {
     return {
-      title: t('Managed Molmo2-O research runtime'),
-      description: t(
-        'IdenaAI can prepare, install, and start this local-only runtime on first use. The first startup can take several minutes.'
-      ),
+      title: getManagedLocalRuntimeTitle(t, managedRuntimeFamily),
+      description: getManagedLocalRuntimeDescription(t, managedRuntimeFamily),
       endpointLabel: t('Managed local endpoint'),
       endpointHelper: t(
         'This loopback endpoint is used internally by the managed runtime on this device.'
@@ -946,6 +1480,9 @@ export default function AiSettingsPage() {
     setShowLocalAiCompatibilityOverrides,
   ] = useState(false)
   const setupSectionRef = React.useRef(null)
+  const providerSetupSectionRef = React.useRef(null)
+  const providerApiKeyInputRef = React.useRef(null)
+  const pendingProviderSetupRevealRef = React.useRef(false)
   const localAiAdapterFileInputRef = React.useRef(null)
   const [isEnableDialogOpen, setIsEnableDialogOpen] = useState(false)
   const [isCheckingLocalAi, setIsCheckingLocalAi] = useState(false)
@@ -956,6 +1493,20 @@ export default function AiSettingsPage() {
     useState(false)
   const [managedRuntimeTrustRequest, setManagedRuntimeTrustRequest] =
     useState(null)
+  const managedRuntimeTrustLocalAi = useMemo(
+    () =>
+      buildLocalAiSettings({
+        ...localAi,
+        ...((managedRuntimeTrustRequest &&
+          managedRuntimeTrustRequest.localAiPatch) ||
+          {}),
+      }),
+    [localAi, managedRuntimeTrustRequest]
+  )
+  const managedRuntimeTrustFamily = useMemo(
+    () => getManagedLocalRuntimeFamily(managedRuntimeTrustLocalAi),
+    [managedRuntimeTrustLocalAi]
+  )
   const [runtimePathDraft, setRuntimePathDraft] = useState({
     endpoint: '',
     managedRuntimePythonPath: '',
@@ -1030,6 +1581,7 @@ export default function AiSettingsPage() {
     missingProviders: [],
     error: '',
   })
+  const [systemMemoryTelemetry, setSystemMemoryTelemetry] = useState(null)
 
   const notify = useCallback(
     (title, description, status = 'info') => {
@@ -1062,14 +1614,65 @@ export default function AiSettingsPage() {
     })
   }
 
+  const refreshSystemMemoryTelemetry = useCallback(async () => {
+    if (
+      !global.localAi ||
+      typeof global.localAi.getDeveloperTelemetry !== 'function'
+    ) {
+      return null
+    }
+
+    try {
+      const telemetry = await global.localAi.getDeveloperTelemetry()
+      const system =
+        telemetry &&
+        telemetry.system &&
+        typeof telemetry.system === 'object' &&
+        !Array.isArray(telemetry.system)
+          ? telemetry.system
+          : null
+      setSystemMemoryTelemetry(system)
+      return system
+    } catch {
+      return null
+    }
+  }, [])
+
   const applyLocalAiRuntimeBackend = useCallback(
     (runtimeBackend) => {
       updateLocalAiSettings(
-        buildRecommendedRuntimePresetForBackend(runtimeBackend)
+        buildRecommendedRuntimePresetForBackend(
+          runtimeBackend,
+          localAi.runtimeFamily
+        )
       )
     },
-    [updateLocalAiSettings]
+    [localAi.runtimeFamily, updateLocalAiSettings]
   )
+
+  useEffect(() => {
+    let isCancelled = false
+    let intervalId = null
+
+    const loadTelemetry = async () => {
+      if (isCancelled) {
+        return
+      }
+
+      await refreshSystemMemoryTelemetry()
+    }
+
+    loadTelemetry()
+    intervalId = window.setInterval(loadTelemetry, 15000)
+
+    return () => {
+      isCancelled = true
+
+      if (intervalId) {
+        window.clearInterval(intervalId)
+      }
+    }
+  }, [refreshSystemMemoryTelemetry])
 
   const applyRecommendedLocalAiSetup = useCallback(() => {
     updateLocalAiSettings({
@@ -1166,7 +1769,10 @@ export default function AiSettingsPage() {
         ...nextSettingsPatch,
       })
       const nextPayload = buildLocalAiRuntimePayload(nextLocalAi)
-      const managedRuntime = isManagedMolmo2Runtime(nextLocalAi)
+      const managedRuntime = isManagedLocalRuntime(nextLocalAi)
+      const managedRuntimeMemoryReference = managedRuntime
+        ? resolveManagedLocalRuntimeMemoryReference(nextLocalAi.runtimeFamily)
+        : ''
 
       if (openSetup) {
         setShowLocalAiSetup(true)
@@ -1199,12 +1805,22 @@ export default function AiSettingsPage() {
 
       updateLocalAiSettings(nextSettingsPatch)
 
+      const nextAiSolverPatch = managedRuntimeMemoryReference
+        ? {
+            localAiMemoryReference: managedRuntimeMemoryReference,
+          }
+        : {}
+
       if (enableLocalProvider) {
-        updateAiSolverSettings({
+        Object.assign(nextAiSolverPatch, {
           enabled: true,
           provider: 'local-ai',
           model: resolveDefaultModelForProvider('local-ai', nextLocalAi),
         })
+      }
+
+      if (Object.keys(nextAiSolverPatch).length > 0) {
+        updateAiSolverSettings(nextAiSolverPatch)
       }
 
       setLocalAiStatusResult(
@@ -1316,20 +1932,21 @@ export default function AiSettingsPage() {
 
   const resetRuntimePathDraft = useCallback(() => {
     const recommendedPreset = buildRecommendedRuntimePresetForBackend(
-      localAi.runtimeBackend
+      localAi.runtimeBackend,
+      localAi.runtimeFamily
     )
     setRuntimePathDraft({
       endpoint: recommendedPreset.endpoint,
       managedRuntimePythonPath: '',
       ollamaCommandPath: '',
     })
-  }, [localAi.runtimeBackend])
+  }, [localAi.runtimeBackend, localAi.runtimeFamily])
 
   const fixLocalAiAutomatically = useCallback(
     () =>
       startLocalAiWithSettings({
         localAiPatch: buildLocalAiRepairPreset(localAi, {
-          preferManaged: !localAi.enabled || isManagedMolmo2Runtime(localAi),
+          preferManaged: !localAi.enabled || isManagedLocalRuntime(localAi),
         }),
         preparingMessage: t(
           'Resetting the local runtime path to the recommended value and retrying now.'
@@ -1402,6 +2019,39 @@ export default function AiSettingsPage() {
         localAiPatch: buildMolmo2OResearchPreset(),
         preparingMessage: t(
           'Preparing the managed on-device runtime now. Progress will appear below.'
+        ),
+      }),
+    [startLocalAiWithSettings, t]
+  )
+
+  const applyMolmo24BCompactSetup = useCallback(
+    () =>
+      startLocalAiWithSettings({
+        localAiPatch: buildMolmo24BCompactPreset(),
+        preparingMessage: t(
+          'Preparing the compact managed on-device runtime now. Progress will appear below.'
+        ),
+      }),
+    [startLocalAiWithSettings, t]
+  )
+
+  const applyInternVl351BLightSetup = useCallback(
+    () =>
+      startLocalAiWithSettings({
+        localAiPatch: buildInternVl351BLightPreset(),
+        preparingMessage: t(
+          'Preparing the light InternVL3.5-1B runtime now. Progress will appear below.'
+        ),
+      }),
+    [startLocalAiWithSettings, t]
+  )
+
+  const applyInternVl358BExperimentalSetup = useCallback(
+    () =>
+      startLocalAiWithSettings({
+        localAiPatch: buildInternVl358BExperimentalPreset(),
+        preparingMessage: t(
+          'Preparing the experimental InternVL3.5-8B runtime now. Progress will appear below.'
         ),
       }),
     [startLocalAiWithSettings, t]
@@ -1537,7 +2187,7 @@ export default function AiSettingsPage() {
     if (result.sidecarReachable !== true) {
       throw new Error(
         formatLocalAiStatusDescription(result, t, {
-          managedRuntime: isManagedMolmo2Runtime(localAi),
+          managedRuntime: isManagedLocalRuntime(localAi),
         }) || t('The configured Local AI runtime is not reachable yet.')
       )
     }
@@ -1638,7 +2288,7 @@ export default function AiSettingsPage() {
         isChecking: isCheckingLocalAi,
         result: localAiStatusResult,
         baseUrl: localAiRuntimeUrl,
-        managedRuntime: isManagedMolmo2Runtime(localAi),
+        managedRuntime: isManagedLocalRuntime(localAi),
         t,
       }),
     [isCheckingLocalAi, localAiRuntimeUrl, localAiStatusResult, localAi, t]
@@ -1646,7 +2296,7 @@ export default function AiSettingsPage() {
   const localAiRuntimeProgressDisplay = useMemo(
     () =>
       describeRuntimeProgress(localAiRuntimeProgress, t, {
-        managedRuntime: isManagedMolmo2Runtime(localAi),
+        managedRuntime: isManagedLocalRuntime(localAi),
       }),
     [localAi, localAiRuntimeProgress, t]
   )
@@ -2309,6 +2959,9 @@ export default function AiSettingsPage() {
 
     if (router.query?.setup === '1') {
       setShowProviderSetup(true)
+      if (!isLocalAiPrimaryProvider) {
+        pendingProviderSetupRevealRef.current = true
+      }
     }
 
     if (
@@ -2321,7 +2974,43 @@ export default function AiSettingsPage() {
         block: 'start',
       })
     }
-  }, [router.query])
+  }, [isLocalAiPrimaryProvider, router.query])
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined' ||
+      !showProviderSetup ||
+      !pendingProviderSetupRevealRef.current
+    ) {
+      return
+    }
+
+    pendingProviderSetupRevealRef.current = false
+
+    const requestId = window.requestAnimationFrame(() => {
+      if (
+        providerSetupSectionRef.current &&
+        typeof providerSetupSectionRef.current.scrollIntoView === 'function'
+      ) {
+        providerSetupSectionRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        })
+      }
+
+      if (
+        !isLocalAiPrimaryProvider &&
+        providerApiKeyInputRef.current &&
+        typeof providerApiKeyInputRef.current.focus === 'function'
+      ) {
+        providerApiKeyInputRef.current.focus()
+      }
+    })
+
+    return () => {
+      window.cancelAnimationFrame(requestId)
+    }
+  }, [isLocalAiPrimaryProvider, showProviderSetup])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2404,6 +3093,161 @@ export default function AiSettingsPage() {
     providerKeyStatus.requiredProviders,
     t,
   ])
+  const totalSystemMemoryGiB = bytesToRoundedGiB(
+    getSharedGlobal('totalSystemMemoryBytes', 0)
+  )
+  const liveMemoryTotalGiB = Number(systemMemoryTelemetry?.memoryTotalGiB)
+  const liveMemoryFreeGiB = Number(systemMemoryTelemetry?.memoryFreeGiB)
+  const liveMemoryUsedGiB = Number(systemMemoryTelemetry?.memoryUsedGiB)
+  const liveAppMemoryRssGiB =
+    Number(systemMemoryTelemetry?.appMemoryRssMb) / 1024
+  const effectiveMemoryTotalGiB =
+    Number.isFinite(liveMemoryTotalGiB) && liveMemoryTotalGiB > 0
+      ? Math.max(1, Math.round(liveMemoryTotalGiB))
+      : totalSystemMemoryGiB
+  const selectedLocalAiMemoryReference = getLocalAiMemoryReferenceProfile(
+    aiSolver.localAiMemoryReference
+  )
+  const maxAiMemoryBudgetGiB = effectiveMemoryTotalGiB
+    ? Math.max(
+        MIN_AI_MEMORY_BUDGET_GIB,
+        Math.min(MAX_AI_MEMORY_BUDGET_GIB, effectiveMemoryTotalGiB)
+      )
+    : MAX_AI_MEMORY_BUDGET_GIB
+  const normalizedAiMemoryBudgetGiB = normalizeAiMemoryBudgetGiB(
+    aiSolver.memoryBudgetGiB,
+    {
+      max: maxAiMemoryBudgetGiB,
+    }
+  )
+  const maxSystemReserveGiB = effectiveMemoryTotalGiB
+    ? Math.max(
+        MIN_SYSTEM_RESERVE_GIB,
+        Math.min(
+          MAX_SYSTEM_RESERVE_GIB,
+          effectiveMemoryTotalGiB - MIN_AI_MEMORY_BUDGET_GIB
+        )
+      )
+    : MAX_SYSTEM_RESERVE_GIB
+  const normalizedSystemReserveGiB = normalizeSystemReserveGiB(
+    aiSolver.systemReserveGiB,
+    {
+      max: maxSystemReserveGiB,
+    }
+  )
+  const aiMemoryBudgetUi = useMemo(
+    () =>
+      describeAiMemoryBudget({
+        budgetGiB: normalizedAiMemoryBudgetGiB,
+        totalSystemMemoryGiB: effectiveMemoryTotalGiB,
+        referenceProfile: selectedLocalAiMemoryReference,
+        systemReserveGiB: normalizedSystemReserveGiB,
+        t,
+      }),
+    [
+      effectiveMemoryTotalGiB,
+      normalizedAiMemoryBudgetGiB,
+      normalizedSystemReserveGiB,
+      selectedLocalAiMemoryReference,
+      t,
+    ]
+  )
+  const localAiReferenceBudgetFit = useMemo(
+    () =>
+      describeLocalAiBudgetFeasibility(
+        selectedLocalAiMemoryReference,
+        normalizedAiMemoryBudgetGiB,
+        normalizedSystemReserveGiB,
+        t
+      ),
+    [
+      normalizedAiMemoryBudgetGiB,
+      normalizedSystemReserveGiB,
+      selectedLocalAiMemoryReference,
+      t,
+    ]
+  )
+  const localAiReferenceNeedsMoreRam =
+    normalizedAiMemoryBudgetGiB < localAiReferenceBudgetFit.comfortableTotalGiB
+  const otherProcessesMemoryGiB =
+    Number.isFinite(liveMemoryUsedGiB) && Number.isFinite(liveAppMemoryRssGiB)
+      ? Math.max(0, liveMemoryUsedGiB - liveAppMemoryRssGiB)
+      : null
+  const liveSessionAvailableNowGiB = (() => {
+    if (
+      Number.isFinite(otherProcessesMemoryGiB) &&
+      Number.isFinite(liveMemoryTotalGiB)
+    ) {
+      return Math.max(0, liveMemoryTotalGiB - otherProcessesMemoryGiB)
+    }
+
+    if (
+      Number.isFinite(liveMemoryFreeGiB) &&
+      Number.isFinite(liveAppMemoryRssGiB)
+    ) {
+      return Math.max(0, liveMemoryFreeGiB + liveAppMemoryRssGiB)
+    }
+
+    return null
+  })()
+  const liveSessionAvailabilityUi = useMemo(
+    () =>
+      describeLiveSessionAvailability(
+        normalizedAiMemoryBudgetGiB,
+        liveSessionAvailableNowGiB,
+        t
+      ),
+    [liveSessionAvailableNowGiB, normalizedAiMemoryBudgetGiB, t]
+  )
+  const externalProviderBudgetFit = useMemo(
+    () =>
+      describeExternalProviderBudgetFeasibility(
+        normalizedAiMemoryBudgetGiB,
+        normalizedSystemReserveGiB,
+        t
+      ),
+    [normalizedAiMemoryBudgetGiB, normalizedSystemReserveGiB, t]
+  )
+  const systemMemoryTelemetrySummary = useMemo(
+    () => ({
+      available: formatGiBMetric(liveSessionAvailableNowGiB),
+      free: formatGiBMetric(liveMemoryFreeGiB),
+      used: formatGiBMetric(liveMemoryUsedGiB),
+      other: formatGiBMetric(otherProcessesMemoryGiB),
+      appRss: formatGiBMetric(liveAppMemoryRssGiB),
+    }),
+    [
+      liveSessionAvailableNowGiB,
+      liveAppMemoryRssGiB,
+      liveMemoryFreeGiB,
+      liveMemoryUsedGiB,
+      otherProcessesMemoryGiB,
+    ]
+  )
+  useEffect(() => {
+    if (
+      Number.parseInt(aiSolver.memoryBudgetGiB, 10) !==
+      normalizedAiMemoryBudgetGiB
+    ) {
+      updateAiSolverSettings({memoryBudgetGiB: normalizedAiMemoryBudgetGiB})
+    }
+  }, [
+    aiSolver.memoryBudgetGiB,
+    normalizedAiMemoryBudgetGiB,
+    updateAiSolverSettings,
+  ])
+  useEffect(() => {
+    if (
+      Number.parseInt(aiSolver.systemReserveGiB, 10) !==
+      normalizedSystemReserveGiB
+    ) {
+      updateAiSolverSettings({systemReserveGiB: normalizedSystemReserveGiB})
+    }
+  }, [
+    aiSolver.systemReserveGiB,
+    normalizedSystemReserveGiB,
+    updateAiSolverSettings,
+  ])
   const externalProviderChoice = isLocalAiPrimaryProvider
     ? 'openai'
     : activeProvider
@@ -2415,6 +3259,7 @@ export default function AiSettingsPage() {
         'Use this when you want an external AI provider via API instead of a local runtime.'
       )
   const enableExternalProviderSetup = useCallback(() => {
+    pendingProviderSetupRevealRef.current = true
     updateAiSolverSettings({
       enabled: true,
       provider: externalProviderChoice,
@@ -2439,6 +3284,7 @@ export default function AiSettingsPage() {
       const nextValue = !value
 
       if (nextValue) {
+        pendingProviderSetupRevealRef.current = true
         setShowLocalAiSetup(false)
       }
 
@@ -2657,39 +3503,548 @@ export default function AiSettingsPage() {
                       </Stack>
                     </Stack>
                   </Box>
+
+                  <Box
+                    borderWidth="1px"
+                    borderColor="gray.100"
+                    borderRadius="md"
+                    p={3}
+                    bg="white"
+                  >
+                    <Stack spacing={3}>
+                      <Flex
+                        align="center"
+                        justify="space-between"
+                        gap={3}
+                        flexWrap="wrap"
+                      >
+                        <Flex align="center" gap={2}>
+                          <Text fontWeight={600}>
+                            {t('Live-session RAM budget')}
+                          </Text>
+                          <Tooltip
+                            label={t(
+                              'This target counts the node, desktop app, selected local AI, and the reserve you keep aside for the rest of the desktop during a validation session.'
+                            )}
+                            zIndex="tooltip"
+                          >
+                            <Box as="span" color="muted" cursor="help">
+                              <InfoIcon boxSize="4" />
+                            </Box>
+                          </Tooltip>
+                        </Flex>
+                        <Text fontSize="sm" fontWeight={600}>
+                          {t('{{count}} GB', {
+                            count: normalizedAiMemoryBudgetGiB,
+                          })}
+                        </Text>
+                      </Flex>
+
+                      <Flex gap={3} flexWrap="wrap" align="stretch">
+                        <Box
+                          flex="1 1 420px"
+                          borderWidth="1px"
+                          borderColor={
+                            localAiReferenceNeedsMoreRam
+                              ? 'orange.200'
+                              : 'green.100'
+                          }
+                          borderRadius="md"
+                          bg={
+                            localAiReferenceNeedsMoreRam
+                              ? 'orange.012'
+                              : 'green.010'
+                          }
+                          p={3}
+                        >
+                          <Stack spacing={2}>
+                            <Flex gap={3} flexWrap="wrap" align="end">
+                              <Box flex="1 1 260px">
+                                <Text color="muted" fontSize="xs" mb={1}>
+                                  {t('Local AI reference')}
+                                </Text>
+                                <Select
+                                  value={selectedLocalAiMemoryReference.value}
+                                  onChange={(e) =>
+                                    updateAiSolverSettings({
+                                      localAiMemoryReference: e.target.value,
+                                    })
+                                  }
+                                  w="full"
+                                >
+                                  {LOCAL_AI_MEMORY_REFERENCE_PROFILES.map(
+                                    (profile) => (
+                                      <option
+                                        key={profile.value}
+                                        value={profile.value}
+                                      >
+                                        {profile.label}
+                                      </option>
+                                    )
+                                  )}
+                                </Select>
+                              </Box>
+                              <Box flex="0 0 116px">
+                                <Text color="muted" fontSize="xs" mb={1}>
+                                  {t('Reserve')}
+                                </Text>
+                                <InputGroup size="sm">
+                                  <Input
+                                    type="number"
+                                    min={MIN_SYSTEM_RESERVE_GIB}
+                                    max={maxSystemReserveGiB}
+                                    value={normalizedSystemReserveGiB}
+                                    onChange={(e) =>
+                                      updateAiSolverSettings({
+                                        systemReserveGiB:
+                                          normalizeSystemReserveGiB(
+                                            e.target.value,
+                                            {max: maxSystemReserveGiB}
+                                          ),
+                                      })
+                                    }
+                                    pr="10"
+                                  />
+                                  <InputRightElement
+                                    w="10"
+                                    color="muted"
+                                    fontSize="xs"
+                                  >
+                                    GB
+                                  </InputRightElement>
+                                </InputGroup>
+                              </Box>
+                            </Flex>
+                            <Flex
+                              align="center"
+                              justify="space-between"
+                              gap={2}
+                              flexWrap="wrap"
+                            >
+                              <Text
+                                color={localAiReferenceBudgetFit.color}
+                                fontSize="xs"
+                                fontWeight={600}
+                              >
+                                {t('Target: ~{{count}} GB total', {
+                                  count:
+                                    localAiReferenceBudgetFit.comfortableTotalGiB,
+                                })}
+                              </Text>
+                              <Text color="muted" fontSize="xs">
+                                {t('{{count}} GB reserved for node/app', {
+                                  count: normalizedSystemReserveGiB,
+                                })}
+                              </Text>
+                            </Flex>
+                          </Stack>
+                        </Box>
+
+                        <Box
+                          flex="0 1 260px"
+                          minW="240px"
+                          borderWidth="1px"
+                          borderColor={
+                            localAiReferenceNeedsMoreRam
+                              ? 'orange.200'
+                              : 'green.100'
+                          }
+                          borderRadius="md"
+                          p={3}
+                        >
+                          <Stack spacing={2}>
+                            <Box>
+                              <Text color="muted" fontSize="xs">
+                                {t('Target fit')}
+                              </Text>
+                              <Text
+                                fontSize="sm"
+                                fontWeight={600}
+                                color={aiMemoryBudgetUi.color}
+                              >
+                                {aiMemoryBudgetUi.title}
+                              </Text>
+                              <Text color="muted" fontSize="xs">
+                                {aiMemoryBudgetUi.detail}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text color="muted" fontSize="xs">
+                                {t('Live now')}
+                              </Text>
+                              <Text
+                                fontSize="sm"
+                                fontWeight={600}
+                                color={liveSessionAvailabilityUi.color}
+                              >
+                                {liveSessionAvailabilityUi.title}
+                              </Text>
+                              <Text color="muted" fontSize="xs">
+                                {liveSessionAvailabilityUi.detail}
+                              </Text>
+                            </Box>
+                          </Stack>
+                        </Box>
+                      </Flex>
+
+                      <Box px={1}>
+                        <Slider
+                          min={MIN_AI_MEMORY_BUDGET_GIB}
+                          max={maxAiMemoryBudgetGiB}
+                          step={1}
+                          value={normalizedAiMemoryBudgetGiB}
+                          onChange={(value) =>
+                            updateAiSolverSettings({
+                              memoryBudgetGiB: normalizeAiMemoryBudgetGiB(
+                                value,
+                                {max: maxAiMemoryBudgetGiB}
+                              ),
+                            })
+                          }
+                        >
+                          <SliderTrack>
+                            <SliderFilledTrack />
+                          </SliderTrack>
+                          <SliderThumb />
+                        </Slider>
+
+                        <Flex
+                          align="center"
+                          justify="space-between"
+                          mt={2}
+                          gap={2}
+                          flexWrap="wrap"
+                        >
+                          <Text color="muted" fontSize="xs">
+                            {t('{{count}} GB', {
+                              count: MIN_AI_MEMORY_BUDGET_GIB,
+                            })}
+                          </Text>
+                          <Text fontSize="sm" fontWeight={600}>
+                            {t('{{count}} GB selected', {
+                              count: normalizedAiMemoryBudgetGiB,
+                            })}
+                          </Text>
+                          <Text color="muted" fontSize="xs">
+                            {totalSystemMemoryGiB > 0
+                              ? t('{{count}} GB max on this desktop', {
+                                  count: maxAiMemoryBudgetGiB,
+                                })
+                              : t('{{count}} GB max', {
+                                  count: MAX_AI_MEMORY_BUDGET_GIB,
+                                })}
+                          </Text>
+                        </Flex>
+                      </Box>
+
+                      <Flex gap={2} flexWrap="wrap">
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.100"
+                          borderRadius="md"
+                          px={3}
+                          py={2}
+                        >
+                          <Text color="muted" fontSize="xs">
+                            {t('Need')}
+                          </Text>
+                          <Text fontSize="sm" fontWeight={600}>
+                            {t('~{{count}} GB', {
+                              count:
+                                localAiReferenceBudgetFit.comfortableTotalGiB,
+                            })}
+                          </Text>
+                        </Box>
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.100"
+                          borderRadius="md"
+                          px={3}
+                          py={2}
+                        >
+                          <Text color="muted" fontSize="xs">
+                            {t('Reserve')}
+                          </Text>
+                          <Text fontSize="sm" fontWeight={600}>
+                            {t('{{count}} GB', {
+                              count: normalizedSystemReserveGiB,
+                            })}
+                          </Text>
+                        </Box>
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.100"
+                          borderRadius="md"
+                          px={3}
+                          py={2}
+                        >
+                          <Text color="muted" fontSize="xs">
+                            {t('Available now')}
+                          </Text>
+                          <Text fontSize="sm" fontWeight={600}>
+                            {systemMemoryTelemetrySummary.available ||
+                              systemMemoryTelemetrySummary.free ||
+                              'n/a'}
+                          </Text>
+                        </Box>
+                        <Box
+                          borderWidth="1px"
+                          borderColor="gray.100"
+                          borderRadius="md"
+                          px={3}
+                          py={2}
+                        >
+                          <Text color="muted" fontSize="xs">
+                            {t('Ceiling')}
+                          </Text>
+                          <Text fontSize="sm" fontWeight={600}>
+                            {aiMemoryBudgetUi.ceilingLabel}
+                          </Text>
+                        </Box>
+                      </Flex>
+
+                      <Text
+                        color={externalProviderBudgetFit.color}
+                        fontSize="xs"
+                        fontWeight={600}
+                      >
+                        {externalProviderBudgetFit.title}
+                      </Text>
+                      <Text color="orange.500" fontSize="xs">
+                        {t('For real validation, close heavy apps first.')}
+                      </Text>
+                    </Stack>
+                  </Box>
                 </Stack>
               </Stack>
             </Box>
 
             {showProviderSetup ? (
               <>
-                <SettingsFormControl>
-                  <SettingsFormLabel>{t('Main AI provider')}</SettingsFormLabel>
-                  <Select
-                    value={activeProvider}
-                    onChange={(e) => updateProvider(e.target.value)}
-                    w="xs"
-                  >
-                    {MAIN_PROVIDER_OPTIONS.map((item) => (
-                      <option key={item.value} value={item.value}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </Select>
-                </SettingsFormControl>
+                <Box
+                  ref={providerSetupSectionRef}
+                  borderWidth="1px"
+                  borderColor="blue.100"
+                  borderRadius="md"
+                  p={4}
+                  bg="white"
+                >
+                  <Stack spacing={3}>
+                    <Box>
+                      <Text fontWeight={600}>
+                        {t('Provider choice and session key')}
+                      </Text>
+                      <Text color="muted" fontSize="sm" mt={1}>
+                        {isLocalAiPrimaryProvider
+                          ? t(
+                              'Local AI is currently selected as the main provider. Switch to a cloud provider below if you want to use a session API key instead.'
+                            )
+                          : t(
+                              'Choose the external provider you want and load its session key here first. The key stays in memory only for this desktop run.'
+                            )}
+                      </Text>
+                    </Box>
 
-                <Flex align="center" justify="space-between">
-                  <Box>
-                    <Text fontWeight={500}>{t('Current setup state')}</Text>
-                    <Text color="muted">
-                      {providerKeyStatusUi.detail ||
-                        t('Choose a provider and complete its required setup.')}
-                    </Text>
-                  </Box>
-                  <Text fontWeight={600} color={providerKeyStatusUi.color}>
-                    {providerKeyStatusUi.label}
-                  </Text>
-                </Flex>
+                    <SettingsFormControl>
+                      <SettingsFormLabel>
+                        {t('Main AI provider')}
+                      </SettingsFormLabel>
+                      <Select
+                        value={activeProvider}
+                        onChange={(e) => updateProvider(e.target.value)}
+                        w="sm"
+                      >
+                        {MAIN_PROVIDER_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </SettingsFormControl>
+
+                    <Box
+                      borderWidth="1px"
+                      borderColor="gray.100"
+                      borderRadius="md"
+                      p={3}
+                    >
+                      <Stack spacing={1}>
+                        <Text color="muted" fontSize="xs">
+                          {isLocalAiPrimaryProvider
+                            ? t('Current runtime status')
+                            : t('Current key status')}
+                        </Text>
+                        <Text
+                          fontSize="sm"
+                          fontWeight={500}
+                          color={providerKeyStatusUi.color}
+                        >
+                          {providerKeyStatusUi.label}
+                        </Text>
+                        {providerKeyStatusUi.detail ? (
+                          <Text color="muted" fontSize="xs">
+                            {providerKeyStatusUi.detail}
+                          </Text>
+                        ) : null}
+                      </Stack>
+                    </Box>
+
+                    {!isLocalAiPrimaryProvider ? (
+                      <>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>{t('API key')}</SettingsFormLabel>
+                          <InputGroup w="full" maxW="xl">
+                            <Input
+                              ref={providerApiKeyInputRef}
+                              value={apiKey}
+                              type={isApiKeyVisible ? 'text' : 'password'}
+                              placeholder={t('Paste provider API key')}
+                              onChange={(e) => setApiKey(e.target.value)}
+                            />
+                            <InputRightElement w="6" h="6" m="1">
+                              <IconButton
+                                size="xs"
+                                icon={
+                                  isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />
+                                }
+                                bg={isApiKeyVisible ? 'gray.300' : 'white'}
+                                fontSize={20}
+                                _hover={{
+                                  bg: isApiKeyVisible ? 'gray.300' : 'white',
+                                }}
+                                onClick={() =>
+                                  setIsApiKeyVisible(!isApiKeyVisible)
+                                }
+                              />
+                            </InputRightElement>
+                          </InputGroup>
+                        </SettingsFormControl>
+
+                        <Stack isInline justify="flex-end" spacing={2}>
+                          <SecondaryButton
+                            isLoading={isUpdatingKey}
+                            onClick={async () => {
+                              setIsUpdatingKey(true)
+                              try {
+                                const bridge = ensureBridge()
+                                await bridge.clearProviderKey({
+                                  provider: activeProvider,
+                                })
+                                setApiKey('')
+                                await refreshProviderKeyStatus()
+                                notify(
+                                  t('Provider key cleared'),
+                                  t(
+                                    'The session key has been removed from memory.'
+                                  )
+                                )
+                              } catch (error) {
+                                notify(
+                                  t('Unable to clear key'),
+                                  formatErrorForToast(error),
+                                  'error'
+                                )
+                              } finally {
+                                setIsUpdatingKey(false)
+                              }
+                            }}
+                          >
+                            {t('Clear key')}
+                          </SecondaryButton>
+
+                          <SecondaryButton
+                            isDisabled={!trimmedApiKey}
+                            isLoading={isUpdatingKey}
+                            onClick={async () => {
+                              setIsUpdatingKey(true)
+                              try {
+                                const bridge = ensureBridge()
+                                await bridge.setProviderKey({
+                                  provider: activeProvider,
+                                  apiKey: trimmedApiKey,
+                                })
+                                setApiKey('')
+                                setIsApiKeyVisible(false)
+                                await refreshProviderKeyStatus()
+                                notify(
+                                  t('Provider key set'),
+                                  t(
+                                    'The session key was loaded and is ready for requests.'
+                                  )
+                                )
+                              } catch (error) {
+                                notify(
+                                  t('Unable to set key'),
+                                  formatErrorForToast(error),
+                                  'error'
+                                )
+                              } finally {
+                                setIsUpdatingKey(false)
+                              }
+                            }}
+                          >
+                            {t('Set key')}
+                          </SecondaryButton>
+
+                          <PrimaryButton
+                            isDisabled={!providerKeyStatus.primaryReady}
+                            isLoading={isTesting}
+                            onClick={async () => {
+                              setIsTesting(true)
+                              try {
+                                const bridge = ensureBridge()
+                                const result = await bridge.testProvider({
+                                  provider: activeProvider,
+                                  model: activeModel,
+                                  providerConfig,
+                                })
+                                notify(
+                                  t('Provider is reachable'),
+                                  t(
+                                    '{{provider}} {{model}} in {{latency}} ms',
+                                    {
+                                      provider: formatAiProviderLabel(
+                                        result.provider
+                                      ),
+                                      model:
+                                        String(result.model || '').trim() ||
+                                        t('default model'),
+                                      latency: result.latencyMs,
+                                    }
+                                  )
+                                )
+                                await refreshProviderKeyStatus()
+                              } catch (error) {
+                                notify(
+                                  t('Provider test failed'),
+                                  formatErrorForToast(error),
+                                  'error'
+                                )
+                              } finally {
+                                setIsTesting(false)
+                              }
+                            }}
+                          >
+                            {t('Test connection')}
+                          </PrimaryButton>
+                        </Stack>
+                      </>
+                    ) : (
+                      <Box
+                        borderWidth="1px"
+                        borderColor="blue.050"
+                        borderRadius="md"
+                        p={3}
+                      >
+                        <Text color="muted" fontSize="sm">
+                          {t(
+                            'Local AI does not need a session API key. Use the Local AI section below for runtime setup, then return here only if you want to switch back to a cloud provider.'
+                          )}
+                        </Text>
+                      </Box>
+                    )}
+                  </Stack>
+                </Box>
 
                 {isCustomConfigProvider(activeProvider) && (
                   <Stack spacing={3}>
@@ -3783,11 +5138,22 @@ export default function AiSettingsPage() {
                 <Text color="muted" fontSize="sm" mt={1}>
                   {localAiSelection.endpointHelper}
                 </Text>
-                {isManagedMolmo2Runtime(localAi) ? (
+                {isManagedLocalRuntime(localAi) ? (
                   <Text color="muted" fontSize="sm" mt={1}>
                     {t(
                       'Managed research model: {{model}}. IdenaAI prepares this local-only runtime on first use.',
-                      {model: MOLMO2_O_RESEARCH_RUNTIME_MODEL}
+                      {
+                        model: getManagedLocalRuntimeModel(
+                          localAi.runtimeFamily
+                        ),
+                      }
+                    )}
+                  </Text>
+                ) : null}
+                {isExperimentalManagedLocalRuntime(localAi.runtimeFamily) ? (
+                  <Text color="orange.600" fontSize="sm" mt={1}>
+                    {t(
+                      'Experimental path: this pinned InternVL build uses the generic transformers runtime and can still be too heavy for a 32 GB desktop once the node and other apps are open.'
                     )}
                   </Text>
                 ) : null}
@@ -3806,6 +5172,24 @@ export default function AiSettingsPage() {
                   {t('Install recommended on-device AI')}
                 </PrimaryButton>
                 <SecondaryButton
+                  onClick={applyMolmo24BCompactSetup}
+                  isLoading={isStartingLocalAi}
+                >
+                  {t('Try compact Molmo2-4B')}
+                </SecondaryButton>
+                <SecondaryButton
+                  onClick={applyInternVl351BLightSetup}
+                  isLoading={isStartingLocalAi}
+                >
+                  {t('Try light InternVL3.5-1B')}
+                </SecondaryButton>
+                <SecondaryButton
+                  onClick={applyInternVl358BExperimentalSetup}
+                  isLoading={isStartingLocalAi}
+                >
+                  {t('Try experimental InternVL3.5-8B')}
+                </SecondaryButton>
+                <SecondaryButton
                   onClick={fixLocalAiAutomatically}
                   isLoading={isStartingLocalAi}
                 >
@@ -3817,7 +5201,7 @@ export default function AiSettingsPage() {
               </Stack>
               <Text color="muted" fontSize="sm">
                 {t(
-                  'Recommended for most people: let IdenaAI prepare the managed on-device runtime now and follow the progress bar below. Pick Ollama only if you already run your own local model runtime.'
+                  'Recommended for most people: let IdenaAI prepare the default Molmo runtime now and follow the progress bar below. The compact Molmo path is the safer fallback. InternVL3.5-1B is the lightest official same-provider alternative, while InternVL3.5-8B stays the heavy experimental option. Pick Ollama only if you already run your own local model runtime.'
                 )}
               </Text>
               <Box
@@ -4364,11 +5748,11 @@ export default function AiSettingsPage() {
                               baseUrl: nextPayload.baseUrl || localAiRuntimeUrl,
                               runtimeProgress: {
                                 active: true,
-                                status: isManagedMolmo2Runtime(localAi)
+                                status: isManagedLocalRuntime(localAi)
                                   ? 'installing'
                                   : 'starting',
                                 stage: 'prepare_runtime_request',
-                                message: isManagedMolmo2Runtime(localAi)
+                                message: isManagedLocalRuntime(localAi)
                                   ? 'Preparing the managed local runtime on this device.'
                                   : 'Preparing the local runtime on this device.',
                                 progressPercent: 2,
@@ -4388,7 +5772,7 @@ export default function AiSettingsPage() {
                           notify(
                             t('Local AI runtime updated'),
                             formatLocalAiStatusDescription(result, t, {
-                              managedRuntime: isManagedMolmo2Runtime(localAi),
+                              managedRuntime: isManagedLocalRuntime(localAi),
                             }),
                             result && result.status === 'ok'
                               ? 'success'
@@ -4472,7 +5856,7 @@ export default function AiSettingsPage() {
                               ? t('Local AI runtime reachable')
                               : t('Local AI runtime unavailable'),
                             formatLocalAiStatusDescription(result, t, {
-                              managedRuntime: isManagedMolmo2Runtime(localAi),
+                              managedRuntime: isManagedLocalRuntime(localAi),
                             }),
                             result && result.status === 'ok'
                               ? 'success'
@@ -5283,210 +6667,6 @@ export default function AiSettingsPage() {
             </Stack>
           </SettingsSection>
         ) : null}
-
-        {showProviderSetup ? (
-          <SettingsSection
-            title={
-              isLocalAiPrimaryProvider
-                ? t('Local AI runtime')
-                : t('Provider key (session only)')
-            }
-          >
-            <Stack spacing={3}>
-              <Text color="muted" fontSize="sm">
-                {isLocalAiPrimaryProvider
-                  ? t(
-                      'Local AI uses the runtime configured in the Local AI section below. No session API key is required for the main provider.'
-                    )
-                  : t(
-                      'The API key is kept in memory only for this desktop run and is not persisted to settings by default.'
-                    )}
-              </Text>
-              <Text color="muted" fontSize="sm">
-                {isLocalAiPrimaryProvider
-                  ? t(
-                      'If setup still shows Missing, enable Local AI and make sure the configured runtime endpoint responds before testing again.'
-                    )
-                  : t(
-                      'Keys are stored separately per provider. Setting an OpenAI key does not automatically enable Gemini, Anthropic, xAI, Groq, OpenRouter, or other providers.'
-                    )}
-              </Text>
-              <Box
-                borderWidth="1px"
-                borderColor="gray.100"
-                borderRadius="md"
-                p={3}
-              >
-                <Stack spacing={1}>
-                  <Text color="muted" fontSize="xs">
-                    {isLocalAiPrimaryProvider
-                      ? t('Current runtime status')
-                      : t('Current key status')}
-                  </Text>
-                  <Text
-                    fontSize="sm"
-                    fontWeight={500}
-                    color={providerKeyStatusUi.color}
-                  >
-                    {providerKeyStatusUi.label}
-                  </Text>
-                  {providerKeyStatusUi.detail ? (
-                    <Text color="muted" fontSize="xs">
-                      {providerKeyStatusUi.detail}
-                    </Text>
-                  ) : null}
-                </Stack>
-              </Box>
-
-              {!isLocalAiPrimaryProvider ? (
-                <SettingsFormControl>
-                  <SettingsFormLabel>{t('API key')}</SettingsFormLabel>
-                  <InputGroup w="full" maxW="xl">
-                    <Input
-                      value={apiKey}
-                      type={isApiKeyVisible ? 'text' : 'password'}
-                      placeholder={t('Paste provider API key')}
-                      onChange={(e) => setApiKey(e.target.value)}
-                    />
-                    <InputRightElement w="6" h="6" m="1">
-                      <IconButton
-                        size="xs"
-                        icon={isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />}
-                        bg={isApiKeyVisible ? 'gray.300' : 'white'}
-                        fontSize={20}
-                        _hover={{
-                          bg: isApiKeyVisible ? 'gray.300' : 'white',
-                        }}
-                        onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
-                      />
-                    </InputRightElement>
-                  </InputGroup>
-                </SettingsFormControl>
-              ) : (
-                <Box
-                  borderWidth="1px"
-                  borderColor="blue.050"
-                  borderRadius="md"
-                  p={3}
-                >
-                  <Text color="muted" fontSize="sm">
-                    {t(
-                      'Model selection, runtime URL, and runtime health checks live in the Local AI section above. Use Test connection here to verify the current Local AI provider setup.'
-                    )}
-                  </Text>
-                </Box>
-              )}
-
-              <Stack isInline justify="flex-end" spacing={2}>
-                {!isLocalAiPrimaryProvider ? (
-                  <>
-                    <SecondaryButton
-                      isLoading={isUpdatingKey}
-                      onClick={async () => {
-                        setIsUpdatingKey(true)
-                        try {
-                          const bridge = ensureBridge()
-                          await bridge.clearProviderKey({
-                            provider: activeProvider,
-                          })
-                          setApiKey('')
-                          await refreshProviderKeyStatus()
-                          notify(
-                            t('Provider key cleared'),
-                            t('The session key has been removed from memory.')
-                          )
-                        } catch (error) {
-                          notify(
-                            t('Unable to clear key'),
-                            formatErrorForToast(error),
-                            'error'
-                          )
-                        } finally {
-                          setIsUpdatingKey(false)
-                        }
-                      }}
-                    >
-                      {t('Clear key')}
-                    </SecondaryButton>
-
-                    <SecondaryButton
-                      isDisabled={!trimmedApiKey}
-                      isLoading={isUpdatingKey}
-                      onClick={async () => {
-                        setIsUpdatingKey(true)
-                        try {
-                          const bridge = ensureBridge()
-                          await bridge.setProviderKey({
-                            provider: activeProvider,
-                            apiKey: trimmedApiKey,
-                          })
-                          setApiKey('')
-                          setIsApiKeyVisible(false)
-                          await refreshProviderKeyStatus()
-                          notify(
-                            t('Provider key set'),
-                            t(
-                              'The session key was loaded and is ready for requests.'
-                            )
-                          )
-                        } catch (error) {
-                          notify(
-                            t('Unable to set key'),
-                            formatErrorForToast(error),
-                            'error'
-                          )
-                        } finally {
-                          setIsUpdatingKey(false)
-                        }
-                      }}
-                    >
-                      {t('Set key')}
-                    </SecondaryButton>
-                  </>
-                ) : null}
-
-                <PrimaryButton
-                  isDisabled={
-                    !isLocalAiPrimaryProvider && !providerKeyStatus.primaryReady
-                  }
-                  isLoading={isTesting}
-                  onClick={async () => {
-                    setIsTesting(true)
-                    try {
-                      const bridge = ensureBridge()
-                      const result = await bridge.testProvider({
-                        provider: activeProvider,
-                        model: activeModel,
-                        providerConfig,
-                      })
-                      notify(
-                        t('Provider is reachable'),
-                        t('{{provider}} {{model}} in {{latency}} ms', {
-                          provider: formatAiProviderLabel(result.provider),
-                          model:
-                            String(result.model || '').trim() ||
-                            t('default model'),
-                          latency: result.latencyMs,
-                        })
-                      )
-                      await refreshProviderKeyStatus()
-                    } catch (error) {
-                      notify(
-                        t('Provider test failed'),
-                        formatErrorForToast(error),
-                        'error'
-                      )
-                    } finally {
-                      setIsTesting(false)
-                    }
-                  }}
-                >
-                  {t('Test connection')}
-                </PrimaryButton>
-              </Stack>
-            </Stack>
-          </SettingsSection>
-        ) : null}
       </Stack>
       <Dialog
         isOpen={isRuntimePathDialogOpen}
@@ -5593,6 +6773,11 @@ export default function AiSettingsPage() {
         isLoading={isStartingLocalAi}
         title={t('Trust managed on-device AI')}
         confirmLabel={t('Trust and install')}
+        runtimeName={getManagedLocalRuntimeName(t, managedRuntimeTrustFamily)}
+        extraNote={getManagedLocalRuntimeTrustNote(
+          t,
+          managedRuntimeTrustFamily
+        )}
       />
       <AiEnableDialog
         isOpen={isEnableDialogOpen}

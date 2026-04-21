@@ -334,6 +334,7 @@ class TransformersChatBackend:
             self.model_source,
             trust_remote_code=trust_remote_code,
             dtype="auto",
+            low_cpu_mem_usage=True,
             device_map="auto",
         )
 

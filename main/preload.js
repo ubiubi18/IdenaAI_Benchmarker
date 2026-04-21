@@ -312,6 +312,35 @@ function createNodeBridge() {
     initLocalNode() {
       ipcRenderer.send(NODE_COMMAND, 'init-local-node')
     },
+    startValidationDevnet(payload) {
+      ipcRenderer.send(
+        NODE_COMMAND,
+        'start-validation-devnet',
+        toIpcCloneable(payload)
+      )
+    },
+    restartValidationDevnet(payload) {
+      ipcRenderer.send(
+        NODE_COMMAND,
+        'restart-validation-devnet',
+        toIpcCloneable(payload)
+      )
+    },
+    stopValidationDevnet() {
+      ipcRenderer.send(NODE_COMMAND, 'stop-validation-devnet')
+    },
+    getValidationDevnetStatus() {
+      ipcRenderer.send(NODE_COMMAND, 'get-validation-devnet-status')
+    },
+    getValidationDevnetLogs() {
+      ipcRenderer.send(NODE_COMMAND, 'get-validation-devnet-logs')
+    },
+    connectValidationDevnet() {
+      ipcRenderer.send(NODE_COMMAND, 'connect-validation-devnet')
+    },
+    clearExternalNodeOverride() {
+      ipcRenderer.send(NODE_COMMAND, 'clear-external-node-override')
+    },
     stopLocalNode() {
       ipcRenderer.send(NODE_COMMAND, 'stop-local-node')
     },
@@ -1626,6 +1655,10 @@ const bridge = {
     isMac: process.platform === 'darwin',
     locale,
     appVersion: appInfo.version || '0.0.0',
+    totalSystemMemoryBytes:
+      Number(appInfo.totalSystemMemoryBytes) > 0
+        ? Number(appInfo.totalSystemMemoryBytes)
+        : 0,
     env: {
       NODE_ENV: process.env.NODE_ENV,
       NODE_MOCK: process.env.NODE_MOCK,

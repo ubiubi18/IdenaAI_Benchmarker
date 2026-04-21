@@ -1,4 +1,5 @@
 const {join, resolve} = require('path')
+const os = require('os')
 const {
   BrowserWindow,
   app,
@@ -111,6 +112,10 @@ const {
   getNodeIpfsDir,
   tryStopNode,
 } = require('./idena-node')
+const {
+  createDefaultValidationDevnetController,
+  shouldConnectValidationDevnetStatus,
+} = require('./idena-devnet')
 
 const NodeUpdater = require('./node-updater')
 
@@ -161,6 +166,7 @@ let mainWindow
 let node
 let nodeDownloadPromise = null
 let tray
+const validationDevnet = createDefaultValidationDevnetController({logger})
 
 const nodeUpdater = new NodeUpdater(logger)
 
@@ -173,6 +179,23 @@ const RELEASE_REPOSITORY = {
 }
 
 const RELEASE_URL = `https://api.github.com/repos/${RELEASE_REPOSITORY.owner}/${RELEASE_REPOSITORY.repo}/releases/latest`
+
+let runtimeExternalNodeOverride = null
+
+function normalizeRuntimeExternalNodeOverride(value = null) {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const url = pickTrimmedString([value.url], '')
+  const key = pickTrimmedString([value.key, value.apiKey], '')
+
+  if (!url || !key) {
+    return null
+  }
+
+  return {url, key}
+}
 
 function loadMainSettings() {
   try {
@@ -278,6 +301,7 @@ onTrusted(APP_INFO_COMMAND, (event) => {
   event.returnValue = {
     version: appVersion,
     locale: app.getLocale(),
+    totalSystemMemoryBytes: os.totalmem(),
   }
 })
 
@@ -428,6 +452,14 @@ function validateNodeRpcPayload(payload = {}) {
 }
 
 function getNodeRpcConnection() {
+  const runtimeOverride = normalizeRuntimeExternalNodeOverride(
+    runtimeExternalNodeOverride
+  )
+
+  if (runtimeOverride) {
+    return runtimeOverride
+  }
+
   const settings = loadMainSettings()
   const internalPort = Number(settings && settings.internalPort)
 
@@ -451,6 +483,43 @@ function getNodeRpcConnection() {
 function getInternalNodeApiKey() {
   const settings = loadMainSettings()
   return pickTrimmedString([settings && settings.internalApiKey], '')
+}
+
+function emitValidationDevnetConnectPayload() {
+  try {
+    const payload = validationDevnet.getConnectionDetails()
+
+    runtimeExternalNodeOverride = normalizeRuntimeExternalNodeOverride({
+      url: payload && payload.url,
+      key: payload && payload.apiKey,
+    })
+
+    if (!runtimeExternalNodeOverride) {
+      return false
+    }
+
+    sendMainWindowMsg(NODE_EVENT, 'validation-devnet-connect-payload', {
+      ...payload,
+      label: 'Validation rehearsal node',
+      transient: true,
+    })
+
+    return true
+  } catch (error) {
+    logger.error(
+      'error while emitting validation devnet connection payload',
+      error.toString()
+    )
+    return false
+  }
+}
+
+function shouldEmitValidationDevnetConnectPayload(status, options = {}) {
+  return shouldConnectValidationDevnetStatus(status, {
+    connectCountdownSeconds: Number.isFinite(options.connectCountdownSeconds)
+      ? options.connectCountdownSeconds
+      : null,
+  })
 }
 
 async function performNodeRpc(payload = {}) {
@@ -1671,6 +1740,26 @@ app.on('will-finish-launching', () => {
 })
 
 let didConfirmQuit = false
+let isFinalizingQuit = false
+let quitCleanupPromise = null
+let quitAfterCleanup = () => app.quit()
+
+function finalizeQuitAfterCleanup() {
+  if (isFinalizingQuit) {
+    return
+  }
+
+  isFinalizingQuit = true
+  didConfirmQuit = true
+
+  if (mainWindow) {
+    mainWindow.forceClose = true
+  }
+
+  const completeQuit = quitAfterCleanup
+  quitAfterCleanup = () => app.quit()
+  completeQuit()
+}
 
 app.on('before-quit', (e) => {
   if (mainWindow) {
@@ -1678,16 +1767,42 @@ app.on('before-quit', (e) => {
     mainWindow.focus()
   }
 
-  if (didConfirmQuit || isDev) {
-    mainWindow.forceClose = true
-  } else {
+  if (isFinalizingQuit) {
+    if (mainWindow) {
+      mainWindow.forceClose = true
+    }
+    return
+  }
+
+  if (!didConfirmQuit && !isDev) {
     e.preventDefault()
     sendMainWindowMsg('confirm-quit')
+    return
   }
+
+  e.preventDefault()
+
+  if (quitCleanupPromise) {
+    return
+  }
+
+  quitCleanupPromise = validationDevnet
+    .stop({quiet: true})
+    .catch((error) => {
+      logger.error(
+        'error while stopping validation rehearsal network on quit',
+        error.toString()
+      )
+    })
+    .finally(() => {
+      quitCleanupPromise = null
+      finalizeQuitAfterCleanup()
+    })
 })
 
 onTrusted('confirm-quit', () => {
   didConfirmQuit = true
+  quitAfterCleanup = () => app.quit()
   app.quit()
 })
 
@@ -1712,6 +1827,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
   logger.info(`new node command`, command, data)
   switch (command) {
     case 'init-local-node': {
+      runtimeExternalNodeOverride = null
       if (macosVersion.isMacOS && macosVersion.is('<10.15')) {
         return sendMainWindowMsg(NODE_EVENT, 'unsupported-macos-version')
       }
@@ -1748,6 +1864,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'start-local-node': {
+      runtimeExternalNodeOverride = null
       if (node && node.exitCode == null) {
         logger.info(`node already managed, PID: ${node.pid || 'unknown'}`)
         sendMainWindowMsg(NODE_EVENT, 'node-started')
@@ -1790,6 +1907,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'stop-local-node': {
+      runtimeExternalNodeOverride = null
       stopNode(node)
         .then((log) => {
           logger.info(log)
@@ -1803,6 +1921,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'clean-state': {
+      runtimeExternalNodeOverride = null
       stopNode(node)
         .then((log) => {
           logger.info(log)
@@ -1818,6 +1937,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'restart-node': {
+      runtimeExternalNodeOverride = null
       stopNode(node)
         .then((log) => {
           logger.info(log)
@@ -1848,6 +1968,139 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
         .catch((e) => {
           logger.error('error while reading logs', e.toString())
         })
+      break
+    }
+    case 'start-validation-devnet': {
+      let didEmitConnectPayload = false
+
+      validationDevnet
+        .start({
+          ...(data || {}),
+          onStatus(status) {
+            sendMainWindowMsg(NODE_EVENT, 'validation-devnet-status', status)
+
+            if (
+              data?.connectApp &&
+              !didEmitConnectPayload &&
+              shouldEmitValidationDevnetConnectPayload(status, {
+                connectCountdownSeconds: data?.connectCountdownSeconds,
+              })
+            ) {
+              didEmitConnectPayload = emitValidationDevnetConnectPayload()
+            }
+          },
+          onLog(line) {
+            sendMainWindowMsg(NODE_EVENT, 'validation-devnet-log', line)
+          },
+        })
+        .then((status) => {
+          if (!data?.connectApp || !status?.active || didEmitConnectPayload) {
+            return
+          }
+
+          didEmitConnectPayload = emitValidationDevnetConnectPayload()
+        })
+        .catch((e) => {
+          logger.error('error while starting validation devnet', e.toString())
+        })
+      break
+    }
+    case 'restart-validation-devnet': {
+      runtimeExternalNodeOverride = null
+      let didEmitConnectPayload = false
+      validationDevnet
+        .stop({quiet: true})
+        .then(() =>
+          validationDevnet.start({
+            ...(data || {}),
+            onStatus(status) {
+              sendMainWindowMsg(NODE_EVENT, 'validation-devnet-status', status)
+
+              if (
+                data?.connectApp &&
+                !didEmitConnectPayload &&
+                shouldEmitValidationDevnetConnectPayload(status, {
+                  connectCountdownSeconds: data?.connectCountdownSeconds,
+                })
+              ) {
+                didEmitConnectPayload = emitValidationDevnetConnectPayload()
+              }
+            },
+            onLog(line) {
+              sendMainWindowMsg(NODE_EVENT, 'validation-devnet-log', line)
+            },
+          })
+        )
+        .then((status) => {
+          if (!data?.connectApp || !status?.active || didEmitConnectPayload) {
+            return
+          }
+
+          didEmitConnectPayload = emitValidationDevnetConnectPayload()
+        })
+        .catch((e) => {
+          logger.error('error while restarting validation devnet', e.toString())
+        })
+      break
+    }
+    case 'stop-validation-devnet': {
+      runtimeExternalNodeOverride = null
+      validationDevnet
+        .stop()
+        .then((status) => {
+          sendMainWindowMsg(NODE_EVENT, 'validation-devnet-status', status)
+        })
+        .catch((e) => {
+          logger.error('error while stopping validation devnet', e.toString())
+        })
+      break
+    }
+    case 'get-validation-devnet-status': {
+      validationDevnet
+        .getStatus({
+          onStatus(status) {
+            sendMainWindowMsg(NODE_EVENT, 'validation-devnet-status', status)
+          },
+        })
+        .catch((e) => {
+          logger.error(
+            'error while getting validation devnet status',
+            e.toString()
+          )
+        })
+      break
+    }
+    case 'get-validation-devnet-logs': {
+      validationDevnet
+        .getLogs({
+          onLog(line) {
+            sendMainWindowMsg(NODE_EVENT, 'validation-devnet-log', line)
+          },
+        })
+        .then((logs) => {
+          sendMainWindowMsg(NODE_EVENT, 'validation-devnet-logs', logs)
+        })
+        .catch((e) => {
+          logger.error(
+            'error while getting validation devnet logs',
+            e.toString()
+          )
+        })
+      break
+    }
+    case 'connect-validation-devnet': {
+      try {
+        emitValidationDevnetConnectPayload()
+      } catch (e) {
+        logger.error(
+          'error while resolving validation devnet connection payload',
+          e.toString()
+        )
+      }
+      break
+    }
+    case 'clear-external-node-override': {
+      runtimeExternalNodeOverride = null
       break
     }
 
@@ -1948,7 +2201,8 @@ onTrusted(AUTO_UPDATE_COMMAND, async (event, command, data) => {
     case 'update-ui': {
       if (isWin && app.isPackaged) {
         didConfirmQuit = true
-        autoUpdater.quitAndInstall()
+        quitAfterCleanup = () => autoUpdater.quitAndInstall()
+        app.quit()
       } else {
         shell.openExternal(
           `https://github.com/${RELEASE_REPOSITORY.owner}/${RELEASE_REPOSITORY.repo}/releases`

@@ -9,31 +9,132 @@ const {
   LOCAL_AI_SIDECAR_RUNTIME_BACKEND,
   validateLocalAiBaseUrl,
 } = require('./runtime-adapter')
-const managedMolmo2Manifest = require('./managed-molmo2-manifest.json')
+const managedInternVl351BManifest = require('./managed-internvl3.5-1b-manifest.json')
+const managedMolmo2OManifest = require('./managed-molmo2-manifest.json')
+const managedMolmo24BManifest = require('./managed-molmo2-4b-manifest.json')
+const managedInternVl358BManifest = require('./managed-internvl3.5-8b-manifest.json')
 
-const DEFAULT_MANAGED_MOLMO2_MODEL =
-  managedMolmo2Manifest.modelId || 'allenai/Molmo2-O-7B'
-const MANAGED_MOLMO2_MODEL_REVISION =
-  managedMolmo2Manifest.revision || '784410650d12be9bc086118fdefa32d2c3bced86'
-const MANAGED_MOLMO2_RUNTIME_FAMILY = 'molmo2-o'
-const MANAGED_MOLMO2_RUNTIME_TRUST_VERSION =
-  Number.parseInt(managedMolmo2Manifest.trustVersion, 10) || 1
-const MANAGED_MOLMO2_SNAPSHOT_ALLOW_PATTERNS = Array.isArray(
-  managedMolmo2Manifest.allowPatterns
-)
-  ? managedMolmo2Manifest.allowPatterns.filter(Boolean)
-  : []
-const MANAGED_MOLMO2_SNAPSHOT_WEIGHT_FILES = Array.isArray(
-  managedMolmo2Manifest.weightFiles
-)
-  ? managedMolmo2Manifest.weightFiles.filter(Boolean)
-  : []
-const MANAGED_MOLMO2_VERIFY_FILES =
-  managedMolmo2Manifest.verifyFiles &&
-  typeof managedMolmo2Manifest.verifyFiles === 'object' &&
-  !Array.isArray(managedMolmo2Manifest.verifyFiles)
-    ? managedMolmo2Manifest.verifyFiles
+function normalizeManagedManifestVerifyFiles(verifyFiles) {
+  return verifyFiles &&
+    typeof verifyFiles === 'object' &&
+    !Array.isArray(verifyFiles)
+    ? verifyFiles
     : {}
+}
+
+function buildManagedRuntimeConfig({
+  runtimeFamily,
+  runtimeRootName,
+  displayName,
+  manifest = {},
+  defaultModel,
+  defaultRevision,
+  supportsMlx = false,
+  preferredFlavor = '',
+  transformersRequirements = [],
+}) {
+  return {
+    runtimeFamily,
+    runtimeRootName,
+    displayName,
+    modelId: trimString(manifest.modelId) || defaultModel,
+    revision: trimString(manifest.revision) || defaultRevision,
+    trustVersion: Number.parseInt(manifest.trustVersion, 10) || 1,
+    allowPatterns: Array.isArray(manifest.allowPatterns)
+      ? manifest.allowPatterns.filter(Boolean)
+      : [],
+    weightFiles: Array.isArray(manifest.weightFiles)
+      ? manifest.weightFiles.filter(Boolean)
+      : [],
+    verifyFiles: normalizeManagedManifestVerifyFiles(manifest.verifyFiles),
+    supportsMlx: supportsMlx === true,
+    preferredFlavor: trimString(preferredFlavor).toLowerCase(),
+    transformersRequirements: Array.isArray(transformersRequirements)
+      ? transformersRequirements
+      : [],
+  }
+}
+
+const DEFAULT_MANAGED_LOCAL_RUNTIME_FAMILY = 'molmo2-o'
+const MANAGED_MLX_VLM_REQUIREMENTS = [
+  {name: 'mlx-vlm', version: '0.4.4'},
+  {name: 'pillow', version: '12.2.0'},
+]
+const MANAGED_MOLMO2_TRANSFORMERS_REQUIREMENTS = [
+  {name: 'transformers', version: '4.57.1'},
+  {name: 'torch', version: '2.11.0'},
+  {name: 'torchvision', version: '0.26.0'},
+  {name: 'accelerate', version: '1.13.0'},
+  {name: 'pillow', version: '12.2.0'},
+  {name: 'einops', version: '0.8.2'},
+  {name: 'molmo_utils', version: '0.0.1'},
+  {name: 'decord2', version: '3.3.0'},
+]
+const MANAGED_GENERIC_TRANSFORMERS_REQUIREMENTS = [
+  {name: 'transformers', version: '4.57.1'},
+  {name: 'torch', version: '2.11.0'},
+  {name: 'torchvision', version: '0.26.0'},
+  {name: 'accelerate', version: '1.13.0'},
+  {name: 'pillow', version: '12.2.0'},
+  {name: 'einops', version: '0.8.2'},
+]
+const MANAGED_INTERNVL_TRANSFORMERS_REQUIREMENTS =
+  MANAGED_GENERIC_TRANSFORMERS_REQUIREMENTS.concat({
+    name: 'timm',
+    version: '0.9.12',
+  })
+const MANAGED_LOCAL_RUNTIMES = {
+  'molmo2-o': buildManagedRuntimeConfig({
+    runtimeFamily: 'molmo2-o',
+    runtimeRootName: 'molmo2-o',
+    displayName: 'Molmo2-O',
+    manifest: managedMolmo2OManifest,
+    defaultModel: 'allenai/Molmo2-O-7B',
+    defaultRevision: '784410650d12be9bc086118fdefa32d2c3bced86',
+    supportsMlx: true,
+    transformersRequirements: MANAGED_MOLMO2_TRANSFORMERS_REQUIREMENTS,
+  }),
+  'molmo2-4b': buildManagedRuntimeConfig({
+    runtimeFamily: 'molmo2-4b',
+    runtimeRootName: 'molmo2-4b',
+    displayName: 'Molmo2-4B',
+    manifest: managedMolmo24BManifest,
+    defaultModel: 'allenai/Molmo2-4B',
+    defaultRevision: '042abfa7a38879a376cec03d949eff0aefaa0600',
+    supportsMlx: true,
+    transformersRequirements: MANAGED_MOLMO2_TRANSFORMERS_REQUIREMENTS,
+  }),
+  'internvl3.5-1b': buildManagedRuntimeConfig({
+    runtimeFamily: 'internvl3.5-1b',
+    runtimeRootName: 'internvl3.5-1b',
+    displayName: 'InternVL3.5-1B',
+    manifest: managedInternVl351BManifest,
+    defaultModel: 'OpenGVLab/InternVL3_5-1B-HF',
+    defaultRevision: '9191dbccf312b537016f041b25d61c72e7c5c9f3',
+    preferredFlavor: 'transformers',
+    transformersRequirements: MANAGED_INTERNVL_TRANSFORMERS_REQUIREMENTS,
+  }),
+  'internvl3.5-8b': buildManagedRuntimeConfig({
+    runtimeFamily: 'internvl3.5-8b',
+    runtimeRootName: 'internvl3.5-8b',
+    displayName: 'InternVL3.5-8B',
+    manifest: managedInternVl358BManifest,
+    defaultModel: 'OpenGVLab/InternVL3_5-8B-HF',
+    defaultRevision: '741a7d03020411e666c6109218ab71e08151ef86',
+    preferredFlavor: 'transformers',
+    transformersRequirements: MANAGED_INTERNVL_TRANSFORMERS_REQUIREMENTS,
+  }),
+}
+const DEFAULT_MANAGED_MOLMO2_RUNTIME_FAMILY =
+  DEFAULT_MANAGED_LOCAL_RUNTIME_FAMILY
+const MANAGED_MOLMO2_RUNTIME_FAMILY = DEFAULT_MANAGED_MOLMO2_RUNTIME_FAMILY
+const MANAGED_LOCAL_RUNTIME_TRUST_VERSION = Object.values(
+  MANAGED_LOCAL_RUNTIMES
+).reduce(
+  (maxVersion, runtimeConfig) =>
+    Math.max(maxVersion, Number.parseInt(runtimeConfig.trustVersion, 10) || 0),
+  1
+)
 const MANAGED_MOLMO2_PROGRESS_STAGE_COUNT = 7
 const MANAGED_MOLMO2_RUNTIME_START_TIMEOUT_MS = 20 * 60 * 1000
 const MANAGED_RUNTIME_INSTALL_TIMEOUT_MS = 45 * 60 * 1000
@@ -49,23 +150,18 @@ const PYTHON_COMMAND_CANDIDATES = [
   process.platform === 'win32' ? 'py -3' : 'python3',
   process.platform === 'win32' ? 'python' : 'python',
 ]
-const MANAGED_MLX_VLM_REQUIREMENTS = [
-  {name: 'mlx-vlm', version: '0.4.4'},
-  {name: 'pillow', version: '12.2.0'},
-]
-const MANAGED_TRANSFORMERS_REQUIREMENTS = [
-  {name: 'transformers', version: '4.57.1'},
-  {name: 'torch', version: '2.11.0'},
-  {name: 'torchvision', version: '0.26.0'},
-  {name: 'accelerate', version: '1.13.0'},
-  {name: 'pillow', version: '12.2.0'},
-  {name: 'einops', version: '0.8.2'},
-  {name: 'molmo_utils', version: '0.0.1'},
-  {name: 'decord2', version: '3.3.0'},
-]
 
 function trimString(value) {
   return String(value || '').trim()
+}
+
+function resolveManagedRuntimeConfig(runtimeFamily = '') {
+  const key = trimString(runtimeFamily).toLowerCase()
+  return key ? MANAGED_LOCAL_RUNTIMES[key] || null : null
+}
+
+function resolveManagedMolmo2RuntimeConfig(runtimeFamily = '') {
+  return resolveManagedRuntimeConfig(runtimeFamily)
 }
 
 function normalizeManagedRuntimeTrustVersion(value) {
@@ -76,7 +172,7 @@ function normalizeManagedRuntimeTrustVersion(value) {
 function hasManagedRuntimeTrustApproval(payload = {}) {
   return (
     normalizeManagedRuntimeTrustVersion(payload.managedRuntimeTrustVersion) >=
-    MANAGED_MOLMO2_RUNTIME_TRUST_VERSION
+    MANAGED_LOCAL_RUNTIME_TRUST_VERSION
   )
 }
 
@@ -130,19 +226,36 @@ function managedRuntimeKindFromPayload(payload = {}) {
 
   if (
     runtimeBackend === LOCAL_AI_SIDECAR_RUNTIME_BACKEND &&
-    runtimeFamily === MANAGED_MOLMO2_RUNTIME_FAMILY
+    resolveManagedRuntimeConfig(runtimeFamily)
   ) {
-    return 'molmo2-o'
+    return runtimeFamily
   }
 
   return null
 }
 
 function isManagedLocalHttpRuntime(payload = {}) {
-  return managedRuntimeKindFromPayload(payload) === 'molmo2-o'
+  const managedKind = managedRuntimeKindFromPayload(payload)
+  return Boolean(managedKind && managedKind !== 'ollama')
 }
 
-function resolveManagedMolmo2RuntimeFlavor() {
+function resolveManagedLocalRuntimeFlavor(runtimeConfig = null) {
+  const config =
+    runtimeConfig && typeof runtimeConfig === 'object'
+      ? runtimeConfig
+      : resolveManagedRuntimeConfig(DEFAULT_MANAGED_LOCAL_RUNTIME_FAMILY)
+  const preferredFlavor = trimString(
+    config && config.preferredFlavor
+  ).toLowerCase()
+
+  if (preferredFlavor === 'mlx-vlm' || preferredFlavor === 'transformers') {
+    return preferredFlavor
+  }
+
+  if (!(config && config.supportsMlx === true)) {
+    return 'transformers'
+  }
+
   if (process.platform !== 'darwin') {
     return 'transformers'
   }
@@ -156,6 +269,10 @@ function resolveManagedMolmo2RuntimeFlavor() {
   )
 
   return /apple/i.test(cpuModel) ? 'mlx-vlm' : 'transformers'
+}
+
+function resolveManagedMolmo2RuntimeFlavor(runtimeConfig = null) {
+  return resolveManagedLocalRuntimeFlavor(runtimeConfig)
 }
 
 function buildPythonVariants(configured, preferArm64 = false) {
@@ -506,26 +623,30 @@ async function sha256File(filePath) {
   return crypto.createHash('sha256').update(data).digest('hex')
 }
 
-async function verifyManagedMolmo2Snapshot(snapshotDir) {
+async function verifyManagedMolmo2Snapshot(snapshotDir, runtimeConfig) {
+  const config =
+    runtimeConfig ||
+    resolveManagedMolmo2RuntimeConfig(DEFAULT_MANAGED_MOLMO2_RUNTIME_FAMILY)
+  const displayName = config ? config.displayName : 'Molmo2'
+  const verifyFiles = config ? config.verifyFiles : {}
+  const weightFiles = config ? config.weightFiles : []
+
   if (!(await fs.pathExists(snapshotDir))) {
     return {
       ok: false,
       error: 'missing_model_snapshot',
-      lastError:
-        'The pinned Molmo2 runtime snapshot is missing on this device.',
+      lastError: `The pinned ${displayName} runtime snapshot is missing on this device.`,
     }
   }
 
-  for (const [relativePath, manifestEntry] of Object.entries(
-    MANAGED_MOLMO2_VERIFY_FILES
-  )) {
+  for (const [relativePath, manifestEntry] of Object.entries(verifyFiles)) {
     const filePath = path.join(snapshotDir, relativePath)
 
     if (!(await fs.pathExists(filePath))) {
       return {
         ok: false,
         error: 'missing_snapshot_file',
-        lastError: `The pinned Molmo2 runtime file is missing: ${relativePath}`,
+        lastError: `The pinned ${displayName} runtime file is missing: ${relativePath}`,
       }
     }
 
@@ -534,7 +655,7 @@ async function verifyManagedMolmo2Snapshot(snapshotDir) {
       return {
         ok: false,
         error: 'invalid_snapshot_file',
-        lastError: `The pinned Molmo2 runtime path is not a file: ${relativePath}`,
+        lastError: `The pinned ${displayName} runtime path is not a file: ${relativePath}`,
       }
     }
 
@@ -543,7 +664,7 @@ async function verifyManagedMolmo2Snapshot(snapshotDir) {
       return {
         ok: false,
         error: 'snapshot_size_mismatch',
-        lastError: `The pinned Molmo2 runtime file has an unexpected size: ${relativePath}`,
+        lastError: `The pinned ${displayName} runtime file has an unexpected size: ${relativePath}`,
       }
     }
 
@@ -555,9 +676,23 @@ async function verifyManagedMolmo2Snapshot(snapshotDir) {
         return {
           ok: false,
           error: 'snapshot_hash_mismatch',
-          lastError: `The pinned Molmo2 runtime file failed verification: ${relativePath}`,
+          lastError: `The pinned ${displayName} runtime file failed verification: ${relativePath}`,
         }
       }
+    }
+  }
+
+  const requiresIndexedWeights =
+    weightFiles.length > 1 ||
+    Object.prototype.hasOwnProperty.call(
+      verifyFiles,
+      'model.safetensors.index.json'
+    )
+
+  if (!requiresIndexedWeights) {
+    return {
+      ok: true,
+      snapshotDir,
     }
   }
 
@@ -567,8 +702,7 @@ async function verifyManagedMolmo2Snapshot(snapshotDir) {
     return {
       ok: false,
       error: 'missing_weight_index',
-      lastError:
-        'The pinned Molmo2 runtime weight index is missing from the local snapshot.',
+      lastError: `The pinned ${displayName} runtime weight index is missing from the local snapshot.`,
     }
   }
 
@@ -585,7 +719,7 @@ async function verifyManagedMolmo2Snapshot(snapshotDir) {
         ).map((value) => trimString(value))
       )
     ).filter(Boolean)
-    const expectedShards = new Set(MANAGED_MOLMO2_SNAPSHOT_WEIGHT_FILES)
+    const expectedShards = new Set(weightFiles)
 
     if (
       shardNames.length !== expectedShards.size ||
@@ -594,27 +728,25 @@ async function verifyManagedMolmo2Snapshot(snapshotDir) {
       return {
         ok: false,
         error: 'unexpected_weight_layout',
-        lastError:
-          'The pinned Molmo2 runtime weight layout does not match the trusted manifest.',
+        lastError: `The pinned ${displayName} runtime weight layout does not match the trusted manifest.`,
       }
     }
   } catch {
     return {
       ok: false,
       error: 'invalid_weight_index',
-      lastError:
-        'The pinned Molmo2 runtime weight index could not be verified.',
+      lastError: `The pinned ${displayName} runtime weight index could not be verified.`,
     }
   }
 
-  for (const fileName of MANAGED_MOLMO2_SNAPSHOT_WEIGHT_FILES) {
+  for (const fileName of weightFiles) {
     const filePath = path.join(snapshotDir, fileName)
 
     if (!(await fs.pathExists(filePath))) {
       return {
         ok: false,
         error: 'missing_weight_file',
-        lastError: `The pinned Molmo2 runtime weight shard is missing: ${fileName}`,
+        lastError: `The pinned ${displayName} runtime weight shard is missing: ${fileName}`,
       }
     }
   }
@@ -675,6 +807,21 @@ function requirementSpecList(requirements = []) {
       return name && version ? `${name}==${version}` : ''
     })
     .filter(Boolean)
+}
+
+function resolveManagedRuntimeRequirements(flavor, runtimeConfig = null) {
+  if (flavor === 'mlx-vlm') {
+    return MANAGED_MLX_VLM_REQUIREMENTS
+  }
+
+  if (
+    Array.isArray(runtimeConfig && runtimeConfig.transformersRequirements) &&
+    runtimeConfig.transformersRequirements.length > 0
+  ) {
+    return runtimeConfig.transformersRequirements
+  }
+
+  return MANAGED_GENERIC_TRANSFORMERS_REQUIREMENTS
 }
 
 function managedRuntimeTokenPath(runtimeRoot) {
@@ -769,7 +916,7 @@ async function ensureManagedPythonVenv(
 async function ensureManagedMolmo2RuntimeInstalled(
   runtimeRoot,
   flavor,
-  {onProgress, pythonPath = ''} = {}
+  {onProgress, pythonPath = '', runtimeConfig = null} = {}
 ) {
   const preferArm64 = flavor === 'mlx-vlm'
   const venvPython = await ensureManagedPythonVenv(runtimeRoot, preferArm64, {
@@ -777,10 +924,10 @@ async function ensureManagedMolmo2RuntimeInstalled(
     pythonPath,
   })
   const env = buildManagedRuntimeEnv(runtimeRoot)
-  const requirements =
-    flavor === 'mlx-vlm'
-      ? MANAGED_MLX_VLM_REQUIREMENTS
-      : MANAGED_TRANSFORMERS_REQUIREMENTS
+  const config =
+    runtimeConfig ||
+    resolveManagedRuntimeConfig(DEFAULT_MANAGED_LOCAL_RUNTIME_FAMILY)
+  const requirements = resolveManagedRuntimeRequirements(flavor, config)
 
   if (probeInstalledPackages(venvPython, requirements)) {
     emitRuntimeProgress(onProgress, {
@@ -858,18 +1005,22 @@ async function ensureManagedMolmo2RuntimeInstalled(
 async function downloadManagedMolmo2Snapshot(
   pythonPath,
   runtimeRoot,
+  runtimeConfig,
   {onProgress} = {}
 ) {
   const snapshotDir = managedMolmo2SnapshotPath(runtimeRoot)
   const env = buildManagedRuntimeEnv(runtimeRoot)
-  const verification = await verifyManagedMolmo2Snapshot(snapshotDir)
+  const config =
+    runtimeConfig ||
+    resolveManagedRuntimeConfig(DEFAULT_MANAGED_LOCAL_RUNTIME_FAMILY)
+  const displayName = config ? config.displayName : 'Molmo2'
+  const verification = await verifyManagedMolmo2Snapshot(snapshotDir, config)
 
   if (verification.ok) {
     emitRuntimeProgress(onProgress, {
       status: 'installing',
       stage: 'verify_model_snapshot',
-      message:
-        'The pinned Molmo2 runtime snapshot is already verified on this device.',
+      message: `The pinned ${displayName} runtime snapshot is already verified on this device.`,
       progressPercent: 68,
       stageIndex: 5,
       stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
@@ -882,8 +1033,7 @@ async function downloadManagedMolmo2Snapshot(
   emitRuntimeProgress(onProgress, {
     status: 'installing',
     stage: 'download_model_snapshot',
-    message:
-      'Downloading the pinned Molmo2 runtime snapshot and model weights. This can take a while on first use.',
+    message: `Downloading the pinned ${displayName} runtime snapshot and model weights. This can take a while on first use.`,
     progressPercent: 62,
     stageIndex: 5,
     stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
@@ -909,10 +1059,10 @@ async function downloadManagedMolmo2Snapshot(
         '    local_dir_use_symlinks=False,',
         ')',
       ].join('\n'),
-      DEFAULT_MANAGED_MOLMO2_MODEL,
-      MANAGED_MOLMO2_MODEL_REVISION,
+      config.modelId,
+      config.revision,
       snapshotDir,
-      JSON.stringify(MANAGED_MOLMO2_SNAPSHOT_ALLOW_PATTERNS),
+      JSON.stringify(config.allowPatterns),
     ],
     env,
     label: 'Managed Local AI model snapshot download',
@@ -930,8 +1080,7 @@ async function downloadManagedMolmo2Snapshot(
       emitRuntimeProgress(onProgress, {
         status: 'installing',
         stage: 'download_model_snapshot',
-        message:
-          'Downloading the pinned Molmo2 runtime snapshot and model weights. This can take a while on first use.',
+        message: `Downloading the pinned ${displayName} runtime snapshot and model weights. This can take a while on first use.`,
         detail,
         progressPercent: 62,
         stageIndex: 5,
@@ -940,21 +1089,24 @@ async function downloadManagedMolmo2Snapshot(
     },
   })
 
-  const verifiedSnapshot = await verifyManagedMolmo2Snapshot(snapshotDir)
+  const verifiedSnapshot = await verifyManagedMolmo2Snapshot(
+    snapshotDir,
+    config
+  )
 
   if (!verifiedSnapshot.ok) {
     await fs.remove(snapshotDir)
     throw createRuntimeControllerError(
       verifiedSnapshot.error || 'snapshot_verification_failed',
       verifiedSnapshot.lastError ||
-        'The pinned Molmo2 runtime snapshot could not be verified.'
+        `The pinned ${displayName} runtime snapshot could not be verified.`
     )
   }
 
   emitRuntimeProgress(onProgress, {
     status: 'installing',
     stage: 'verify_model_snapshot',
-    message: 'Verified the pinned Molmo2 runtime snapshot before startup.',
+    message: `Verified the pinned ${displayName} runtime snapshot before startup.`,
     progressPercent: 74,
     stageIndex: 5,
     stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
@@ -1040,6 +1192,9 @@ function sameManagedSpec(current = {}, next = {}) {
 }
 
 function resolveManagedMolmo2RuntimeContext(baseDir, payload = {}) {
+  const runtimeConfig = resolveManagedRuntimeConfig(
+    managedRuntimeKindFromPayload(payload)
+  )
   const endpoint = parseLoopbackBaseUrl(payload.baseUrl)
 
   if (!endpoint.ok) {
@@ -1051,28 +1206,38 @@ function resolveManagedMolmo2RuntimeContext(baseDir, payload = {}) {
     }
   }
 
-  const flavor = resolveManagedMolmo2RuntimeFlavor()
-  const requestedModel =
-    trimString(payload.visionModel) || trimString(payload.model)
-
-  if (requestedModel && requestedModel !== DEFAULT_MANAGED_MOLMO2_MODEL) {
+  if (!runtimeConfig) {
     return {
       ok: false,
       error: 'unsupported_managed_model',
       lastError:
-        'The managed local runtime only supports the pinned Molmo2-O model.',
+        'The managed local runtime only supports the pinned runtime families bundled by IdenaAI.',
       baseUrl: endpoint.baseUrl,
     }
   }
 
-  const model = DEFAULT_MANAGED_MOLMO2_MODEL
+  const flavor = resolveManagedLocalRuntimeFlavor(runtimeConfig)
+  const requestedModel =
+    trimString(payload.visionModel) || trimString(payload.model)
+
+  if (requestedModel && requestedModel !== runtimeConfig.modelId) {
+    return {
+      ok: false,
+      error: 'unsupported_managed_model',
+      lastError: `The managed local runtime only supports the pinned ${runtimeConfig.displayName} model.`,
+      baseUrl: endpoint.baseUrl,
+    }
+  }
+
+  const model = runtimeConfig.modelId
 
   return {
     ok: true,
     endpoint,
     flavor,
     model,
-    runtimeRoot: path.join(baseDir, 'molmo2-o', flavor),
+    runtimeConfig,
+    runtimeRoot: path.join(baseDir, runtimeConfig.runtimeRootName, flavor),
   }
 }
 
@@ -1100,7 +1265,7 @@ function createDefaultRuntimeController({
     if (!hasManagedRuntimeTrustApproval(payload)) {
       throw createRuntimeControllerError(
         'managed_runtime_trust_required',
-        'Approve the managed Local AI runtime before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot on this device.'
+        'Approve the managed Local AI runtime before IdenaAI installs pinned packages and runs a verified pinned on-device model snapshot on this device.'
       )
     }
 
@@ -1120,7 +1285,7 @@ function createDefaultRuntimeController({
       }
     }
 
-    const {endpoint, flavor, model, runtimeRoot} = context
+    const {endpoint, flavor, model, runtimeConfig, runtimeRoot} = context
     const pythonPath = trimString(payload.managedRuntimePythonPath)
     emitRuntimeProgress(onProgress, {
       status: 'installing',
@@ -1135,12 +1300,12 @@ function createDefaultRuntimeController({
       [MANAGED_RUNTIME_AUTH_ENV]: authToken,
     })
     const spec = {
-      kind: 'molmo2-o',
+      kind: runtimeConfig.runtimeFamily,
       flavor,
       baseUrl: endpoint.baseUrl,
       model,
       authToken,
-      revision: MANAGED_MOLMO2_MODEL_REVISION,
+      revision: runtimeConfig.revision,
     }
 
     if (
@@ -1189,11 +1354,12 @@ function createDefaultRuntimeController({
     const install = await ensureManagedMolmo2RuntimeInstalled(
       runtimeRoot,
       flavor,
-      {onProgress, pythonPath}
+      {onProgress, pythonPath, runtimeConfig}
     )
     const snapshotPath = await downloadManagedMolmo2Snapshot(
       install.pythonPath,
       runtimeRoot,
+      runtimeConfig,
       {onProgress}
     )
     emitRuntimeProgress(onProgress, {
@@ -1219,7 +1385,7 @@ function createDefaultRuntimeController({
         '--display-model-id',
         model,
         '--model-revision',
-        MANAGED_MOLMO2_MODEL_REVISION,
+        runtimeConfig.revision,
         '--trust-remote-code',
       ],
       {env}
@@ -1266,7 +1432,7 @@ function createDefaultRuntimeController({
       model,
       baseUrl: endpoint.baseUrl,
       authToken,
-      revision: MANAGED_MOLMO2_MODEL_REVISION,
+      revision: runtimeConfig.revision,
     }
   }
 
@@ -1274,7 +1440,7 @@ function createDefaultRuntimeController({
     resolveAccess(payload = {}) {
       const managedKind = managedRuntimeKindFromPayload(payload)
 
-      if (managedKind !== 'molmo2-o') {
+      if (!managedKind || managedKind === 'ollama') {
         return {managed: false, authToken: null}
       }
 
@@ -1296,7 +1462,7 @@ function createDefaultRuntimeController({
         baseUrl: context.endpoint.baseUrl,
         model: context.model,
         flavor: context.flavor,
-        revision: MANAGED_MOLMO2_MODEL_REVISION,
+        revision: context.runtimeConfig.revision,
       }
     },
 
@@ -1415,7 +1581,7 @@ function createDefaultRuntimeController({
         }
       }
 
-      if (managedKind === 'molmo2-o') {
+      if (managedKind && managedKind !== 'ollama') {
         return startManagedMolmoRuntime(payload)
       }
 
@@ -1462,5 +1628,6 @@ module.exports = {
   MANAGED_MOLMO2_RUNTIME_START_TIMEOUT_MS,
   createDefaultRuntimeController,
   isManagedLocalHttpRuntime,
+  resolveManagedLocalRuntimeFlavor,
   resolveManagedMolmo2RuntimeFlavor,
 }

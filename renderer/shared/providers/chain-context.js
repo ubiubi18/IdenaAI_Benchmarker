@@ -9,8 +9,9 @@ const SET_LOADING = 'SET_LOADING'
 
 const initialState = {
   loading: true,
-  offline: true,
+  offline: false,
   syncing: false,
+  peersCount: 0,
   currentBlock: null,
   highestBlock: null,
   progress: null,
@@ -20,8 +21,9 @@ function chainReducer(state, action) {
   switch (action.type) {
     case SET_LOADING: {
       return {
-        ...state,
+        ...initialState,
         loading: true,
+        offline: false,
       }
     }
     case FETCH_SYNC_SUCCEEDED: {
@@ -48,19 +50,32 @@ const ChainStateContext = React.createContext()
 
 // eslint-disable-next-line react/prop-types
 function ChainProvider({children}) {
-  const {useExternalNode} = useSettingsState()
+  const {useExternalNode, url, externalApiKey, internalPort} =
+    useSettingsState()
   const [state, dispatch] = React.useReducer(chainReducer, initialState)
+  const rpcConnectionKey = React.useMemo(
+    () =>
+      useExternalNode
+        ? `external:${url || ''}:${externalApiKey || ''}`
+        : `internal:${internalPort || ''}`,
+    [externalApiKey, internalPort, url, useExternalNode]
+  )
 
   useEffect(() => {
     dispatch({type: SET_LOADING})
-  }, [useExternalNode])
+  }, [rpcConnectionKey])
 
   useInterval(
     async () => {
       try {
+        const [syncStatus, peers] = await Promise.all([
+          callRpc('bcn_syncing'),
+          callRpc('net_peers').catch(() => []),
+        ])
+
         dispatch({
           type: FETCH_SYNC_SUCCEEDED,
-          payload: await callRpc('bcn_syncing'),
+          payload: {...syncStatus, peersCount: (peers || []).length},
         })
       } catch (error) {
         dispatch({type: FETCH_SYNC_FAILED})

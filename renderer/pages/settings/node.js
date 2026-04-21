@@ -33,6 +33,12 @@ import SettingsLayout from '../../screens/settings/layout'
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
 import {getNodeBridge} from '../../shared/utils/node-bridge'
 
+const REHEARSAL_NETWORK_NODE_COUNT = 9
+const REHEARSAL_NETWORK_LEAD_SECONDS = 8 * 60
+const REHEARSAL_NETWORK_FAST_FORWARD_LEAD_SECONDS = 90
+const REHEARSAL_NETWORK_FAST_FORWARD_CONNECT_SECONDS = 20
+const REHEARSAL_NETWORK_SEED_FLIP_COUNT = 27
+
 function hasNodeBridge() {
   return !getNodeBridge().__idenaFallback
 }
@@ -52,6 +58,76 @@ function normalizeLogs(value) {
   return []
 }
 
+function normalizeDevnetStatus(value) {
+  if (!value || typeof value !== 'object') {
+    return {
+      active: false,
+      stage: 'idle',
+      message: '',
+      error: null,
+      primaryRpcUrl: null,
+      nodeCount: 0,
+      nodes: [],
+      countdownSeconds: null,
+      firstCeremonyAt: null,
+      seedSource: null,
+      seedRequestedCount: null,
+      seedSubmittedCount: null,
+      seedConfirmedCount: null,
+    }
+  }
+
+  return {
+    active: Boolean(value.active),
+    stage: value.stage || 'idle',
+    message: value.message || '',
+    error: value.error || null,
+    primaryRpcUrl: value.primaryRpcUrl || null,
+    nodeCount:
+      typeof value.nodeCount === 'number' && value.nodeCount >= 0
+        ? value.nodeCount
+        : 0,
+    nodes: Array.isArray(value.nodes) ? value.nodes : [],
+    countdownSeconds:
+      typeof value.countdownSeconds === 'number'
+        ? value.countdownSeconds
+        : null,
+    firstCeremonyAt: value.firstCeremonyAt || null,
+    networkId: value.networkId || null,
+    seedSource: value.seedSource || null,
+    seedRequestedCount:
+      typeof value.seedRequestedCount === 'number'
+        ? value.seedRequestedCount
+        : null,
+    seedSubmittedCount:
+      typeof value.seedSubmittedCount === 'number'
+        ? value.seedSubmittedCount
+        : null,
+    seedConfirmedCount:
+      typeof value.seedConfirmedCount === 'number'
+        ? value.seedConfirmedCount
+        : null,
+  }
+}
+
+function buildRehearsalNetworkPayload({
+  connectApp = false,
+  fastForward = false,
+} = {}) {
+  return {
+    nodeCount: REHEARSAL_NETWORK_NODE_COUNT,
+    firstCeremonyLeadSeconds: fastForward
+      ? REHEARSAL_NETWORK_FAST_FORWARD_LEAD_SECONDS
+      : REHEARSAL_NETWORK_LEAD_SECONDS,
+    seedFlipCount: REHEARSAL_NETWORK_SEED_FLIP_COUNT,
+    connectApp,
+    connectCountdownSeconds:
+      connectApp && fastForward
+        ? REHEARSAL_NETWORK_FAST_FORWARD_CONNECT_SECONDS
+        : null,
+  }
+}
+
 function NodeSettings() {
   const {t} = useTranslation()
 
@@ -63,6 +139,8 @@ function NodeSettings() {
     toggleUseExternalNode,
     toggleRunInternalNode,
     setConnectionDetails,
+    connectEphemeralExternalNode,
+    clearEphemeralExternalNode,
     toggleAutoActivateMining,
   } = useSettingsDispatch()
 
@@ -110,13 +188,39 @@ function NodeSettings() {
             logs: normalizeLogs(action.data),
           }
         }
+        case 'SET_DEVNET_STATUS': {
+          return {
+            ...prevState,
+            devnetStatus: normalizeDevnetStatus(action.data),
+          }
+        }
+        case 'NEW_DEVNET_LOG': {
+          const nextLogs = normalizeLogs(action.data)
+          const prevLogs =
+            prevState.devnetLogs.length > 200
+              ? prevState.devnetLogs.slice(-100)
+              : prevState.devnetLogs
+
+          return {
+            ...prevState,
+            devnetLogs: [...prevLogs, ...nextLogs],
+          }
+        }
+        case 'SET_DEVNET_LOGS': {
+          return {
+            ...prevState,
+            devnetLogs: normalizeLogs(action.data),
+          }
+        }
         default:
       }
     },
     {
       logs: [],
+      devnetLogs: [],
       url: settings.url,
       apiKey: settings.externalApiKey,
+      devnetStatus: normalizeDevnetStatus(),
     }
   )
 
@@ -133,18 +237,87 @@ function NodeSettings() {
         case 'last-node-logs':
           dispatch({type: 'SET_LAST_LOGS', data})
           break
+        case 'validation-devnet-status':
+          dispatch({type: 'SET_DEVNET_STATUS', data})
+          if (!data?.active && settings.ephemeralExternalNodeConnected) {
+            clearEphemeralExternalNode()
+          }
+          break
+        case 'validation-devnet-log':
+          dispatch({type: 'NEW_DEVNET_LOG', data})
+          break
+        case 'validation-devnet-logs':
+          dispatch({type: 'SET_DEVNET_LOGS', data})
+          break
+        case 'validation-devnet-connect-payload':
+          if (!data || !data.url || !data.apiKey) {
+            break
+          }
+
+          connectEphemeralExternalNode({
+            url: data.url,
+            apiKey: data.apiKey,
+            label: data.label,
+          })
+
+          toast({
+            render: () => (
+              <Toast
+                title={t('Rehearsal node connected')}
+                description={t(
+                  'IdenaAI now uses the rehearsal node for this app session only. The secret is not saved to normal node settings.'
+                )}
+              />
+            ),
+          })
+          break
         default:
       }
     }
 
     return getNodeBridge().onEvent(onEvent)
-  }, [canUseIpcRenderer, settings.useExternalNode])
+  }, [
+    canUseIpcRenderer,
+    clearEphemeralExternalNode,
+    connectEphemeralExternalNode,
+    dispatch,
+    settings.ephemeralExternalNodeConnected,
+    settings.useExternalNode,
+    t,
+    toast,
+  ])
+
+  useEffect(() => {
+    if (settings.ephemeralExternalNodeConnected) {
+      return
+    }
+
+    dispatch({
+      type: 'SET_CONNECTION_DETAILS',
+      url: settings.url,
+      apiKey: settings.externalApiKey,
+    })
+  }, [
+    dispatch,
+    settings.ephemeralExternalNodeConnected,
+    settings.externalApiKey,
+    settings.url,
+  ])
 
   useEffect(() => {
     if (canUseIpcRenderer && !settings.useExternalNode) {
       getNodeBridge().getLastLogs()
     }
   }, [canUseIpcRenderer, settings.useExternalNode])
+
+  useEffect(() => {
+    if (!canUseIpcRenderer) {
+      return
+    }
+
+    getNodeBridge().getValidationDevnetStatus()
+    getNodeBridge().getValidationDevnetLogs()
+  }, [canUseIpcRenderer])
 
   useEffect(() => {
     if (logsRef.current) {
@@ -179,6 +352,57 @@ function NodeSettings() {
 
     return t('Node output will appear here after the built-in node starts.')
   })()
+  const {devnetStatus} = state
+  const isStartingDevnet =
+    devnetStatus.stage &&
+    !['idle', 'running', 'failed'].includes(devnetStatus.stage)
+  const primaryRpcPort = devnetStatus.primaryRpcUrl
+    ? Number(String(devnetStatus.primaryRpcUrl).split(':').pop())
+    : null
+  const primaryDevnetNode =
+    devnetStatus.nodes.find(({rpcPort}) => rpcPort === primaryRpcPort) ||
+    devnetStatus.nodes[0] ||
+    null
+  const rehearsalCurrentPeriod = primaryDevnetNode?.currentPeriod || null
+  const rehearsalNodeConnected =
+    settings.ephemeralExternalNodeConnected &&
+    devnetStatus.primaryRpcUrl &&
+    settings.url === devnetStatus.primaryRpcUrl
+  const rehearsalNeedsConnection =
+    devnetStatus.active && devnetStatus.primaryRpcUrl && !rehearsalNodeConnected
+  const rehearsalSessionAlreadyAdvanced =
+    rehearsalNodeConnected &&
+    ['ShortSession', 'LongSession', 'AfterLongSession'].includes(
+      rehearsalCurrentPeriod
+    )
+  const rehearsalConnectWarning =
+    rehearsalNeedsConnection &&
+    ['ShortSession', 'LongSession', 'AfterLongSession'].includes(
+      rehearsalCurrentPeriod
+    )
+  const emptyDevnetLogMessage = canUseIpcRenderer
+    ? t(
+        'Rehearsal-network output will appear here after the private validation network starts.'
+      )
+    : t(
+        'The validation rehearsal network is unavailable because the desktop bridge is not ready.'
+      )
+
+  const startRehearsalNetwork = ({
+    connectApp = false,
+    fastForward = false,
+  } = {}) =>
+    getNodeBridge().startValidationDevnet(
+      buildRehearsalNetworkPayload({connectApp, fastForward})
+    )
+
+  const restartRehearsalNetwork = ({
+    connectApp = true,
+    fastForward = false,
+  } = {}) =>
+    getNodeBridge().restartValidationDevnet(
+      buildRehearsalNetworkPayload({connectApp, fastForward})
+    )
 
   return (
     <SettingsLayout>
@@ -189,6 +413,8 @@ function NodeSettings() {
               <Switch
                 isChecked={settings.runInternalNode}
                 onChange={() => {
+                  clearEphemeralExternalNode()
+                  getNodeBridge().clearExternalNodeOverride()
                   toggleRunInternalNode(!settings.runInternalNode)
                 }}
               />
@@ -239,6 +465,8 @@ function NodeSettings() {
               <Switch
                 isChecked={settings.useExternalNode}
                 onChange={() => {
+                  clearEphemeralExternalNode()
+                  getNodeBridge().clearExternalNodeOverride()
                   toggleUseExternalNode(!settings.useExternalNode)
                 }}
               />
@@ -261,6 +489,8 @@ function NodeSettings() {
               as="form"
               onSubmit={(e) => {
                 e.preventDefault()
+                clearEphemeralExternalNode()
+                getNodeBridge().clearExternalNodeOverride()
                 setConnectionDetails(state)
                 notify()
               }}
@@ -309,6 +539,8 @@ function NodeSettings() {
                   ml="auto"
                   type="button"
                   onClick={() => {
+                    clearEphemeralExternalNode()
+                    getNodeBridge().clearExternalNodeOverride()
                     dispatch({type: 'SET_URL', data: BASE_API_URL})
                   }}
                 >
@@ -319,6 +551,237 @@ function NodeSettings() {
             </Stack>
           </SettingsSection>
         )}
+
+        <SettingsSection title={t('Validation Rehearsal Devnet')}>
+          <Stack spacing={4}>
+            <Box>
+              <Text fontWeight={500}>
+                {t('Private multi-node rehearsal network')}
+              </Text>
+              <Text color="muted">
+                {t(
+                  'Start an isolated local Idena network for validation rehearsals without touching mainnet. The rehearsal network seeds FLIP-Challenge flips locally and lets the node run the normal encryption and later validation decryption flow.'
+                )}
+              </Text>
+            </Box>
+
+            <Stack
+              spacing={3}
+              borderWidth="1px"
+              borderColor={devnetStatus.error ? 'red.100' : 'muted'}
+              borderRadius="md"
+              px={4}
+              py={3}
+              bg={devnetStatus.error ? 'red.50' : 'transparent'}
+            >
+              <Text fontWeight={500}>
+                {devnetStatus.message ||
+                  t('Validation rehearsal network is stopped.')}
+              </Text>
+
+              {devnetStatus.error && (
+                <Text color="red.500">{devnetStatus.error}</Text>
+              )}
+
+              {rehearsalNeedsConnection && (
+                <Text
+                  color={rehearsalConnectWarning ? 'orange.500' : 'blue.500'}
+                >
+                  {rehearsalConnectWarning
+                    ? t(
+                        'The rehearsal network is already running, but this app is still on your normal node and the ceremony has already progressed. Restart fresh for a clean run.'
+                      )
+                    : t(
+                        'The rehearsal network is running in the background, but this app is still connected to your normal node. Switch this app over when you are ready.'
+                      )}
+                </Text>
+              )}
+
+              {rehearsalSessionAlreadyAdvanced && (
+                <Text color="orange.500">
+                  {t(
+                    'This rehearsal node is already inside {{period}}. Restart the rehearsal network for a clean short-session run.',
+                    {period: rehearsalCurrentPeriod}
+                  )}
+                </Text>
+              )}
+
+              {(devnetStatus.networkId || devnetStatus.firstCeremonyAt) && (
+                <Stack spacing={1}>
+                  {devnetStatus.networkId && (
+                    <Text color="muted">
+                      {t('Network id')}: {devnetStatus.networkId}
+                    </Text>
+                  )}
+                  {devnetStatus.firstCeremonyAt && (
+                    <Text color="muted">
+                      {t('First ceremony starts at')}:{' '}
+                      {devnetStatus.firstCeremonyAt}
+                    </Text>
+                  )}
+                  {typeof devnetStatus.countdownSeconds === 'number' && (
+                    <Text color="muted">
+                      {t('Countdown')}: {devnetStatus.countdownSeconds}
+                      {t(' sec')}
+                    </Text>
+                  )}
+                  {rehearsalCurrentPeriod && (
+                    <Text color="muted">
+                      {t('Primary node period')}: {rehearsalCurrentPeriod}
+                    </Text>
+                  )}
+                  {devnetStatus.primaryRpcUrl && (
+                    <Text color="muted">
+                      {t('Primary RPC endpoint')}: {devnetStatus.primaryRpcUrl}
+                    </Text>
+                  )}
+                  {devnetStatus.seedSource && (
+                    <Text color="muted">
+                      {t('Seed source')}: {devnetStatus.seedSource}
+                    </Text>
+                  )}
+                  {typeof devnetStatus.seedSubmittedCount === 'number' && (
+                    <Text color="muted">
+                      {t('Seed flips')}: {devnetStatus.seedSubmittedCount}
+                      {typeof devnetStatus.seedRequestedCount === 'number'
+                        ? ` / ${devnetStatus.seedRequestedCount}`
+                        : ''}
+                    </Text>
+                  )}
+                  {typeof devnetStatus.seedConfirmedCount === 'number' && (
+                    <Text color="muted">
+                      {t('Confirmed flips on primary node')}:{' '}
+                      {devnetStatus.seedConfirmedCount}
+                    </Text>
+                  )}
+                  {devnetStatus.nodes.length > 0 && (
+                    <Text color="muted">
+                      {t('Ready nodes')}:{' '}
+                      {
+                        devnetStatus.nodes.filter(({rpcReady}) => rpcReady)
+                          .length
+                      }{' '}
+                      / {devnetStatus.nodeCount}
+                    </Text>
+                  )}
+                  {rehearsalNodeConnected && (
+                    <Text color="green.500">
+                      {t(
+                        'IdenaAI is currently connected to the rehearsal network for this app session.'
+                      )}
+                    </Text>
+                  )}
+                </Stack>
+              )}
+
+              <Stack isInline spacing={2} flexWrap="wrap">
+                {!devnetStatus.active ? (
+                  <>
+                    <PrimaryButton
+                      onClick={() => startRehearsalNetwork({connectApp: true})}
+                      isLoading={isStartingDevnet}
+                      isDisabled={!canUseIpcRenderer || isStartingDevnet}
+                    >
+                      {t('Start and use rehearsal network')}
+                    </PrimaryButton>
+
+                    <SecondaryButton
+                      onClick={() => startRehearsalNetwork()}
+                      isDisabled={!canUseIpcRenderer || isStartingDevnet}
+                    >
+                      {t('Start in background')}
+                    </SecondaryButton>
+
+                    <SecondaryButton
+                      onClick={() =>
+                        startRehearsalNetwork({
+                          connectApp: true,
+                          fastForward: true,
+                        })
+                      }
+                      isDisabled={!canUseIpcRenderer || isStartingDevnet}
+                    >
+                      {t('Fast forward to session')}
+                    </SecondaryButton>
+                  </>
+                ) : (
+                  <>
+                    {rehearsalNeedsConnection && (
+                      <PrimaryButton
+                        onClick={() =>
+                          getNodeBridge().connectValidationDevnet()
+                        }
+                        isDisabled={
+                          !canUseIpcRenderer || !devnetStatus.primaryRpcUrl
+                        }
+                      >
+                        {t('Use rehearsal node now')}
+                      </PrimaryButton>
+                    )}
+
+                    <SecondaryButton
+                      onClick={() =>
+                        restartRehearsalNetwork({
+                          connectApp:
+                            rehearsalNodeConnected || rehearsalNeedsConnection,
+                        })
+                      }
+                      isDisabled={!canUseIpcRenderer || isStartingDevnet}
+                    >
+                      {t('Restart fresh rehearsal')}
+                    </SecondaryButton>
+
+                    <SecondaryButton
+                      onClick={() =>
+                        restartRehearsalNetwork({
+                          connectApp:
+                            rehearsalNodeConnected || rehearsalNeedsConnection,
+                          fastForward: true,
+                        })
+                      }
+                      isDisabled={!canUseIpcRenderer || isStartingDevnet}
+                    >
+                      {t('Fast forward to session')}
+                    </SecondaryButton>
+
+                    <SecondaryButton
+                      onClick={() => getNodeBridge().stopValidationDevnet()}
+                      isDisabled={!canUseIpcRenderer || !devnetStatus.active}
+                    >
+                      {t('Stop rehearsal network')}
+                    </SecondaryButton>
+                  </>
+                )}
+              </Stack>
+            </Stack>
+
+            <Box>
+              <Heading fontWeight={500} fontSize="md" mb={3}>
+                {t('Rehearsal network log')}
+              </Heading>
+              <Flex
+                direction="column"
+                height="xs"
+                overflow="auto"
+                wordBreak="break-word"
+                borderColor="muted"
+                borderWidth="px"
+                fontSize="sm"
+                fontFamily="mono"
+                px={3}
+                py={2}
+              >
+                {state.devnetLogs.length > 0 ? (
+                  state.devnetLogs.map((log, idx) => (
+                    <Ansi key={idx}>{log}</Ansi>
+                  ))
+                ) : (
+                  <Text color="muted">{emptyDevnetLogMessage}</Text>
+                )}
+              </Flex>
+            </Box>
+          </Stack>
+        </SettingsSection>
 
         {!settings.useExternalNode && (
           <Box>

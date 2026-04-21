@@ -26,6 +26,9 @@ import {
   decodedWithKeywords,
   availableReportsNumber,
   solvableFlips,
+  shouldPrepareValidationSession,
+  buildValidationSessionNodeScope,
+  buildValidationStateScope,
 } from '../screens/validation/utils'
 import {
   ValidationScene,
@@ -46,6 +49,7 @@ import {
   ValidationTimer,
   ValidationFailedDialog,
   SubmitFailedDialog,
+  FailedFlip,
   FailedFlipAnnotation,
   ReviewValidationDialog,
   EncourageReportDialog,
@@ -57,6 +61,7 @@ import {
 import {rem} from '../shared/theme'
 import {AnswerType, RelevanceType} from '../shared/types'
 import {useEpochState} from '../shared/providers/epoch-context'
+import {useIdentity} from '../shared/providers/identity-context'
 import {useTimingState} from '../shared/providers/timing-context'
 import {
   InfoButton,
@@ -76,12 +81,15 @@ import {
   NewStarIcon,
 } from '../shared/components/icons'
 import {useAutoCloseValidationToast} from '../screens/validation/hooks/use-validation-toast'
+import {useValidationCeremonyReadiness} from '../screens/validation/hooks/use-start-validation'
 import {solveValidationSessionWithAi} from '../screens/validation/ai/solver-orchestrator'
 import {
   checkAiProviderReadiness,
   formatMissingAiProviders,
   isLocalAiProvider,
 } from '../shared/utils/ai-provider-readiness'
+import {prepareValidationSession} from '../shared/api/validation'
+import {getNodeBridge} from '../shared/utils/node-bridge'
 
 const previewAiSampleSet = require('../../samples/flips/flip-challenge-test-5-decoded-labeled.json')
 
@@ -602,6 +610,7 @@ export default function ValidationPage() {
   const router = useRouter()
   const epoch = useEpochState()
   const timing = useTimingState()
+  const {loading, offline, syncing, peersCount} = useChainState()
 
   useAutoCloseValidationToast()
 
@@ -633,7 +642,36 @@ export default function ValidationPage() {
       />
     )
 
-  return null
+  let validationBootstrapMessage =
+    'Waiting for the validation route to receive ceremony timing data from the connected node...'
+
+  if (offline) {
+    validationBootstrapMessage =
+      'The connected node is temporarily unavailable. Stay on this screen while the connection recovers, or go back and reconnect the rehearsal node.'
+  } else if (loading) {
+    validationBootstrapMessage =
+      'Loading ceremony timing and identity data from the connected node...'
+  } else if (syncing) {
+    validationBootstrapMessage =
+      'Waiting for the connected node to finish synchronization before validation can start...'
+  } else if (Number.isFinite(peersCount) && peersCount < 1) {
+    validationBootstrapMessage =
+      'Waiting for the connected node to discover ceremony peers...'
+  }
+
+  return (
+    <ValidationScene>
+      <Flex flex={1} align="center" justify="center">
+        <Stack spacing={4} align="center" maxW={rem(520)} textAlign="center">
+          <Title>Preparing validation session</Title>
+          <Text color="xwhite.050">{validationBootstrapMessage}</Text>
+          <SecondaryButton onClick={() => router.push('/home')}>
+            Back to home
+          </SecondaryButton>
+        </Stack>
+      </Flex>
+    </ValidationScene>
+  )
 }
 
 function ValidationSession({
@@ -649,6 +687,7 @@ function ValidationSession({
   const toast = useToast()
   const settings = useSettingsState()
   const {updateAiSolverSettings} = useSettingsDispatch()
+  const [identity] = useIdentity()
   const aiSolverSettings = useMemo(
     () => ({
       ...DEFAULT_AI_SOLVER_SETTINGS,
@@ -681,10 +720,43 @@ function ValidationSession({
   const manualReportingStartedRef = useRef(false)
   const autoReportSubmitPendingRef = useRef(false)
   const localAiCaptureSyncRef = useRef({})
+  const preparedValidationSessionRef = useRef({
+    epoch: null,
+    sessionId: null,
+    prepareScopeKey: null,
+  })
   const previewShortFlips = useMemo(
     () => (forceAiPreview ? createPreviewAiShortFlips() : []),
     [forceAiPreview]
   )
+  const validationNodeScope = useMemo(
+    () =>
+      buildValidationSessionNodeScope({
+        runInternalNode: settings.runInternalNode,
+        useExternalNode: settings.useExternalNode,
+        url: settings.url,
+        internalPort: settings.internalPort,
+      }),
+    [
+      settings.internalPort,
+      settings.runInternalNode,
+      settings.url,
+      settings.useExternalNode,
+    ]
+  )
+  const validationStateScope = useMemo(
+    () =>
+      buildValidationStateScope({
+        epoch,
+        address: identity?.address,
+        nodeScope: validationNodeScope,
+        validationStart,
+      }),
+    [epoch, identity?.address, validationNodeScope, validationStart]
+  )
+  const validationReadiness = useValidationCeremonyReadiness()
+  const {validationSessionId, rememberLiveValidationSessionId} =
+    validationReadiness
 
   const {
     isOpen: isExceededTooltipOpen,
@@ -703,6 +775,7 @@ function ValidationSession({
       validationStart,
       shortSessionDuration,
       longSessionDuration,
+      validationSessionId,
       locale: i18n.language || 'en',
       onDecodedFlip: ({
         flipHash,
@@ -751,7 +824,10 @@ function ValidationSession({
         router.push('/validation/after')
       },
     },
-    state: forceAiPreview ? undefined : loadValidationState(),
+    state:
+      forceAiPreview || !validationStateScope
+        ? undefined
+        : loadValidationState(validationStateScope),
     logger: global.isDev
       ? console.log
       : (...args) => global.logger.debug(...args),
@@ -767,6 +843,19 @@ function ValidationSession({
   } = state.context
 
   useEffect(() => {
+    if (validationSessionId) {
+      send({type: 'SET_VALIDATION_SESSION_ID', sessionId: validationSessionId})
+    }
+  }, [send, validationSessionId])
+
+  let currentValidationPeriod = null
+  if (state.matches('shortSession')) {
+    currentValidationPeriod = 'ShortSession'
+  } else if (state.matches('longSession')) {
+    currentValidationPeriod = 'LongSession'
+  }
+
+  useEffect(() => {
     if (hasLongSessionReportSelections(longFlips)) {
       manualReportingStartedRef.current = true
       setAutoReportDeadlineAt(null)
@@ -777,8 +866,80 @@ function ValidationSession({
     if (forceAiPreview) {
       return
     }
-    persistValidationState(state)
-  }, [forceAiPreview, state])
+    if (validationStateScope) {
+      persistValidationState(state, validationStateScope)
+    }
+  }, [forceAiPreview, state, validationStateScope])
+
+  useEffect(() => {
+    const preparedSessionId = preparedValidationSessionRef.current.sessionId
+    const hasPreparedSessionForScope =
+      preparedValidationSessionRef.current.epoch === epoch &&
+      preparedValidationSessionRef.current.prepareScopeKey ===
+        validationReadiness.validationPrepareScopeKey &&
+      (validationSessionId
+        ? preparedSessionId === validationSessionId
+        : Boolean(preparedSessionId))
+
+    if (
+      forceAiPreview ||
+      !validationReadiness.rpcReady ||
+      hasPreparedSessionForScope ||
+      !shouldPrepareValidationSession(
+        {
+          epoch,
+          currentPeriod: currentValidationPeriod,
+        },
+        identity
+      )
+    ) {
+      return
+    }
+
+    let ignore = false
+    const requestedSessionId = String(validationSessionId || '')
+
+    prepareValidationSession(epoch, requestedSessionId)
+      .then((result) => {
+        if (ignore) return
+
+        const activeSessionId =
+          (result && result.sessionId) || requestedSessionId
+
+        if (activeSessionId) {
+          rememberLiveValidationSessionId(activeSessionId)
+          send({type: 'SET_VALIDATION_SESSION_ID', sessionId: activeSessionId})
+        }
+
+        preparedValidationSessionRef.current = {
+          epoch,
+          sessionId: activeSessionId,
+          prepareScopeKey: validationReadiness.validationPrepareScopeKey,
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          global.logger.error(
+            'Unable to refresh live validation session',
+            error && error.message ? error.message : error
+          )
+        }
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [
+    currentValidationPeriod,
+    epoch,
+    forceAiPreview,
+    identity,
+    rememberLiveValidationSessionId,
+    send,
+    validationReadiness.validationPrepareScopeKey,
+    validationReadiness.rpcReady,
+    validationSessionId,
+  ])
 
   const {
     isOpen: isOpenEncourageReportDialog,
@@ -794,6 +955,18 @@ function ValidationSession({
 
   const flips = sessionFlips(state)
   const currentFlip = flips[currentIndex]
+  const displayIndex = flips.length
+    ? Math.min(currentIndex + 1, flips.length)
+    : 0
+  const hasRenderableCurrentFlip = Boolean(currentFlip && currentFlip.hash)
+  const isRehearsalNodeSession =
+    settings.ephemeralExternalNodeConnected &&
+    settings.externalNodeLabel === 'Validation rehearsal node'
+  const shouldOfferRehearsalRestart =
+    isRehearsalNodeSession &&
+    !forceAiPreview &&
+    !hasRenderableCurrentFlip &&
+    state.matches('longSession')
   const localAiValidationEnabled = settings.localAi?.enabled === true
   const localAiCheckerAvailable =
     localAiValidationEnabled &&
@@ -811,6 +984,7 @@ function ValidationSession({
     shortSessionDuration,
     longSessionDuration,
   }
+  const isRealSessionAutoBlockedInDev = global.isDev && !forceAiPreview
 
   const [bestRewardTipOpen, setBestRewardTipOpen] = useState(false)
   useEffect(() => {
@@ -818,6 +992,16 @@ function ValidationSession({
       setBestRewardTipOpen(true)
     }
   }, [currentFlip])
+
+  const handleRestartRehearsalNetwork = useCallback(() => {
+    getNodeBridge().restartValidationDevnet({
+      nodeCount: 9,
+      firstCeremonyLeadSeconds: 8 * 60,
+      seedFlipCount: 27,
+      connectApp: true,
+    })
+    router.push('/settings/node')
+  }, [router])
 
   useEffect(() => {
     if (
@@ -891,6 +1075,21 @@ function ValidationSession({
   )
 
   const enableAutomaticNextValidationSession = useCallback(() => {
+    if (global.isDev && !forceAiPreview) {
+      toast({
+        render: () => (
+          <Toast
+            title={t('Automatic session solving is blocked in dev mode')}
+            description={t(
+              'Use the off-chain preview flow while developing. Real ceremony auto-start and auto-solve stay disabled in the dev build.'
+            )}
+            status="warning"
+          />
+        ),
+      })
+      return
+    }
+
     updateAiSolverSettings({
       enabled: true,
       mode: 'session-auto',
@@ -907,7 +1106,7 @@ function ValidationSession({
       ),
     })
     router.push('/settings/ai')
-  }, [router, t, toast, updateAiSolverSettings])
+  }, [forceAiPreview, router, t, toast, updateAiSolverSettings])
 
   const canRunAiSolveInShort =
     state.matches('shortSession.solve.answer.normal') &&
@@ -927,7 +1126,9 @@ function ValidationSession({
   }
 
   const isSessionAutoMode =
-    aiSolverSettings.enabled && aiSolverSettings.mode === 'session-auto'
+    !isRealSessionAutoBlockedInDev &&
+    aiSolverSettings.enabled &&
+    aiSolverSettings.mode === 'session-auto'
   const autoReportDelayMinutes = Math.max(
     1,
     Number(aiSolverSettings.autoReportDelayMinutes) ||
@@ -1720,7 +1921,7 @@ function ValidationSession({
             color={isShortSession(state) ? 'white' : 'brandGray.500'}
             mr={6}
           >
-            {currentIndex + 1}{' '}
+            {displayIndex}{' '}
             <Text as="span" color="muted">
               {t('out of')} {flips.length}
             </Text>
@@ -1744,38 +1945,63 @@ function ValidationSession({
       <CurrentStep>
         <FlipChallenge>
           <Flex justify="center" align="center" position="relative">
-            {currentFlip &&
+            {hasRenderableCurrentFlip &&
               ((currentFlip.fetched && !currentFlip.decoded) ||
                 currentFlip.failed) && (
                 <FailedFlipAnnotation>
                   {t('No data available. Please skip the flip.')}
                 </FailedFlipAnnotation>
               )}
-            <Flip
-              {...currentFlip}
-              variant={AnswerType.Left}
-              timerDetails={flipTimerDetails}
-              onChoose={(hash) =>
-                send({
-                  type: 'ANSWER',
-                  hash,
-                  option: AnswerType.Left,
-                })
-              }
-            />
-            <Flip
-              {...currentFlip}
-              variant={AnswerType.Right}
-              timerDetails={flipTimerDetails}
-              onChoose={(hash) =>
-                send({
-                  type: 'ANSWER',
-                  hash,
-                  option: AnswerType.Right,
-                })
-              }
-              onImageFail={() => send('REFETCH_FLIPS')}
-            />
+            {hasRenderableCurrentFlip ? (
+              <>
+                <Flip
+                  {...currentFlip}
+                  variant={AnswerType.Left}
+                  timerDetails={flipTimerDetails}
+                  onChoose={(hash) =>
+                    send({
+                      type: 'ANSWER',
+                      hash,
+                      option: AnswerType.Left,
+                    })
+                  }
+                />
+                <Flip
+                  {...currentFlip}
+                  variant={AnswerType.Right}
+                  timerDetails={flipTimerDetails}
+                  onChoose={(hash) =>
+                    send({
+                      type: 'ANSWER',
+                      hash,
+                      option: AnswerType.Right,
+                    })
+                  }
+                  onImageFail={() => send('REFETCH_FLIPS')}
+                />
+              </>
+            ) : (
+              <>
+                <Stack spacing={4} align="center">
+                  <FailedFlipAnnotation>
+                    {shouldOfferRehearsalRestart
+                      ? t(
+                          'This rehearsal node was connected too late and is already past a clean short-session start. Restart the rehearsal network for a fresh run.'
+                        )
+                      : t(
+                          'Waiting for validation flips to become available...'
+                        )}
+                  </FailedFlipAnnotation>
+                  {shouldOfferRehearsalRestart && (
+                    <SecondaryButton onClick={handleRestartRehearsalNetwork}>
+                      {t('Restart fresh rehearsal')}
+                    </SecondaryButton>
+                  )}
+                </Stack>
+                <FailedFlip />
+                <FailedFlip />
+              </>
+            )}
           </Flex>
           {(isLongSessionKeywords(state) ||
             state.matches('validationSucceeded')) &&

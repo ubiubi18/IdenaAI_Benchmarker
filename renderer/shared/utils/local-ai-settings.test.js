@@ -27,10 +27,26 @@ const {
   DEFAULT_LOCAL_AI_PUBLIC_MODEL_ID,
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   MOLMO2_O_RESEARCH_BASE_URL,
+  MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
   MOLMO2_O_RESEARCH_RUNTIME_MODEL,
   MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
+  MOLMO2_4B_RESEARCH_BASE_URL,
+  MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+  MOLMO2_4B_RESEARCH_RUNTIME_MODEL,
+  MOLMO2_4B_RESEARCH_RUNTIME_VISION_MODEL,
+  INTERNVL3_5_1B_RESEARCH_BASE_URL,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_VISION_MODEL,
+  INTERNVL3_5_8B_RESEARCH_BASE_URL,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_VISION_MODEL,
   buildLocalAiSettings,
   buildMolmo2OResearchPreset,
+  buildMolmo24BCompactPreset,
+  buildInternVl351BLightPreset,
+  buildInternVl358BExperimentalPreset,
   buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   buildRecommendedLocalAiMacPreset,
@@ -58,6 +74,7 @@ const {
   resolveDeveloperLocalTrainingProfileRuntimeVisionModel,
   resolveDeveloperLocalBenchmarkThermalModeCooldowns,
   resolveDeveloperLocalTrainingThermalModeCooldowns,
+  resolveManagedLocalRuntimeMemoryReference,
   resolveLocalAiWireRuntimeType,
 } = require('./local-ai-settings')
 
@@ -266,24 +283,131 @@ describe('local-ai settings schema', () => {
       baseUrl: MOLMO2_O_RESEARCH_BASE_URL,
       endpoint: MOLMO2_O_RESEARCH_BASE_URL,
       runtimeType: 'sidecar',
-      runtimeFamily: 'molmo2-o',
+      runtimeFamily: MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
       model: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
       visionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
     })
+  })
+
+  it('builds a compact Molmo2-4B preset on the local runtime service', () => {
+    expect(buildMolmo24BCompactPreset()).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
+      baseUrl: MOLMO2_4B_RESEARCH_BASE_URL,
+      endpoint: MOLMO2_4B_RESEARCH_BASE_URL,
+      runtimeType: 'sidecar',
+      runtimeFamily: MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+      model: MOLMO2_4B_RESEARCH_RUNTIME_MODEL,
+      visionModel: MOLMO2_4B_RESEARCH_RUNTIME_VISION_MODEL,
+    })
+  })
+
+  it('builds a light InternVL3.5-1B preset on the local runtime service', () => {
+    expect(buildInternVl351BLightPreset()).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
+      baseUrl: INTERNVL3_5_1B_RESEARCH_BASE_URL,
+      endpoint: INTERNVL3_5_1B_RESEARCH_BASE_URL,
+      runtimeType: 'sidecar',
+      runtimeFamily: INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+      model: INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL,
+      visionModel: INTERNVL3_5_1B_RESEARCH_RUNTIME_VISION_MODEL,
+    })
+  })
+
+  it('builds an experimental InternVL3.5-8B preset on the local runtime service', () => {
+    expect(buildInternVl358BExperimentalPreset()).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
+      baseUrl: INTERNVL3_5_8B_RESEARCH_BASE_URL,
+      endpoint: INTERNVL3_5_8B_RESEARCH_BASE_URL,
+      runtimeType: 'sidecar',
+      runtimeFamily: INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
+      model: INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL,
+      visionModel: INTERNVL3_5_8B_RESEARCH_RUNTIME_VISION_MODEL,
+    })
+  })
+
+  it('maps managed runtime families to matching RAM reference profiles', () => {
+    expect(
+      resolveManagedLocalRuntimeMemoryReference(
+        MOLMO2_O_RESEARCH_RUNTIME_FAMILY
+      )
+    ).toBe('molmo2-o-7b')
+    expect(
+      resolveManagedLocalRuntimeMemoryReference(
+        MOLMO2_4B_RESEARCH_RUNTIME_FAMILY
+      )
+    ).toBe('molmo2-4b')
+    expect(
+      resolveManagedLocalRuntimeMemoryReference(
+        INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY
+      )
+    ).toBe('internvl3.5-1b')
+    expect(
+      resolveManagedLocalRuntimeMemoryReference(
+        INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY
+      )
+    ).toBe('internvl3.5-8b')
+    expect(resolveManagedLocalRuntimeMemoryReference('unknown-runtime')).toBe(
+      ''
+    )
   })
 
   it('builds a one-click repair preset with cleared path overrides', () => {
     expect(
       buildLocalAiRepairPreset({
         runtimeBackend: 'local-runtime-service',
-        runtimeFamily: 'molmo2-o',
+        runtimeFamily: MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
         managedRuntimePythonPath: '/custom/python',
       })
     ).toMatchObject({
       runtimeBackend: 'local-runtime-service',
       baseUrl: MOLMO2_O_RESEARCH_BASE_URL,
       endpoint: MOLMO2_O_RESEARCH_BASE_URL,
-      runtimeFamily: 'molmo2-o',
+      runtimeFamily: MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
+      managedRuntimePythonPath: '',
+      ollamaCommandPath: '',
+    })
+
+    expect(
+      buildLocalAiRepairPreset({
+        runtimeBackend: 'local-runtime-service',
+        runtimeFamily: MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+        managedRuntimePythonPath: '/custom/python',
+      })
+    ).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
+      baseUrl: MOLMO2_4B_RESEARCH_BASE_URL,
+      endpoint: MOLMO2_4B_RESEARCH_BASE_URL,
+      runtimeFamily: MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+      managedRuntimePythonPath: '',
+      ollamaCommandPath: '',
+    })
+
+    expect(
+      buildLocalAiRepairPreset({
+        runtimeBackend: 'local-runtime-service',
+        runtimeFamily: INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+        managedRuntimePythonPath: '/custom/python',
+      })
+    ).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
+      baseUrl: INTERNVL3_5_1B_RESEARCH_BASE_URL,
+      endpoint: INTERNVL3_5_1B_RESEARCH_BASE_URL,
+      runtimeFamily: INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+      managedRuntimePythonPath: '',
+      ollamaCommandPath: '',
+    })
+
+    expect(
+      buildLocalAiRepairPreset({
+        runtimeBackend: 'local-runtime-service',
+        runtimeFamily: INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
+        managedRuntimePythonPath: '/custom/python',
+      })
+    ).toMatchObject({
+      runtimeBackend: 'local-runtime-service',
+      baseUrl: INTERNVL3_5_8B_RESEARCH_BASE_URL,
+      endpoint: INTERNVL3_5_8B_RESEARCH_BASE_URL,
+      runtimeFamily: INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
       managedRuntimePythonPath: '',
       ollamaCommandPath: '',
     })

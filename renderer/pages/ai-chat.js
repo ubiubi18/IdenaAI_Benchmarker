@@ -59,11 +59,16 @@ import {
 } from '../shared/utils/ai-provider-readiness'
 import {
   DEFAULT_LOCAL_AI_SETTINGS,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
+  MANAGED_LOCAL_RUNTIME_FAMILIES,
+  MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
   buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   buildMolmo2OResearchPreset,
   buildLocalAiSettings,
   hasManagedLocalAiTrustApproval,
+  resolveManagedLocalRuntimeMemoryReference,
 } from '../shared/utils/local-ai-settings'
 import {
   ChatIcon,
@@ -392,13 +397,13 @@ function formatRuntimeStatusError(result, t) {
 
   if (/managed_runtime_trust_required/i.test(message)) {
     return t(
-      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot locally.'
+      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified pinned local model snapshot locally.'
     )
   }
 
   if (/unsupported_managed_model/i.test(message)) {
     return t(
-      'The managed on-device runtime is locked to the pinned Molmo2-O model. Use a custom local runtime if you need a different base model.'
+      'The managed on-device runtime is locked to its pinned model family. Use a custom local runtime if you need a different base model.'
     )
   }
 
@@ -413,15 +418,78 @@ function formatChatError(error, t) {
   const message = String((error && error.message) || error || '').trim()
   if (/managed_runtime_trust_required/i.test(message)) {
     return t(
-      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified Molmo2-O snapshot locally.'
+      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified pinned local model snapshot locally.'
     )
   }
   if (/unsupported_managed_model/i.test(message)) {
     return t(
-      'The managed on-device runtime is locked to the pinned Molmo2-O model. Use a custom local runtime if you need a different base model.'
+      'The managed on-device runtime is locked to its pinned model family. Use a custom local runtime if you need a different base model.'
     )
   }
   return message || t('Local AI chat request failed.')
+}
+
+function getManagedLocalRuntimeFamily(localAi = {}) {
+  const runtimeBackend = String(localAi?.runtimeBackend || '')
+    .trim()
+    .toLowerCase()
+  const runtimeFamily = String(localAi?.runtimeFamily || '')
+    .trim()
+    .toLowerCase()
+
+  if (runtimeBackend !== 'local-runtime-service') {
+    return ''
+  }
+
+  return MANAGED_LOCAL_RUNTIME_FAMILIES.includes(runtimeFamily)
+    ? runtimeFamily
+    : ''
+}
+
+function getManagedLocalRuntimeName(t, runtimeFamily = '') {
+  switch (
+    String(runtimeFamily || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
+      return t('InternVL3.5-1B light runtime')
+    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
+      return t('Molmo2-4B compact runtime')
+    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
+      return t('InternVL3.5-8B experimental runtime')
+    case 'molmo2-o':
+    default:
+      return t('Molmo2-O research runtime')
+  }
+}
+
+function getManagedLocalRuntimeBackendLabel(t, runtimeFamily = '') {
+  switch (
+    String(runtimeFamily || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
+      return t('Managed InternVL3.5-1B runtime')
+    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
+      return t('Managed Molmo2-4B runtime')
+    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
+      return t('Experimental InternVL3.5-8B runtime')
+    case 'molmo2-o':
+    default:
+      return t('Managed Molmo2-O runtime')
+  }
+}
+
+function getManagedLocalRuntimeTrustNote(t, runtimeFamily = '') {
+  return String(runtimeFamily || '')
+    .trim()
+    .toLowerCase() === INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY
+    ? t(
+        'Experimental path: this pinned InternVL build uses the generic transformers runtime and can still be too heavy for a 32 GB desktop once the node and other apps are open.'
+      )
+    : ''
 }
 
 function normalizeRuntimeProgress(progress) {
@@ -1232,7 +1300,7 @@ export default function AiChatPage() {
   const {loading, syncing, offline} = useChainState()
   const epoch = useEpochState()
   const settings = useSettingsState()
-  const {updateLocalAiSettings} = useSettingsDispatch()
+  const {updateAiSolverSettings, updateLocalAiSettings} = useSettingsDispatch()
 
   const localAi = React.useMemo(
     () => buildLocalAiSettings(settings.localAi),
@@ -1269,6 +1337,18 @@ export default function AiChatPage() {
     React.useState(false)
   const [managedRuntimeTrustPatch, setManagedRuntimeTrustPatch] =
     React.useState(null)
+  const managedRuntimeTrustLocalAi = React.useMemo(
+    () =>
+      buildLocalAiSettings({
+        ...localAi,
+        ...((managedRuntimeTrustPatch && managedRuntimeTrustPatch) || {}),
+      }),
+    [localAi, managedRuntimeTrustPatch]
+  )
+  const managedRuntimeTrustFamily = React.useMemo(
+    () => getManagedLocalRuntimeFamily(managedRuntimeTrustLocalAi),
+    [managedRuntimeTrustLocalAi]
+  )
   const applyBackgroundStatusResult = React.useCallback(
     (nextResult, payload) => {
       const payloadKey = getRuntimePayloadKey(payload)
@@ -1836,13 +1916,10 @@ export default function AiChatPage() {
         ...nextSettingsPatch,
       })
       const nextPayload = buildLocalAiRuntimePayload(nextLocalAi)
-      const managedRuntime =
-        String(nextLocalAi.runtimeBackend || '')
-          .trim()
-          .toLowerCase() === 'local-runtime-service' &&
-        String(nextLocalAi.runtimeFamily || '')
-          .trim()
-          .toLowerCase() === 'molmo2-o'
+      const managedRuntime = Boolean(getManagedLocalRuntimeFamily(nextLocalAi))
+      const managedRuntimeMemoryReference = managedRuntime
+        ? resolveManagedLocalRuntimeMemoryReference(nextLocalAi.runtimeFamily)
+        : ''
 
       if (managedRuntime && !hasManagedLocalAiTrustApproval(nextLocalAi)) {
         setManagedRuntimeTrustPatch(nextSettingsPatch)
@@ -1869,6 +1946,11 @@ export default function AiChatPage() {
           },
         }))
         updateLocalAiSettings(nextSettingsPatch)
+        if (managedRuntimeMemoryReference) {
+          updateAiSolverSettings({
+            localAiMemoryReference: managedRuntimeMemoryReference,
+          })
+        }
         const bridge = getLocalAiBridge()
         const result = await bridge.start(nextPayload)
         setStatusResult(result)
@@ -1886,7 +1968,13 @@ export default function AiChatPage() {
         setActiveRuntimePayload(null)
       }
     },
-    [appendAssistantErrorToast, localAi, t, updateLocalAiSettings]
+    [
+      appendAssistantErrorToast,
+      localAi,
+      t,
+      updateAiSolverSettings,
+      updateLocalAiSettings,
+    ]
   )
 
   const handleStartLocalAi = React.useCallback(async () => {
@@ -2004,9 +2092,11 @@ export default function AiChatPage() {
   const runtimeProgressDisplay = React.useMemo(
     () =>
       describeRuntimeProgress(runtimeProgress, t, {
-        managedRuntime: localAi.runtimeBackend === 'local-runtime-service',
+        managedRuntime: Boolean(
+          getManagedLocalRuntimeFamily(activeRuntimePayload || localAi)
+        ),
       }),
-    [localAi.runtimeBackend, runtimeProgress, t]
+    [activeRuntimePayload, localAi, runtimeProgress, t]
   )
   const runtimeErrorMessage = formatRuntimeStatusError(statusResult, t)
   const startRuntimeLabel =
@@ -2021,7 +2111,10 @@ export default function AiChatPage() {
   } else if (localAi.runtimeBackend === 'ollama-direct') {
     backendLabel = t('Ollama local runtime')
   } else if (localAi.runtimeBackend === 'local-runtime-service') {
-    backendLabel = t('Managed Molmo2-O runtime')
+    const managedRuntimeFamily = getManagedLocalRuntimeFamily(localAi)
+    backendLabel = managedRuntimeFamily
+      ? getManagedLocalRuntimeBackendLabel(t, managedRuntimeFamily)
+      : t('Managed local runtime')
   }
 
   let openChatButtonLabel = t('Start local AI and open chat')
@@ -2733,6 +2826,11 @@ export default function AiChatPage() {
         isLoading={isStartingRuntime}
         title={t('Trust managed on-device AI')}
         confirmLabel={t('Trust and start')}
+        runtimeName={getManagedLocalRuntimeName(t, managedRuntimeTrustFamily)}
+        extraNote={getManagedLocalRuntimeTrustNote(
+          t,
+          managedRuntimeTrustFamily
+        )}
       />
     </Layout>
   )

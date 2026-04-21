@@ -8,8 +8,31 @@ const DEFAULT_LOCAL_AI_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
 const DEFAULT_LOCAL_AI_SIDECAR_BASE_URL = LEGACY_LOCAL_AI_BASE_URL
 const LOCAL_RUNTIME_SERVICE_BACKEND = 'local-runtime-service'
 const MOLMO2_O_RESEARCH_BASE_URL = 'http://127.0.0.1:8080'
+const MOLMO2_O_RESEARCH_RUNTIME_FAMILY = 'molmo2-o'
 const MOLMO2_O_RESEARCH_RUNTIME_MODEL = 'allenai/Molmo2-O-7B'
 const MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL = 'allenai/Molmo2-O-7B'
+const MOLMO2_4B_RESEARCH_BASE_URL = 'http://127.0.0.1:8080'
+const MOLMO2_4B_RESEARCH_RUNTIME_FAMILY = 'molmo2-4b'
+const MOLMO2_4B_RESEARCH_RUNTIME_MODEL = 'allenai/Molmo2-4B'
+const MOLMO2_4B_RESEARCH_RUNTIME_VISION_MODEL = 'allenai/Molmo2-4B'
+const INTERNVL3_5_1B_RESEARCH_BASE_URL = 'http://127.0.0.1:8080'
+const INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY = 'internvl3.5-1b'
+const INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL = 'OpenGVLab/InternVL3_5-1B-HF'
+const INTERNVL3_5_1B_RESEARCH_RUNTIME_VISION_MODEL =
+  'OpenGVLab/InternVL3_5-1B-HF'
+const INTERNVL3_5_8B_RESEARCH_BASE_URL = 'http://127.0.0.1:8080'
+const INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY = 'internvl3.5-8b'
+const INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL = 'OpenGVLab/InternVL3_5-8B-HF'
+const INTERNVL3_5_8B_RESEARCH_RUNTIME_VISION_MODEL =
+  'OpenGVLab/InternVL3_5-8B-HF'
+const MANAGED_MOLMO2_RUNTIME_FAMILIES = [
+  MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
+  MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+]
+const MANAGED_LOCAL_RUNTIME_FAMILIES = MANAGED_MOLMO2_RUNTIME_FAMILIES.concat(
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY
+)
 const MANAGED_LOCAL_RUNTIME_TRUST_VERSION = 1
 const DEFAULT_LOCAL_AI_OLLAMA_MODEL = ''
 const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = ''
@@ -634,10 +657,84 @@ function buildMolmo2OResearchPreset() {
     ...buildLocalAiRuntimePreset(LOCAL_RUNTIME_SERVICE_BACKEND),
     baseUrl: MOLMO2_O_RESEARCH_BASE_URL,
     endpoint: MOLMO2_O_RESEARCH_BASE_URL,
-    runtimeFamily: 'molmo2-o',
+    runtimeFamily: MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
     model: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
     visionModel: MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
   }
+}
+
+function buildMolmo24BCompactPreset() {
+  return {
+    ...buildLocalAiRuntimePreset(LOCAL_RUNTIME_SERVICE_BACKEND),
+    baseUrl: MOLMO2_4B_RESEARCH_BASE_URL,
+    endpoint: MOLMO2_4B_RESEARCH_BASE_URL,
+    runtimeFamily: MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+    model: MOLMO2_4B_RESEARCH_RUNTIME_MODEL,
+    visionModel: MOLMO2_4B_RESEARCH_RUNTIME_VISION_MODEL,
+  }
+}
+
+function buildInternVl351BLightPreset() {
+  return {
+    ...buildLocalAiRuntimePreset(LOCAL_RUNTIME_SERVICE_BACKEND),
+    baseUrl: INTERNVL3_5_1B_RESEARCH_BASE_URL,
+    endpoint: INTERNVL3_5_1B_RESEARCH_BASE_URL,
+    runtimeFamily: INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+    model: INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL,
+    visionModel: INTERNVL3_5_1B_RESEARCH_RUNTIME_VISION_MODEL,
+  }
+}
+
+function buildInternVl358BExperimentalPreset() {
+  return {
+    ...buildLocalAiRuntimePreset(LOCAL_RUNTIME_SERVICE_BACKEND),
+    baseUrl: INTERNVL3_5_8B_RESEARCH_BASE_URL,
+    endpoint: INTERNVL3_5_8B_RESEARCH_BASE_URL,
+    runtimeFamily: INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
+    model: INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL,
+    visionModel: INTERNVL3_5_8B_RESEARCH_RUNTIME_VISION_MODEL,
+  }
+}
+
+function buildManagedLocalRuntimePreset(runtimeFamily = '') {
+  switch (
+    String(runtimeFamily || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
+      return buildMolmo24BCompactPreset()
+    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
+      return buildInternVl351BLightPreset()
+    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
+      return buildInternVl358BExperimentalPreset()
+    case MOLMO2_O_RESEARCH_RUNTIME_FAMILY:
+    default:
+      return buildMolmo2OResearchPreset()
+  }
+}
+
+function resolveManagedLocalRuntimeMemoryReference(runtimeFamily = '') {
+  switch (
+    String(runtimeFamily || '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
+      return 'molmo2-4b'
+    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
+      return 'internvl3.5-1b'
+    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
+      return 'internvl3.5-8b'
+    case MOLMO2_O_RESEARCH_RUNTIME_FAMILY:
+      return 'molmo2-o-7b'
+    default:
+      return ''
+  }
+}
+
+function buildManagedMolmo2RuntimePreset(runtimeFamily = '') {
+  return buildManagedLocalRuntimePreset(runtimeFamily)
 }
 
 function buildLocalAiRepairPreset(source = {}, {preferManaged = false} = {}) {
@@ -646,10 +743,10 @@ function buildLocalAiRepairPreset(source = {}, {preferManaged = false} = {}) {
   const useManaged =
     preferManaged ||
     runtimeBackend === LOCAL_RUNTIME_SERVICE_BACKEND ||
-    runtimeFamily === 'molmo2-o'
+    MANAGED_LOCAL_RUNTIME_FAMILIES.includes(runtimeFamily)
 
   const preset = useManaged
-    ? buildMolmo2OResearchPreset()
+    ? buildManagedLocalRuntimePreset(runtimeFamily)
     : buildLocalAiRuntimePreset(runtimeBackend)
 
   return {
@@ -886,13 +983,34 @@ module.exports = {
   DEFAULT_LOCAL_AI_PUBLIC_VISION_ID,
   DEFAULT_LOCAL_AI_SIDECAR_BASE_URL,
   MOLMO2_O_RESEARCH_BASE_URL,
+  MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
   MOLMO2_O_RESEARCH_RUNTIME_MODEL,
   MOLMO2_O_RESEARCH_RUNTIME_VISION_MODEL,
+  MOLMO2_4B_RESEARCH_BASE_URL,
+  MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+  MOLMO2_4B_RESEARCH_RUNTIME_MODEL,
+  MOLMO2_4B_RESEARCH_RUNTIME_VISION_MODEL,
+  INTERNVL3_5_1B_RESEARCH_BASE_URL,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL,
+  INTERNVL3_5_1B_RESEARCH_RUNTIME_VISION_MODEL,
+  INTERNVL3_5_8B_RESEARCH_BASE_URL,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL,
+  INTERNVL3_5_8B_RESEARCH_RUNTIME_VISION_MODEL,
+  MANAGED_MOLMO2_RUNTIME_FAMILIES,
+  MANAGED_LOCAL_RUNTIME_FAMILIES,
   getLocalAiEndpointSafety,
   resolveLocalAiWireRuntimeType,
   buildLocalAiRuntimePreset,
   buildRecommendedLocalAiMacPreset,
   buildMolmo2OResearchPreset,
+  buildMolmo24BCompactPreset,
+  buildInternVl351BLightPreset,
+  buildInternVl358BExperimentalPreset,
+  buildManagedLocalRuntimePreset,
+  buildManagedMolmo2RuntimePreset,
+  resolveManagedLocalRuntimeMemoryReference,
   buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   hasManagedLocalAiTrustApproval,
