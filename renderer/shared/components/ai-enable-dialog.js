@@ -21,6 +21,9 @@ import {Input, Select, Toast} from './components'
 import {PrimaryButton, SecondaryButton} from './button'
 import {EyeIcon, EyeOffIcon} from './icons'
 import {isLocalAiProvider} from '../utils/ai-provider-readiness'
+import {getSharedGlobal} from '../utils/shared-global'
+
+const LOCAL_AI_COMFORT_MEMORY_GIB = 32
 
 function ensureBridge() {
   if (!global.aiSolver) {
@@ -44,6 +47,15 @@ export function AiEnableDialog({
   const [isSaving, setIsSaving] = useState(false)
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false)
   const [showExternalProviders, setShowExternalProviders] = useState(false)
+  const totalSystemMemoryBytes = Number(
+    getSharedGlobal('totalSystemMemoryBytes', 0)
+  )
+  const totalSystemMemoryGiB =
+    Number.isFinite(totalSystemMemoryBytes) && totalSystemMemoryBytes > 0
+      ? Math.max(1, Math.round(totalSystemMemoryBytes / 1024 ** 3))
+      : 0
+  const externalProviderSectionRef = React.useRef(null)
+  const apiKeyInputRef = React.useRef(null)
   const hasLocalProviderOption = useMemo(
     () => providerOptions.some((item) => isLocalAiProvider(item.value)),
     [providerOptions]
@@ -64,6 +76,42 @@ export function AiEnableDialog({
     setShowExternalProviders(!isLocalAiProvider(defaultProvider))
   }, [defaultProvider, isOpen])
 
+  const trimmedApiKey = String(apiKey || '').trim()
+  const isLocalProvider = isLocalAiProvider(provider)
+  const selectedProvidersLabel = useMemo(
+    () => savedProviders.map(String).join(', '),
+    [savedProviders]
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isOpen || isLocalProvider) {
+      return
+    }
+
+    const requestId = window.requestAnimationFrame(() => {
+      if (
+        externalProviderSectionRef.current &&
+        typeof externalProviderSectionRef.current.scrollIntoView === 'function'
+      ) {
+        externalProviderSectionRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+        })
+      }
+
+      if (
+        apiKeyInputRef.current &&
+        typeof apiKeyInputRef.current.focus === 'function'
+      ) {
+        apiKeyInputRef.current.focus()
+      }
+    })
+
+    return () => {
+      window.cancelAnimationFrame(requestId)
+    }
+  }, [isLocalProvider, isOpen, provider, showExternalProviders])
+
   const notify = (title, description, status = 'info') => {
     toast({
       render: () => (
@@ -71,13 +119,6 @@ export function AiEnableDialog({
       ),
     })
   }
-
-  const trimmedApiKey = String(apiKey || '').trim()
-  const isLocalProvider = isLocalAiProvider(provider)
-  const selectedProvidersLabel = useMemo(
-    () => savedProviders.map(String).join(', '),
-    [savedProviders]
-  )
 
   const persistCurrentProviderKey = async () => {
     const nextKey = String(apiKey || '').trim()
@@ -143,7 +184,7 @@ export function AiEnableDialog({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg" isCentered>
+    <Modal isOpen={isOpen} onClose={onClose} size="xl" isCentered>
       <ModalOverlay />
       <ModalContent>
         <ModalHeader>{t('Enable experimental AI features')}</ModalHeader>
@@ -184,6 +225,27 @@ export function AiEnableDialog({
                       'You do not need to paste any API key for this path. One confirmation is enough.'
                     )}
                   </Text>
+                  <Text
+                    color={
+                      totalSystemMemoryGiB > 0 &&
+                      totalSystemMemoryGiB < LOCAL_AI_COMFORT_MEMORY_GIB
+                        ? 'orange.500'
+                        : 'muted'
+                    }
+                    fontSize="xs"
+                  >
+                    {totalSystemMemoryGiB > 0
+                      ? t(
+                          'This desktop has {{count}} GB RAM installed. Managed local AI is much safer around {{recommended}} GB and above. Smaller machines can still try it, but startup or live-session failures are more likely.',
+                          {
+                            count: totalSystemMemoryGiB,
+                            recommended: LOCAL_AI_COMFORT_MEMORY_GIB,
+                          }
+                        )
+                      : t(
+                          'Managed local AI needs significant RAM headroom. Smaller machines can still try it, but startup or live-session failures are more likely.'
+                        )}
+                  </Text>
                   {hasLocalProviderOption ? (
                     <Stack isInline spacing={2} flexWrap="wrap">
                       <SecondaryButton
@@ -202,13 +264,16 @@ export function AiEnableDialog({
 
             {showExternalProviders || !isLocalProvider ? (
               <Box
+                ref={externalProviderSectionRef}
                 borderWidth="1px"
                 borderColor="blue.050"
                 borderRadius="md"
                 p={3}
               >
                 <Stack spacing={2}>
-                  <Text fontWeight={500}>{t('Provider')}</Text>
+                  <Text fontWeight={500}>
+                    {t('Provider choice and session key')}
+                  </Text>
                   <Select
                     value={provider}
                     onChange={(e) => setProvider(e.target.value)}
@@ -231,6 +296,65 @@ export function AiEnableDialog({
                       'Cloud providers need a session API key. Use this only when you intentionally want an external API instead of local AI on this device.'
                     )}
                   </Text>
+                  {!isLocalProvider ? (
+                    <>
+                      <InputGroup w="full">
+                        <Input
+                          ref={apiKeyInputRef}
+                          value={apiKey}
+                          type={isApiKeyVisible ? 'text' : 'password'}
+                          placeholder={t(
+                            'Paste API key for the selected provider'
+                          )}
+                          onChange={(e) => setApiKey(e.target.value)}
+                        />
+                        <InputRightElement w="6" h="6" m="1">
+                          <IconButton
+                            size="xs"
+                            icon={
+                              isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />
+                            }
+                            bg={isApiKeyVisible ? 'gray.300' : 'white'}
+                            fontSize={20}
+                            _hover={{
+                              bg: isApiKeyVisible ? 'gray.300' : 'white',
+                            }}
+                            onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
+                          />
+                        </InputRightElement>
+                      </InputGroup>
+                      <Stack isInline justify="flex-end">
+                        <SecondaryButton
+                          isDisabled={!trimmedApiKey}
+                          isLoading={isSaving}
+                          onClick={async () => {
+                            setIsSaving(true)
+                            try {
+                              await persistCurrentProviderKey()
+                              notify(
+                                t('Provider key saved'),
+                                t('{{provider}} is ready for this session.', {
+                                  provider,
+                                })
+                              )
+                            } catch (error) {
+                              notify(
+                                t('Unable to save provider key'),
+                                String(
+                                  (error && error.message) || error || ''
+                                ).trim(),
+                                'error'
+                              )
+                            } finally {
+                              setIsSaving(false)
+                            }
+                          }}
+                        >
+                          {t('Save provider key')}
+                        </SecondaryButton>
+                      </Stack>
+                    </>
+                  ) : null}
                   {hasLocalProviderOption ? (
                     <SecondaryButton
                       alignSelf="flex-start"
@@ -242,69 +366,6 @@ export function AiEnableDialog({
                       {t('Back to local AI')}
                     </SecondaryButton>
                   ) : null}
-                </Stack>
-              </Box>
-            ) : null}
-
-            {!isLocalProvider ? (
-              <Box
-                borderWidth="1px"
-                borderColor="gray.100"
-                borderRadius="md"
-                p={3}
-              >
-                <Stack spacing={3}>
-                  <Text fontWeight={500}>{t('Session API key')}</Text>
-                  <InputGroup w="full">
-                    <Input
-                      value={apiKey}
-                      type={isApiKeyVisible ? 'text' : 'password'}
-                      placeholder={t('Paste API key for the selected provider')}
-                      onChange={(e) => setApiKey(e.target.value)}
-                    />
-                    <InputRightElement w="6" h="6" m="1">
-                      <IconButton
-                        size="xs"
-                        icon={isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />}
-                        bg={isApiKeyVisible ? 'gray.300' : 'white'}
-                        fontSize={20}
-                        _hover={{
-                          bg: isApiKeyVisible ? 'gray.300' : 'white',
-                        }}
-                        onClick={() => setIsApiKeyVisible(!isApiKeyVisible)}
-                      />
-                    </InputRightElement>
-                  </InputGroup>
-                  <Stack isInline justify="flex-end">
-                    <SecondaryButton
-                      isDisabled={!trimmedApiKey}
-                      isLoading={isSaving}
-                      onClick={async () => {
-                        setIsSaving(true)
-                        try {
-                          await persistCurrentProviderKey()
-                          notify(
-                            t('Provider key saved'),
-                            t('{{provider}} is ready for this session.', {
-                              provider,
-                            })
-                          )
-                        } catch (error) {
-                          notify(
-                            t('Unable to save provider key'),
-                            String(
-                              (error && error.message) || error || ''
-                            ).trim(),
-                            'error'
-                          )
-                        } finally {
-                          setIsSaving(false)
-                        }
-                      }}
-                    >
-                      {t('Save provider key')}
-                    </SecondaryButton>
-                  </Stack>
                 </Stack>
               </Box>
             ) : null}

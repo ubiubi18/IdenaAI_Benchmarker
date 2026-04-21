@@ -2,6 +2,7 @@ import React, {useEffect} from 'react'
 import {useInterval} from '../hooks/use-interval'
 import {useSettingsState} from './settings-context'
 import {callRpc} from '../utils/utils'
+import {RPC_CONNECTION_CHANGED_EVENT} from '../utils/rpc-connection-events'
 
 const FETCH_SYNC_SUCCEEDED = 'FETCH_SYNC_SUCCEEDED'
 const FETCH_SYNC_FAILED = 'FETCH_SYNC_FAILED'
@@ -60,27 +61,51 @@ function ChainProvider({children}) {
         : `internal:${internalPort || ''}`,
     [externalApiKey, internalPort, url, useExternalNode]
   )
+  const refreshChainState = React.useCallback(async () => {
+    try {
+      const [syncStatus, peers] = await Promise.all([
+        callRpc('bcn_syncing'),
+        callRpc('net_peers').catch(() => []),
+      ])
+
+      dispatch({
+        type: FETCH_SYNC_SUCCEEDED,
+        payload: {...syncStatus, peersCount: (peers || []).length},
+      })
+    } catch (error) {
+      dispatch({type: FETCH_SYNC_FAILED})
+    }
+  }, [])
 
   useEffect(() => {
     dispatch({type: SET_LOADING})
   }, [rpcConnectionKey])
 
-  useInterval(
-    async () => {
-      try {
-        const [syncStatus, peers] = await Promise.all([
-          callRpc('bcn_syncing'),
-          callRpc('net_peers').catch(() => []),
-        ])
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
 
-        dispatch({
-          type: FETCH_SYNC_SUCCEEDED,
-          payload: {...syncStatus, peersCount: (peers || []).length},
-        })
-      } catch (error) {
-        dispatch({type: FETCH_SYNC_FAILED})
-      }
-    },
+    const handleRpcConnectionChanged = () => {
+      dispatch({type: SET_LOADING})
+      refreshChainState()
+    }
+
+    window.addEventListener(
+      RPC_CONNECTION_CHANGED_EVENT,
+      handleRpcConnectionChanged
+    )
+
+    return () => {
+      window.removeEventListener(
+        RPC_CONNECTION_CHANGED_EVENT,
+        handleRpcConnectionChanged
+      )
+    }
+  }, [refreshChainState])
+
+  useInterval(
+    refreshChainState,
     !state.offline && state.syncing ? 1000 * 1 : 1000 * 5,
     true
   )

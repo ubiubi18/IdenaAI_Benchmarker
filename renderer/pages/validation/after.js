@@ -20,12 +20,18 @@ import {
   useAutoCloseValidationToast,
   useTrackEpochPeriod,
 } from '../../screens/validation/hooks/use-validation-toast'
-import {canValidate} from '../../screens/validation/utils'
+import {
+  buildValidationIdentityScope,
+  buildValidationSessionNodeScope,
+  canValidate,
+} from '../../screens/validation/utils'
 import {ErrorAlert} from '../../shared/components/components'
 import {Status} from '../../shared/components/sidebar'
 import {useEpochState} from '../../shared/providers/epoch-context'
 import {useIdentity} from '../../shared/providers/identity-context'
+import {useSettingsState} from '../../shared/providers/settings-context'
 import {useTimingState} from '../../shared/providers/timing-context'
+import {useChainState} from '../../shared/providers/chain-context'
 import {EpochPeriod, IdentityStatus} from '../../shared/types'
 
 export default function AfterValidationPage() {
@@ -35,7 +41,33 @@ export default function AfterValidationPage() {
 
   const [{isPending}, setIsPending] = useBoolean()
 
-  const {data: validationState} = usePersistedValidationState()
+  const settings = useSettingsState()
+  const [identity] = useIdentity()
+  const {loading, offline, syncing} = useChainState()
+
+  const validationIdentityScope = React.useMemo(
+    () =>
+      buildValidationIdentityScope({
+        address: identity?.address,
+        nodeScope: buildValidationSessionNodeScope({
+          runInternalNode: settings.runInternalNode,
+          useExternalNode: settings.useExternalNode,
+          url: settings.url,
+          internalPort: settings.internalPort,
+        }),
+      }),
+    [
+      identity?.address,
+      settings.internalPort,
+      settings.runInternalNode,
+      settings.url,
+      settings.useExternalNode,
+    ]
+  )
+
+  const {data: validationState} = usePersistedValidationState({
+    scope: validationIdentityScope,
+  })
 
   useTrackTx(validationState?.submitLongAnswersHash, {
     onMined: () => {
@@ -54,9 +86,13 @@ export default function AfterValidationPage() {
 
   const timing = useTimingState()
 
-  const [identity] = useIdentity()
-
   const isEligible = canValidate(identity)
+  const showEligibilityError =
+    !isEligible &&
+    !loading &&
+    !offline &&
+    !syncing &&
+    !identity.fetchingIdentity
 
   const isValidated = [
     IdentityStatus.Newbie,
@@ -134,7 +170,7 @@ export default function AfterValidationPage() {
               <ValidationCountdown duration={validationEnd.diff(dayjs())} />
             )}
 
-            {!isEligible && (
+            {showEligibilityError && (
               <ErrorAlert>
                 {isValidated
                   ? t(

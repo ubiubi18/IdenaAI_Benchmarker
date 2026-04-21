@@ -139,6 +139,11 @@ const MANAGED_MOLMO2_PROGRESS_STAGE_COUNT = 7
 const MANAGED_MOLMO2_RUNTIME_START_TIMEOUT_MS = 20 * 60 * 1000
 const MANAGED_RUNTIME_INSTALL_TIMEOUT_MS = 45 * 60 * 1000
 const MANAGED_RUNTIME_AUTH_ENV = 'IDENAAI_LOCAL_RUNTIME_TOKEN'
+const BYTES_PER_GIB = 1024 * 1024 * 1024
+const MANAGED_RUNTIME_TRANSFORMERS_INSTALL_OVERHEAD_BYTES = 3 * BYTES_PER_GIB
+const MANAGED_RUNTIME_MLX_INSTALL_OVERHEAD_BYTES = 2 * BYTES_PER_GIB
+const MANAGED_RUNTIME_INSTALL_HEADROOM_MIN_BYTES = 1 * BYTES_PER_GIB
+const MANAGED_RUNTIME_INSTALL_HEADROOM_RATIO = 0.1
 const OLLAMA_COMMAND_CANDIDATES = [
   '/opt/homebrew/bin/ollama',
   '/usr/local/bin/ollama',
@@ -162,6 +167,59 @@ function resolveManagedRuntimeConfig(runtimeFamily = '') {
 
 function resolveManagedMolmo2RuntimeConfig(runtimeFamily = '') {
   return resolveManagedRuntimeConfig(runtimeFamily)
+}
+
+function formatApproxGiB(bytes) {
+  const value = Number(bytes)
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 GB'
+  }
+
+  return `~${(value / BYTES_PER_GIB).toFixed(
+    value >= 10 * BYTES_PER_GIB ? 0 : 1
+  )} GB`
+}
+
+function sumManagedRuntimeVerifyBytes(runtimeConfig = null) {
+  const verifyFiles =
+    runtimeConfig && typeof runtimeConfig.verifyFiles === 'object'
+      ? runtimeConfig.verifyFiles
+      : {}
+
+  return Object.values(verifyFiles).reduce((total, entry) => {
+    const size = Number.parseInt(entry && entry.size, 10)
+    return Number.isFinite(size) && size > 0 ? total + size : total
+  }, 0)
+}
+
+function estimateManagedRuntimePackageInstallBytes(flavor = '') {
+  return flavor === 'mlx-vlm'
+    ? MANAGED_RUNTIME_MLX_INSTALL_OVERHEAD_BYTES
+    : MANAGED_RUNTIME_TRANSFORMERS_INSTALL_OVERHEAD_BYTES
+}
+
+function estimateManagedRuntimeSnapshotInstallBytes(runtimeConfig = null) {
+  const snapshotBytes = sumManagedRuntimeVerifyBytes(runtimeConfig)
+
+  if (!(snapshotBytes > 0)) {
+    return 0
+  }
+
+  return (
+    snapshotBytes +
+    Math.max(
+      MANAGED_RUNTIME_INSTALL_HEADROOM_MIN_BYTES,
+      Math.ceil(snapshotBytes * MANAGED_RUNTIME_INSTALL_HEADROOM_RATIO)
+    )
+  )
+}
+
+function estimateManagedRuntimeInstallBytes(runtimeConfig = null, flavor = '') {
+  return (
+    estimateManagedRuntimePackageInstallBytes(flavor) +
+    estimateManagedRuntimeSnapshotInstallBytes(runtimeConfig)
+  )
 }
 
 function normalizeManagedRuntimeTrustVersion(value) {
@@ -605,6 +663,7 @@ function buildManagedRuntimeEnv(runtimeRoot, extra = {}) {
     HUGGINGFACE_HUB_CACHE: hubCache,
     TRANSFORMERS_CACHE: transformersCache,
     HF_HUB_DISABLE_TELEMETRY: '1',
+    HF_HUB_DISABLE_XET: '1',
     PIP_DISABLE_PIP_VERSION_CHECK: '1',
     PIP_NO_PYTHON_VERSION_WARNING: '1',
     PIP_REQUIRE_VIRTUALENV: '1',
@@ -614,13 +673,55 @@ function buildManagedRuntimeEnv(runtimeRoot, extra = {}) {
   }
 }
 
+async function resolveExistingDiskProbePath(targetPath) {
+  let currentPath = path.resolve(trimString(targetPath) || process.cwd())
+
+  while (!(await fs.pathExists(currentPath))) {
+    const parentPath = path.dirname(currentPath)
+
+    if (parentPath === currentPath) {
+      return process.cwd()
+    }
+
+    currentPath = parentPath
+  }
+
+  return currentPath
+}
+
+async function probeFreeDiskBytes(targetPath) {
+  const probePath = await resolveExistingDiskProbePath(targetPath)
+  const stats = await fs.promises.statfs(probePath)
+  const blockSize = Number(stats && stats.bsize)
+  const availableBlocks = Number(stats && stats.bavail)
+  const freeBytes = blockSize * availableBlocks
+
+  if (!(Number.isFinite(freeBytes) && freeBytes >= 0)) {
+    throw new Error(
+      `Managed Local AI disk-space probe returned an invalid result for ${probePath}.`
+    )
+  }
+
+  return {probePath, freeBytes}
+}
+
 function managedMolmo2SnapshotPath(runtimeRoot) {
   return path.join(runtimeRoot, 'model-snapshot')
 }
 
 async function sha256File(filePath) {
-  const data = await fs.readFile(filePath)
-  return crypto.createHash('sha256').update(data).digest('hex')
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256')
+    const stream = fs.createReadStream(filePath)
+
+    stream.on('error', reject)
+    stream.on('data', (chunk) => {
+      hash.update(chunk)
+    })
+    stream.on('end', () => {
+      resolve(hash.digest('hex'))
+    })
+  })
 }
 
 async function verifyManagedMolmo2Snapshot(snapshotDir, runtimeConfig) {
@@ -1002,11 +1103,78 @@ async function ensureManagedMolmo2RuntimeInstalled(
   return {pythonPath: venvPython, flavor}
 }
 
+async function ensureManagedRuntimeDiskSpace(
+  runtimeRoot,
+  flavor,
+  runtimeConfig = null
+) {
+  const config =
+    runtimeConfig ||
+    resolveManagedRuntimeConfig(DEFAULT_MANAGED_LOCAL_RUNTIME_FAMILY)
+  const displayName = config ? config.displayName : 'managed local'
+  const snapshotDir = managedMolmo2SnapshotPath(runtimeRoot)
+  const venvPython = getVenvPythonPath(path.join(runtimeRoot, 'venv'))
+  const requirements = resolveManagedRuntimeRequirements(flavor, config)
+  const hasVenvPython = await fs.pathExists(venvPython)
+  const packageInstallRequired =
+    !hasVenvPython || !probeInstalledPackages(venvPython, requirements)
+  const snapshotVerification = await verifyManagedMolmo2Snapshot(
+    snapshotDir,
+    config
+  )
+  const snapshotInstallRequired = !snapshotVerification.ok
+  const requiredBytes =
+    (packageInstallRequired
+      ? estimateManagedRuntimePackageInstallBytes(flavor)
+      : 0) +
+    (snapshotInstallRequired
+      ? estimateManagedRuntimeSnapshotInstallBytes(config)
+      : 0)
+
+  if (!(requiredBytes > 0)) {
+    return {
+      probePath: runtimeRoot,
+      freeBytes: 0,
+      requiredBytes: 0,
+      packageInstallRequired,
+      snapshotInstallRequired,
+      snapshotVerification,
+    }
+  }
+
+  const {probePath, freeBytes} = await probeFreeDiskBytes(runtimeRoot)
+
+  if (freeBytes < requiredBytes) {
+    const error = createRuntimeControllerError(
+      'managed_runtime_disk_space_low',
+      `The managed ${displayName} runtime needs about ${formatApproxGiB(
+        requiredBytes
+      )} of free disk space before install can start, but only about ${formatApproxGiB(
+        freeBytes
+      )} is currently available at ${probePath}.`
+    )
+    error.requiredBytes = requiredBytes
+    error.freeBytes = freeBytes
+    error.probePath = probePath
+    error.runtimeFamily = config ? config.runtimeFamily : ''
+    throw error
+  }
+
+  return {
+    probePath,
+    freeBytes,
+    requiredBytes,
+    packageInstallRequired,
+    snapshotInstallRequired,
+    snapshotVerification,
+  }
+}
+
 async function downloadManagedMolmo2Snapshot(
   pythonPath,
   runtimeRoot,
   runtimeConfig,
-  {onProgress} = {}
+  {onProgress, existingVerification = null} = {}
 ) {
   const snapshotDir = managedMolmo2SnapshotPath(runtimeRoot)
   const env = buildManagedRuntimeEnv(runtimeRoot)
@@ -1014,7 +1182,9 @@ async function downloadManagedMolmo2Snapshot(
     runtimeConfig ||
     resolveManagedRuntimeConfig(DEFAULT_MANAGED_LOCAL_RUNTIME_FAMILY)
   const displayName = config ? config.displayName : 'Molmo2'
-  const verification = await verifyManagedMolmo2Snapshot(snapshotDir, config)
+  const verification =
+    existingVerification ||
+    (await verifyManagedMolmo2Snapshot(snapshotDir, config))
 
   if (verification.ok) {
     emitRuntimeProgress(onProgress, {
@@ -1191,6 +1361,37 @@ function sameManagedSpec(current = {}, next = {}) {
   )
 }
 
+function buildManagedLocalAiServerArgs({
+  backend,
+  host,
+  port,
+  modelPath,
+  displayModelId,
+  modelRevision,
+} = {}) {
+  const args = [
+    path.resolve(__dirname, '..', '..', 'scripts', 'local_ai_server.py'),
+    '--backend',
+    backend,
+    '--host',
+    host,
+    '--port',
+    String(port),
+    '--model',
+    modelPath,
+  ]
+
+  if (trimString(displayModelId)) {
+    args.push('--display-model-id', displayModelId)
+  }
+
+  if (trimString(modelRevision)) {
+    args.push('--model-revision', modelRevision)
+  }
+
+  return args
+}
+
 function resolveManagedMolmo2RuntimeContext(baseDir, payload = {}) {
   const runtimeConfig = resolveManagedRuntimeConfig(
     managedRuntimeKindFromPayload(payload)
@@ -1351,6 +1552,11 @@ function createDefaultRuntimeController({
       managedSpec = null
     }
 
+    const diskSpace = await ensureManagedRuntimeDiskSpace(
+      runtimeRoot,
+      flavor,
+      runtimeConfig
+    )
     const install = await ensureManagedMolmo2RuntimeInstalled(
       runtimeRoot,
       flavor,
@@ -1360,7 +1566,10 @@ function createDefaultRuntimeController({
       install.pythonPath,
       runtimeRoot,
       runtimeConfig,
-      {onProgress}
+      {
+        onProgress,
+        existingVerification: diskSpace.snapshotVerification,
+      }
     )
     emitRuntimeProgress(onProgress, {
       status: 'starting',
@@ -1372,22 +1581,14 @@ function createDefaultRuntimeController({
     })
     const child = await spawnManagedProcess(
       install.pythonPath,
-      [
-        path.resolve(__dirname, '..', '..', 'scripts', 'local_ai_server.py'),
-        '--backend',
-        flavor,
-        '--host',
-        endpoint.host,
-        '--port',
-        String(endpoint.port),
-        '--model',
-        snapshotPath,
-        '--display-model-id',
-        model,
-        '--model-revision',
-        runtimeConfig.revision,
-        '--trust-remote-code',
-      ],
+      buildManagedLocalAiServerArgs({
+        backend: flavor,
+        host: endpoint.host,
+        port: endpoint.port,
+        modelPath: snapshotPath,
+        displayModelId: model,
+        modelRevision: runtimeConfig.revision,
+      }),
       {env}
     )
 
@@ -1624,10 +1825,14 @@ function createDefaultRuntimeController({
 }
 
 module.exports = {
+  estimateManagedRuntimeInstallBytes,
   MANAGED_MOLMO2_RUNTIME_FAMILY,
   MANAGED_MOLMO2_RUNTIME_START_TIMEOUT_MS,
+  buildManagedLocalAiServerArgs,
+  buildManagedRuntimeEnv,
   createDefaultRuntimeController,
   isManagedLocalHttpRuntime,
   resolveManagedLocalRuntimeFlavor,
   resolveManagedMolmo2RuntimeFlavor,
+  sha256File,
 }

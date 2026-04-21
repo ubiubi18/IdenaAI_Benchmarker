@@ -146,6 +146,80 @@ describe('createAiProviderBridge', () => {
     expect(logger.error).toHaveBeenCalled()
   })
 
+  it('merges session-level prompt options into solveFlipBatch provider calls', async () => {
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValue('{"answer":"left","confidence":0.9}')
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    await bridge.solveFlipBatch({
+      provider: 'openai',
+      model: 'gpt-5.4-mini',
+      benchmarkProfile: 'custom',
+      deadlineMs: 10000,
+      requestTimeoutMs: 1000,
+      maxConcurrency: 1,
+      maxRetries: 0,
+      maxOutputTokens: 64,
+      forceDecision: false,
+      uncertaintyRepromptEnabled: false,
+      promptOptions: {
+        openAiServiceTier: 'priority',
+        openAiReasoningEffort: 'none',
+      },
+      flips: [{hash: 'flip-priority'}],
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(1)
+    expect(invokeProvider.mock.calls[0][0].promptOptions).toMatchObject({
+      openAiServiceTier: 'priority',
+      openAiReasoningEffort: 'none',
+      promptPhase: 'decision',
+    })
+  })
+
+  it('exposes fast-mode fallback diagnostics on solved flips', async () => {
+    const invokeProvider = jest.fn().mockResolvedValue({
+      rawText: '{"answer":"left","confidence":0.9}',
+      providerMeta: {
+        fastMode: {
+          requested: true,
+          requestedServiceTier: 'priority',
+          requestedReasoningEffort: 'none',
+          appliedServiceTier: null,
+          compatibilityFallbackUsed: true,
+          missingRequestedParameters: ['service_tier', 'reasoning_effort'],
+          priorityDowngraded: false,
+        },
+      },
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {invokeProvider})
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.solveFlipBatch({
+      provider: 'openai',
+      model: 'gpt-5.4-mini',
+      benchmarkProfile: 'custom',
+      deadlineMs: 10000,
+      requestTimeoutMs: 1000,
+      maxConcurrency: 1,
+      maxRetries: 0,
+      maxOutputTokens: 64,
+      forceDecision: false,
+      uncertaintyRepromptEnabled: false,
+      flips: [{hash: 'flip-fast-meta'}],
+    })
+
+    expect(result.results[0].fastMode).toMatchObject({
+      requested: true,
+      compatibilityFallbackUsed: true,
+      missingRequestedParameters: ['service_tier', 'reasoning_effort'],
+    })
+  })
+
   it('retries provider test once on 429 and succeeds', async () => {
     const logger = mockLogger()
     const httpClient = {
@@ -4577,7 +4651,7 @@ describe('createAiProviderBridge', () => {
       checkFlipSequence: jest.fn(),
       listModels: jest.fn(async () => ({
         ok: true,
-        models: ['qwen3.5:9b'],
+        models: ['reasoner-lab:latest'],
         total: 1,
       })),
     }
@@ -4592,7 +4666,7 @@ describe('createAiProviderBridge', () => {
       ok: true,
       provider: 'local-ai',
       total: 1,
-      models: ['qwen3.5:9b'],
+      models: ['reasoner-lab:latest'],
     })
     expect(localAiManager.listModels).toHaveBeenCalledWith(
       expect.objectContaining({

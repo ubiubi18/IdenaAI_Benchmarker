@@ -2,12 +2,17 @@ import React, {useCallback, useEffect, useMemo} from 'react'
 import {useSettingsState} from './settings-context'
 import useLogger from '../hooks/use-logger'
 import {getNodeBridge} from '../utils/node-bridge'
+import {
+  NODE_STARTUP_PHASE,
+  reduceNodeStartupPhase,
+} from '../utils/node-startup-status'
 
 const NODE_READY = 'NODE_READY'
 const NODE_FAILED = 'NODE_FAILED'
 const NODE_START = 'NODE_START'
 const NODE_STOP = 'NODE_STOP'
 const NODE_REINIT = 'NODE_REINIT'
+const NODE_LOG = 'NODE_LOG'
 const UNSUPPORTED_MACOS_VERSION = 'UNSUPPORTED_MACOS_VERSION'
 
 const TROUBLESHOOTING_RESTART_NODE = 'TROUBLESHOOTING_RESTART_NODE'
@@ -20,6 +25,8 @@ const initialState = {
   nodeFailed: false,
   runningTroubleshooter: false,
   logs: [],
+  nodeSessionKey: 0,
+  nodeStartupPhase: NODE_STARTUP_PHASE.IDLE,
 }
 
 function nodeReducer(state, action) {
@@ -43,12 +50,15 @@ function nodeReducer(state, action) {
         ...state,
         nodeStarted: true,
         runningTroubleshooter: false,
+        nodeSessionKey: state.nodeSessionKey + 1,
+        nodeStartupPhase: NODE_STARTUP_PHASE.STARTING,
       }
     }
     case NODE_STOP: {
       return {
         ...state,
         nodeStarted: false,
+        nodeStartupPhase: NODE_STARTUP_PHASE.IDLE,
       }
     }
     case NODE_REINIT: {
@@ -56,6 +66,16 @@ function nodeReducer(state, action) {
         ...state,
         nodeReady: false,
         nodeFailed: false,
+        nodeStartupPhase: NODE_STARTUP_PHASE.IDLE,
+      }
+    }
+    case NODE_LOG: {
+      return {
+        ...state,
+        nodeStartupPhase: reduceNodeStartupPhase(
+          action.data,
+          state.nodeStartupPhase
+        ),
       }
     }
     case UNSUPPORTED_MACOS_VERSION: {
@@ -112,6 +132,9 @@ export function NodeProvider({children}) {
           break
         case 'node-ready':
           dispatch({type: NODE_READY, data})
+          break
+        case 'node-log':
+          dispatch({type: NODE_LOG, data})
           break
         case 'restart-node':
         case 'state-cleaned':

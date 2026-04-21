@@ -8,20 +8,98 @@ import {useTranslation} from 'react-i18next'
 import {createMachine} from 'xstate'
 import {assign, choose} from 'xstate/lib/actions'
 import {useCloseToast} from '../../../shared/hooks/use-toast'
+import {useInterval} from '../../../shared/hooks/use-interval'
 import {useEpochState} from '../../../shared/providers/epoch-context'
+import {useSettingsState} from '../../../shared/providers/settings-context'
 import {EpochPeriod} from '../../../shared/types'
+import {getNodeBridge} from '../../../shared/utils/node-bridge'
 import {ValidatonStatusToast} from '../components/toast'
+import {
+  canOpenRehearsalValidation,
+  getRehearsalValidationBlockedReason,
+  normalizeRehearsalDevnetStatus,
+  REHEARSAL_DEVNET_STATUS_INITIAL,
+} from './use-start-validation'
 
 export function useValidationToast() {
   const {t} = useTranslation()
 
   const router = useRouter()
+  const epoch = useEpochState()
+  const settings = useSettingsState()
 
   const toast = useToast()
 
   const closeValidationToasts = useCloseValidationToast()
 
   const closeToast = useCloseToast()
+  const currentPeriod = epoch?.currentPeriod
+  const isRehearsalNodeSession =
+    settings.useExternalNode &&
+    settings.externalNodeLabel === 'Validation rehearsal node'
+  const [rehearsalDevnetStatus, setRehearsalDevnetStatus] = React.useState(
+    REHEARSAL_DEVNET_STATUS_INITIAL
+  )
+  const rehearsalBlockedReason = React.useMemo(
+    () =>
+      getRehearsalValidationBlockedReason({
+        currentPeriod,
+        devnetStatus: rehearsalDevnetStatus,
+        isRehearsalNodeSession,
+      }),
+    [currentPeriod, isRehearsalNodeSession, rehearsalDevnetStatus]
+  )
+  const rehearsalValidationOpenable = React.useMemo(
+    () =>
+      canOpenRehearsalValidation({
+        currentPeriod,
+        devnetStatus: rehearsalDevnetStatus,
+        isRehearsalNodeSession,
+      }),
+    [currentPeriod, isRehearsalNodeSession, rehearsalDevnetStatus]
+  )
+
+  React.useEffect(() => {
+    if (!isRehearsalNodeSession || getNodeBridge().__idenaFallback) {
+      setRehearsalDevnetStatus(REHEARSAL_DEVNET_STATUS_INITIAL)
+      return undefined
+    }
+
+    const bridge = getNodeBridge()
+
+    bridge.getValidationDevnetStatus()
+
+    return bridge.onEvent((event, data) => {
+      if (event === 'validation-devnet-status') {
+        setRehearsalDevnetStatus(normalizeRehearsalDevnetStatus(data))
+      }
+    })
+  }, [isRehearsalNodeSession])
+
+  useInterval(
+    () => {
+      if (isRehearsalNodeSession && !getNodeBridge().__idenaFallback) {
+        getNodeBridge().getValidationDevnetStatus()
+      }
+    },
+    isRehearsalNodeSession &&
+      [
+        EpochPeriod.FlipLottery,
+        EpochPeriod.ShortSession,
+        EpochPeriod.LongSession,
+      ].includes(currentPeriod)
+      ? 1000
+      : null
+  )
+
+  const routeToRehearsalEntry = React.useCallback(() => {
+    if (rehearsalBlockedReason) {
+      router.push('/settings/node')
+      return
+    }
+
+    router.push('/validation')
+  }, [rehearsalBlockedReason, router])
 
   useTrackEpochPeriod({
     onChangeCurrentPeriod: (nextPeriod) => {
@@ -29,15 +107,9 @@ export function useValidationToast() {
         EpochPeriod.FlipLottery,
         EpochPeriod.ShortSession,
         EpochPeriod.LongSession,
-        'validationCeremony',
         EpochPeriod.AfterLongSession,
       ]) {
-        const isShowingCeremonyToast =
-          [EpochPeriod.ShortSession, EpochPeriod.LongSession].includes(
-            nextPeriod
-          ) && toastId === 'validationCeremony'
-
-        if (toastId !== nextPeriod && !isShowingCeremonyToast) {
+        if (toastId !== nextPeriod) {
           closeToast(toastId)
         }
       }
@@ -66,25 +138,67 @@ export function useValidationToast() {
         ),
       })
     },
-    onValidationCeremony: () => {
-      if (toast.isActive('validationCeremony')) return
+    onShortSession: () => {
+      if (toast.isActive(EpochPeriod.ShortSession)) return
 
       toast({
-        id: 'validationCeremony',
+        id: EpochPeriod.ShortSession,
         duration: null,
         // eslint-disable-next-line react/display-name
         render: () => (
           <ValidatonStatusToast
-            title={t('Waiting for the end of the long session')}
+            title={
+              isRehearsalNodeSession && rehearsalBlockedReason
+                ? t('Rehearsal short session is not ready yet')
+                : t('Idena short session has started')
+            }
             colorScheme="green"
           >
             <Button
               variant="unstyled"
               onClick={() => {
-                router.push('/validation/after')
+                routeToRehearsalEntry()
               }}
             >
-              {t('Show countdown')}
+              {t(
+                isRehearsalNodeSession && rehearsalBlockedReason
+                  ? 'Open node settings'
+                  : 'Open validation'
+              )}
+            </Button>
+          </ValidatonStatusToast>
+        ),
+      })
+    },
+    onLongSession: () => {
+      if (toast.isActive(EpochPeriod.LongSession)) return
+
+      toast({
+        id: EpochPeriod.LongSession,
+        duration: null,
+        // eslint-disable-next-line react/display-name
+        render: () => (
+          <ValidatonStatusToast
+            title={
+              isRehearsalNodeSession &&
+              (!rehearsalValidationOpenable || rehearsalBlockedReason)
+                ? t('Rehearsal long session is not ready yet')
+                : t('Idena long session has started')
+            }
+            colorScheme="green"
+          >
+            <Button
+              variant="unstyled"
+              onClick={() => {
+                routeToRehearsalEntry()
+              }}
+            >
+              {t(
+                isRehearsalNodeSession &&
+                  (!rehearsalValidationOpenable || rehearsalBlockedReason)
+                  ? 'Open node settings'
+                  : 'Open validation'
+              )}
             </Button>
           </ValidatonStatusToast>
         ),
@@ -249,7 +363,6 @@ export function useCloseValidationToast() {
       EpochPeriod.FlipLottery,
       EpochPeriod.ShortSession,
       EpochPeriod.LongSession,
-      'validationCeremony',
       EpochPeriod.AfterLongSession,
     ].forEach(closeToast)
   }, [closeToast])

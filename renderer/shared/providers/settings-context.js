@@ -5,6 +5,7 @@ import {loadPersistentState} from '../utils/persist'
 import {BASE_API_URL, BASE_INTERNAL_API_PORT} from '../api/api-client'
 import useLogger from '../hooks/use-logger'
 import {AVAILABLE_LANGS} from '../../i18n'
+import {emitRpcConnectionChanged} from '../utils/rpc-connection-events'
 import {
   DEFAULT_LOCAL_AI_OLLAMA_MODEL,
   buildLocalAiSettings,
@@ -34,6 +35,8 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
   provider: 'openai',
   model: 'gpt-5.4',
+  shortSessionOpenAiFastEnabled: false,
+  shortSessionOpenAiFastModel: 'gpt-5.4-mini',
   memoryBudgetGiB: 32,
   systemReserveGiB: 6,
   localAiMemoryReference: 'molmo2-o-7b',
@@ -72,6 +75,8 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   customProviderBaseUrl: 'https://api.openai.com/v1',
   customProviderChatPath: '/chat/completions',
 }
+
+const OPENAI_SHORT_SESSION_FAST_MODELS = ['gpt-5.4-mini', 'gpt-5.4']
 
 function normalizeEphemeralExternalNode(value) {
   if (!value || typeof value !== 'object') {
@@ -164,6 +169,19 @@ function buildAiSolverSettings(settings = {}) {
     ...DEFAULT_AI_SOLVER_SETTINGS,
     ...(settings || {}),
   }
+
+  nextSettings.shortSessionOpenAiFastEnabled = Boolean(
+    nextSettings.shortSessionOpenAiFastEnabled
+  )
+  const normalizedShortSessionOpenAiFastModel = String(
+    nextSettings.shortSessionOpenAiFastModel || ''
+  ).trim()
+  nextSettings.shortSessionOpenAiFastModel =
+    OPENAI_SHORT_SESSION_FAST_MODELS.includes(
+      normalizedShortSessionOpenAiFastModel
+    )
+      ? normalizedShortSessionOpenAiFastModel
+      : DEFAULT_AI_SOLVER_SETTINGS.shortSessionOpenAiFastModel
 
   const normalizedMemoryBudgetGiB = Number.parseInt(
     nextSettings.memoryBudgetGiB,
@@ -389,6 +407,48 @@ export function SettingsProvider({children}) {
     () => buildEffectiveSettingsState(state, ephemeralExternalNode),
     [ephemeralExternalNode, state]
   )
+  const rpcConnectionKey = useMemo(
+    () =>
+      effectiveState.useExternalNode
+        ? `external:${effectiveState.url || ''}:${
+            effectiveState.externalApiKey || ''
+          }`
+        : `internal:${effectiveState.internalPort || ''}:${
+            effectiveState.internalApiKey || ''
+          }`,
+    [
+      effectiveState.externalApiKey,
+      effectiveState.internalApiKey,
+      effectiveState.internalPort,
+      effectiveState.url,
+      effectiveState.useExternalNode,
+    ]
+  )
+  const lastRpcConnectionKeyRef = React.useRef(null)
+
+  useEffect(() => {
+    if (!rpcConnectionKey) {
+      return
+    }
+
+    if (lastRpcConnectionKeyRef.current === rpcConnectionKey) {
+      return
+    }
+
+    lastRpcConnectionKeyRef.current = rpcConnectionKey
+
+    emitRpcConnectionChanged({
+      rpcConnectionKey,
+      mode: effectiveState.useExternalNode ? 'external' : 'internal',
+      url: effectiveState.useExternalNode ? effectiveState.url : '',
+      transient: effectiveState.ephemeralExternalNodeConnected === true,
+    })
+  }, [
+    effectiveState.ephemeralExternalNodeConnected,
+    effectiveState.url,
+    effectiveState.useExternalNode,
+    rpcConnectionKey,
+  ])
 
   const updateAiSolverSettings = useCallback(
     (data) => {

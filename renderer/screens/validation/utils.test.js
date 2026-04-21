@@ -1,5 +1,90 @@
+/** @jest-environment jsdom */
 import {byId, merge, mergeById} from '../../shared/utils/utils'
-import {hasEnoughAnswers, exponentialBackoff, shouldTranslate} from './utils'
+import {
+  createValidationMachine,
+  getShortSessionFinalizeDelaySeconds,
+  SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS,
+} from './machine'
+import {
+  __resetValidationSessionStateForTests,
+  buildValidationIdentityScope,
+  buildValidationSessionNodeScope,
+  buildValidationSessionScopeKey,
+  buildValidationStateScope,
+  hasEnoughAnswers,
+  exponentialBackoff,
+  shouldTranslate,
+  computeValidationCeremonyReadiness,
+  getCurrentValidationSessionId,
+  loadValidationState,
+  loadValidationStateForPeriod,
+  loadValidationStateByIdentityScope,
+  persistValidationState,
+  rememberValidationSessionId,
+  shouldDiscardPersistedValidationStateForPeriod,
+  VALIDATION_NODE_STABILITY_GRACE_MS,
+  canValidate,
+  isValidationCeremonyPeriod,
+  shouldPrepareValidationSession,
+  getValidationSessionPhaseDeadlineAt,
+  getValidationSessionPhaseRemainingMs,
+  getValidationAutoReportDelayMs,
+  SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+  LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+  AUTO_REPORT_REVIEW_RUNTIME_BUFFER_MS,
+} from './utils'
+import {EpochPeriod, IdentityStatus} from '../../shared/types'
+
+let validationSessionStoreState = {}
+
+function createValidationSessionStore() {
+  return {
+    loadState() {
+      return {...validationSessionStoreState}
+    },
+    loadValue(key) {
+      return validationSessionStoreState[key] || null
+    },
+    persistItem(key, value) {
+      if (value == null) {
+        delete validationSessionStoreState[key]
+      } else {
+        validationSessionStoreState[key] = value
+      }
+    },
+    persistState(state) {
+      validationSessionStoreState = state ? {...state} : {}
+    },
+  }
+}
+
+function createPersistableValidationState({context = {}} = {}) {
+  const {initialState} = createValidationMachine({
+    epoch: context.epoch ?? 0,
+    validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    shortSessionDuration: 120,
+    longSessionDuration: 300,
+    validationSessionId: '',
+    locale: 'en',
+  })
+
+  return {
+    ...initialState,
+    context: {
+      ...initialState.context,
+      ...context,
+    },
+    toJSON() {
+      return {
+        ...initialState.toJSON(),
+        context: {
+          ...initialState.context,
+          ...context,
+        },
+      }
+    },
+  }
+}
 
 describe('hasEnoughAnswers', () => {
   it('falsy when no answers', () => {
@@ -112,6 +197,98 @@ describe('exponentialBackoff', () => {
       expect(exponentialBackoff(n)).toBeGreaterThan(2 ** n)
     })
     expect(exponentialBackoff(10)).toBe(32)
+  })
+})
+
+describe('validation ceremony timing helpers', () => {
+  const validationStart = Date.UTC(2026, 3, 21, 10, 0, 0)
+
+  it('computes the short-session safe submit deadline', () => {
+    expect(
+      getValidationSessionPhaseDeadlineAt({
+        validationStart,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        sessionType: 'short',
+      })
+    ).toBe(
+      validationStart + (120 - SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS) * 1000
+    )
+  })
+
+  it('computes the long-session safe submit deadline', () => {
+    expect(
+      getValidationSessionPhaseDeadlineAt({
+        validationStart,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        sessionType: 'long',
+      })
+    ).toBe(
+      validationStart +
+        (120 + 300 - LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS) * 1000
+    )
+  })
+
+  it('reports remaining time against the current phase deadline', () => {
+    expect(
+      getValidationSessionPhaseRemainingMs({
+        validationStart,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        sessionType: 'short',
+        now: validationStart + 45 * 1000,
+      })
+    ).toBe(65 * 1000)
+  })
+
+  it('caps auto-report delay against the remaining long-session window', () => {
+    expect(
+      getValidationAutoReportDelayMs({
+        validationStart,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        requestedDelayMinutes: 10,
+        now: validationStart + (120 + 300 - 40) * 1000,
+      })
+    ).toBe(5 * 1000)
+  })
+
+  it('forces immediate auto-report when the remaining window is exhausted', () => {
+    expect(
+      getValidationAutoReportDelayMs({
+        validationStart,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        requestedDelayMinutes: 2,
+        now:
+          validationStart +
+          (120 +
+            300 -
+            LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS -
+            AUTO_REPORT_REVIEW_RUNTIME_BUFFER_MS / 1000 +
+            1) *
+            1000,
+      })
+    ).toBe(0)
+  })
+
+  it('pulls short-session flip finalization earlier to preserve AI solve time', () => {
+    expect(
+      getShortSessionFinalizeDelaySeconds({
+        shortSessionDuration: 120,
+        configuredSeconds: 90,
+      })
+    ).toBe(120 - 10 - SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS)
+  })
+
+  it('keeps a lower explicit finalize override when it is already earlier', () => {
+    expect(
+      getShortSessionFinalizeDelaySeconds({
+        shortSessionDuration: 120,
+        configuredSeconds: 50,
+      })
+    ).toBe(50)
   })
 })
 
@@ -259,5 +436,478 @@ describe('merge', () => {
       {id: 2, name: 'b'},
       {id: 3, name: 'c'},
     ])
+  })
+})
+
+describe('computeValidationCeremonyReadiness', () => {
+  const readyIdentity = {
+    address: '0xabc',
+    nonce: 7,
+    mempoolNonce: 7,
+  }
+
+  it('blocks real validation auto-start in dev mode', () => {
+    expect(
+      computeValidationCeremonyReadiness({
+        isDev: true,
+        isValidationRunning: true,
+        identity: readyIdentity,
+      })
+    ).toMatchObject({ready: false, reason: 'dev-mode-blocked'})
+  })
+
+  it('requires peers before reporting readiness', () => {
+    expect(
+      computeValidationCeremonyReadiness({
+        identity: readyIdentity,
+        stableSince: Date.now() - VALIDATION_NODE_STABILITY_GRACE_MS,
+      })
+    ).toMatchObject({ready: false, reason: 'no-peers'})
+  })
+
+  it('requires a stability grace period after sync', () => {
+    expect(
+      computeValidationCeremonyReadiness({
+        peersCount: 2,
+        identity: readyIdentity,
+        stableSince: Date.now(),
+        now: Date.now(),
+      })
+    ).toMatchObject({ready: false, reason: 'stabilizing'})
+  })
+
+  it('requires fresh account nonce state', () => {
+    expect(
+      computeValidationCeremonyReadiness({
+        peersCount: 2,
+        identity: {
+          ...readyIdentity,
+          nonce: 9,
+          mempoolNonce: 8,
+        },
+        stableSince: Date.now() - VALIDATION_NODE_STABILITY_GRACE_MS - 1000,
+        now: Date.now(),
+      })
+    ).toMatchObject({ready: false, reason: 'nonce-stale'})
+  })
+
+  it('reports ready once peers, stability window, and account state are healthy', () => {
+    expect(
+      computeValidationCeremonyReadiness({
+        peersCount: 3,
+        identity: readyIdentity,
+        stableSince: Date.now() - VALIDATION_NODE_STABILITY_GRACE_MS - 1000,
+        now: Date.now(),
+      })
+    ).toMatchObject({ready: true, reason: 'ready'})
+  })
+})
+
+describe('validation session id persistence', () => {
+  beforeEach(() => {
+    validationSessionStoreState = {}
+    window.idena = {
+      storage: {
+        validationSession: createValidationSessionStore(),
+      },
+    }
+    window.sessionStorage.clear()
+    __resetValidationSessionStateForTests()
+  })
+
+  afterEach(() => {
+    delete window.idena
+  })
+
+  it('persists the same session id across renderer reloads for one epoch/node scope', () => {
+    const scope = {
+      epoch: 196,
+      address: '0xabc',
+      nodeScope: buildValidationSessionNodeScope({
+        runInternalNode: true,
+        internalPort: 9119,
+      }),
+    }
+
+    const firstSessionId = rememberValidationSessionId(scope, 'session-1')
+
+    __resetValidationSessionStateForTests({clearStorage: false})
+
+    const secondSessionId = getCurrentValidationSessionId(scope)
+
+    expect(secondSessionId).toBe(firstSessionId)
+  })
+
+  it('restores the same session id after a full app restart from durable validation storage', () => {
+    const scope = {
+      epoch: 196,
+      address: '0xabc',
+      nodeScope: buildValidationSessionNodeScope({
+        runInternalNode: true,
+        internalPort: 9119,
+      }),
+    }
+
+    const firstSessionId = rememberValidationSessionId(scope, 'session-2')
+
+    __resetValidationSessionStateForTests({clearStorage: false})
+    window.sessionStorage.clear()
+
+    const secondSessionId = getCurrentValidationSessionId(scope)
+
+    expect(secondSessionId).toBe(firstSessionId)
+  })
+
+  it('keeps session ids isolated by epoch and node scope', () => {
+    const internalScope = {
+      epoch: 196,
+      address: '0xabc',
+      nodeScope: buildValidationSessionNodeScope({
+        runInternalNode: true,
+        internalPort: 9119,
+      }),
+    }
+
+    const firstSessionId = rememberValidationSessionId(
+      internalScope,
+      'internal-session'
+    )
+
+    rememberValidationSessionId(
+      {
+        ...internalScope,
+        epoch: 197,
+      },
+      'next-epoch-session'
+    )
+
+    rememberValidationSessionId(
+      {
+        ...internalScope,
+        nodeScope: buildValidationSessionNodeScope({
+          useExternalNode: true,
+          url: 'http://127.0.0.1:9119',
+        }),
+      },
+      'external-session'
+    )
+
+    const nextEpochSessionId = getCurrentValidationSessionId({
+      ...internalScope,
+      epoch: 197,
+    })
+    const externalSessionId = getCurrentValidationSessionId({
+      ...internalScope,
+      nodeScope: buildValidationSessionNodeScope({
+        useExternalNode: true,
+        url: 'http://127.0.0.1:9119',
+      }),
+    })
+
+    expect(nextEpochSessionId).not.toBe(firstSessionId)
+    expect(externalSessionId).not.toBe(firstSessionId)
+  })
+
+  it('keeps session ids isolated across fresh rehearsal runs on the same rpc endpoint', () => {
+    const rehearsalNodeScope = buildValidationSessionNodeScope({
+      useExternalNode: true,
+      url: 'http://127.0.0.1:22301',
+    })
+    const firstRunScope = {
+      epoch: 196,
+      address: '0xabc',
+      nodeScope: rehearsalNodeScope,
+      validationStart: Date.UTC(2026, 3, 21, 15, 20, 0),
+    }
+    const secondRunScope = {
+      ...firstRunScope,
+      validationStart: Date.UTC(2026, 3, 21, 15, 28, 0),
+    }
+
+    const firstSessionId = rememberValidationSessionId(
+      firstRunScope,
+      'rehearsal-session-1'
+    )
+    const secondSessionId = getCurrentValidationSessionId(secondRunScope)
+
+    expect(firstSessionId).toBe('rehearsal-session-1')
+    expect(secondSessionId).toBe('')
+  })
+
+  it('does not invent a renderer-owned session id before the node prepares one', () => {
+    const scope = {
+      epoch: 196,
+      address: '0xabc',
+      nodeScope: buildValidationSessionNodeScope({
+        runInternalNode: true,
+        internalPort: 9119,
+      }),
+    }
+
+    expect(getCurrentValidationSessionId(scope)).toBe('')
+  })
+
+  it('builds a deterministic scope key from epoch, address, and node scope', () => {
+    expect(
+      buildValidationSessionScopeKey({
+        epoch: 196,
+        address: '0xAbC',
+        nodeScope: 'internal:9119',
+      })
+    ).toBe('196:0xabc:internal:9119')
+  })
+
+  it('includes validationStart in the scope key when provided', () => {
+    expect(
+      buildValidationSessionScopeKey({
+        epoch: 196,
+        address: '0xAbC',
+        nodeScope: 'external:http://127.0.0.1:22301',
+        validationStart: Date.UTC(2026, 3, 21, 15, 20, 0),
+      })
+    ).toBe(
+      `196:0xabc:external:http://127.0.0.1:22301:${Date.UTC(
+        2026,
+        3,
+        21,
+        15,
+        20,
+        0
+      )}`
+    )
+  })
+})
+
+describe('canValidate', () => {
+  it('accepts rehearsal identities that expose madeFlips but null flips arrays', () => {
+    expect(
+      canValidate({
+        state: IdentityStatus.Verified,
+        requiredFlips: 3,
+        availableFlips: 4,
+        flips: null,
+        flipsWithPair: null,
+        madeFlips: 3,
+      })
+    ).toBe(true)
+  })
+})
+
+describe('scoped validation state persistence', () => {
+  beforeEach(() => {
+    validationSessionStoreState = {}
+    window.idena = {
+      storage: {
+        validationSession: createValidationSessionStore(),
+      },
+    }
+    window.sessionStorage.clear()
+    __resetValidationSessionStateForTests()
+  })
+
+  afterEach(() => {
+    delete window.idena
+  })
+
+  it('restores a persisted validation snapshot only when the scope matches', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    persistValidationState(
+      createPersistableValidationState({
+        context: {
+          epoch: 0,
+          reports: new Set(['0xflip']),
+        },
+      }),
+      scope
+    )
+
+    const restoredState = loadValidationState(scope)
+
+    expect(restoredState?.context?.epoch).toBe(0)
+    expect(restoredState?.context?.reports instanceof Set).toBe(true)
+    expect(Array.from(restoredState?.context?.reports || [])).toEqual([
+      '0xflip',
+    ])
+  })
+
+  it('drops a stale validation snapshot when a different node/session scope is active', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    rememberValidationSessionId(
+      {
+        epoch: 0,
+        address: '0xabc',
+        nodeScope: 'external:http://127.0.0.1:22301',
+      },
+      'session-keep'
+    )
+
+    persistValidationState(
+      createPersistableValidationState({
+        context: {
+          epoch: 0,
+          reports: new Set(),
+        },
+      }),
+      scope
+    )
+
+    const restoredState = loadValidationState(
+      buildValidationStateScope({
+        epoch: 0,
+        address: '0xabc',
+        nodeScope: 'external:http://127.0.0.1:22301',
+        validationStart: Date.UTC(2026, 3, 21, 7, 35, 22),
+      })
+    )
+
+    expect(restoredState).toBeUndefined()
+    expect(validationSessionStoreState.validationStateSnapshot).toBeUndefined()
+    expect(
+      getCurrentValidationSessionId({
+        epoch: 0,
+        address: '0xabc',
+        nodeScope: 'external:http://127.0.0.1:22301',
+      })
+    ).toBe('session-keep')
+  })
+
+  it('restores validation state by node/address scope without requiring the same epoch metadata', () => {
+    persistValidationState(
+      createPersistableValidationState({
+        context: {
+          epoch: 0,
+          reports: new Set(['0xflip']),
+        },
+      }),
+      buildValidationStateScope({
+        epoch: 0,
+        address: '0xabc',
+        nodeScope: 'external:http://127.0.0.1:22301',
+        validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+      })
+    )
+
+    const restoredState = loadValidationStateByIdentityScope(
+      buildValidationIdentityScope({
+        address: '0xabc',
+        nodeScope: 'external:http://127.0.0.1:22301',
+      })
+    )
+
+    expect(restoredState?.context?.epoch).toBe(0)
+    expect(Array.from(restoredState?.context?.reports || [])).toEqual([
+      '0xflip',
+    ])
+  })
+
+  it('drops persisted short-session state when the node already returned in long session', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    persistValidationState(
+      createPersistableValidationState({
+        context: {
+          epoch: 0,
+          reports: new Set(['0xflip']),
+        },
+      }),
+      scope
+    )
+
+    expect(
+      shouldDiscardPersistedValidationStateForPeriod(
+        EpochPeriod.LongSession,
+        loadValidationState(scope)
+      )
+    ).toBe(true)
+
+    const restoredState = loadValidationStateForPeriod(
+      EpochPeriod.LongSession,
+      scope
+    )
+
+    expect(restoredState).toBeNull()
+    expect(validationSessionStoreState.validationStateSnapshot).toBeUndefined()
+  })
+})
+
+describe('shouldPrepareValidationSession', () => {
+  const candidateIdentity = {state: 'Verified', requiredFlips: 0, flips: []}
+
+  it('prepares validation sessions during flip lottery and validation periods', () => {
+    expect(
+      shouldPrepareValidationSession(
+        {currentPeriod: EpochPeriod.FlipLottery},
+        candidateIdentity
+      )
+    ).toBe(true)
+    expect(
+      shouldPrepareValidationSession(
+        {currentPeriod: EpochPeriod.ShortSession},
+        candidateIdentity
+      )
+    ).toBe(true)
+    expect(
+      shouldPrepareValidationSession(
+        {currentPeriod: EpochPeriod.LongSession},
+        candidateIdentity
+      )
+    ).toBe(true)
+  })
+
+  it('does not prepare sessions outside ceremony periods', () => {
+    expect(
+      shouldPrepareValidationSession(
+        {currentPeriod: EpochPeriod.AfterLongSession},
+        candidateIdentity
+      )
+    ).toBe(false)
+  })
+})
+
+describe('isValidationCeremonyPeriod', () => {
+  it('accepts only short and long validation phases', () => {
+    expect(isValidationCeremonyPeriod(EpochPeriod.ShortSession)).toBe(true)
+    expect(isValidationCeremonyPeriod(EpochPeriod.LongSession)).toBe(true)
+    expect(isValidationCeremonyPeriod(EpochPeriod.FlipLottery)).toBe(false)
+    expect(isValidationCeremonyPeriod(EpochPeriod.AfterLongSession)).toBe(false)
+    expect(isValidationCeremonyPeriod(EpochPeriod.None)).toBe(false)
+  })
+})
+
+describe('createValidationMachine initial period', () => {
+  it('can start directly in long session when opened after short session', () => {
+    global.env = {
+      ...(global.env || {}),
+      FINALIZE_LONG_FLIPS: 4 * 60,
+    }
+
+    const machine = createValidationMachine({
+      epoch: 1,
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+      shortSessionDuration: 120,
+      longSessionDuration: 300,
+      validationSessionId: '',
+      locale: 'en',
+      initialValidationPeriod: 'long',
+    })
+
+    expect(machine.initialState.matches('longSession')).toBe(true)
   })
 })

@@ -33,6 +33,7 @@ import Sidebar from './sidebar'
 import {useDebounce} from '../hooks/use-debounce'
 import {EpochPeriod, useEpochState} from '../providers/epoch-context'
 import {loadPersistentStateValue, persistItem} from '../utils/persist'
+import {getNodeStartupPhaseCopy} from '../utils/node-startup-status'
 import {
   DnaSignInDialog,
   DnaSendDialog,
@@ -874,7 +875,8 @@ function LoadingApp() {
 }
 
 function OfflineApp() {
-  const [{nodeReady, nodeFailed, unsupportedMacosVersion}] = useNode()
+  const [{nodeReady, nodeFailed, nodeStartupPhase, unsupportedMacosVersion}] =
+    useNode()
 
   const [
     {useExternalNode, runInternalNode},
@@ -976,9 +978,14 @@ function OfflineApp() {
       )}
 
       {isStartingBuiltinNode && (
-        <Heading fontSize="mdx" fontWeight={500}>
-          {t('Idena Node is starting...')}
-        </Heading>
+        <Stack spacing={2} w={416}>
+          <Heading fontSize="mdx" fontWeight={500}>
+            {getNodeStartupPhaseCopy(t, nodeStartupPhase).label}
+          </Heading>
+          <Text color="xwhite.050" fontSize="mdx">
+            {getNodeStartupPhaseCopy(t, nodeStartupPhase).detail}
+          </Text>
+        </Stack>
       )}
 
       {isFailedBuiltinNode && <TroubleshootingScreen />}

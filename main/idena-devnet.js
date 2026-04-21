@@ -42,7 +42,10 @@ const VALIDATION_DEVNET_STAKE = (25n * VALIDATION_DEVNET_DNA_BASE).toString()
 const VALIDATION_DEVNET_RETRY_INTERVAL_MS = 750
 const VALIDATION_DEVNET_NODE_READY_TIMEOUT_MS = 25 * 1000
 const VALIDATION_DEVNET_PEER_STABILIZE_TIMEOUT_MS = 30 * 1000
-const VALIDATION_DEVNET_SEED_CONFIRM_TIMEOUT_MS = 60 * 1000
+const VALIDATION_DEVNET_VALIDATOR_ONLINE_TIMEOUT_MS = 3 * 60 * 1000
+const VALIDATION_DEVNET_SEED_CONFIRM_TIMEOUT_MS = 2 * 60 * 1000
+const VALIDATION_DEVNET_PRIMARY_SEED_VISIBILITY_TIMEOUT_MS = 2 * 60 * 1000
+const VALIDATION_DEVNET_MIN_PRIMARY_PEERS = 3
 const VALIDATION_DEVNET_DEFAULT_SEED_FILES = [
   path.join(
     __dirname,
@@ -149,6 +152,18 @@ function trimLogLine(value) {
   return String(value || '').trimEnd()
 }
 
+function getValidationDevnetPublishedFlipCount(identity) {
+  if (!identity || typeof identity !== 'object') {
+    return 0
+  }
+
+  if (Array.isArray(identity.flips)) {
+    return identity.flips.length
+  }
+
+  return Number.parseInt(identity.madeFlips, 10) || 0
+}
+
 function pickStatusText(overrideValue, persistedValue) {
   return overrideValue || persistedValue || null
 }
@@ -163,6 +178,18 @@ function pickStatusCount(overrideValue, persistedValue) {
   }
 
   return null
+}
+
+function pickPendingNodeNames(overrideValue, persistedValue) {
+  if (Array.isArray(overrideValue)) {
+    return overrideValue
+  }
+
+  if (Array.isArray(persistedValue)) {
+    return persistedValue
+  }
+
+  return []
 }
 
 function serializeValidationDevnetConfig(config) {
@@ -588,6 +615,18 @@ function normalizePositiveInteger(value, fallback) {
   return Number.isInteger(nextValue) && nextValue > 0 ? nextValue : fallback
 }
 
+function getValidationDevnetPrimaryPeerTarget(nodeCount) {
+  const normalizedNodeCount = normalizePositiveInteger(
+    nodeCount,
+    VALIDATION_DEVNET_NODE_COUNT
+  )
+
+  return Math.max(
+    1,
+    Math.min(VALIDATION_DEVNET_MIN_PRIMARY_PEERS, normalizedNodeCount - 1)
+  )
+}
+
 function summarizeValidationDevnetNode(node) {
   return {
     name: node.name,
@@ -603,9 +642,27 @@ function summarizeValidationDevnetNode(node) {
         ? node.peerCount
         : null,
     syncing: Boolean(node.syncing),
+    online: Boolean(node.online),
+    identityState: node.identityState || null,
     currentPeriod: node.currentPeriod || null,
     nextValidation: node.nextValidation || null,
   }
+}
+
+function normalizeValidationHashItems(result) {
+  if (!Array.isArray(result)) {
+    return []
+  }
+
+  return result.filter(
+    (item) => item && typeof item === 'object' && String(item.hash || '').trim()
+  )
+}
+
+function countReadyValidationHashItems(result) {
+  return normalizeValidationHashItems(result).filter(
+    ({ready}) => ready === true
+  ).length
 }
 
 function canConnectValidationDevnetStatus(status = {}) {
@@ -613,11 +670,7 @@ function canConnectValidationDevnetStatus(status = {}) {
     return false
   }
 
-  return [
-    VALIDATION_DEVNET_PHASE.WAITING_FOR_PEERS,
-    VALIDATION_DEVNET_PHASE.SEEDING_FLIPS,
-    VALIDATION_DEVNET_PHASE.RUNNING,
-  ].includes(status.stage)
+  return status.stage === VALIDATION_DEVNET_PHASE.RUNNING
 }
 
 function shouldConnectValidationDevnetStatus(
@@ -812,6 +865,8 @@ function createValidationDevnetController({
   const state = {
     run: null,
     logs: [],
+    statusTicker: null,
+    statusRefreshInFlight: false,
     status: {
       active: false,
       stage: VALIDATION_DEVNET_PHASE.IDLE,
@@ -849,6 +904,42 @@ function createValidationDevnetController({
     }
   }
 
+  function stopStatusTicker() {
+    if (state.statusTicker) {
+      clearInterval(state.statusTicker)
+      state.statusTicker = null
+    }
+  }
+
+  function ensureStatusTicker() {
+    if (state.statusTicker || !state.run) {
+      return
+    }
+
+    state.statusTicker = setInterval(async () => {
+      if (
+        !state.run ||
+        state.status.stage !== VALIDATION_DEVNET_PHASE.RUNNING
+      ) {
+        stopStatusTicker()
+        return
+      }
+
+      if (state.statusRefreshInFlight) {
+        return
+      }
+
+      state.statusRefreshInFlight = true
+      try {
+        await refreshRunRuntime()
+      } catch {
+        publishStatus()
+      } finally {
+        state.statusRefreshInFlight = false
+      }
+    }, 1000)
+  }
+
   function buildStatus(overrides = {}) {
     const {run} = state
     const firstCeremonyUnix =
@@ -878,6 +969,24 @@ function createValidationDevnetController({
       primaryRpcUrl: primaryNode
         ? `http://127.0.0.1:${primaryNode.rpcPort}`
         : null,
+      primaryValidationAssigned:
+        primaryNode && primaryNode.validationAssigned === true,
+      primaryShortHashCount:
+        primaryNode && typeof primaryNode.shortHashCount === 'number'
+          ? primaryNode.shortHashCount
+          : null,
+      primaryShortHashReadyCount:
+        primaryNode && typeof primaryNode.shortHashReadyCount === 'number'
+          ? primaryNode.shortHashReadyCount
+          : null,
+      primaryLongHashCount:
+        primaryNode && typeof primaryNode.longHashCount === 'number'
+          ? primaryNode.longHashCount
+          : null,
+      primaryLongHashReadyCount:
+        primaryNode && typeof primaryNode.longHashReadyCount === 'number'
+          ? primaryNode.longHashReadyCount
+          : null,
       seedSource: pickStatusText(
         overrides.seedSource,
         run && run.seed && run.seed.source
@@ -898,6 +1007,30 @@ function createValidationDevnetController({
         overrides.seedConfirmedCount,
         run && run.seed && run.seed.confirmed
       ),
+      seedConfirmedNodeCount: pickStatusCount(
+        overrides.seedConfirmedNodeCount,
+        run && run.seed && run.seed.confirmedNodeCount
+      ),
+      seedExpectedNodeCount: pickStatusCount(
+        overrides.seedExpectedNodeCount,
+        run && run.seed && run.seed.expectedNodeCount
+      ),
+      seedPrimaryVisibleNodeCount: pickStatusCount(
+        overrides.seedPrimaryVisibleNodeCount,
+        run && run.seed && run.seed.primaryVisibleNodeCount
+      ),
+      seedPrimaryExpectedNodeCount: pickStatusCount(
+        overrides.seedPrimaryExpectedNodeCount,
+        run && run.seed && run.seed.primaryExpectedNodeCount
+      ),
+      seedPendingNodeNames: pickPendingNodeNames(
+        overrides.seedPendingNodeNames,
+        run && run.seed && run.seed.pendingNodeNames
+      ),
+      seedPrimaryPendingNodeNames: pickPendingNodeNames(
+        overrides.seedPrimaryPendingNodeNames,
+        run && run.seed && run.seed.primaryPendingNodeNames
+      ),
       nodes:
         run && run.nodes ? run.nodes.map(summarizeValidationDevnetNode) : [],
       logsAvailable: state.logs.length > 0,
@@ -906,6 +1039,12 @@ function createValidationDevnetController({
 
   function publishStatus(overrides = {}) {
     state.status = buildStatus(overrides)
+
+    if (state.run && state.status.stage === VALIDATION_DEVNET_PHASE.RUNNING) {
+      ensureStatusTicker()
+    } else {
+      stopStatusTicker()
+    }
 
     if (emitters.onStatus) {
       emitters.onStatus(state.status)
@@ -1126,21 +1265,27 @@ function createValidationDevnetController({
       node.rpcReady = false
       node.peerCount = 0
       node.syncing = false
+      node.online = false
+      node.identityState = null
       node.currentPeriod = null
       node.nextValidation = null
       return summarizeValidationDevnetNode(node)
     }
 
     try {
-      const [syncStatus, peers, epoch] = await Promise.all([
+      const [syncStatus, peers, epoch, identity] = await Promise.all([
         callNodeRpc(node, 'bcn_syncing').catch(() => null),
         callNodeRpc(node, 'net_peers').catch(() => []),
         callNodeRpc(node, 'dna_epoch').catch(() => null),
+        callNodeRpc(node, 'dna_identity', [node.address]).catch(() => null),
       ])
 
       node.rpcReady = true
       node.syncing = Boolean(syncStatus && syncStatus.syncing)
       node.peerCount = Array.isArray(peers) ? peers.length : 0
+      node.online = Boolean(identity && identity.online)
+      node.identityState =
+        identity && typeof identity.state === 'string' ? identity.state : null
       node.currentPeriod =
         epoch && epoch.currentPeriod ? epoch.currentPeriod : null
       node.nextValidation =
@@ -1149,11 +1294,83 @@ function createValidationDevnetController({
       node.rpcReady = false
       node.peerCount = 0
       node.syncing = false
+      node.online = false
+      node.identityState = null
       node.currentPeriod = null
       node.nextValidation = null
     }
 
     return summarizeValidationDevnetNode(node)
+  }
+
+  async function refreshPrimaryValidationAssignment(run) {
+    const primaryNode = run.nodes.find(
+      ({name}) => name === run.plan.primaryNodeName
+    )
+
+    if (!primaryNode) {
+      return
+    }
+
+    primaryNode.shortHashCount = null
+    primaryNode.shortHashReadyCount = null
+    primaryNode.longHashCount = null
+    primaryNode.longHashReadyCount = null
+    primaryNode.validationAssigned = false
+
+    if (
+      !primaryNode.process ||
+      primaryNode.process.exitCode != null ||
+      !primaryNode.rpcReady ||
+      primaryNode.syncing
+    ) {
+      return
+    }
+
+    const currentPeriod = String(primaryNode.currentPeriod || '').trim()
+    const canQueryShortHashes =
+      currentPeriod === 'FlipLottery' || currentPeriod === 'ShortSession'
+    const canQueryLongHashes =
+      canQueryShortHashes || currentPeriod === 'LongSession'
+
+    if (!canQueryShortHashes && !canQueryLongHashes) {
+      return
+    }
+
+    let shortHashes = []
+    let longHashes = []
+
+    if (canQueryShortHashes) {
+      try {
+        shortHashes = normalizeValidationHashItems(
+          await callNodeRpc(primaryNode, 'flip_shortHashes')
+        )
+      } catch {
+        shortHashes = []
+      }
+    }
+
+    if (canQueryLongHashes) {
+      try {
+        longHashes = normalizeValidationHashItems(
+          await callNodeRpc(primaryNode, 'flip_longHashes')
+        )
+      } catch {
+        longHashes = []
+      }
+    }
+
+    primaryNode.shortHashCount = canQueryShortHashes ? shortHashes.length : null
+    primaryNode.shortHashReadyCount = canQueryShortHashes
+      ? countReadyValidationHashItems(shortHashes)
+      : null
+    primaryNode.longHashCount = canQueryLongHashes ? longHashes.length : null
+    primaryNode.longHashReadyCount = canQueryLongHashes
+      ? countReadyValidationHashItems(longHashes)
+      : null
+    primaryNode.validationAssigned =
+      (primaryNode.shortHashCount || 0) > 0 ||
+      (primaryNode.longHashCount || 0) > 0
   }
 
   async function refreshRunRuntime() {
@@ -1166,6 +1383,7 @@ function createValidationDevnetController({
     }
 
     await Promise.all(state.run.nodes.map((node) => refreshNodeRuntime(node)))
+    await refreshPrimaryValidationAssignment(state.run)
     return publishStatus()
   }
 
@@ -1235,12 +1453,21 @@ function createValidationDevnetController({
       return
     }
 
+    const requiredPeerCount = getValidationDevnetPrimaryPeerTarget(
+      run.nodes.length
+    )
+
     const stabilized = await waitForCondition(
       async () => {
         try {
-          const peers = await callNodeRpc(primaryNode, 'net_peers')
-          primaryNode.peerCount = Array.isArray(peers) ? peers.length : 0
-          return primaryNode.peerCount > 0
+          await refreshNodeRuntime(primaryNode)
+          publishStatus({
+            stage: VALIDATION_DEVNET_PHASE.WAITING_FOR_PEERS,
+            message: `Waiting for the rehearsal nodes to discover each other (${
+              primaryNode.peerCount || 0
+            }/${requiredPeerCount} primary peers).`,
+          })
+          return (primaryNode.peerCount || 0) >= requiredPeerCount
         } catch {
           return false
         }
@@ -1250,8 +1477,34 @@ function createValidationDevnetController({
     )
 
     if (!stabilized) {
-      appendLog(
-        '[devnet] rehearsal network started but peer count is still zero'
+      throw new Error(
+        `Primary rehearsal node did not reach ${requiredPeerCount} peers in time`
+      )
+    }
+  }
+
+  async function waitForValidatorOnline(run) {
+    const expectedOnlineNodeCount = run.nodes.length
+
+    const validatorsOnline = await waitForCondition(
+      async () => {
+        await Promise.all(run.nodes.map((node) => refreshNodeRuntime(node)))
+        const onlineNodeCount = run.nodes.filter((node) => node.online).length
+
+        publishStatus({
+          stage: VALIDATION_DEVNET_PHASE.WAITING_FOR_PEERS,
+          message: `Waiting for rehearsal validators to come online (${onlineNodeCount}/${expectedOnlineNodeCount} online).`,
+        })
+
+        return onlineNodeCount >= expectedOnlineNodeCount
+      },
+      VALIDATION_DEVNET_VALIDATOR_ONLINE_TIMEOUT_MS,
+      VALIDATION_DEVNET_RETRY_INTERVAL_MS
+    )
+
+    if (!validatorsOnline) {
+      throw new Error(
+        'Rehearsal validators did not all reach online status in time'
       )
     }
   }
@@ -1275,6 +1528,7 @@ function createValidationDevnetController({
 
     const flipSubmitCounts = {}
     const baseFlipCounts = {}
+    const {primaryNodeName} = run.plan
 
     for (const node of run.nodes) {
       flipSubmitCounts[node.name] = 0
@@ -1283,12 +1537,9 @@ function createValidationDevnetController({
         node.address,
       ]).catch(() => null)
       baseFlipCounts[node.name] =
-        identity && Array.isArray(identity.flips) ? identity.flips.length : 0
+        getValidationDevnetPublishedFlipCount(identity)
     }
-    const initialConfirmedCount = seedAuthorNames.reduce(
-      (result, nodeName) => result + (baseFlipCounts[nodeName] || 0),
-      0
-    )
+    const initialPrimaryConfirmedCount = baseFlipCounts[primaryNodeName] || 0
 
     publishStatus({
       stage: VALIDATION_DEVNET_PHASE.SEEDING_FLIPS,
@@ -1297,7 +1548,7 @@ function createValidationDevnetController({
       seedSourceFile: seedSet.sourceFile,
       seedRequestedCount: requestedCount,
       seedSubmittedCount: 0,
-      seedConfirmedCount: initialConfirmedCount,
+      seedConfirmedCount: initialPrimaryConfirmedCount,
     })
 
     let submittedCount = 0
@@ -1335,90 +1586,305 @@ function createValidationDevnetController({
       })
     }
 
-    return {
-      seed: {
-        source: seedSet.source,
-        sourceFile: seedSet.sourceFile,
-        requested: requestedCount,
-        submitted: submittedCount,
-        confirmed: initialConfirmedCount,
-        authors: seedAuthorNames,
-      },
-      confirmInBackground: async () => {
-        const confirmationTargets = seedAuthorNames.reduce(
-          (result, nodeName) => {
-            result[nodeName] =
-              (baseFlipCounts[nodeName] || 0) +
-              (flipSubmitCounts[nodeName] || 0)
-            return result
-          },
-          {}
-        )
+    const confirmationTargets = seedAuthorNames.reduce((result, nodeName) => {
+      result[nodeName] =
+        (baseFlipCounts[nodeName] || 0) + (flipSubmitCounts[nodeName] || 0)
+      return result
+    }, {})
+    const primaryNode = run.nodes.find(({name}) => name === primaryNodeName)
+    const primaryTargetFlipCount = confirmationTargets[primaryNodeName] || 0
 
-        const confirmedIdentities = await waitForCondition(
-          async () => {
-            const identities = {}
+    if (!primaryNode) {
+      throw new Error('Primary rehearsal node is unavailable for seed checks')
+    }
 
-            for (const nodeName of seedAuthorNames) {
-              const node = run.nodes.find(({name}) => name === nodeName)
+    const waitForNodeSeedConfirmation = async ({
+      node,
+      nodeName,
+      targetFlipCount,
+      timeoutMs = VALIDATION_DEVNET_SEED_CONFIRM_TIMEOUT_MS,
+      updatePrimaryStatus = false,
+    }) =>
+      waitForCondition(
+        async () => {
+          try {
+            const identity = await callNodeRpc(node, 'dna_identity', [
+              node.address,
+            ])
+            const nextFlipCount =
+              getValidationDevnetPublishedFlipCount(identity)
 
-              if (!node) {
-                return null
-              }
-
-              try {
-                // eslint-disable-next-line no-await-in-loop
-                const identity = await callNodeRpc(node, 'dna_identity', [
-                  node.address,
-                ])
-                const nextFlipCount =
-                  identity && Array.isArray(identity.flips)
-                    ? identity.flips.length
-                    : 0
-
-                identities[nodeName] = nextFlipCount
-
-                if (nextFlipCount < confirmationTargets[nodeName]) {
-                  return null
-                }
-              } catch {
-                return null
-              }
+            if (updatePrimaryStatus) {
+              publishStatus({
+                stage: VALIDATION_DEVNET_PHASE.SEEDING_FLIPS,
+                message: `Waiting for rehearsal flips to confirm on ${nodeName}.`,
+                seedSource: seedSet.source,
+                seedSourceFile: seedSet.sourceFile,
+                seedRequestedCount: requestedCount,
+                seedSubmittedCount: submittedCount,
+                seedConfirmedCount: nextFlipCount,
+              })
             }
 
-            return identities
+            return nextFlipCount >= targetFlipCount ? nextFlipCount : null
+          } catch {
+            return null
+          }
+        },
+        timeoutMs,
+        VALIDATION_DEVNET_RETRY_INTERVAL_MS
+      )
+
+    const confirmedPrimaryFlipCount = await waitForNodeSeedConfirmation({
+      node: primaryNode,
+      nodeName: primaryNodeName,
+      targetFlipCount: primaryTargetFlipCount,
+      updatePrimaryStatus: true,
+    })
+
+    if (primaryTargetFlipCount > 0 && !confirmedPrimaryFlipCount) {
+      throw new Error(
+        'Primary rehearsal identity did not confirm its required seeded flips in time'
+      )
+    }
+
+    const collectPrimarySeedVisibilitySnapshot = async () => {
+      const identities = {}
+      const pendingNodeNames = []
+
+      for (const nodeName of seedAuthorNames) {
+        const node = run.nodes.find(({name}) => name === nodeName)
+
+        if (!node) {
+          return null
+        }
+
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const identity = await callNodeRpc(primaryNode, 'dna_identity', [
+            node.address,
+          ])
+          const nextFlipCount = getValidationDevnetPublishedFlipCount(identity)
+
+          identities[nodeName] = nextFlipCount
+
+          if (nextFlipCount < confirmationTargets[nodeName]) {
+            pendingNodeNames.push(nodeName)
+          }
+        } catch {
+          return null
+        }
+      }
+
+      return {
+        identities,
+        pendingNodeNames,
+      }
+    }
+
+    const primarySeedVisibilitySnapshot = await waitForCondition(
+      async () => {
+        const snapshot = await collectPrimarySeedVisibilitySnapshot()
+
+        if (!snapshot) {
+          return null
+        }
+
+        const visibleNodeCount =
+          seedAuthorNames.length - snapshot.pendingNodeNames.length
+
+        publishStatus({
+          stage: VALIDATION_DEVNET_PHASE.SEEDING_FLIPS,
+          message: `Waiting for the primary rehearsal node to observe all seeded flips (${visibleNodeCount}/${seedAuthorNames.length} authors visible).`,
+          seedSource: seedSet.source,
+          seedSourceFile: seedSet.sourceFile,
+          seedRequestedCount: requestedCount,
+          seedSubmittedCount: submittedCount,
+          seedConfirmedCount: confirmedPrimaryFlipCount,
+          seedPrimaryVisibleNodeCount: visibleNodeCount,
+          seedPrimaryExpectedNodeCount: seedAuthorNames.length,
+          seedPrimaryPendingNodeNames: snapshot.pendingNodeNames,
+        })
+
+        return snapshot.pendingNodeNames.length === 0 ? snapshot : null
+      },
+      VALIDATION_DEVNET_PRIMARY_SEED_VISIBILITY_TIMEOUT_MS,
+      VALIDATION_DEVNET_RETRY_INTERVAL_MS
+    )
+
+    if (!primarySeedVisibilitySnapshot) {
+      throw new Error(
+        'Primary rehearsal node did not observe all seeded flips in time'
+      )
+    }
+
+    const collectSeedConfirmationSnapshot = async () => {
+      const identities = {}
+      const pendingNodeNames = []
+      let nextPrimaryConfirmedCount =
+        confirmedPrimaryFlipCount || initialPrimaryConfirmedCount || 0
+
+      for (const nodeName of seedAuthorNames) {
+        const node = run.nodes.find(({name}) => name === nodeName)
+
+        if (!node) {
+          return null
+        }
+
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const identity = await callNodeRpc(node, 'dna_identity', [
+            node.address,
+          ])
+          const nextFlipCount = getValidationDevnetPublishedFlipCount(identity)
+
+          identities[nodeName] = nextFlipCount
+
+          if (nodeName === primaryNodeName) {
+            nextPrimaryConfirmedCount = nextFlipCount
+          }
+
+          if (nextFlipCount < confirmationTargets[nodeName]) {
+            pendingNodeNames.push(nodeName)
+          }
+        } catch {
+          return null
+        }
+      }
+
+      return {
+        identities,
+        pendingNodeNames,
+        primaryConfirmedCount: nextPrimaryConfirmedCount,
+      }
+    }
+
+    const initialSeedState = {
+      source: seedSet.source,
+      sourceFile: seedSet.sourceFile,
+      requested: requestedCount,
+      submitted: submittedCount,
+      confirmed: confirmedPrimaryFlipCount || initialPrimaryConfirmedCount || 0,
+      confirmedNodeCount: 1,
+      expectedNodeCount: seedAuthorNames.length,
+      pendingNodeNames: seedAuthorNames.filter(
+        (nodeName) => nodeName !== primaryNodeName
+      ),
+      primaryVisibleNodeCount: seedAuthorNames.length,
+      primaryExpectedNodeCount: seedAuthorNames.length,
+      primaryPendingNodeNames: [],
+      authors: seedAuthorNames,
+    }
+
+    run.seed = initialSeedState
+    ;(async () => {
+      try {
+        const confirmedSnapshot = await waitForCondition(
+          async () => {
+            if (!state.run || state.run !== run) {
+              return null
+            }
+
+            const snapshot = await collectSeedConfirmationSnapshot()
+
+            if (!snapshot) {
+              return null
+            }
+
+            if (snapshot.pendingNodeNames.length > 0) {
+              const runningInBackground =
+                state.status.stage === VALIDATION_DEVNET_PHASE.RUNNING
+              publishStatus({
+                stage: runningInBackground
+                  ? VALIDATION_DEVNET_PHASE.RUNNING
+                  : VALIDATION_DEVNET_PHASE.SEEDING_FLIPS,
+                message: runningInBackground
+                  ? 'Validation rehearsal network is running while some validator seed flips continue confirming in the background.'
+                  : 'Waiting for rehearsal seed flips to confirm across validator identities.',
+                seedSource: seedSet.source,
+                seedSourceFile: seedSet.sourceFile,
+                seedRequestedCount: requestedCount,
+                seedSubmittedCount: submittedCount,
+                seedConfirmedCount: snapshot.primaryConfirmedCount,
+                seedConfirmedNodeCount:
+                  seedAuthorNames.length - snapshot.pendingNodeNames.length,
+                seedExpectedNodeCount: seedAuthorNames.length,
+                seedPendingNodeNames: snapshot.pendingNodeNames,
+              })
+              return null
+            }
+
+            return snapshot
           },
           VALIDATION_DEVNET_SEED_CONFIRM_TIMEOUT_MS,
           VALIDATION_DEVNET_RETRY_INTERVAL_MS
         )
 
-        const confirmedCount = seedAuthorNames.reduce(
-          (result, nodeName) =>
-            result +
-            (confirmedIdentities
-              ? confirmedIdentities[nodeName] || 0
-              : baseFlipCounts[nodeName] || 0),
-          0
-        )
+        if (!state.run || state.run !== run) {
+          return
+        }
 
-        if (!confirmedIdentities) {
+        if (confirmedSnapshot) {
+          run.seed = {
+            ...run.seed,
+            confirmed:
+              confirmedSnapshot.identities[primaryNodeName] ||
+              confirmedSnapshot.primaryConfirmedCount ||
+              run.seed.confirmed,
+            confirmedNodeCount: seedAuthorNames.length,
+            expectedNodeCount: seedAuthorNames.length,
+            pendingNodeNames: [],
+          }
           appendLog(
-            '[devnet] FLIP-Challenge seed flips were submitted across multiple rehearsal identities, but on-chain confirmation timed out'
+            '[devnet] rehearsal seed flips confirmed across all validator identities'
+          )
+        } else {
+          const latestSnapshot = await collectSeedConfirmationSnapshot().catch(
+            () => null
+          )
+          const pendingNodeNames =
+            latestSnapshot && Array.isArray(latestSnapshot.pendingNodeNames)
+              ? latestSnapshot.pendingNodeNames
+              : run.seed.pendingNodeNames || []
+          const confirmedNodeCount =
+            latestSnapshot && Array.isArray(latestSnapshot.pendingNodeNames)
+              ? seedAuthorNames.length - latestSnapshot.pendingNodeNames.length
+              : Math.max(1, run.seed.confirmedNodeCount || 1)
+
+          run.seed = {
+            ...run.seed,
+            confirmed:
+              (latestSnapshot && latestSnapshot.primaryConfirmedCount) ||
+              run.seed.confirmed,
+            confirmedNodeCount,
+            expectedNodeCount: seedAuthorNames.length,
+            pendingNodeNames,
+          }
+
+          appendLog(
+            `[devnet] continuing rehearsal startup while seed confirmation is still pending on ${
+              pendingNodeNames.length > 0
+                ? pendingNodeNames.join(', ')
+                : 'some validator identities'
+            }`
           )
         }
 
-        if (state.run === run && run.seed) {
-          run.seed = {
-            ...run.seed,
-            confirmed: confirmedCount,
-          }
-          publishStatus({
-            seedConfirmedCount: confirmedCount,
-          })
+        await refreshRunRuntime()
+      } catch (error) {
+        if (state.run && state.run === run) {
+          appendLog(
+            `[devnet] background seed confirmation failed: ${
+              error && error.message ? error.message : error
+            }`
+          )
+          publishStatus()
         }
+      }
+    })()
 
-        return confirmedCount
-      },
+    return {
+      seed: initialSeedState,
     }
   }
 
@@ -1519,13 +1985,32 @@ function createValidationDevnetController({
         )} rehearsal validator nodes.`,
       })
 
-      await Promise.all(
-        run.nodes.slice(1).map(async (node) => {
-          await writeNodeConfig(run.plan, node, [bootstrapAddr])
-          spawnNodeProcess(node)
-          await waitForNodeRpc(node)
+      const validatorBootNodes = [bootstrapAddr]
+      for (const [index, node] of run.nodes.slice(1).entries()) {
+        publishStatus({
+          stage: VALIDATION_DEVNET_PHASE.STARTING_VALIDATORS,
+          message: `Starting rehearsal validator ${index + 1}/${Math.max(
+            0,
+            run.nodes.length - 1
+          )}.`,
         })
-      )
+
+        // Use a cumulative bootnode list so later validators connect to the
+        // already-running validator set instead of relying on a single
+        // bootstrap edge.
+        // eslint-disable-next-line no-await-in-loop
+        await writeNodeConfig(run.plan, node, validatorBootNodes)
+        spawnNodeProcess(node)
+        // eslint-disable-next-line no-await-in-loop
+        await waitForNodeRpc(node)
+        // eslint-disable-next-line no-await-in-loop
+        const nodeAddr = await callNodeRpc(node, 'net_ipfsAddress').catch(
+          () => null
+        )
+        if (nodeAddr) {
+          validatorBootNodes.push(nodeAddr)
+        }
+      }
 
       publishStatus({
         stage: VALIDATION_DEVNET_PHASE.WAITING_FOR_PEERS,
@@ -1533,15 +2018,14 @@ function createValidationDevnetController({
       })
 
       await waitForPrimaryPeers(run)
-      let seedConfirmationTask = null
+      await waitForValidatorOnline(run)
       if (payload.seedFlips !== false) {
         const seeded = await seedValidationFlips(run, payload)
         run.seed = seeded.seed
-        seedConfirmationTask = seeded.confirmInBackground
       }
       await refreshRunRuntime()
 
-      const runningStatus = publishStatus({
+      publishStatus({
         stage: VALIDATION_DEVNET_PHASE.RUNNING,
         message:
           run.seed && run.seed.submitted > 0
@@ -1550,13 +2034,7 @@ function createValidationDevnetController({
         error: null,
       })
 
-      if (typeof seedConfirmationTask === 'function') {
-        seedConfirmationTask().catch((error) => {
-          appendLog(`[devnet] seed confirmation check failed: ${error.message}`)
-        })
-      }
-
-      return runningStatus
+      return refreshRunRuntime()
     } catch (error) {
       logger.error('validation devnet failed to start', error.toString())
       appendLog(`[devnet] start failed: ${error.message}`)
@@ -1653,9 +2131,12 @@ module.exports = {
   buildValidationDevnetPlan,
   buildValidationDevnetNodeConfig,
   buildValidationDevnetSeedFlipSubmitArgs,
+  getValidationDevnetPublishedFlipCount,
   loadValidationDevnetSeedFlips,
   serializeValidationDevnetConfig,
   summarizeValidationDevnetNode,
+  getValidationDevnetPrimaryPeerTarget,
+  countReadyValidationHashItems,
   canConnectValidationDevnetStatus,
   shouldConnectValidationDevnetStatus,
   createValidationDevnetController,

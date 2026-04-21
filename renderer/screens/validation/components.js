@@ -366,7 +366,7 @@ function LoadingFlip() {
 
 const defaultOrder = [1, 2, 3, 4]
 
-function FailedFlip() {
+export function FailedFlip() {
   const {t} = useTranslation()
   return (
     <FlipHolder border="none" boxShadow="none" cursor="not-allowed">

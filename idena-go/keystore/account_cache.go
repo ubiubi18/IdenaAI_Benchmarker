@@ -247,6 +247,10 @@ func (ac *accountCache) scanAccounts() error {
 		}
 	)
 	readAccount := func(path string) *Account {
+		if filepath.Base(path) == "nodekey" {
+			return nil
+		}
+
 		fd, err := os.Open(path)
 		if err != nil {
 			log.Trace("Failed to open keystore file", "path", path, "err", err)

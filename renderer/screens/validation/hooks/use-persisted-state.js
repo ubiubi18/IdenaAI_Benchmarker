@@ -1,13 +1,18 @@
 import {useQuery} from 'react-query'
 import {useCoinbase} from '../../ads/hooks'
-import {loadValidationState} from '../utils'
+import {loadValidationStateByIdentityScope} from '../utils'
 
-export function usePersistedValidationState(options) {
+export function usePersistedValidationState({scope = null, ...options} = {}) {
   const coinbase = useCoinbase()
 
   return useQuery({
-    queryKey: ['validationState', coinbase],
-    queryFn: () => loadValidationState(),
+    queryKey: [
+      'validationState',
+      coinbase,
+      scope?.address || '',
+      scope?.nodeScope || '',
+    ],
+    queryFn: () => loadValidationStateByIdentityScope(scope),
     ...options,
   })
 }

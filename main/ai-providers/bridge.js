@@ -5225,6 +5225,70 @@ function normalizeProviderResponse(providerResponse) {
   }
 }
 
+function normalizeFastMode(providerMeta = null) {
+  if (
+    !providerMeta ||
+    typeof providerMeta !== 'object' ||
+    !providerMeta.fastMode ||
+    typeof providerMeta.fastMode !== 'object'
+  ) {
+    return null
+  }
+
+  const {fastMode} = providerMeta
+  return {
+    requested: fastMode.requested === true,
+    requestedServiceTier: fastMode.requestedServiceTier || null,
+    requestedReasoningEffort: fastMode.requestedReasoningEffort || null,
+    appliedServiceTier: fastMode.appliedServiceTier || null,
+    compatibilityFallbackUsed: fastMode.compatibilityFallbackUsed === true,
+    missingRequestedParameters: Array.isArray(
+      fastMode.missingRequestedParameters
+    )
+      ? fastMode.missingRequestedParameters.filter(Boolean)
+      : [],
+    priorityDowngraded: fastMode.priorityDowngraded === true,
+  }
+}
+
+function summarizeConsultantFastMode(consultantDecisions = []) {
+  const entries = consultantDecisions
+    .map((item) => normalizeFastMode(item && item.providerMeta))
+    .filter((item) => item && item.requested)
+
+  if (!entries.length) {
+    return null
+  }
+
+  const missingRequestedParameters = Array.from(
+    new Set(
+      entries.flatMap((item) =>
+        Array.isArray(item.missingRequestedParameters)
+          ? item.missingRequestedParameters
+          : []
+      )
+    )
+  )
+
+  return {
+    requested: true,
+    requestedServiceTier:
+      entries.find((item) => item.requestedServiceTier)?.requestedServiceTier ||
+      null,
+    requestedReasoningEffort:
+      entries.find((item) => item.requestedReasoningEffort)
+        ?.requestedReasoningEffort || null,
+    appliedServiceTier:
+      entries.find((item) => item.appliedServiceTier)?.appliedServiceTier ||
+      null,
+    compatibilityFallbackUsed: entries.some(
+      (item) => item.compatibilityFallbackUsed
+    ),
+    missingRequestedParameters,
+    priorityDowngraded: entries.some((item) => item.priorityDowngraded),
+  }
+}
+
 function addTokenUsage(left = {}, right = {}) {
   const a = normalizeTokenUsage(left)
   const b = normalizeTokenUsage(right)
@@ -9140,6 +9204,12 @@ Flip hash: ${hash}
     }
 
     const profile = sanitizeBenchmarkProfile(payload)
+    const basePromptOptions =
+      payload &&
+      payload.promptOptions &&
+      typeof payload.promptOptions === 'object'
+        ? payload.promptOptions
+        : {}
     const startedAt = now()
     const deadlineAt = startedAt + profile.deadlineMs
     const swapPlan = buildSwapPlan(flips)
@@ -9305,6 +9375,7 @@ Flip hash: ${hash}
               const frameReasoningResponse = await invokeConsultantOnce(
                 consultant,
                 {
+                  ...basePromptOptions,
                   secondPass,
                   forceDecision: false,
                   flipVisionMode: vision.applied,
@@ -9321,6 +9392,7 @@ Flip hash: ${hash}
               frameReasoningUsed = true
 
               decisionResponse = await invokeConsultantOnce(consultant, {
+                ...basePromptOptions,
                 secondPass,
                 forceDecision: !allowSkip,
                 flipVisionMode: vision.applied,
@@ -9329,6 +9401,7 @@ Flip hash: ${hash}
               })
             } else {
               decisionResponse = await invokeConsultantOnce(consultant, {
+                ...basePromptOptions,
                 secondPass,
                 forceDecision: !allowSkip,
                 flipVisionMode: vision.applied,
@@ -9336,7 +9409,7 @@ Flip hash: ${hash}
               })
             }
 
-            const {rawText, tokenUsage} =
+            const {rawText, tokenUsage, providerMeta} =
               normalizeProviderResponse(decisionResponse)
             combinedTokenUsage = addTokenUsage(combinedTokenUsage, tokenUsage)
 
@@ -9356,6 +9429,7 @@ Flip hash: ${hash}
               error: null,
               tokenUsage: combinedTokenUsage,
               frameReasoningUsed,
+              providerMeta,
             }
           } catch (error) {
             const message = createProviderErrorMessage({
@@ -9374,6 +9448,7 @@ Flip hash: ${hash}
               error: message,
               tokenUsage: createEmptyTokenUsage(),
               frameReasoningUsed: false,
+              providerMeta: null,
             }
           }
         }
@@ -9417,6 +9492,7 @@ Flip hash: ${hash}
         const finalAnswerAfterRemap = singleConsultantDecision
           ? normalizeAnswer(singleConsultantDecision.finalAnswerAfterRemap)
           : aggregate.answer
+        const fastMode = summarizeConsultantFastMode(consultantDecisions)
 
         return {
           hash: flip.hash,
@@ -9443,6 +9519,7 @@ Flip hash: ${hash}
           ensembleContributors: aggregate.contributors,
           ensembleTotalWeight: aggregate.totalWeight,
           ensembleConsulted: consultantDecisions.length,
+          fastMode,
         }
       }
 

@@ -40,14 +40,30 @@ This section should stay current and act as a short roadmap of what has already 
   with seeded FLIP-Challenge flips, background start, restart/stop controls,
   app-only rehearsal switching, and fast-forward to roughly 90 seconds before
   session start.
-- Rehearsal connection behavior:
-  the app now treats the rehearsal node as a transient session-only override so
-  normal node settings are not overwritten, and the reconnect path no longer
-  lingers as `Offline` for as long during the handoff.
+- Rehearsal validation gating:
+  the app now waits until the primary rehearsal node has actually been assigned
+  validation hashes before allowing the handoff into validation, and the node
+  panel shows assigned short/long-session flip counts on that primary node.
+- Rehearsal failure handling:
+  if a rehearsal run still reaches short session with no visible validation
+  flips, the validation screen now exposes an explicit fresh-restart path
+  instead of leaving the user in a silent `0 / 0` dead-end.
+- Session-auto validation:
+  once enabled, the app is now closer to true no-touch ceremony handling, with
+  automatic route entry, provider-readiness retries during validation, ceremony-
+  aware AI timing checks, and long-session auto-submit fallback when delayed AI
+  report review is unavailable or misses its window.
+- OpenAI short-session fast mode:
+  the app now supports an optional short-session-only OpenAI fast lane using
+  `service_tier=priority` and `reasoning_effort=none`, with a visible fallback
+  notice if the API shape is rejected or Priority is not actually applied. That
+  fallback only affects short session; long session stays on the normal plan.
 - Local AI preparations:
   managed runtime trust gating, loopback-only runtime auth, RAM estimation work,
   and pinned manifest verification now cover the active research lanes for
-  `Molmo2-O`, `Molmo2-4B`, `InternVL3.5-1B`, and `InternVL3.5-8B`.
+  `Molmo2-O`, `Molmo2-4B`, `InternVL3.5-1B`, and `InternVL3.5-8B`, with the
+  lighter `InternVL3.5-1B` lane now validated as a realistic same-provider
+  managed-runtime candidate.
 - Safety posture:
   none of the above changes make the project production-safe. The repo remains a
   research fork first.
@@ -64,10 +80,16 @@ Current project posture:
 What works today:
 - AI settings and runtime controls inside the app
 - provider-based solving, benchmarking, and AI-assisted FLIP generation
+- optional short-session-only OpenAI fast mode with a visible fallback back to
+  the normal OpenAI plan if the provider API no longer accepts the fast-lane
+  request shape
 - in-app human-teacher annotation flows and demo/test paths
 - local benchmark/session logging for traceability
 - managed on-device runtime preparation for current research candidates
 - local rehearsal-network controls inside the node settings page
+- session-auto validation is now intended to manage ceremony route entry and
+  long-session completion without manual babysitting once provider setup is
+  genuinely ready
 - local FLIP research scripts in `scripts/`
 
 What is still not production-ready:
@@ -118,6 +140,14 @@ Behavior notes:
 - the app can connect to the rehearsal node for the current app session only
 - that rehearsal connection is transient and should not overwrite your normal saved node settings
 - the app exposes live status and rehearsal-network logs in the same settings panel
+- the app now waits for assigned validation hashes on the primary rehearsal node
+  before switching into validation, instead of handing over as soon as the
+  private network merely looks alive
+- the node settings screen shows assigned short/long-session flip counts on the
+  primary rehearsal node so the handoff state is visible
+- if a rehearsal run still enters validation without flips, the validation page
+  should now offer a restart path instead of hanging indefinitely in a silent
+  `0 / 0` waiting state
 - this is still experimental and can still break in edge cases
 
 ## Local AI Preparations
@@ -144,6 +174,28 @@ Advanced users can still point the app at their own local-only:
 - `vLLM` endpoint
 
 In short: local AI experiments are enabled, but the broader local-model direction is still being evaluated.
+
+## Session-Auto Validation
+
+`session-auto` is meant to reduce or remove ceremony babysitting, but it is
+still experimental and should not be blindly trusted.
+
+Current intended behavior:
+- auto-route into the validation flow when the real ceremony reaches the right phase
+- retry provider-readiness checks during the session instead of depending on a
+  single lucky startup check
+- optionally use an OpenAI-only short-session fast lane with Priority
+  processing and reduced reasoning effort, while automatically degrading to the
+  normal OpenAI plan if the API shape changes or fast-lane handling is rejected
+- refuse late AI runs when too little short- or long-session time remains
+- submit long-session answers automatically even when delayed AI report review is
+  disabled, unsupported, or fails
+
+Current limitation:
+- short session is still the hardest window to hit reliably because image fetch,
+  node readiness, and model latency all compete with protocol timing
+- you should still assume short-session automation can miss under bad network,
+  slow provider, or reconnect-heavy conditions
 
 ## Safety and Privacy
 

@@ -21,6 +21,7 @@ import {useAutoCloseValidationToast} from '../../screens/validation/hooks/use-va
 import {EpochPeriod, IdentityStatus} from '../../shared/types'
 import {canValidate} from '../../screens/validation/utils'
 import {useIdentity} from '../../shared/providers/identity-context'
+import {useChainState} from '../../shared/providers/chain-context'
 import {Status} from '../../shared/components/sidebar'
 
 const shouldForwardProp = (prop) =>
@@ -35,8 +36,15 @@ export default function LotteryPage() {
 
   const epoch = useEpochState()
   const [identity] = useIdentity()
+  const {loading, offline, syncing} = useChainState()
 
   const isIneligible = !canValidate(identity)
+  const showEligibilityError =
+    isIneligible &&
+    !loading &&
+    !offline &&
+    !syncing &&
+    !identity.fetchingIdentity
 
   const isValidated = [
     IdentityStatus.Newbie,
@@ -124,7 +132,7 @@ export default function LotteryPage() {
                   />
                 ) : null}
 
-                {isIneligible && (
+                {showEligibilityError && (
                   <ErrorAlert>
                     {isValidated
                       ? t(

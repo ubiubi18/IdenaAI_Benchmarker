@@ -1,6 +1,7 @@
 import React, {useEffect, useReducer, useRef, useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import Ansi from 'ansi-to-react'
+import {useRouter} from 'next/router'
 import {
   Box,
   Text,
@@ -32,11 +33,17 @@ import {
 import SettingsLayout from '../../screens/settings/layout'
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
 import {getNodeBridge} from '../../shared/utils/node-bridge'
+import {
+  canOpenRehearsalValidation,
+  getRehearsalValidationEntryPath,
+  getRehearsalValidationBlockedReason,
+  openValidationLottery,
+} from '../../screens/validation/hooks/use-start-validation'
 
 const REHEARSAL_NETWORK_NODE_COUNT = 9
 const REHEARSAL_NETWORK_LEAD_SECONDS = 8 * 60
-const REHEARSAL_NETWORK_FAST_FORWARD_LEAD_SECONDS = 90
-const REHEARSAL_NETWORK_FAST_FORWARD_CONNECT_SECONDS = 20
+const REHEARSAL_NETWORK_FAST_FORWARD_START_LEAD_SECONDS = 8 * 60
+const REHEARSAL_NETWORK_FAST_FORWARD_CONNECT_SECONDS = 90
 const REHEARSAL_NETWORK_SEED_FLIP_COUNT = 27
 
 function hasNodeBridge() {
@@ -74,6 +81,11 @@ function normalizeDevnetStatus(value) {
       seedRequestedCount: null,
       seedSubmittedCount: null,
       seedConfirmedCount: null,
+      primaryValidationAssigned: false,
+      primaryShortHashCount: null,
+      primaryShortHashReadyCount: null,
+      primaryLongHashCount: null,
+      primaryLongHashReadyCount: null,
     }
   }
 
@@ -107,6 +119,23 @@ function normalizeDevnetStatus(value) {
       typeof value.seedConfirmedCount === 'number'
         ? value.seedConfirmedCount
         : null,
+    primaryValidationAssigned: value.primaryValidationAssigned === true,
+    primaryShortHashCount:
+      typeof value.primaryShortHashCount === 'number'
+        ? value.primaryShortHashCount
+        : null,
+    primaryShortHashReadyCount:
+      typeof value.primaryShortHashReadyCount === 'number'
+        ? value.primaryShortHashReadyCount
+        : null,
+    primaryLongHashCount:
+      typeof value.primaryLongHashCount === 'number'
+        ? value.primaryLongHashCount
+        : null,
+    primaryLongHashReadyCount:
+      typeof value.primaryLongHashReadyCount === 'number'
+        ? value.primaryLongHashReadyCount
+        : null,
   }
 }
 
@@ -117,7 +146,7 @@ function buildRehearsalNetworkPayload({
   return {
     nodeCount: REHEARSAL_NETWORK_NODE_COUNT,
     firstCeremonyLeadSeconds: fastForward
-      ? REHEARSAL_NETWORK_FAST_FORWARD_LEAD_SECONDS
+      ? REHEARSAL_NETWORK_FAST_FORWARD_START_LEAD_SECONDS
       : REHEARSAL_NETWORK_LEAD_SECONDS,
     seedFlipCount: REHEARSAL_NETWORK_SEED_FLIP_COUNT,
     connectApp,
@@ -130,6 +159,7 @@ function buildRehearsalNetworkPayload({
 
 function NodeSettings() {
   const {t} = useTranslation()
+  const router = useRouter()
 
   const toast = useToast()
 
@@ -370,16 +400,95 @@ function NodeSettings() {
     settings.url === devnetStatus.primaryRpcUrl
   const rehearsalNeedsConnection =
     devnetStatus.active && devnetStatus.primaryRpcUrl && !rehearsalNodeConnected
+  const rehearsalNodeConnectable =
+    rehearsalNeedsConnection && devnetStatus.stage === 'running'
   const rehearsalSessionAlreadyAdvanced =
     rehearsalNodeConnected &&
     ['ShortSession', 'LongSession', 'AfterLongSession'].includes(
       rehearsalCurrentPeriod
     )
+  const rehearsalAwaitingFlipLottery =
+    rehearsalNeedsConnection &&
+    !devnetStatus.primaryValidationAssigned &&
+    ![
+      'FlipLottery',
+      'ShortSession',
+      'LongSession',
+      'AfterLongSession',
+    ].includes(rehearsalCurrentPeriod)
   const rehearsalConnectWarning =
     rehearsalNeedsConnection &&
     ['ShortSession', 'LongSession', 'AfterLongSession'].includes(
       rehearsalCurrentPeriod
     )
+  const rehearsalBlockedReason = getRehearsalValidationBlockedReason({
+    currentPeriod: rehearsalCurrentPeriod,
+    devnetStatus,
+    isRehearsalNodeSession: rehearsalNodeConnected,
+  })
+  const rehearsalValidationOpenable = canOpenRehearsalValidation({
+    currentPeriod: rehearsalCurrentPeriod,
+    devnetStatus,
+    isRehearsalNodeSession: rehearsalNodeConnected,
+  })
+  const rehearsalCanOpenCountdown =
+    rehearsalNodeConnected &&
+    !['ShortSession', 'LongSession', 'AfterLongSession'].includes(
+      rehearsalCurrentPeriod
+    )
+  let rehearsalConnectionMessage = ''
+  let rehearsalSessionMessage = ''
+  const rehearsalCurrentNodeStatusNote =
+    rehearsalNeedsConnection &&
+    settings.useExternalNode &&
+    settings.url &&
+    settings.url !== devnetStatus.primaryRpcUrl
+      ? t(
+          'Until the rehearsal handoff happens, the app sidebar still reflects your current node endpoint ({{url}}), not the rehearsal RPC.',
+          {url: settings.url}
+        )
+      : ''
+
+  if (rehearsalConnectWarning) {
+    rehearsalConnectionMessage = t(
+      'The rehearsal network is already running, but this app is still on your normal node and the ceremony has already progressed. Restart fresh for a clean run.'
+    )
+  } else if (rehearsalAwaitingFlipLottery) {
+    rehearsalConnectionMessage = t(
+      'The rehearsal network is healthy, and you can already switch this app over to the rehearsal node. Validation hashes have not been assigned yet because the primary node is still before FlipLottery.'
+    )
+  } else if (!devnetStatus.primaryValidationAssigned) {
+    rehearsalConnectionMessage = t(
+      'The rehearsal network is running and ready for app handoff. The primary node still has no assigned validation flips yet, so validation content will appear later when the ceremony reaches FlipLottery.'
+    )
+  } else {
+    rehearsalConnectionMessage = t(
+      'The rehearsal network is running in the background, but this app is still connected to your normal node. Switch this app over when you are ready.'
+    )
+  }
+
+  if (rehearsalNodeConnected) {
+    if (
+      rehearsalBlockedReason === 'before-flip-lottery' ||
+      rehearsalBlockedReason === 'flip-lottery'
+    ) {
+      rehearsalSessionMessage = t(
+        'Rehearsal node is connected. Open the countdown and stay in the session window; validation content will appear there as soon as real rehearsal flips are ready.'
+      )
+    } else if (rehearsalBlockedReason === 'hashes-not-assigned') {
+      rehearsalSessionMessage = t(
+        'Rehearsal node is connected, but validation hashes are still not assigned on the primary node.'
+      )
+    } else if (rehearsalBlockedReason === 'keys-not-ready') {
+      rehearsalSessionMessage = t(
+        'Rehearsal node is connected, but flip decryption keys are still syncing. Validation will open once at least one flip is ready.'
+      )
+    } else if (rehearsalValidationOpenable) {
+      rehearsalSessionMessage = t(
+        'Rehearsal session is ready to open from this page.'
+      )
+    }
+  }
   const emptyDevnetLogMessage = canUseIpcRenderer
     ? t(
         'Rehearsal-network output will appear here after the private validation network starts.'
@@ -584,17 +693,16 @@ function NodeSettings() {
               )}
 
               {rehearsalNeedsConnection && (
-                <Text
-                  color={rehearsalConnectWarning ? 'orange.500' : 'blue.500'}
-                >
-                  {rehearsalConnectWarning
-                    ? t(
-                        'The rehearsal network is already running, but this app is still on your normal node and the ceremony has already progressed. Restart fresh for a clean run.'
-                      )
-                    : t(
-                        'The rehearsal network is running in the background, but this app is still connected to your normal node. Switch this app over when you are ready.'
-                      )}
-                </Text>
+                <Stack spacing={1}>
+                  <Text
+                    color={rehearsalConnectWarning ? 'orange.500' : 'blue.500'}
+                  >
+                    {rehearsalConnectionMessage}
+                  </Text>
+                  {rehearsalCurrentNodeStatusNote && (
+                    <Text color="muted">{rehearsalCurrentNodeStatusNote}</Text>
+                  )}
+                </Stack>
               )}
 
               {rehearsalSessionAlreadyAdvanced && (
@@ -654,6 +762,26 @@ function NodeSettings() {
                       {devnetStatus.seedConfirmedCount}
                     </Text>
                   )}
+                  {typeof devnetStatus.primaryShortHashCount === 'number' && (
+                    <Text color="muted">
+                      {t('Assigned short-session flips on primary node')}:{' '}
+                      {devnetStatus.primaryShortHashCount}
+                      {typeof devnetStatus.primaryShortHashReadyCount ===
+                      'number'
+                        ? ` (${devnetStatus.primaryShortHashReadyCount} ready now)`
+                        : ''}
+                    </Text>
+                  )}
+                  {typeof devnetStatus.primaryLongHashCount === 'number' && (
+                    <Text color="muted">
+                      {t('Assigned long-session flips on primary node')}:{' '}
+                      {devnetStatus.primaryLongHashCount}
+                      {typeof devnetStatus.primaryLongHashReadyCount ===
+                      'number'
+                        ? ` (${devnetStatus.primaryLongHashReadyCount} ready now)`
+                        : ''}
+                    </Text>
+                  )}
                   {devnetStatus.nodes.length > 0 && (
                     <Text color="muted">
                       {t('Ready nodes')}:{' '}
@@ -665,11 +793,24 @@ function NodeSettings() {
                     </Text>
                   )}
                   {rehearsalNodeConnected && (
-                    <Text color="green.500">
-                      {t(
-                        'IdenaAI is currently connected to the rehearsal network for this app session.'
+                    <Stack spacing={1}>
+                      <Text color="green.500">
+                        {t(
+                          'IdenaAI is currently connected to the rehearsal network for this app session.'
+                        )}
+                      </Text>
+                      {rehearsalSessionMessage && (
+                        <Text
+                          color={
+                            rehearsalValidationOpenable
+                              ? 'green.500'
+                              : 'orange.500'
+                          }
+                        >
+                          {rehearsalSessionMessage}
+                        </Text>
                       )}
-                    </Text>
+                    </Stack>
                   )}
                 </Stack>
               )}
@@ -706,13 +847,86 @@ function NodeSettings() {
                   </>
                 ) : (
                   <>
+                    {rehearsalCanOpenCountdown && (
+                      <PrimaryButton
+                        onClick={() =>
+                          openValidationLottery(router, {
+                            isRehearsalNodeSession: rehearsalNodeConnected,
+                          })
+                        }
+                        isDisabled={!canUseIpcRenderer}
+                      >
+                        {t('Open countdown')}
+                      </PrimaryButton>
+                    )}
+
+                    {rehearsalNodeConnected &&
+                      rehearsalCurrentPeriod === 'ShortSession' &&
+                      rehearsalValidationOpenable && (
+                        <PrimaryButton
+                          onClick={() => router.push('/validation')}
+                          isDisabled={!canUseIpcRenderer}
+                        >
+                          {t('Open validation')}
+                        </PrimaryButton>
+                      )}
+
+                    {rehearsalNodeConnected &&
+                      rehearsalCurrentPeriod === 'LongSession' &&
+                      rehearsalValidationOpenable && (
+                        <PrimaryButton
+                          onClick={() => router.push('/validation')}
+                          isDisabled={!canUseIpcRenderer}
+                        >
+                          {t('Open validation')}
+                        </PrimaryButton>
+                      )}
+
+                    {rehearsalNodeConnected &&
+                      ['ShortSession', 'LongSession'].includes(
+                        rehearsalCurrentPeriod
+                      ) &&
+                      !rehearsalValidationOpenable &&
+                      rehearsalBlockedReason !== 'failed-rehearsal' && (
+                        <PrimaryButton
+                          onClick={() => {
+                            const nextPath = getRehearsalValidationEntryPath({
+                              blockedReason: rehearsalBlockedReason,
+                              canOpenValidation: rehearsalValidationOpenable,
+                            })
+
+                            if (nextPath === '/validation/lottery') {
+                              openValidationLottery(router, {
+                                isRehearsalNodeSession: rehearsalNodeConnected,
+                              })
+                              return
+                            }
+
+                            router.push(nextPath)
+                          }}
+                          isDisabled={!canUseIpcRenderer}
+                        >
+                          {t('Open session status')}
+                        </PrimaryButton>
+                      )}
+
+                    {rehearsalNodeConnected &&
+                      rehearsalCurrentPeriod === 'AfterLongSession' && (
+                        <PrimaryButton
+                          onClick={() => router.push('/validation/after')}
+                          isDisabled={!canUseIpcRenderer}
+                        >
+                          {t('Open results')}
+                        </PrimaryButton>
+                      )}
+
                     {rehearsalNeedsConnection && (
                       <PrimaryButton
                         onClick={() =>
                           getNodeBridge().connectValidationDevnet()
                         }
                         isDisabled={
-                          !canUseIpcRenderer || !devnetStatus.primaryRpcUrl
+                          !canUseIpcRenderer || !rehearsalNodeConnectable
                         }
                       >
                         {t('Use rehearsal node now')}

@@ -1994,7 +1994,14 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
           },
         })
         .then((status) => {
-          if (!data?.connectApp || !status?.active || didEmitConnectPayload) {
+          if (
+            !data?.connectApp ||
+            !status?.active ||
+            didEmitConnectPayload ||
+            !shouldEmitValidationDevnetConnectPayload(status, {
+              connectCountdownSeconds: data?.connectCountdownSeconds,
+            })
+          ) {
             return
           }
 
@@ -2032,7 +2039,14 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
           })
         )
         .then((status) => {
-          if (!data?.connectApp || !status?.active || didEmitConnectPayload) {
+          if (
+            !data?.connectApp ||
+            !status?.active ||
+            didEmitConnectPayload ||
+            !shouldEmitValidationDevnetConnectPayload(status, {
+              connectCountdownSeconds: data?.connectCountdownSeconds,
+            })
+          ) {
             return
           }
 
@@ -2071,12 +2085,14 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'get-validation-devnet-logs': {
-      validationDevnet
-        .getLogs({
-          onLog(line) {
-            sendMainWindowMsg(NODE_EVENT, 'validation-devnet-log', line)
-          },
-        })
+      Promise.resolve()
+        .then(() =>
+          validationDevnet.getLogs({
+            onLog(line) {
+              sendMainWindowMsg(NODE_EVENT, 'validation-devnet-log', line)
+            },
+          })
+        )
         .then((logs) => {
           sendMainWindowMsg(NODE_EVENT, 'validation-devnet-logs', logs)
         })
@@ -2089,14 +2105,28 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'connect-validation-devnet': {
-      try {
-        emitValidationDevnetConnectPayload()
-      } catch (e) {
-        logger.error(
-          'error while resolving validation devnet connection payload',
-          e.toString()
-        )
-      }
+      validationDevnet
+        .getStatus({
+          onStatus(status) {
+            sendMainWindowMsg(NODE_EVENT, 'validation-devnet-status', status)
+          },
+        })
+        .then((status) => {
+          if (!shouldConnectValidationDevnetStatus(status)) {
+            logger.info(
+              'validation rehearsal network is not ready for a manual app handoff yet'
+            )
+            return
+          }
+
+          emitValidationDevnetConnectPayload()
+        })
+        .catch((e) => {
+          logger.error(
+            'error while resolving validation devnet connection payload',
+            e.toString()
+          )
+        })
       break
     }
     case 'clear-external-node-override': {

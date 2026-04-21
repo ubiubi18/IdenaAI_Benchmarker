@@ -8,16 +8,279 @@ import {useChainState} from '../../../shared/providers/chain-context'
 import {useNodeState} from '../../../shared/providers/node-context'
 import {prepareValidationSession} from '../../../shared/api/validation'
 import {EpochPeriod} from '../../../shared/types'
+import {getNodeBridge} from '../../../shared/utils/node-bridge'
 import {
+  buildValidationIdentityScope,
+  buildValidationSessionScopeKey,
   buildValidationSessionNodeScope,
   buildValidationStateScope,
   canValidate,
   computeValidationCeremonyReadiness,
   getCurrentValidationSessionId,
   rememberValidationSessionId,
+  shouldExpectValidationResults,
   shouldPrepareValidationSession,
   shouldStartValidation,
 } from '../utils'
+
+const DISMISSED_VALIDATION_SCREEN_STORAGE_KEY = 'didCloseValidationScreen'
+export const REHEARSAL_DEVNET_STATUS_INITIAL = {
+  active: false,
+  stage: 'idle',
+  primaryValidationAssigned: false,
+  primaryShortHashCount: null,
+  primaryShortHashReadyCount: null,
+  primaryLongHashCount: null,
+  primaryLongHashReadyCount: null,
+}
+
+export function isValidationSessionAutoMode(settings = {}) {
+  return (
+    settings?.aiSolver?.enabled === true &&
+    String(settings?.aiSolver?.mode || '')
+      .trim()
+      .toLowerCase() === 'session-auto'
+  )
+}
+
+export function shouldAutoOpenLottery({
+  currentPeriod,
+  pathname = '',
+  isCandidate = false,
+  dismissedLottery = null,
+  identityAddress = '',
+  epochNumber = null,
+} = {}) {
+  if (
+    currentPeriod !== EpochPeriod.FlipLottery ||
+    !isCandidate ||
+    pathname === '/validation/lottery'
+  ) {
+    return false
+  }
+
+  return !(
+    dismissedLottery?.address === identityAddress &&
+    dismissedLottery?.epoch === epochNumber
+  )
+}
+
+export function shouldAutoOpenValidationResults({
+  currentPeriod,
+  pathname = '',
+  sessionAutoMode = false,
+  expectValidationResults = false,
+} = {}) {
+  return (
+    sessionAutoMode &&
+    currentPeriod === EpochPeriod.AfterLongSession &&
+    pathname !== '/validation/after' &&
+    expectValidationResults
+  )
+}
+
+export function shouldRefreshValidationIdentity({
+  shouldPrimeValidationIdentity = false,
+  isCandidate = false,
+  readinessReason = '',
+} = {}) {
+  return (
+    shouldPrimeValidationIdentity &&
+    (!isCandidate ||
+      readinessReason === 'nonce-stale' ||
+      readinessReason === 'account-unavailable')
+  )
+}
+
+export function rememberDismissedValidationScreen({
+  scopeKey = '',
+  reason = '',
+} = {}) {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return null
+  }
+
+  const normalizedScopeKey = String(scopeKey || '').trim()
+  const normalizedReason = String(reason || '')
+    .trim()
+    .toLowerCase()
+
+  if (!normalizedScopeKey || !normalizedReason) {
+    window.sessionStorage.removeItem(DISMISSED_VALIDATION_SCREEN_STORAGE_KEY)
+    return null
+  }
+
+  const nextDismissal = {
+    scopeKey: normalizedScopeKey,
+    reason: normalizedReason,
+  }
+
+  window.sessionStorage.setItem(
+    DISMISSED_VALIDATION_SCREEN_STORAGE_KEY,
+    JSON.stringify(nextDismissal)
+  )
+
+  return nextDismissal
+}
+
+export function readDismissedValidationScreen() {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return null
+  }
+
+  try {
+    const value = JSON.parse(
+      window.sessionStorage.getItem(DISMISSED_VALIDATION_SCREEN_STORAGE_KEY)
+    )
+
+    if (
+      value &&
+      typeof value === 'object' &&
+      String(value.scopeKey || '').trim() &&
+      String(value.reason || '').trim()
+    ) {
+      return {
+        scopeKey: String(value.scopeKey).trim(),
+        reason: String(value.reason).trim().toLowerCase(),
+      }
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+export function shouldSuppressValidationAutoOpen({
+  dismissedValidationScreen = null,
+  validationScopeKey = '',
+} = {}) {
+  return (
+    String(validationScopeKey || '').trim() &&
+    dismissedValidationScreen?.reason === 'failed-rehearsal' &&
+    dismissedValidationScreen?.scopeKey === validationScopeKey
+  )
+}
+
+export function normalizeRehearsalDevnetStatus(value) {
+  if (!value || typeof value !== 'object') {
+    return REHEARSAL_DEVNET_STATUS_INITIAL
+  }
+
+  return {
+    active: Boolean(value.active),
+    stage: String(value.stage || 'idle').trim() || 'idle',
+    primaryValidationAssigned: value.primaryValidationAssigned === true,
+    primaryShortHashCount:
+      typeof value.primaryShortHashCount === 'number'
+        ? value.primaryShortHashCount
+        : null,
+    primaryShortHashReadyCount:
+      typeof value.primaryShortHashReadyCount === 'number'
+        ? value.primaryShortHashReadyCount
+        : null,
+    primaryLongHashCount:
+      typeof value.primaryLongHashCount === 'number'
+        ? value.primaryLongHashCount
+        : null,
+    primaryLongHashReadyCount:
+      typeof value.primaryLongHashReadyCount === 'number'
+        ? value.primaryLongHashReadyCount
+        : null,
+  }
+}
+
+export function getRehearsalValidationBlockedReason({
+  currentPeriod,
+  devnetStatus = REHEARSAL_DEVNET_STATUS_INITIAL,
+  isRehearsalNodeSession = false,
+} = {}) {
+  if (!isRehearsalNodeSession) {
+    return ''
+  }
+
+  if (
+    String(devnetStatus?.stage || '')
+      .trim()
+      .toLowerCase() === 'failed'
+  ) {
+    return 'failed-rehearsal'
+  }
+
+  if (currentPeriod === EpochPeriod.FlipLottery) {
+    return 'before-flip-lottery'
+  }
+
+  if (currentPeriod === EpochPeriod.ShortSession) {
+    if (Number(devnetStatus.primaryShortHashCount || 0) < 1) {
+      return 'hashes-not-assigned'
+    }
+
+    if (
+      typeof devnetStatus.primaryShortHashReadyCount === 'number' &&
+      devnetStatus.primaryShortHashReadyCount < 1
+    ) {
+      return 'keys-not-ready'
+    }
+  }
+
+  if (currentPeriod === EpochPeriod.LongSession) {
+    if (
+      Math.max(
+        Number(devnetStatus.primaryLongHashCount || 0),
+        Number(devnetStatus.primaryShortHashCount || 0)
+      ) < 1
+    ) {
+      return 'hashes-not-assigned'
+    }
+
+    if (
+      Math.max(
+        Number(devnetStatus.primaryLongHashReadyCount || 0),
+        Number(devnetStatus.primaryShortHashReadyCount || 0)
+      ) < 1
+    ) {
+      return 'keys-not-ready'
+    }
+  }
+
+  return ''
+}
+
+export function canOpenRehearsalValidation(args = {}) {
+  return !getRehearsalValidationBlockedReason(args)
+}
+
+export function hasAssignedRehearsalValidationHashes({
+  currentPeriod,
+  devnetStatus = REHEARSAL_DEVNET_STATUS_INITIAL,
+  isRehearsalNodeSession = false,
+} = {}) {
+  if (!isRehearsalNodeSession) {
+    return true
+  }
+
+  if (!devnetStatus?.active) {
+    return false
+  }
+
+  if (currentPeriod === EpochPeriod.LongSession) {
+    return (
+      devnetStatus.primaryValidationAssigned === true ||
+      Number(devnetStatus.primaryLongHashCount || 0) > 0 ||
+      Number(devnetStatus.primaryShortHashCount || 0) > 0
+    )
+  }
+
+  if (currentPeriod === EpochPeriod.ShortSession) {
+    return (
+      devnetStatus.primaryValidationAssigned === true ||
+      Number(devnetStatus.primaryShortHashCount || 0) > 0
+    )
+  }
+
+  return true
+}
 
 export function useValidationCeremonyReadiness() {
   const epoch = useEpochState()
@@ -44,6 +307,13 @@ export function useValidationCeremonyReadiness() {
       settings.useExternalNode,
     ]
   )
+  const validationStartMs = React.useMemo(() => {
+    const value = epoch?.nextValidation
+      ? new Date(epoch.nextValidation).getTime()
+      : null
+
+    return Number.isFinite(value) ? value : null
+  }, [epoch?.nextValidation])
   const isValidationRunning =
     epoch &&
     [EpochPeriod.ShortSession, EpochPeriod.LongSession].includes(
@@ -54,6 +324,7 @@ export function useValidationCeremonyReadiness() {
       epoch: epoch?.epoch,
       address: identity?.address,
       nodeScope: validationNodeScope,
+      validationStart: validationStartMs,
     })
   )
   const rememberLiveValidationSessionId = React.useCallback(
@@ -63,6 +334,7 @@ export function useValidationCeremonyReadiness() {
           epoch: epoch?.epoch,
           address: identity?.address,
           nodeScope: validationNodeScope,
+          validationStart: validationStartMs,
         },
         nextSessionId
       )
@@ -73,7 +345,7 @@ export function useValidationCeremonyReadiness() {
 
       return normalizedSessionId
     },
-    [epoch?.epoch, identity?.address, validationNodeScope]
+    [epoch?.epoch, identity?.address, validationNodeScope, validationStartMs]
   )
 
   React.useEffect(() => {
@@ -82,9 +354,10 @@ export function useValidationCeremonyReadiness() {
         epoch: epoch?.epoch,
         address: identity?.address,
         nodeScope: validationNodeScope,
+        validationStart: validationStartMs,
       })
     )
-  }, [epoch?.epoch, identity?.address, validationNodeScope])
+  }, [epoch?.epoch, identity?.address, validationNodeScope, validationStartMs])
 
   const isBaseHealthy =
     !loading &&
@@ -157,22 +430,52 @@ export function useAutoStartValidation() {
   const router = useRouter()
 
   const epoch = useEpochState()
-  const [identity] = useIdentity()
+  const [identity, {forceUpdate}] = useIdentity()
   const settings = useSettingsState()
+  const isRehearsalNodeSession =
+    settings.useExternalNode &&
+    settings.externalNodeLabel === 'Validation rehearsal node'
+  const isSessionAutoMode = React.useMemo(
+    () => isValidationSessionAutoMode(settings),
+    [settings]
+  )
+  const [rehearsalDevnetStatus, setRehearsalDevnetStatus] = React.useState(
+    REHEARSAL_DEVNET_STATUS_INITIAL
+  )
+  const validationReadiness = useValidationCeremonyReadiness()
   const {
     rpcReady,
+    reason: validationReadinessReason,
     validationSessionId,
     rememberLiveValidationSessionId,
     validationPrepareScopeKey,
-  } = useValidationCeremonyReadiness()
+  } = validationReadiness
   const preparedSessionRef = React.useRef({
     epoch: null,
     sessionId: null,
     prepareScopeKey: null,
   })
   const lastPrepareAttemptAtRef = React.useRef(0)
+  const lastIdentityRefreshAtRef = React.useRef(0)
 
   const isCandidate = React.useMemo(() => canValidate(identity), [identity])
+  const shouldPrimeValidationIdentity =
+    (settings.ephemeralExternalNodeConnected || isSessionAutoMode) &&
+    rpcReady &&
+    [
+      EpochPeriod.FlipLottery,
+      EpochPeriod.ShortSession,
+      EpochPeriod.LongSession,
+    ].includes(epoch?.currentPeriod)
+  const shouldRefreshValidationIdentityState = React.useMemo(
+    () =>
+      shouldRefreshValidationIdentity({
+        shouldPrimeValidationIdentity,
+        isCandidate,
+        readinessReason: validationReadinessReason,
+      }),
+    [isCandidate, shouldPrimeValidationIdentity, validationReadinessReason]
+  )
   const validationNodeScope = React.useMemo(
     () =>
       buildValidationSessionNodeScope({
@@ -205,9 +508,67 @@ export function useAutoStartValidation() {
       validationNodeScope,
     ]
   )
+  const validationScopeKey = React.useMemo(
+    () =>
+      buildValidationSessionScopeKey({
+        epoch: epoch?.epoch,
+        address: identity?.address,
+        nodeScope: validationNodeScope,
+        validationStart: epoch?.nextValidation
+          ? new Date(epoch.nextValidation).getTime()
+          : null,
+      }),
+    [
+      epoch?.epoch,
+      epoch?.nextValidation,
+      identity?.address,
+      validationNodeScope,
+    ]
+  )
+  const rehearsalValidationOpenable = React.useMemo(
+    () =>
+      canOpenRehearsalValidation({
+        currentPeriod: epoch?.currentPeriod,
+        devnetStatus: rehearsalDevnetStatus,
+        isRehearsalNodeSession,
+      }),
+    [epoch?.currentPeriod, isRehearsalNodeSession, rehearsalDevnetStatus]
+  )
+
+  React.useEffect(() => {
+    if (!isRehearsalNodeSession || getNodeBridge().__idenaFallback) {
+      setRehearsalDevnetStatus(REHEARSAL_DEVNET_STATUS_INITIAL)
+      return undefined
+    }
+
+    const bridge = getNodeBridge()
+
+    bridge.getValidationDevnetStatus()
+
+    return bridge.onEvent((event, data) => {
+      if (event === 'validation-devnet-status') {
+        setRehearsalDevnetStatus(normalizeRehearsalDevnetStatus(data))
+      }
+    })
+  }, [isRehearsalNodeSession])
 
   useInterval(
     async () => {
+      if (
+        shouldRefreshValidationIdentityState &&
+        Date.now() - lastIdentityRefreshAtRef.current >= 1500
+      ) {
+        try {
+          lastIdentityRefreshAtRef.current = Date.now()
+          await forceUpdate()
+        } catch (error) {
+          global.logger.error(
+            'Unable to refresh validation identity state',
+            error && error.message ? error.message : error
+          )
+        }
+      }
+
       const hasPreparedSessionForScope =
         preparedSessionRef.current.epoch === epoch?.epoch &&
         preparedSessionRef.current.prepareScopeKey ===
@@ -249,16 +610,39 @@ export function useAutoStartValidation() {
         }
       }
 
+      const validationAutoOpenDismissal = readDismissedValidationScreen()
+
       if (
         // Enter the validation route as soon as the ceremony actually starts.
         // The validation page already handles any remaining node/bootstrap wait.
         shouldStartValidation(epoch, identity, validationStateScope) &&
-        router.pathname !== '/validation'
+        rehearsalValidationOpenable &&
+        router.pathname !== '/validation' &&
+        !shouldSuppressValidationAutoOpen({
+          dismissedValidationScreen: validationAutoOpenDismissal,
+          validationScopeKey,
+        })
       ) {
         router.push('/validation')
       }
     },
-    isCandidate ? 1000 : null
+    isCandidate || shouldRefreshValidationIdentityState ? 1000 : null
+  )
+
+  useInterval(
+    () => {
+      if (isRehearsalNodeSession && !getNodeBridge().__idenaFallback) {
+        getNodeBridge().getValidationDevnetStatus()
+      }
+    },
+    isRehearsalNodeSession &&
+      [
+        EpochPeriod.FlipLottery,
+        EpochPeriod.ShortSession,
+        EpochPeriod.LongSession,
+      ].includes(epoch?.currentPeriod)
+      ? 1000
+      : null
   )
 }
 
@@ -267,34 +651,79 @@ export function useAutoStartLottery() {
 
   const epoch = useEpochState()
   const [identity] = useIdentity()
+  const settings = useSettingsState()
+  const sessionAutoMode = React.useMemo(
+    () => isValidationSessionAutoMode(settings),
+    [settings]
+  )
 
   const isCandidate = React.useMemo(() => canValidate(identity), [identity])
+  const validationIdentityScope = React.useMemo(
+    () =>
+      buildValidationIdentityScope({
+        address: identity?.address,
+        nodeScope: buildValidationSessionNodeScope({
+          runInternalNode: settings.runInternalNode,
+          useExternalNode: settings.useExternalNode,
+          url: settings.url,
+          internalPort: settings.internalPort,
+        }),
+      }),
+    [
+      identity?.address,
+      settings.internalPort,
+      settings.runInternalNode,
+      settings.url,
+      settings.useExternalNode,
+    ]
+  )
 
   useInterval(
     () => {
-      if (global.isDev && !global.isTest) {
+      if (global.isDev && !global.isTest && !sessionAutoMode) {
         return
       }
 
-      if (epoch?.currentPeriod === EpochPeriod.FlipLottery) {
-        try {
-          const didCloseLotteryScreen = JSON.parse(
-            sessionStorage.getItem('didCloseLotteryScreen')
-          )
+      if (
+        shouldAutoOpenValidationResults({
+          currentPeriod: epoch?.currentPeriod,
+          pathname: router.pathname,
+          sessionAutoMode,
+          expectValidationResults: shouldExpectValidationResults(
+            epoch?.epoch,
+            validationIdentityScope
+          ),
+        })
+      ) {
+        router.push('/validation/after')
+        return
+      }
 
-          const isSameIdentityEpoch =
-            didCloseLotteryScreen?.address === identity?.address &&
-            didCloseLotteryScreen?.epoch === epoch?.epoch
+      let didCloseLotteryScreen = null
 
-          if (!isSameIdentityEpoch) router.push('/validation/lottery')
-        } catch (e) {
-          console.error(e)
-          global.logger.error(e?.message)
+      try {
+        didCloseLotteryScreen = JSON.parse(
+          sessionStorage.getItem('didCloseLotteryScreen')
+        )
+      } catch (e) {
+        console.error(e)
+        global.logger.error(e?.message)
+      }
 
-          router.push('/validation/lottery')
-        }
+      if (
+        shouldAutoOpenLottery({
+          currentPeriod: epoch?.currentPeriod,
+          pathname: router.pathname,
+          isCandidate,
+          sessionAutoMode,
+          dismissedLottery: didCloseLotteryScreen,
+          identityAddress: identity?.address,
+          epochNumber: epoch?.epoch,
+        })
+      ) {
+        router.push('/validation/lottery')
       }
     },
-    isCandidate ? 1000 : null
+    isCandidate || sessionAutoMode ? 1000 : null
   )
 }

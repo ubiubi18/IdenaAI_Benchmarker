@@ -98,6 +98,7 @@ const MODEL_PRESETS = {
   'local-ai': [],
   openai: [
     'gpt-5.4',
+    'gpt-5.4-mini',
     'gpt-5.3-chat-latest',
     'gpt-5.3-codex',
     'gpt-5-mini',
@@ -109,6 +110,7 @@ const MODEL_PRESETS = {
   ],
   'openai-compatible': [
     'gpt-5.4',
+    'gpt-5.4-mini',
     'gpt-5.3-chat-latest',
     'gpt-5.3-codex',
     'gpt-5-mini',
@@ -138,6 +140,8 @@ const MODEL_PRESETS = {
     'google/gemini-2.0-flash-001',
   ],
 }
+
+const SHORT_SESSION_OPENAI_FAST_MODELS = ['gpt-5.4-mini', 'gpt-5.4']
 
 const MAIN_PROVIDER_OPTIONS = [
   {value: 'local-ai', label: 'Local AI runtime'},
@@ -171,6 +175,8 @@ const DEFAULT_AI_SETTINGS = {
   enabled: false,
   provider: 'openai',
   model: DEFAULT_MODELS.openai,
+  shortSessionOpenAiFastEnabled: false,
+  shortSessionOpenAiFastModel: 'gpt-5.4-mini',
   memoryBudgetGiB: 32,
   systemReserveGiB: 6,
   mode: 'manual',
@@ -712,6 +718,12 @@ function formatErrorForToast(error) {
     return 'The managed local runtime could not finish installing its Python packages. Try Fix automatically once, then restart the app and try again.'
   }
 
+  if (/managed_runtime_disk_space_low/i.test(message)) {
+    return message === 'managed_runtime_disk_space_low'
+      ? 'The managed local runtime needs more free disk space before install can start.'
+      : message
+  }
+
   if (/runtime_start_timeout|not responding yet/i.test(message)) {
     return 'The managed local runtime is still preparing the on-device model. The first launch can take several more minutes after package installation.'
   }
@@ -908,6 +920,14 @@ function humanizeLocalAiRuntimeError(
           'IdenaAI could not finish installing the managed local runtime packages. Try Fix automatically once, then restart the app and try again.'
         )
       : t('The local runtime package install failed.')
+  }
+
+  if (/managed_runtime_disk_space_low/i.test(text)) {
+    return text === 'managed_runtime_disk_space_low'
+      ? t(
+          'The managed local runtime needs more free disk space before install can start.'
+        )
+      : text
   }
 
   if (/assistant text|invalid_response/i.test(text)) {
@@ -4124,6 +4144,67 @@ export default function AiSettingsPage() {
                   />
                 </SettingsFormControl>
 
+                {activeProvider === 'openai' ? (
+                  <Box
+                    borderWidth="1px"
+                    borderColor="blue.050"
+                    borderRadius="md"
+                    p={3}
+                  >
+                    <Stack spacing={3}>
+                      <Flex align="center" justify="space-between" gap={4}>
+                        <Box>
+                          <Text fontWeight={500}>
+                            {t('Short-session fast mode')}
+                          </Text>
+                          <Text color="muted" fontSize="sm">
+                            {t(
+                              'Only affects validation short session. OpenAI requests use Priority processing and reasoning_effort=none for lower latency.'
+                            )}
+                          </Text>
+                        </Box>
+                        <Switch
+                          colorScheme="blue"
+                          isChecked={Boolean(
+                            aiSolver.shortSessionOpenAiFastEnabled
+                          )}
+                          onChange={(e) =>
+                            updateAiSolverSettings({
+                              shortSessionOpenAiFastEnabled: e.target.checked,
+                            })
+                          }
+                        />
+                      </Flex>
+
+                      {aiSolver.shortSessionOpenAiFastEnabled ? (
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Fast short-session model')}
+                          </SettingsFormLabel>
+                          <Select
+                            value={
+                              aiSolver.shortSessionOpenAiFastModel ||
+                              'gpt-5.4-mini'
+                            }
+                            onChange={(e) =>
+                              updateAiSolverSettings({
+                                shortSessionOpenAiFastModel: e.target.value,
+                              })
+                            }
+                            w="xs"
+                          >
+                            {SHORT_SESSION_OPENAI_FAST_MODELS.map((value) => (
+                              <option key={value} value={value}>
+                                {value}
+                              </option>
+                            ))}
+                          </Select>
+                        </SettingsFormControl>
+                      ) : null}
+                    </Stack>
+                  </Box>
+                ) : null}
+
                 <Box
                   borderWidth="1px"
                   borderColor="blue.050"
@@ -4700,13 +4781,13 @@ export default function AiSettingsPage() {
                     {aiSolver.mode === 'session-auto' && (
                       <SettingsFormControl>
                         <SettingsFormLabel>
-                          {t('Delayed auto-report')}
+                          {t('Optional delayed AI report review')}
                         </SettingsFormLabel>
                         <Stack spacing={3}>
                           <Flex align="center" justify="space-between">
                             <Text color="muted" fontSize="sm" maxW="lg" mr={4}>
                               {t(
-                                'If manual reporting has not started within the grace period after the automatic keyword step begins, let AI review bad flips and submit the long session automatically.'
+                                'Session-auto always submits the long session on its own. Enable this only if you also want AI to spend part of long session reviewing report keywords before the final submit.'
                               )}
                             </Text>
                             <Switch

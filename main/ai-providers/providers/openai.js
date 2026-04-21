@@ -139,7 +139,9 @@ function shouldRetryWithCompatibilityVariant(error) {
     marker.includes('max_tokens') ||
     marker.includes('max_completion_tokens') ||
     marker.includes('response_format') ||
-    marker.includes('temperature')
+    marker.includes('temperature') ||
+    marker.includes('reasoning_effort') ||
+    marker.includes('service_tier')
   )
 }
 
@@ -164,7 +166,11 @@ function buildOpenAiPayload({
   tokenField,
   includeTemperature,
   includeResponseFormat,
+  includeServiceTier,
+  includeReasoningEffort,
   responseFormat,
+  serviceTier,
+  reasoningEffort,
 }) {
   const payload = {
     model,
@@ -191,6 +197,14 @@ function buildOpenAiPayload({
         : {
             type: 'json_object',
           }
+  }
+
+  if (includeServiceTier && serviceTier) {
+    payload.service_tier = serviceTier
+  }
+
+  if (includeReasoningEffort && reasoningEffort) {
+    payload.reasoning_effort = reasoningEffort
   }
 
   return payload
@@ -237,6 +251,10 @@ function buildOpenAiPayloadVariants({
     typeof structuredOutput.responseFormat === 'object'
       ? structuredOutput.responseFormat
       : null
+  const serviceTier = String(promptOptions.openAiServiceTier || '').trim()
+  const reasoningEffort = String(
+    promptOptions.openAiReasoningEffort || ''
+  ).trim()
 
   return dedupePayloadVariants([
     buildOpenAiPayload({
@@ -247,7 +265,11 @@ function buildOpenAiPayloadVariants({
       tokenField: 'max_tokens',
       includeTemperature: true,
       includeResponseFormat: true,
+      includeServiceTier: true,
+      includeReasoningEffort: true,
       responseFormat,
+      serviceTier,
+      reasoningEffort,
     }),
     buildOpenAiPayload({
       model,
@@ -257,7 +279,11 @@ function buildOpenAiPayloadVariants({
       tokenField: 'max_completion_tokens',
       includeTemperature: true,
       includeResponseFormat: true,
+      includeServiceTier: true,
+      includeReasoningEffort: true,
       responseFormat,
+      serviceTier,
+      reasoningEffort,
     }),
     buildOpenAiPayload({
       model,
@@ -267,6 +293,10 @@ function buildOpenAiPayloadVariants({
       tokenField: 'max_completion_tokens',
       includeTemperature: true,
       includeResponseFormat: false,
+      includeServiceTier: true,
+      includeReasoningEffort: true,
+      serviceTier,
+      reasoningEffort,
     }),
     buildOpenAiPayload({
       model,
@@ -276,6 +306,36 @@ function buildOpenAiPayloadVariants({
       tokenField: 'max_completion_tokens',
       includeTemperature: false,
       includeResponseFormat: false,
+      includeServiceTier: true,
+      includeReasoningEffort: true,
+      serviceTier,
+      reasoningEffort,
+    }),
+    buildOpenAiPayload({
+      model,
+      prompt,
+      images,
+      profile,
+      tokenField: 'max_completion_tokens',
+      includeTemperature: false,
+      includeResponseFormat: false,
+      includeServiceTier: true,
+      includeReasoningEffort: false,
+      serviceTier,
+      reasoningEffort,
+    }),
+    buildOpenAiPayload({
+      model,
+      prompt,
+      images,
+      profile,
+      tokenField: 'max_completion_tokens',
+      includeTemperature: false,
+      includeResponseFormat: false,
+      includeServiceTier: false,
+      includeReasoningEffort: false,
+      serviceTier,
+      reasoningEffort,
     }),
     buildOpenAiPayload({
       model,
@@ -285,6 +345,10 @@ function buildOpenAiPayloadVariants({
       tokenField: null,
       includeTemperature: false,
       includeResponseFormat: false,
+      includeServiceTier: false,
+      includeReasoningEffort: false,
+      serviceTier,
+      reasoningEffort,
     }),
   ])
 }
@@ -386,11 +450,13 @@ async function postWithCompatibilityFallback({
   for (let index = 0; index < payloadVariants.length; index += 1) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      return await httpClient.post(
-        endpoint,
-        payloadVariants[index],
-        requestConfig
-      )
+      const payload = payloadVariants[index]
+      const response = await httpClient.post(endpoint, payload, requestConfig)
+      return {
+        response,
+        payload,
+        compatibilityFallbackUsed: index > 0,
+      }
     } catch (error) {
       lastError = error
       const canRetry =
@@ -402,6 +468,52 @@ async function postWithCompatibilityFallback({
     }
   }
   throw lastError || new Error('OpenAI request failed')
+}
+
+function buildOpenAiFastModeMeta({
+  promptOptions = {},
+  payload = {},
+  responseData = {},
+  compatibilityFallbackUsed = false,
+}) {
+  const requestedServiceTier = String(
+    promptOptions.openAiServiceTier || ''
+  ).trim()
+  const requestedReasoningEffort = String(
+    promptOptions.openAiReasoningEffort || ''
+  ).trim()
+
+  if (!requestedServiceTier && !requestedReasoningEffort) {
+    return null
+  }
+
+  const missingRequestedParameters = []
+
+  if (requestedServiceTier && !payload.service_tier) {
+    missingRequestedParameters.push('service_tier')
+  }
+
+  if (requestedReasoningEffort && !payload.reasoning_effort) {
+    missingRequestedParameters.push('reasoning_effort')
+  }
+
+  const appliedServiceTier = String(responseData.service_tier || '')
+    .trim()
+    .toLowerCase()
+
+  return {
+    requested: true,
+    requestedServiceTier: requestedServiceTier || null,
+    requestedReasoningEffort: requestedReasoningEffort || null,
+    appliedServiceTier: appliedServiceTier || null,
+    compatibilityFallbackUsed:
+      compatibilityFallbackUsed || missingRequestedParameters.length > 0,
+    missingRequestedParameters,
+    priorityDowngraded:
+      requestedServiceTier === 'priority' &&
+      Boolean(appliedServiceTier) &&
+      appliedServiceTier !== 'priority',
+  }
 }
 
 async function callOpenAi({
@@ -421,31 +533,46 @@ async function callOpenAi({
       : [flip && flip.leftImage, flip && flip.rightImage]
   ).filter(Boolean)
 
-  const response = await postWithCompatibilityFallback({
-    httpClient,
-    endpoint,
-    payloadVariants: buildOpenAiPayloadVariants({
-      model,
-      prompt,
-      images,
-      profile,
-      promptOptions,
-    }),
-    requestConfig: {
-      timeout: profile.requestTimeoutMs,
-      headers: createAuthHeaders(apiKey, providerConfig),
-    },
-  })
+  const {response, payload, compatibilityFallbackUsed} =
+    await postWithCompatibilityFallback({
+      httpClient,
+      endpoint,
+      payloadVariants: buildOpenAiPayloadVariants({
+        model,
+        prompt,
+        images,
+        profile,
+        promptOptions,
+      }),
+      requestConfig: {
+        timeout: profile.requestTimeoutMs,
+        headers: createAuthHeaders(apiKey, providerConfig),
+      },
+    })
 
   const responseData = response && response.data
   const choices = responseData && responseData.choices
   const message = Array.isArray(choices) && choices.length && choices[0].message
   const rawText = extractOpenAiRawText(message)
+  const providerMeta = extractOpenAiProviderMeta(responseData)
+  const responseServiceTier = String(responseData?.service_tier || '')
+    .trim()
+    .toLowerCase()
+  const fastMode = buildOpenAiFastModeMeta({
+    promptOptions,
+    payload,
+    responseData,
+    compatibilityFallbackUsed,
+  })
 
   return {
     rawText,
     usage: normalizeOpenAiUsage(responseData && responseData.usage),
-    providerMeta: extractOpenAiProviderMeta(responseData),
+    providerMeta: {
+      ...providerMeta,
+      serviceTier: responseServiceTier || null,
+      fastMode,
+    },
   }
 }
 

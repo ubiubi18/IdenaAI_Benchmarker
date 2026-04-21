@@ -29,10 +29,14 @@ import {
 import {useIdentityState} from '../providers/identity-context'
 import {useEpochState} from '../providers/epoch-context'
 import {useChainState} from '../providers/chain-context'
+import {useNodeState} from '../providers/node-context'
+import {useSettingsState} from '../providers/settings-context'
 import {useAutoUpdate} from '../providers/update-context'
-import useRpc from '../hooks/use-rpc'
-import {usePoll} from '../hooks/use-interval'
-import {loadValidationState} from '../../screens/validation/utils'
+import {
+  loadValidationState,
+  buildValidationSessionNodeScope,
+  buildValidationStateScope,
+} from '../../screens/validation/utils'
 import {IdentityStatus, EpochPeriod, OnboardingStep} from '../types'
 import {useVotingNotification} from '../providers/voting-notification-context'
 import {useOnboarding} from '../providers/onboarding-context'
@@ -41,6 +45,7 @@ import {
   onboardingPromotingStep,
   onboardingShowingStep,
 } from '../utils/onboarding'
+import {getIdentityPublishedFlipsCount} from '../utils/identity'
 import {
   OnboardingLinkButton,
   OnboardingPopover,
@@ -52,6 +57,10 @@ import {
   eitherState,
   formatValidationDate,
 } from '../utils/utils'
+import {
+  getNodeStartupPhaseCopy,
+  isNodeStartupInProgress,
+} from '../utils/node-startup-status'
 import {ExternalLink, Tooltip} from './components'
 import {useTimingState} from '../providers/timing-context'
 import {TodoVotingCountBadge} from '../../screens/oracles/components'
@@ -115,11 +124,30 @@ export default function Sidebar({
 export function Status() {
   const {t} = useTranslation()
 
-  const {loading, syncing, offline} = useChainState()
+  const {loading, syncing, offline, peersCount} = useChainState()
+  const {nodeStartupPhase} = useNodeState()
+  const {runInternalNode, useExternalNode} = useSettingsState()
 
   const {wrongClientTime} = useTimingState()
+  const showBuiltinNodeStartup =
+    runInternalNode &&
+    !useExternalNode &&
+    isNodeStartupInProgress(nodeStartupPhase) &&
+    (loading || offline)
+  const builtinNodeStartupCopy = getNodeStartupPhaseCopy(t, nodeStartupPhase)
 
   switch (true) {
+    case showBuiltinNodeStartup:
+      return (
+        <StatusContent bg="orange.020">
+          <Tooltip label={builtinNodeStartupCopy.detail} zIndex="tooltip">
+            <StatusText color="orange.500">
+              {builtinNodeStartupCopy.label}
+            </StatusText>
+          </Tooltip>
+        </StatusContent>
+      )
+
     case loading:
       return (
         <StatusContent bg="xwhite.010">
@@ -188,7 +216,7 @@ export function Status() {
 
     default:
       return (
-        <StatusContent bg="green.020">
+        <StatusContent bg={peersCount > 0 ? 'green.020' : 'orange.020'}>
           <ConnectionBandwidth />
         </StatusContent>
       )
@@ -209,11 +237,18 @@ const StatusText = React.forwardRef((props, ref) => (
 function ConnectionBandwidth() {
   const {t} = useTranslation()
 
-  const {syncing, currentBlock, highestBlock} = useChainState()
+  const {syncing, currentBlock, highestBlock, peersCount = 0} = useChainState()
+  const hasPeers = peersCount > 0
+  let statusLabel = t('Synchronized')
+  let statusColor = 'green.500'
 
-  const [{result: peers}] = usePoll(useRpc('net_peers'), 5000)
-
-  const peersCount = (peers || []).length
+  if (syncing) {
+    statusLabel = t('Synchronizing')
+    statusColor = 'orange.500'
+  } else if (!hasPeers) {
+    statusLabel = t('No peers')
+    statusColor = 'orange.500'
+  }
 
   return (
     <Tooltip
@@ -242,12 +277,8 @@ function ConnectionBandwidth() {
       zIndex="tooltip"
     >
       <Stack isInline spacing={1}>
-        <Bandwidth peersCount={(peers || []).length} isSyncing={syncing} />
-        {syncing ? (
-          <StatusText color="orange.500">{t('Synchronizing')}</StatusText>
-        ) : (
-          <StatusText color="green.500">{t('Synchronized')}</StatusText>
-        )}
+        <Bandwidth peersCount={peersCount} isSyncing={syncing || !hasPeers} />
+        <StatusText color={statusColor}>{statusLabel}</StatusText>
       </Stack>
     </Tooltip>
   )
@@ -517,6 +548,7 @@ function ActionPanel() {
             <ActionItem title={t('My current task')}>
               <CurrentTask
                 epoch={epoch.epoch}
+                validationStart={epoch?.nextValidation}
                 period={currentPeriod}
                 identity={identity}
               />
@@ -700,17 +732,18 @@ function ActionItem({title, children, value = children, ...props}) {
   )
 }
 
-function CurrentTask({epoch, period, identity}) {
+function CurrentTask({epoch, validationStart, period, identity}) {
   const {t} = useTranslation()
+  const settings = useSettingsState()
 
   const [currentOnboarding] = useOnboarding()
 
+  if (identity.fetchingIdentity) return null
   if (!period || !identity.state) return null
 
   switch (period) {
     case EpochPeriod.None: {
       const {
-        flips,
         requiredFlips: requiredFlipsNumber,
         availableFlips: availableFlipsNumber,
         state: status,
@@ -732,7 +765,7 @@ function CurrentTask({epoch, period, identity}) {
           IdentityStatus.Verified,
           IdentityStatus.Newbie,
         ].includes(status): {
-          const publishedFlipsNumber = (flips || []).length
+          const publishedFlipsNumber = getIdentityPublishedFlipsCount(identity)
           const remainingRequiredFlipsNumber =
             requiredFlipsNumber - publishedFlipsNumber
           const optionalFlipsNumber =
@@ -771,7 +804,21 @@ function CurrentTask({epoch, period, identity}) {
 
     case EpochPeriod.ShortSession:
     case EpochPeriod.LongSession: {
-      const validationState = loadValidationState()
+      const validationState = loadValidationState(
+        buildValidationStateScope({
+          epoch,
+          address: identity?.address,
+          nodeScope: buildValidationSessionNodeScope({
+            runInternalNode: settings.runInternalNode,
+            useExternalNode: settings.useExternalNode,
+            url: settings.url,
+            internalPort: settings.internalPort,
+          }),
+          validationStart: validationStart
+            ? new Date(validationStart).getTime()
+            : null,
+        })
+      )
 
       switch (true) {
         case [IdentityStatus.Undefined, IdentityStatus.Invite].includes(

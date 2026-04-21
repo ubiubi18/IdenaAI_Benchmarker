@@ -4,6 +4,7 @@ const {
   buildValidationDevnetPlan,
   buildValidationDevnetNodeConfig,
   buildValidationDevnetSeedFlipSubmitArgs,
+  getValidationDevnetPublishedFlipCount,
   loadValidationDevnetSeedFlips,
   serializeValidationDevnetConfig,
   summarizeValidationDevnetNode,
@@ -163,31 +164,64 @@ describe('validation devnet helpers', () => {
     expect(summary.apiKey).toBeUndefined()
   })
 
-  it('marks the rehearsal RPC connectable once the primary node is ready', () => {
+  it('falls back to madeFlips when identity flip arrays are unavailable', () => {
+    expect(
+      getValidationDevnetPublishedFlipCount({
+        flips: null,
+        madeFlips: 3,
+      })
+    ).toBe(3)
+
+    expect(
+      getValidationDevnetPublishedFlipCount({
+        flips: ['a', 'b'],
+        madeFlips: 99,
+      })
+    ).toBe(2)
+  })
+
+  it('marks the rehearsal RPC connectable once the primary node is fully running', () => {
     expect(
       canConnectValidationDevnetStatus({
         stage: VALIDATION_DEVNET_PHASE.WAITING_FOR_PEERS,
         primaryRpcUrl: 'http://127.0.0.1:22301',
+        primaryValidationAssigned: true,
       })
-    ).toBe(true)
+    ).toBe(false)
     expect(
       canConnectValidationDevnetStatus({
         stage: VALIDATION_DEVNET_PHASE.SEEDING_FLIPS,
         primaryRpcUrl: 'http://127.0.0.1:22301',
+        primaryValidationAssigned: true,
+      })
+    ).toBe(false)
+    expect(
+      canConnectValidationDevnetStatus({
+        stage: VALIDATION_DEVNET_PHASE.RUNNING,
+        primaryRpcUrl: 'http://127.0.0.1:22301',
+        primaryValidationAssigned: false,
       })
     ).toBe(true)
     expect(
       canConnectValidationDevnetStatus({
         stage: VALIDATION_DEVNET_PHASE.RUNNING,
         primaryRpcUrl: 'http://127.0.0.1:22301',
+        primaryValidationAssigned: true,
       })
     ).toBe(true)
     expect(
       canConnectValidationDevnetStatus({
         stage: VALIDATION_DEVNET_PHASE.STARTING_VALIDATORS,
         primaryRpcUrl: 'http://127.0.0.1:22301',
+        primaryValidationAssigned: true,
       })
     ).toBe(false)
+    expect(
+      canConnectValidationDevnetStatus({
+        stage: VALIDATION_DEVNET_PHASE.RUNNING,
+        primaryRpcUrl: 'http://127.0.0.1:22301',
+      })
+    ).toBe(true)
     expect(
       canConnectValidationDevnetStatus({
         stage: VALIDATION_DEVNET_PHASE.WAITING_FOR_PEERS,
@@ -197,8 +231,9 @@ describe('validation devnet helpers', () => {
 
   it('can delay app connection until the last countdown window', () => {
     const connectableStatus = {
-      stage: VALIDATION_DEVNET_PHASE.WAITING_FOR_PEERS,
+      stage: VALIDATION_DEVNET_PHASE.RUNNING,
       primaryRpcUrl: 'http://127.0.0.1:22301',
+      primaryValidationAssigned: true,
       countdownSeconds: 35,
     }
 

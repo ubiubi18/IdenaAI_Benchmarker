@@ -122,6 +122,112 @@ describe('openai provider adapter', () => {
     expect(httpClient.post.mock.calls[3][1].temperature).toBeUndefined()
   })
 
+  test('passes through service tier and reasoning effort when requested', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: {
+          choices: [
+            {
+              message: {
+                content: '{"answer":"left","confidence":0.88}',
+              },
+            },
+          ],
+          usage: {
+            prompt_tokens: 70,
+            completion_tokens: 14,
+            total_tokens: 84,
+          },
+        },
+      }),
+    }
+
+    await callOpenAi({
+      httpClient,
+      apiKey: 'test-key',
+      model: 'gpt-5.4-mini',
+      flip: {
+        hash: 'flip-priority',
+        leftImage: 'data:image/png;base64,AAA',
+        rightImage: 'data:image/png;base64,BBB',
+      },
+      prompt: 'test prompt',
+      profile: {
+        temperature: 0,
+        maxOutputTokens: 96,
+        requestTimeoutMs: 5000,
+      },
+      providerConfig: null,
+      promptOptions: {
+        openAiServiceTier: 'priority',
+        openAiReasoningEffort: 'none',
+      },
+    })
+
+    expect(httpClient.post).toHaveBeenCalledTimes(1)
+    expect(httpClient.post.mock.calls[0][1]).toMatchObject({
+      service_tier: 'priority',
+      reasoning_effort: 'none',
+    })
+  })
+
+  test('reports fast-mode compatibility fallback when OpenAI rejects the short-session extras', async () => {
+    const httpClient = {
+      post: jest
+        .fn()
+        .mockRejectedValueOnce(makeUnsupportedParameterError('service_tier'))
+        .mockRejectedValueOnce(
+          makeUnsupportedParameterError('reasoning_effort')
+        )
+        .mockResolvedValueOnce({
+          data: {
+            choices: [
+              {
+                message: {
+                  content: '{"answer":"left","confidence":0.83}',
+                },
+              },
+            ],
+            usage: {
+              prompt_tokens: 60,
+              completion_tokens: 12,
+              total_tokens: 72,
+            },
+          },
+        }),
+    }
+
+    const result = await callOpenAi({
+      httpClient,
+      apiKey: 'test-key',
+      model: 'gpt-5.4-mini',
+      flip: {
+        hash: 'flip-fast-fallback',
+        leftImage: 'data:image/png;base64,AAA',
+        rightImage: 'data:image/png;base64,BBB',
+      },
+      prompt: 'test prompt',
+      profile: {
+        temperature: 0,
+        maxOutputTokens: 96,
+        requestTimeoutMs: 5000,
+      },
+      providerConfig: null,
+      promptOptions: {
+        openAiServiceTier: 'priority',
+        openAiReasoningEffort: 'none',
+      },
+    })
+
+    expect(httpClient.post).toHaveBeenCalledTimes(3)
+    expect(result.providerMeta.fastMode).toMatchObject({
+      requested: true,
+      compatibilityFallbackUsed: true,
+      requestedServiceTier: 'priority',
+      requestedReasoningEffort: 'none',
+    })
+  })
+
   test('uses minimal payload for provider test call', async () => {
     const httpClient = {
       post: jest.fn().mockResolvedValue({data: {ok: true}}),

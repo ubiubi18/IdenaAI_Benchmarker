@@ -44,6 +44,18 @@ describe('settings-context ai solver normalization', () => {
     })
   })
 
+  it('normalizes short-session OpenAI fast mode settings', () => {
+    expect(
+      buildAiSolverSettings({
+        shortSessionOpenAiFastEnabled: 1,
+        shortSessionOpenAiFastModel: 'not-a-model',
+      })
+    ).toMatchObject({
+      shortSessionOpenAiFastEnabled: true,
+      shortSessionOpenAiFastModel: 'gpt-5.4-mini',
+    })
+  })
+
   it('keeps the internal node preference while routing through an ephemeral rehearsal node', () => {
     expect(
       buildEffectiveSettingsState(

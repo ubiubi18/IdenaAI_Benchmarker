@@ -25,6 +25,14 @@ const LOCAL_AI_STRICT_PROFILE_OVERRIDES = {
   interFlipDelayMs: 0,
   flipVisionMode: 'frames_single_pass',
 }
+const MIN_SOLVE_GUARD_MS = 1500
+const IMAGE_PREP_BASE_MS = 2000
+const IMAGE_PREP_PER_FLIP_MS = {
+  default: 600,
+  'local-ai': 1000,
+}
+const MIN_PER_FLIP_SOLVE_BUDGET_MS = 2500
+const SHORT_SESSION_OPENAI_FAST_MODELS = ['gpt-5.4-mini', 'gpt-5.4']
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -293,6 +301,45 @@ function normalizeTokenUsage(usage = {}) {
   }
 }
 
+function summarizeFastMode(results = []) {
+  const entries = results
+    .map((item) => (item && item.fastMode ? item.fastMode : null))
+    .filter((item) => item && item.requested)
+
+  if (!entries.length) {
+    return null
+  }
+
+  return {
+    requested: true,
+    requestedServiceTier:
+      entries.find((item) => item.requestedServiceTier)?.requestedServiceTier ||
+      null,
+    requestedReasoningEffort:
+      entries.find((item) => item.requestedReasoningEffort)
+        ?.requestedReasoningEffort || null,
+    appliedServiceTiers: Array.from(
+      new Set(entries.map((item) => item.appliedServiceTier).filter(Boolean))
+    ),
+    compatibilityFallbackUsed: entries.some(
+      (item) => item.compatibilityFallbackUsed
+    ),
+    missingRequestedParameters: Array.from(
+      new Set(
+        entries.flatMap((item) =>
+          Array.isArray(item.missingRequestedParameters)
+            ? item.missingRequestedParameters
+            : []
+        )
+      )
+    ),
+    priorityDowngraded: entries.some((item) => item.priorityDowngraded),
+    affectedFlips: entries.filter(
+      (item) => item.compatibilityFallbackUsed || item.priorityDowngraded
+    ).length,
+  }
+}
+
 function ensureBridge() {
   if (
     !global.aiSolver ||
@@ -477,6 +524,129 @@ function summarizeResults(results, startedAt) {
   }
 }
 
+function normalizeDeadlineAt(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function getTimeRemainingMs(deadlineAt) {
+  if (!Number.isFinite(deadlineAt)) {
+    return Infinity
+  }
+
+  return deadlineAt - Date.now()
+}
+
+function createSessionWindowError() {
+  const error = new Error('Not enough time left in session for AI solve')
+  error.code = 'session_window_too_small'
+  return error
+}
+
+function resolveShortSessionOpenAiFastMode({
+  sessionType,
+  aiSolver = {},
+  provider,
+  model,
+}) {
+  if (
+    sessionType !== 'short' ||
+    provider !== 'openai' ||
+    aiSolver.shortSessionOpenAiFastEnabled !== true
+  ) {
+    return {
+      model,
+      promptOptions: null,
+    }
+  }
+
+  const requestedModel = String(aiSolver.shortSessionOpenAiFastModel || '')
+    .trim()
+    .toLowerCase()
+  const fastModel = SHORT_SESSION_OPENAI_FAST_MODELS.includes(requestedModel)
+    ? requestedModel
+    : 'gpt-5.4-mini'
+
+  return {
+    model: fastModel,
+    promptOptions: {
+      openAiServiceTier: 'priority',
+      openAiReasoningEffort: 'none',
+    },
+  }
+}
+
+function ensureRuntimeRemaining(deadlineAt, minimumMs = 0) {
+  if (!Number.isFinite(deadlineAt)) {
+    return
+  }
+
+  if (Date.now() + Math.max(0, minimumMs) > deadlineAt) {
+    throw createSessionWindowError()
+  }
+}
+
+export function planValidationAiSolve({
+  sessionType = 'short',
+  shortFlips = [],
+  longFlips = [],
+  aiSolver = {},
+  maxFlips,
+} = {}) {
+  const profile = normalizeProfile(aiSolver)
+  const provider = String(aiSolver.provider || 'openai')
+    .trim()
+    .toLowerCase()
+  const effectiveProfile = buildEffectiveProfile(profile, provider)
+  const defaultModel = String(aiSolver.model || 'gpt-5.4').trim() || 'gpt-5.4'
+  const shortSessionOpenAiFastMode = resolveShortSessionOpenAiFastMode({
+    sessionType,
+    aiSolver,
+    provider,
+    model: defaultModel,
+  })
+  const {model, promptOptions} = shortSessionOpenAiFastMode
+  const providerConfig = buildProviderConfig(aiSolver)
+  const consultProviders = buildConsultProviders(aiSolver, providerConfig)
+  const candidateFlips = pickCandidateFlips({
+    sessionType,
+    shortFlips,
+    longFlips,
+    maxFlips,
+  })
+
+  return {
+    profile,
+    provider,
+    effectiveProfile,
+    model,
+    providerConfig,
+    consultProviders,
+    promptOptions,
+    candidateFlips,
+  }
+}
+
+export function estimateValidationAiSolveBudget(options = {}) {
+  const solvePlan = planValidationAiSolve(options)
+  const {provider, effectiveProfile, candidateFlips} = solvePlan
+  const prepPerFlipMs =
+    IMAGE_PREP_PER_FLIP_MS[provider] || IMAGE_PREP_PER_FLIP_MS.default
+  const perFlipSolveMs = Math.max(
+    MIN_PER_FLIP_SOLVE_BUDGET_MS,
+    effectiveProfile.requestTimeoutMs +
+      Math.max(0, toNumberOrFallback(effectiveProfile.interFlipDelayMs, 0))
+  )
+
+  return {
+    ...solvePlan,
+    flipCount: candidateFlips.length,
+    estimatedMs:
+      IMAGE_PREP_BASE_MS +
+      candidateFlips.length * (prepPerFlipMs + perFlipSolveMs),
+  }
+}
+
 export async function solveValidationSessionWithAi({
   sessionType = 'short',
   shortFlips = [],
@@ -486,22 +656,23 @@ export async function solveValidationSessionWithAi({
   onProgress,
   onDecision,
   maxFlips,
+  hardDeadlineAt = null,
 } = {}) {
   const bridge = ensureBridge()
-
-  const profile = normalizeProfile(aiSolver)
-  const provider = String(aiSolver.provider || 'openai')
-    .trim()
-    .toLowerCase()
-  const effectiveProfile = buildEffectiveProfile(profile, provider)
-  const model = aiSolver.model || 'gpt-5.4'
-  const providerConfig = buildProviderConfig(aiSolver)
-  const consultProviders = buildConsultProviders(aiSolver, providerConfig)
-
-  const candidateFlips = pickCandidateFlips({
+  const {
+    profile,
+    provider,
+    effectiveProfile,
+    model,
+    providerConfig,
+    consultProviders,
+    promptOptions,
+    candidateFlips,
+  } = planValidationAiSolve({
     sessionType,
     shortFlips,
     longFlips,
+    aiSolver,
     maxFlips,
   })
 
@@ -510,7 +681,14 @@ export async function solveValidationSessionWithAi({
   }
 
   const startedAt = Date.now()
-  const buildDeadlineAt = Date.now() + effectiveProfile.deadlineMs
+  const sessionDeadlineAt = normalizeDeadlineAt(hardDeadlineAt)
+  ensureRuntimeRemaining(sessionDeadlineAt, MIN_SOLVE_GUARD_MS)
+  const buildDeadlineAt = Number.isFinite(sessionDeadlineAt)
+    ? Math.min(
+        sessionDeadlineAt,
+        Date.now() + Math.max(effectiveProfile.deadlineMs, 15 * 1000)
+      )
+    : Date.now() + Math.max(effectiveProfile.deadlineMs, 15 * 1000)
   const payloadFlips = []
   const useFrameVision =
     effectiveProfile.flipVisionMode !== 'composite' || provider === 'local-ai'
@@ -524,6 +702,7 @@ export async function solveValidationSessionWithAi({
     candidateIndex < candidateFlips.length;
     candidateIndex += 1
   ) {
+    ensureRuntimeRemaining(sessionDeadlineAt, MIN_SOLVE_GUARD_MS)
     if (Date.now() >= buildDeadlineAt) break
     const flip = candidateFlips[candidateIndex]
     const leftImage =
@@ -588,6 +767,10 @@ export async function solveValidationSessionWithAi({
 
   for (let index = 0; index < payloadFlips.length; index += 1) {
     const payloadFlip = payloadFlips[index]
+    ensureRuntimeRemaining(
+      sessionDeadlineAt,
+      Math.max(MIN_SOLVE_GUARD_MS, effectiveProfile.requestTimeoutMs)
+    )
 
     if (onProgress) {
       onProgress({
@@ -603,6 +786,7 @@ export async function solveValidationSessionWithAi({
       })
     }
 
+    const remainingSessionMs = getTimeRemainingMs(sessionDeadlineAt)
     const batchResult = await bridge.solveFlipBatch({
       provider,
       model,
@@ -614,7 +798,12 @@ export async function solveValidationSessionWithAi({
       legacyHeuristicOnly: Boolean(aiSolver.legacyHeuristicOnly),
       consultProviders,
       benchmarkProfile: profile.benchmarkProfile,
-      deadlineMs: effectiveProfile.deadlineMs,
+      deadlineMs: Number.isFinite(remainingSessionMs)
+        ? Math.max(
+            1000,
+            Math.min(effectiveProfile.deadlineMs, remainingSessionMs)
+          )
+        : effectiveProfile.deadlineMs,
       requestTimeoutMs: effectiveProfile.requestTimeoutMs,
       maxConcurrency: 1,
       maxRetries: effectiveProfile.maxRetries,
@@ -630,6 +819,7 @@ export async function solveValidationSessionWithAi({
         effectiveProfile.uncertaintyRepromptInstruction,
       promptTemplateOverride: effectiveProfile.promptTemplateOverride,
       flipVisionMode: effectiveProfile.flipVisionMode,
+      promptOptions,
       flips: [payloadFlip],
       session: {
         ...(sessionMeta || {}),
@@ -664,6 +854,7 @@ export async function solveValidationSessionWithAi({
       confidence: solved.confidence,
       latencyMs: solved.latencyMs,
       error: solved.error,
+      fastMode: solved.fastMode || null,
       leftImage: payloadFlip.leftImage,
       rightImage: payloadFlip.rightImage,
       leftFrames: payloadFlip.leftFrames,
@@ -690,16 +881,25 @@ export async function solveValidationSessionWithAi({
       toNumberOrFallback(effectiveProfile.interFlipDelayMs, 0)
     )
     if (delayMs > 0 && index < payloadFlips.length - 1) {
+      const remainingBeforeDelayMs = getTimeRemainingMs(sessionDeadlineAt)
+      const waitMs = Number.isFinite(remainingBeforeDelayMs)
+        ? Math.min(
+            delayMs,
+            Math.max(0, remainingBeforeDelayMs - MIN_SOLVE_GUARD_MS)
+          )
+        : delayMs
       if (onProgress) {
         onProgress({
           stage: 'waiting',
           sessionType,
           index: index + 1,
           total: payloadFlips.length,
-          waitMs: delayMs,
+          waitMs,
         })
       }
-      await sleep(delayMs)
+      if (waitMs > 0) {
+        await sleep(waitMs)
+      }
     }
   }
 
@@ -717,6 +917,7 @@ export async function solveValidationSessionWithAi({
     .filter(({option}) => option > 0)
 
   const summary = summarizeResults(results, startedAt)
+  const fastMode = summarizeFastMode(results)
   if (onProgress) {
     onProgress({
       stage: 'completed',
@@ -732,6 +933,7 @@ export async function solveValidationSessionWithAi({
     model,
     profile: effectiveProfile,
     summary,
+    fastMode,
     results,
     answers,
   }

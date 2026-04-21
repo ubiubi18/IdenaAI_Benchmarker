@@ -1,6 +1,31 @@
 /* eslint-disable import/prefer-default-export */
 import api from './api-client'
 
+function normalizeFlipHashesResult(result) {
+  if (!Array.isArray(result)) {
+    return []
+  }
+
+  return result
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null
+      }
+
+      const hash = String(item.hash || '').trim()
+
+      if (!hash) {
+        return null
+      }
+
+      return {
+        ...item,
+        hash,
+      }
+    })
+    .filter(Boolean)
+}
+
 /**
  * Flip hash
  * @typedef {Object} FlipHash
@@ -26,7 +51,7 @@ export async function fetchFlipHashes(type) {
   })
   const {result, error} = data
   if (error) throw new Error(error.message)
-  return result
+  return normalizeFlipHashesResult(result)
 }
 
 /**
@@ -49,10 +74,10 @@ export async function fetchFlipHashes(type) {
  * @example
  *  submitShortAnswers({answers: [{hash: 0xa1, answer: 1}, {hash: 0xb2, answer: 2}], nonce: 0, epoch: 0})
  */
-export async function submitShortAnswers(answers, nonce, epoch) {
+export async function submitShortAnswers(answers, nonce, epoch, sessionId) {
   const {data} = await api().post('/', {
     method: 'flip_submitShortAnswers',
-    params: [{answers, nonce, epoch}],
+    params: [{answers, nonce, epoch, sessionId}],
     id: 1,
   })
   const {result, error} = data
@@ -80,4 +105,22 @@ export async function submitLongAnswers(answers, nonce, epoch) {
   const {result, error} = data
   if (error) throw new Error(error.message)
   return result
+}
+
+export async function prepareValidationSession(epoch, sessionId) {
+  const {data} = await api().post('/', {
+    method: 'flip_prepareValidationSession',
+    params: [{epoch, sessionId}],
+    id: 1,
+  })
+  const {result, error} = data
+  if (error) throw new Error(error.message)
+  return {
+    cleared: Boolean(result && result.cleared),
+    sessionId: String(
+      (result && (result.sessionId || result.sessionID || result.SessionId)) ||
+        sessionId ||
+        ''
+    ).trim(),
+  }
 }

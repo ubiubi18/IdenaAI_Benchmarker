@@ -395,6 +395,14 @@ function formatRuntimeStatusError(result, t) {
     )
   }
 
+  if (/managed_runtime_disk_space_low/i.test(message)) {
+    return message === 'managed_runtime_disk_space_low'
+      ? t(
+          'The managed local runtime needs more free disk space before install can start.'
+        )
+      : message
+  }
+
   if (/managed_runtime_trust_required/i.test(message)) {
     return t(
       'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified pinned local model snapshot locally.'
@@ -416,6 +424,13 @@ function formatRuntimeStatusError(result, t) {
 
 function formatChatError(error, t) {
   const message = String((error && error.message) || error || '').trim()
+  if (/managed_runtime_disk_space_low/i.test(message)) {
+    return message === 'managed_runtime_disk_space_low'
+      ? t(
+          'The managed local runtime needs more free disk space before install can start.'
+        )
+      : message
+  }
   if (/managed_runtime_trust_required/i.test(message)) {
     return t(
       'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified pinned local model snapshot locally.'

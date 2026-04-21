@@ -3,9 +3,11 @@ import React, {useCallback, useMemo} from 'react'
 import deepEqual from 'dequal'
 import {useInterval} from '../hooks/use-interval'
 import {fetchIdentity, killIdentity} from '../api/dna'
-import useRpc from '../hooks/use-rpc'
+import {fetchBalance} from '../api/wallet'
 import {useChainState} from './chain-context'
 import {IdentityStatus} from '../types'
+import {getIdentityPublishedFlipsCount} from '../utils/identity'
+import {RPC_CONNECTION_CHANGED_EVENT} from '../utils/rpc-connection-events'
 
 export function mapToFriendlyStatus(status) {
   switch (status) {
@@ -21,13 +23,70 @@ const IdentityDispatchContext = React.createContext()
 
 export function IdentityProvider({children}) {
   const [identity, setIdentity] = React.useState(null)
-  const [{result: balanceResult}, callRpc] = useRpc()
+  const [balanceResult, setBalanceResult] = React.useState(null)
+  const [fetchingIdentity, setFetchingIdentity] = React.useState(false)
   const {loading, offline, syncing} = useChainState()
   const isRpcUsable = !loading && !offline && !syncing
   let identityPollingDelay = null
   if (isRpcUsable) {
     identityPollingDelay = identity ? 1000 * 5 : 1000 * 10
   }
+
+  const refreshIdentitySnapshot = useCallback(
+    async ({preserveTerminatingState = false, canApply = () => true} = {}) => {
+      const nextIdentity = await fetchIdentity()
+
+      if (canApply()) {
+        setIdentity((currentIdentity) => {
+          const keepTerminatingState =
+            preserveTerminatingState &&
+            Boolean(currentIdentity) &&
+            currentIdentity.state === IdentityStatus.Terminating &&
+            Boolean(nextIdentity) &&
+            nextIdentity.state !== IdentityStatus.Undefined
+
+          const state = keepTerminatingState
+            ? currentIdentity.state
+            : nextIdentity?.state
+          const mergedIdentity =
+            nextIdentity && state ? {...nextIdentity, state} : nextIdentity
+
+          return deepEqual(currentIdentity, mergedIdentity)
+            ? currentIdentity
+            : mergedIdentity
+        })
+      }
+
+      const balanceAddress =
+        nextIdentity && nextIdentity.address ? nextIdentity.address : null
+
+      if (!balanceAddress) {
+        if (canApply()) {
+          setBalanceResult(null)
+        }
+        return nextIdentity
+      }
+
+      try {
+        const nextBalance = await fetchBalance(balanceAddress)
+        if (canApply()) {
+          setBalanceResult((currentBalance) =>
+            deepEqual(currentBalance, nextBalance)
+              ? currentBalance
+              : nextBalance
+          )
+        }
+      } catch (error) {
+        global.logger.error(
+          'An error occured while fetching identity balance',
+          error.message
+        )
+      }
+
+      return nextIdentity
+    },
+    []
+  )
 
   React.useEffect(() => {
     if (!isRpcUsable) {
@@ -38,15 +97,19 @@ export function IdentityProvider({children}) {
 
     async function fetchData() {
       try {
-        const fetchedIdentity = await fetchIdentity()
         if (!ignore) {
-          setIdentity(fetchedIdentity)
+          setFetchingIdentity(true)
         }
+        await refreshIdentitySnapshot({canApply: () => !ignore})
       } catch (error) {
         global.logger.error(
           'An error occured while fetching identity',
           error.message
         )
+      } finally {
+        if (!ignore) {
+          setFetchingIdentity(false)
+        }
       }
     }
 
@@ -55,40 +118,65 @@ export function IdentityProvider({children}) {
     return () => {
       ignore = true
     }
-  }, [callRpc, isRpcUsable])
+  }, [isRpcUsable, refreshIdentitySnapshot])
 
-  useInterval(async () => {
-    async function fetchData() {
+  React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    let ignore = false
+
+    const handleRpcConnectionChanged = async () => {
+      setIdentity(null)
+      setBalanceResult(null)
+      setFetchingIdentity(true)
+
       try {
-        const nextIdentity = await fetchIdentity()
-
-        if (!deepEqual(identity, nextIdentity)) {
-          const keepTerminatingState =
-            Boolean(identity) &&
-            identity.state === IdentityStatus.Terminating &&
-            Boolean(nextIdentity) &&
-            nextIdentity.state !== IdentityStatus.Undefined
-          const state = keepTerminatingState
-            ? identity.state
-            : nextIdentity.state
-          setIdentity({...nextIdentity, state})
-        }
+        await refreshIdentitySnapshot({canApply: () => !ignore})
       } catch (error) {
+        if (!ignore) {
+          setIdentity(null)
+          setBalanceResult(null)
+        }
         global.logger.error(
-          'An error occured while fetching identity',
+          'An error occured while refreshing identity after rpc switch',
           error.message
         )
+      } finally {
+        if (!ignore) {
+          setFetchingIdentity(false)
+        }
       }
     }
 
-    await fetchData()
-  }, identityPollingDelay)
+    window.addEventListener(
+      RPC_CONNECTION_CHANGED_EVENT,
+      handleRpcConnectionChanged
+    )
 
-  useInterval(
-    () => callRpc('dna_getBalance', identity.address),
-    isRpcUsable && identity && identity.address ? 1000 * 10 : null,
-    true
-  )
+    return () => {
+      ignore = true
+      window.removeEventListener(
+        RPC_CONNECTION_CHANGED_EVENT,
+        handleRpcConnectionChanged
+      )
+    }
+  }, [refreshIdentitySnapshot])
+
+  useInterval(async () => {
+    try {
+      setFetchingIdentity(true)
+      await refreshIdentitySnapshot({preserveTerminatingState: true})
+    } catch (error) {
+      global.logger.error(
+        'An error occured while fetching identity',
+        error.message
+      )
+    } finally {
+      setFetchingIdentity(false)
+    }
+  }, identityPollingDelay)
 
   const canActivateInvite =
     identity &&
@@ -102,7 +190,7 @@ export function IdentityProvider({children}) {
       IdentityStatus.Human,
     ].includes(identity.state) &&
     identity.requiredFlips > 0 &&
-    (identity.flips || []).length < identity.availableFlips
+    getIdentityPublishedFlipsCount(identity) < identity.availableFlips
 
   const canTerminate =
     identity &&
@@ -137,14 +225,14 @@ export function IdentityProvider({children}) {
   )
 
   const forceUpdate = React.useCallback(async () => {
-    if (identity.address) {
-      const nextIdentity = await fetchIdentity()
+    setFetchingIdentity(true)
 
-      if (!deepEqual(identity, nextIdentity)) {
-        setIdentity({...identity, ...nextIdentity})
-      }
+    try {
+      await refreshIdentitySnapshot({preserveTerminatingState: true})
+    } finally {
+      setFetchingIdentity(false)
     }
-  }, [identity])
+  }, [refreshIdentitySnapshot])
 
   return (
     <IdentityStateContext.Provider
@@ -156,6 +244,7 @@ export function IdentityProvider({children}) {
           canSubmitFlip,
           canMine,
           canTerminate,
+          fetchingIdentity,
           isValidated: [
             IdentityStatus.Newbie,
             IdentityStatus.Verified,
@@ -169,6 +258,7 @@ export function IdentityProvider({children}) {
           canMine,
           canSubmitFlip,
           canTerminate,
+          fetchingIdentity,
           identity,
         ]
       )}

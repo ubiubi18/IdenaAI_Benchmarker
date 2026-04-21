@@ -30,11 +30,38 @@ import {forEachAsync, wait} from '../../shared/utils/fn'
 import {fetchConfirmedKeywordTranslations} from '../flips/utils'
 import {loadKeyword} from '../../shared/utils/utils'
 
+export const SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS = 45
+
+export function getShortSessionFinalizeDelaySeconds({
+  shortSessionDuration,
+  configuredSeconds = 90,
+} = {}) {
+  const requestedSeconds = Number(configuredSeconds)
+  const normalizedRequestedSeconds = Number.isFinite(requestedSeconds)
+    ? requestedSeconds
+    : 90
+  const durationSeconds = Number(shortSessionDuration)
+
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return normalizedRequestedSeconds
+  }
+
+  const latestSafeFinalizeSeconds =
+    durationSeconds - 10 - SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS
+
+  return Math.max(
+    5,
+    Math.min(normalizedRequestedSeconds, latestSafeFinalizeSeconds)
+  )
+}
+
 export const createValidationMachine = ({
   epoch,
   validationStart,
   shortSessionDuration,
   longSessionDuration,
+  validationSessionId = '',
+  initialValidationPeriod = SessionType.Short,
   locale,
   onDecodedFlip,
   initialShortFlips = [],
@@ -44,13 +71,19 @@ export const createValidationMachine = ({
     {
       predictableActionArguments: true,
       id: 'validation',
-      initial: 'shortSession',
+      initial:
+        String(initialValidationPeriod || '')
+          .trim()
+          .toLowerCase() === SessionType.Long
+          ? 'longSession'
+          : 'shortSession',
       context: {
         shortFlips: initialShortFlips,
         longFlips: initialLongFlips,
         currentIndex: 0,
         bestFlipHashes: {},
         epoch,
+        validationSessionId,
         validationStart,
         shortSessionDuration,
         longSessionDuration,
@@ -60,6 +93,13 @@ export const createValidationMachine = ({
         translations: {},
         reports: new Set(),
         submitLongAnswersHash: null,
+      },
+      on: {
+        SET_VALIDATION_SESSION_ID: {
+          actions: assign({
+            validationSessionId: (_, {sessionId}) => String(sessionId || ''),
+          }),
+        },
       },
       states: {
         shortSession: {
@@ -71,12 +111,10 @@ export const createValidationMachine = ({
               initial: 'prepare',
               states: {
                 prepare: {
-                  on: {
-                    '': [
-                      {target: 'done', cond: 'didFetchShortFlips'},
-                      {target: 'polling'},
-                    ],
-                  },
+                  always: [
+                    {target: 'done', cond: 'didFetchShortFlips'},
+                    {target: 'polling'},
+                  ],
                 },
                 polling: {
                   type: 'parallel',
@@ -418,26 +456,24 @@ export const createValidationMachine = ({
                       initial: 'checkAnswers',
                       states: {
                         checkAnswers: {
-                          on: {
-                            '': [
-                              {
-                                target: 'confirm',
-                                cond: ({shortFlips}) => {
-                                  const solvableFlips =
-                                    filterRegularFlips(shortFlips)
-                                  return (
-                                    solvableFlips.length === 0 ||
-                                    solvableFlips.some(
-                                      ({option = 0, decoded, ready, loading}) =>
-                                        (decoded && option === 0) ||
-                                        (ready && loading)
-                                    )
+                          always: [
+                            {
+                              target: 'confirm',
+                              cond: ({shortFlips}) => {
+                                const solvableFlips =
+                                  filterRegularFlips(shortFlips)
+                                return (
+                                  solvableFlips.length === 0 ||
+                                  solvableFlips.some(
+                                    ({option = 0, decoded, ready, loading}) =>
+                                      (decoded && option === 0) ||
+                                      (ready && loading)
                                   )
-                                },
+                                )
                               },
-                              {target: 'submitting'},
-                            ],
-                          },
+                            },
+                            {target: 'submitting'},
+                          ],
                         },
                         confirm: {
                           on: {
@@ -449,7 +485,7 @@ export const createValidationMachine = ({
                         submitting: {
                           invoke: {
                             // eslint-disable-next-line no-shadow
-                            src: ({shortFlips, epoch}) =>
+                            src: ({shortFlips, epoch, validationSessionId}) =>
                               submitShortAnswers(
                                 shortFlips.map(
                                   ({option: answer = 0, hash}) => ({
@@ -458,7 +494,8 @@ export const createValidationMachine = ({
                                   })
                                 ),
                                 0,
-                                epoch
+                                epoch,
+                                validationSessionId
                               ),
                             onDone: {
                               target: '#validation.longSession',
@@ -572,14 +609,12 @@ export const createValidationMachine = ({
                       },
                     },
                     detectMissing: {
-                      on: {
-                        '': [
-                          {target: 'fetchMissing', cond: 'hasMissingFlips'},
-                          {
-                            target: 'done',
-                          },
-                        ],
-                      },
+                      always: [
+                        {target: 'fetchMissing', cond: 'hasMissingFlips'},
+                        {
+                          target: 'done',
+                        },
+                      ],
                     },
                     fetchMissing: {
                       initial: 'polling',
@@ -605,15 +640,13 @@ export const createValidationMachine = ({
                           },
                         },
                         check: {
-                          on: {
-                            '': [
-                              {target: 'enqueue', cond: 'hasMissingFlips'},
-                              {
-                                target:
-                                  '#validation.longSession.fetch.flips.done',
-                              },
-                            ],
-                          },
+                          always: [
+                            {target: 'enqueue', cond: 'hasMissingFlips'},
+                            {
+                              target:
+                                '#validation.longSession.fetch.flips.done',
+                            },
+                          ],
                         },
                         enqueue: {
                           // somehow `after` doesn't work here thus custom delay
@@ -1116,11 +1149,14 @@ export const createValidationMachine = ({
             5
           ) * 1000,
         // eslint-disable-next-line no-shadow
-        FINALIZE_FLIPS: ({validationStart}) =>
+        FINALIZE_FLIPS: ({validationStart, shortSessionDuration}) =>
           Math.max(
             adjustDurationInSeconds(
               validationStart,
-              global.env?.FINALIZE_FLIPS ?? 90
+              getShortSessionFinalizeDelaySeconds({
+                shortSessionDuration,
+                configuredSeconds: global.env?.FINALIZE_FLIPS,
+              })
             ),
             5
           ) * 1000,
@@ -1309,8 +1345,14 @@ function fetchFlips(
   delay = 0,
   {epoch, sessionType, onDecodedFlip} = {}
 ) {
-  global.logger.debug(`Calling flip_get rpc for hashes`, hashes)
-  return forEachAsync(hashes, (hash) =>
+  const nextHashes = Array.isArray(hashes) ? hashes.filter(Boolean) : []
+
+  if (nextHashes.length === 0) {
+    return Promise.resolve()
+  }
+
+  global.logger.debug(`Calling flip_get rpc for hashes`, nextHashes)
+  return forEachAsync(nextHashes, (hash) =>
     fetchFlip(hash)
       .then(({result, error}) => {
         global.logger.debug(`Get flip_get response`, hash)
@@ -1392,15 +1434,13 @@ const stepStates = {
   initial: 'unknown',
   states: {
     unknown: {
-      on: {
-        '': [
-          {
-            target: 'fetching',
-            cond: 'shouldTranslate',
-          },
-          {target: 'idle'},
-        ],
-      },
+      always: [
+        {
+          target: 'fetching',
+          cond: 'shouldTranslate',
+        },
+        {target: 'idle'},
+      ],
     },
     idle: {},
     fetching: {
@@ -1419,8 +1459,11 @@ const stepStates = {
 }
 
 function mergeFlipsByHash(flips, anotherFlips) {
-  return flips.map((flip) => {
-    const anotherFlip = anotherFlips.find(({hash}) => hash === flip.hash)
+  const nextFlips = Array.isArray(flips) ? flips : []
+  const nextAnotherFlips = Array.isArray(anotherFlips) ? anotherFlips : []
+
+  return nextFlips.map((flip) => {
+    const anotherFlip = nextAnotherFlips.find(({hash}) => hash === flip.hash)
 
     if (anotherFlip) {
       const relevance =
