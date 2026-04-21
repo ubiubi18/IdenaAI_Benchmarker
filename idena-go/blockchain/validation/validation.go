@@ -122,6 +122,10 @@ func SetAppConfig(cfg *config.Config) {
 	appCfg = cfg
 }
 
+func UseSharedFlipKeys() bool {
+	return appCfg != nil && appCfg.Validation != nil && appCfg.Validation.UseSharedFlipKeys
+}
+
 func getValidator(txType types.TxType) (validator, bool) {
 	if appCfg != nil && cfgInitVersion != appCfg.Consensus.Version {
 		cfgInitVersion = appCfg.Consensus.Version

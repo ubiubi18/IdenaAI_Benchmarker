@@ -29,9 +29,12 @@ import {
   getValidationSessionPhaseDeadlineAt,
   getValidationSessionPhaseRemainingMs,
   getValidationAutoReportDelayMs,
+  isRenderableValidationFlip,
+  hasRenderableValidationFlips,
   SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
   LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
   AUTO_REPORT_REVIEW_RUNTIME_BUFFER_MS,
+  resetValidationSessionState,
 } from './utils'
 import {EpochPeriod, IdentityStatus} from '../../shared/types'
 
@@ -197,6 +200,108 @@ describe('exponentialBackoff', () => {
       expect(exponentialBackoff(n)).toBeGreaterThan(2 ** n)
     })
     expect(exponentialBackoff(10)).toBe(32)
+  })
+})
+
+describe('isRenderableValidationFlip', () => {
+  it('accepts decoded flips with images and orders', () => {
+    expect(
+      isRenderableValidationFlip({
+        decoded: true,
+        failed: false,
+        images: ['blob:left', 'blob:right'],
+        orders: [
+          [0, 1, 2, 3],
+          [0, 1, 2, 3],
+        ],
+      })
+    ).toBe(true)
+  })
+
+  it('rejects loading and failed placeholder flips', () => {
+    expect(
+      isRenderableValidationFlip({
+        decoded: false,
+        images: ['blob:left'],
+        orders: [[0, 1, 2, 3]],
+      })
+    ).toBe(false)
+
+    expect(
+      isRenderableValidationFlip({
+        decoded: true,
+        failed: true,
+        images: ['blob:left'],
+        orders: [[0, 1, 2, 3]],
+      })
+    ).toBe(false)
+  })
+
+  it('detects whether a session contains at least one renderable flip', () => {
+    expect(
+      hasRenderableValidationFlips([
+        {
+          decoded: false,
+          images: ['blob:left'],
+          orders: [[0, 1, 2, 3]],
+        },
+        {
+          decoded: true,
+          failed: false,
+          images: ['blob:left', 'blob:right'],
+          orders: [
+            [0, 1, 2, 3],
+            [0, 1, 2, 3],
+          ],
+        },
+      ])
+    ).toBe(true)
+
+    expect(
+      hasRenderableValidationFlips([
+        {
+          decoded: false,
+          images: ['blob:left'],
+          orders: [[0, 1, 2, 3]],
+        },
+      ])
+    ).toBe(false)
+  })
+})
+
+describe('resetValidationSessionState', () => {
+  beforeEach(() => {
+    __resetValidationSessionStateForTests()
+    sessionStorage.clear()
+  })
+
+  it('clears persisted validation state and live session storage', () => {
+    rememberValidationSessionId(
+      buildValidationStateScope({
+        epoch: 1,
+        address: '0xabc',
+        nodeScope: 'external:http://127.0.0.1:22301',
+        validationStart: 1760000000000,
+      }),
+      'validation-1-demo'
+    )
+    persistValidationState(
+      createPersistableValidationState({
+        epoch: 1,
+        validationSessionId: 'validation-1-demo',
+      }),
+      buildValidationStateScope({
+        epoch: 1,
+        address: '0xabc',
+        nodeScope: 'external:http://127.0.0.1:22301',
+        validationStart: 1760000000000,
+      })
+    )
+
+    resetValidationSessionState()
+
+    expect(getCurrentValidationSessionId()).toBe('')
+    expect(loadValidationState()).toBeUndefined()
   })
 })
 
@@ -632,6 +737,30 @@ describe('validation session id persistence', () => {
 
     expect(firstSessionId).toBe('rehearsal-session-1')
     expect(secondSessionId).toBe('')
+  })
+
+  it('clears a stale live validation session when the rehearsal identity scope changes', () => {
+    const rehearsalNodeScope = buildValidationSessionNodeScope({
+      useExternalNode: true,
+      url: 'http://127.0.0.1:22301',
+    })
+    const previousRunScope = {
+      epoch: 1,
+      address: '0xb85a4ee48df845078ea3029350cb09ace7723bad',
+      nodeScope: rehearsalNodeScope,
+      validationStart: Date.UTC(2026, 3, 21, 19, 3, 5),
+    }
+    const currentRunScope = {
+      epoch: 1,
+      address: '0x2f8d9d30d163aec7a0a71f6e1a484dfd8d33f991',
+      nodeScope: rehearsalNodeScope,
+      validationStart: Date.UTC(2026, 3, 21, 19, 3, 5),
+    }
+
+    rememberValidationSessionId(previousRunScope, 'stale-session')
+
+    expect(getCurrentValidationSessionId(currentRunScope)).toBe('')
+    expect(window.idena.storage.validationSession.loadState()).toEqual({})
   })
 
   it('does not invent a renderer-owned session id before the node prepares one', () => {

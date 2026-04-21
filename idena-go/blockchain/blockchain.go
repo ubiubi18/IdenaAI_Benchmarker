@@ -306,6 +306,12 @@ func (chain *Blockchain) loadPredefinedGenesis(network types.Network) (*types.Bl
 }
 
 func (chain *Blockchain) generateGenesis(network types.Network) (*types.Block, error) {
+	initialEpoch := chain.config.GenesisConf.InitialEpoch
+
+	if initialEpoch > 0 {
+		chain.appState.State.SetGlobalEpoch(initialEpoch)
+	}
+
 	for addr, alloc := range chain.config.GenesisConf.Alloc {
 		if alloc.Balance != nil {
 			chain.appState.State.SetBalance(addr, alloc.Balance)
@@ -313,7 +319,11 @@ func (chain *Blockchain) generateGenesis(network types.Network) (*types.Block, e
 		if alloc.Stake != nil {
 			chain.appState.State.AddStake(addr, alloc.Stake)
 		}
+		if initialEpoch > 0 {
+			chain.appState.State.SetEpoch(addr, initialEpoch)
+		}
 		chain.appState.State.SetState(addr, state.IdentityState(alloc.State))
+		chain.appState.State.SetRequiredFlips(addr, alloc.RequiredFlips)
 		if state.IdentityState(alloc.State).NewbieOrBetter() {
 			chain.appState.IdentityState.SetValidated(addr, true)
 			if chain.appState.State.IsDiscriminated(addr, chain.appState.State.DiscriminationStakeThreshold(), chain.appState.State.Epoch()) {

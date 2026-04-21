@@ -75,13 +75,13 @@
 - Fix attempt:
   - pin updater to tag `v1.1.2` and add local build fallback for `darwin/arm64`:
   - source detection: sibling `idena-go` repo
-  - build command at runtime: `go build -ldflags "-X main.version=1.1.2"` with `GOTOOLCHAIN=go1.19.13`
+  - build command at runtime: `./scripts/run-go-toolchain.sh build -ldflags "-X main.version=1.1.2"`
 - Result:
   - Desktop can prepare an inbuilt `v1.1.2` node binary on macOS arm64 without depending on unavailable release assets.
 
 ## 2026-03-25 - Issue 7: Full WASM support required on macOS arm64
 - Command:
-  - `cd $WORKSPACE/idena-go && GOTOOLCHAIN=go1.19.13 go test ./vm/wasm -count=1`
+  - `cd $WORKSPACE/idena-go && ./scripts/run-go-toolchain.sh test ./vm/wasm -count=1`
 - Error summary:
   - Product requirement rejected no-wasm fallback; benchmark fork needs full protocol fidelity.
 - Root cause hypothesis:

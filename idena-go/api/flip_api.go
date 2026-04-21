@@ -373,11 +373,35 @@ type FlipAnswer struct {
 }
 
 type SubmitAnswersArgs struct {
-	Answers []FlipAnswer `json:"answers"`
+	Answers   []FlipAnswer `json:"answers"`
+	SessionId string       `json:"sessionId"`
 }
 
 type SubmitAnswersResponse struct {
 	TxHash common.Hash `json:"txHash"`
+}
+
+type PrepareValidationSessionArgs struct {
+	Epoch     uint16 `json:"epoch"`
+	SessionId string `json:"sessionId"`
+}
+
+type PrepareValidationSessionResponse struct {
+	Cleared   bool   `json:"cleared"`
+	SessionId string `json:"sessionId"`
+}
+
+func (api *FlipApi) PrepareValidationSession(args PrepareValidationSessionArgs) (PrepareValidationSessionResponse, error) {
+	if !api.isCeremonyCandidate(api.baseApi.getCurrentCoinbase()) {
+		return PrepareValidationSessionResponse{}, errors.New("coinbase address is not a ceremony candidate")
+	}
+
+	sessionId, cleared, err := api.ceremony.PrepareValidationSession(args.Epoch, args.SessionId)
+	if err != nil {
+		return PrepareValidationSessionResponse{}, err
+	}
+
+	return PrepareValidationSessionResponse{Cleared: cleared, SessionId: sessionId}, nil
 }
 
 func (api *FlipApi) SubmitShortAnswers(args SubmitAnswersArgs) (SubmitAnswersResponse, error) {
@@ -392,7 +416,7 @@ func (api *FlipApi) SubmitShortAnswers(args SubmitAnswersArgs) (SubmitAnswersRes
 
 	answers := prepareAnswers(args.Answers, flips, true)
 
-	hash, err := api.ceremony.SubmitShortAnswers(answers)
+	hash, err := api.ceremony.SubmitShortAnswers(answers, args.SessionId)
 
 	if err != nil {
 		return SubmitAnswersResponse{}, err

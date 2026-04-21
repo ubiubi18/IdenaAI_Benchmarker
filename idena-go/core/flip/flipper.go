@@ -270,6 +270,17 @@ func (fp *Flipper) GetFlipPrivateEncryptionKey() *ecies.PrivateKey {
 }
 
 func (fp *Flipper) generateFlipEncryptionKey(public bool) *ecies.PrivateKey {
+	if validation.UseSharedFlipKeys() {
+		suffix := "private"
+		if public {
+			suffix = "public"
+		}
+		seedA := common.Hash(crypto.Hash([]byte(fmt.Sprintf("rehearsal-shared-flip-%s-key-epoch-%v", suffix, fp.appState.State.Epoch()))))
+		seedB := common.Hash(crypto.Hash([]byte(fmt.Sprintf("rehearsal-shared-flip-%s-key-epoch-%v-b", suffix, fp.appState.State.Epoch()))))
+		flipKey, _ := crypto.GenerateKeyFromSeed(bytes.NewReader(append(seedA.Bytes(), seedB.Bytes()...)))
+		return ecies.ImportECDSA(flipKey)
+	}
+
 	var seed []byte
 	if public {
 		seed = []byte(fmt.Sprintf("flip-key-for-epoch-%v", fp.appState.State.Epoch()))

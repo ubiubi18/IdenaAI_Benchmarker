@@ -12,6 +12,7 @@ WASM_BINDING_DIR="${WORKSPACE_DIR}/idena-wasm-binding"
 WASM_SRC_DIR="${WORKSPACE_DIR}/idena-wasm"
 WASM_TAG="v0.0.30"
 OUTPUT_BIN="${1:-$HOME/Library/Application Support/Idena/node/idena-go}"
+GO_RUNNER="${IDENA_GO_DIR}/scripts/run-go-toolchain.sh"
 
 if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then
   echo "Rust toolchain is missing. Install rustup first:" >&2
@@ -53,7 +54,7 @@ echo "Building idena-go v1.1.2..."
 mkdir -p "$(dirname "${OUTPUT_BIN}")"
 (
   cd "${IDENA_GO_DIR}"
-  GOTOOLCHAIN=go1.19.13 go build -ldflags "-X main.version=1.1.2" -o "${OUTPUT_BIN}" .
+  "${GO_RUNNER}" build -ldflags "-X main.version=1.1.2" -o "${OUTPUT_BIN}" .
 )
 chmod 755 "${OUTPUT_BIN}"
 

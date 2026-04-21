@@ -6,6 +6,7 @@ type IpfsConfig struct {
 	DataDir            string
 	BootNodes          []string
 	IpfsPort           int
+	SwarmListenHost    string
 	StaticPort         bool
 	SwarmKey           string
 	Routing            string

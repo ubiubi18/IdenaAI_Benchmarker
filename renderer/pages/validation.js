@@ -24,6 +24,8 @@ import {
   filterRegularFlips,
   rearrangeFlips,
   readyFlip,
+  isRenderableValidationFlip,
+  hasRenderableValidationFlips,
   decodedWithKeywords,
   availableReportsNumber,
   solvableFlips,
@@ -38,6 +40,7 @@ import {
 } from '../screens/validation/utils'
 import {
   rememberDismissedValidationScreen,
+  getRehearsalValidationBlockedReason,
   normalizeRehearsalDevnetStatus,
   hasAssignedRehearsalValidationHashes,
   REHEARSAL_DEVNET_STATUS_INITIAL,
@@ -1102,11 +1105,16 @@ function ValidationSession({
     state.matches('shortSession') &&
     validationStart &&
     dayjs().diff(dayjs(validationStart), 'second') >= 20
+  const rehearsalBlockedReason = getRehearsalValidationBlockedReason({
+    currentPeriod,
+    devnetStatus: rehearsalDevnetStatus,
+    isRehearsalNodeSession,
+  })
   const shouldOfferRehearsalRestart =
     isRehearsalNodeSession &&
     !forceAiPreview &&
     !hasRenderableCurrentFlip &&
-    (state.matches('longSession') || rehearsalFlipFetchStuck)
+    rehearsalBlockedReason === 'failed-rehearsal'
   const rehearsalWaitingForHashAssignment =
     isRehearsalNodeSession &&
     !forceAiPreview &&
@@ -1118,15 +1126,24 @@ function ValidationSession({
       devnetStatus: rehearsalDevnetStatus,
       isRehearsalNodeSession,
     })
+  const rehearsalWaitingForKeys =
+    isRehearsalNodeSession &&
+    !forceAiPreview &&
+    !hasRenderableCurrentFlip &&
+    rehearsalBlockedReason === 'keys-not-ready' &&
+    !shouldOfferRehearsalRestart
   const rehearsalRestartMessage = rehearsalFlipFetchStuck
     ? t(
-        'This rehearsal run still has no validation flips after the short session started. Restart the rehearsal network for a fresh run.'
+        'This rehearsal run still has no ready validation flips well into short session. Restart the rehearsal network for a fresh run.'
       )
     : t(
-        'This rehearsal node was connected too late and is already past a clean short-session start. Restart the rehearsal network for a fresh run.'
+        'This rehearsal run still never produced a ready flip after short session began. Restart the rehearsal network for a fresh run.'
       )
   const rehearsalWaitingMessage = t(
     'Rehearsal node is connected, but validation hashes are not assigned yet. IdenaAI will keep waiting for the rehearsal node to assign them.'
+  )
+  const rehearsalKeysWaitingMessage = t(
+    'Rehearsal node is connected, but public flip keys and decryption packages are still syncing. IdenaAI will keep waiting until at least one rehearsal flip is actually ready.'
   )
   let waitingForCurrentFlipMessage = t(
     'Waiting for validation flips to become available...'
@@ -1134,6 +1151,8 @@ function ValidationSession({
 
   if (rehearsalWaitingForHashAssignment) {
     waitingForCurrentFlipMessage = rehearsalWaitingMessage
+  } else if (rehearsalWaitingForKeys) {
+    waitingForCurrentFlipMessage = rehearsalKeysWaitingMessage
   }
 
   if (shouldOfferRehearsalRestart) {
@@ -1536,8 +1555,15 @@ function ValidationSession({
   const aiProviderSetupReady =
     !aiSolverSettings.enabled ||
     (aiProviderStatus.checked && aiProviderStatus.allReady)
+  const renderableSessionFlipsAvailable = useMemo(
+    () => hasRenderableValidationFlips(sessionFlips(state)),
+    [state]
+  )
   const canRunAiSolve =
-    aiSolverSettings.enabled && Boolean(aiSessionType) && aiProviderSetupReady
+    aiSolverSettings.enabled &&
+    Boolean(aiSessionType) &&
+    aiProviderSetupReady &&
+    renderableSessionFlipsAvailable
 
   useInterval(
     () => {
@@ -1586,6 +1612,14 @@ function ValidationSession({
     const indexByHash = new Map(
       displayFlips.map((flip, index) => [flip.hash, index])
     )
+    const firstRenderableFlip = displayFlips.find(isRenderableValidationFlip)
+
+    if (firstRenderableFlip) {
+      const pickIndex = indexByHash.get(firstRenderableFlip.hash)
+      if (Number.isFinite(pickIndex)) {
+        send({type: 'PICK', index: pickIndex})
+      }
+    }
 
     setAiSolving(true)
     setAiProgress(t('Preparing flip payloads...'))
@@ -2528,7 +2562,8 @@ function ValidationSession({
                     {waitingForCurrentFlipMessage}
                   </FailedFlipAnnotation>
                   {(shouldOfferRehearsalRestart ||
-                    rehearsalWaitingForHashAssignment) && (
+                    rehearsalWaitingForHashAssignment ||
+                    rehearsalWaitingForKeys) && (
                     <Stack isInline spacing={2}>
                       {shouldOfferRehearsalRestart && (
                         <PrimaryButton onClick={handleRestartRehearsalNetwork}>

@@ -9,7 +9,6 @@ Unlike `python -m mlx_vlm.lora`, this wrapper loads a local dataset created with
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import math
 import time
@@ -21,7 +20,6 @@ import mlx.optimizers as optim
 import numpy as np
 from datasets import load_from_disk
 from tqdm import tqdm
-from transformers.models.qwen2.tokenization_qwen2 import Qwen2Tokenizer
 
 from mlx_vlm.trainer import find_all_linear_names, get_peft_model, save_adapter
 from mlx_vlm.utils import load, load_image_processor
@@ -41,9 +39,7 @@ except ImportError:
     MODERN_TRAINER_API = True
 
 
-SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
-STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
-RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
+DEFAULT_RESEARCH_MODEL_PATH = ""
 TRAINING_PROGRESS_STATE = {
     "global_step": 0,
     "steps_per_epoch": 0,
@@ -136,25 +132,6 @@ def emit_training_progress(loss, *, force: bool = False) -> None:
     )
 
 
-def looks_like_qwen35_model_path(value: str) -> bool:
-    return "qwen3.5-9b" in str(value or "").strip().lower()
-
-
-def ensure_model_runtime_support(model_path: str) -> None:
-    if not looks_like_qwen35_model_path(model_path):
-        return
-
-    if importlib.util.find_spec("mlx_vlm.models.qwen3_5") is not None:
-        return
-
-    raise RuntimeError(
-        "The selected base model requires mlx-vlm support for qwen3_5, but the "
-        "current training environment does not provide that module. "
-        "Use Python 3.10+ and install a newer mlx-vlm release in a dedicated "
-        "training venv, for example: python3.11 -m venv .tmp/flip-train-venv-py311"
-    )
-
-
 def load_model_and_processor(model_path: str):
     load_kwargs = {
         "trust_remote_code": True,
@@ -168,18 +145,6 @@ def load_model_and_processor(model_path: str):
             raise
 
     return load(model_path, trust_remote_code=True)
-
-
-def patch_qwen_tokenizer_vocab() -> None:
-    """Bridge mlx_vlm's detokenizer expectation for slow Qwen tokenizers.
-
-    mlx_vlm currently assumes tokenizer.vocab exists. Slow Qwen tokenizers expose
-    get_vocab() instead, so training dies during processor setup unless we add
-    the compatibility property first.
-    """
-
-    if not hasattr(Qwen2Tokenizer, "vocab"):
-        Qwen2Tokenizer.vocab = property(lambda self: self.get_vocab())
 
 
 def resolve_image_token_index(config: dict) -> int:
@@ -408,9 +373,6 @@ def main(args) -> int:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    patch_qwen_tokenizer_vocab()
-    ensure_model_runtime_support(args.model_path)
-
     print(f"Loading model from {args.model_path}")
     model, processor = load_model_and_processor(args.model_path)
     config = normalize_model_config(model.config.__dict__)
@@ -614,12 +576,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--model-path",
-        default=RECOMMENDED_MAC_MODEL_PATH,
+        default=DEFAULT_RESEARCH_MODEL_PATH,
         help=(
             "MLX model repo or local path used as the base model. "
-            f"Recommended strong-Mac target: {RECOMMENDED_MAC_MODEL_PATH}. "
-            f"Stronger fallback: {STRONG_FALLBACK_MODEL_PATH}. "
-            f"Safe minimum fallback: {SAFE_FALLBACK_MODEL_PATH}."
+            "No approved local base ships by default while IdenaAI remains in "
+            "embryo stage."
         ),
     )
     parser.add_argument(
@@ -689,4 +650,12 @@ if __name__ == "__main__":
         help="Dataset column used for per-example training weights",
     )
 
-    raise SystemExit(main(parser.parse_args()))
+    args = parser.parse_args()
+
+    if not str(args.model_path or "").strip():
+        parser.error(
+            "--model-path is required while no approved local research base is "
+            "bundled by default"
+        )
+
+    raise SystemExit(main(args))

@@ -20,6 +20,9 @@ type ValidationConfig struct {
 	ShortSessionDuration time.Duration
 	// Do not use directly
 	LongSessionDuration time.Duration
+	// Rehearsal-only shortcut: use deterministic shared flip encryption keys
+	// so staged validation does not depend on live flip-key/package gossip.
+	UseSharedFlipKeys bool
 }
 
 func (cfg *ValidationConfig) GetNextValidationTime(validationTime time.Time, networkSize int, enableUpgrade12 bool) time.Time {

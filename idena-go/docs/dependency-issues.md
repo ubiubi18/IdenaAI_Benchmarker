@@ -9,15 +9,15 @@
 - Root cause hypothesis:
   - `idena-go v1.1.2` dependency graph is tied to Go 1.19-era networking stack.
 - Fix attempt:
-  - Build with compatible toolchain via environment override:
-  - `cd $WORKSPACE/idena-go && GOTOOLCHAIN=go1.19.13 go build -o /tmp/idena-go-v1.1.2-arm64 .`
+  - Build with the repo wrapper that pins the compatible toolchain:
+  - `cd $WORKSPACE/idena-go && ./scripts/run-go-toolchain.sh build -o /tmp/idena-go-v1.1.2-arm64 .`
 - Result:
   - Toolchain mismatch resolved; build progressed to next linker issue.
 
 ## 2026-03-25 - Issue 2: Apple Silicon link failure in `idena-wasm-binding`
 
 - Command:
-  - `cd $WORKSPACE/idena-go && GOTOOLCHAIN=go1.19.13 go build -o /tmp/idena-go-v1.1.2-arm64 .`
+  - `cd $WORKSPACE/idena-go && ./scripts/run-go-toolchain.sh build -o /tmp/idena-go-v1.1.2-arm64 .`
 - Error summary:
   - linker failed because upstream module contains `libidena_wasm_darwin_amd64.a` but no darwin/arm64 static archive.
 - Root cause hypothesis:
@@ -32,8 +32,8 @@
   - pointed `idena-go` to local binding module via:
     - `replace github.com/idena-network/idena-wasm-binding => ../idena-wasm-binding`
   - rebuilt with version ldflag and ran wasm package tests:
-  - `cd $WORKSPACE/idena-go && GOTOOLCHAIN=go1.19.13 go build -ldflags "-X main.version=1.1.2" -o /tmp/idena-go-v1.1.2-arm64 .`
-  - `cd $WORKSPACE/idena-go && GOTOOLCHAIN=go1.19.13 go test ./vm/wasm -count=1`
+  - `cd $WORKSPACE/idena-go && ./scripts/run-go-toolchain.sh build -ldflags "-X main.version=1.1.2" -o /tmp/idena-go-v1.1.2-arm64 .`
+  - `cd $WORKSPACE/idena-go && ./scripts/run-go-toolchain.sh test ./vm/wasm -count=1`
 - Result:
   - Node binary builds successfully on macOS arm64 with WASM symbols linked.
   - `vm/wasm` tests pass on this machine.

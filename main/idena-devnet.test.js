@@ -4,6 +4,8 @@ const {
   buildValidationDevnetPlan,
   buildValidationDevnetNodeConfig,
   buildValidationDevnetSeedFlipSubmitArgs,
+  countReadyValidationHashItems,
+  getValidationDevnetPrimaryPeerTarget,
   getValidationDevnetPublishedFlipCount,
   loadValidationDevnetSeedFlips,
   serializeValidationDevnetConfig,
@@ -143,6 +145,8 @@ describe('validation devnet helpers', () => {
       rpcReady: true,
       peerCount: 2,
       syncing: false,
+      online: true,
+      identityState: 'Verified',
       currentPeriod: 'FlipLottery',
       nextValidation: '2026-04-21T12:03:00.000Z',
     })
@@ -158,10 +162,19 @@ describe('validation devnet helpers', () => {
       rpcReady: true,
       peerCount: 2,
       syncing: false,
+      online: true,
+      identityState: 'Verified',
       currentPeriod: 'FlipLottery',
       nextValidation: '2026-04-21T12:03:00.000Z',
     })
     expect(summary.apiKey).toBeUndefined()
+  })
+
+  it('targets a denser primary peer count for rehearsal readiness', () => {
+    expect(getValidationDevnetPrimaryPeerTarget(1)).toBe(1)
+    expect(getValidationDevnetPrimaryPeerTarget(2)).toBe(1)
+    expect(getValidationDevnetPrimaryPeerTarget(3)).toBe(2)
+    expect(getValidationDevnetPrimaryPeerTarget(9)).toBe(3)
   })
 
   it('falls back to madeFlips when identity flip arrays are unavailable', () => {
@@ -178,6 +191,16 @@ describe('validation devnet helpers', () => {
         madeFlips: 99,
       })
     ).toBe(2)
+  })
+
+  it('counts only truly ready validation hashes as ready now', () => {
+    expect(
+      countReadyValidationHashItems([
+        {hash: 'bafkrei-ready', ready: true, available: true},
+        {hash: 'bafkrei-assigned-only', ready: false, available: true},
+        {hash: 'bafkrei-unavailable', ready: false, available: false},
+      ])
+    ).toBe(1)
   })
 
   it('marks the rehearsal RPC connectable once the primary node is fully running', () => {

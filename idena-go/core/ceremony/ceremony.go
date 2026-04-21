@@ -3,6 +3,8 @@ package ceremony
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"github.com/deckarep/golang-set"
 	"github.com/idena-network/idena-go/blockchain"
@@ -61,6 +63,7 @@ type ValidationCeremony struct {
 	shortAnswersSent         bool
 	evidenceSent             bool
 	shortSessionStarted      bool
+	liveValidationSessionId  string
 	shardCandidates          map[common.ShardId]*candidatesOfShard
 	candidateIndexes         map[common.Address]int
 	mutex                    sync.Mutex
@@ -288,13 +291,30 @@ func (vc *ValidationCeremony) GetLongFlipsToSolve(address common.Address, shardI
 	return data
 }
 
-func (vc *ValidationCeremony) SubmitShortAnswers(answers *types.Answers) (common.Hash, error) {
+func (vc *ValidationCeremony) SubmitShortAnswers(answers *types.Answers, sessionId string) (common.Hash, error) {
 	vc.mutex.Lock()
 	prevAnswers := vc.epochDb.ReadOwnShortAnswersBits()
+	prevSessionId := vc.epochDb.ReadOwnShortAnswersSession()
+	if sessionId == "" {
+		sessionId = vc.liveValidationSessionId
+	} else if vc.requiresLiveValidationSession() && vc.liveValidationSessionId != "" && sessionId != vc.liveValidationSessionId {
+		vc.mutex.Unlock()
+		return common.Hash{}, errors.New("validation session id does not match the active live session")
+	}
+	if vc.requiresLiveValidationSession() && sessionId == "" {
+		vc.mutex.Unlock()
+		return common.Hash{}, errors.New("validation session is not prepared")
+	}
+	if len(prevAnswers) > 0 && prevSessionId != sessionId {
+		vc.clearOwnShortAnswersLocked("stale validation session detected before short answers submission")
+		prevAnswers = nil
+		prevSessionId = ""
+	}
 	salt := getShortAnswersSalt(vc.epoch, vc.secStore)
 	var hash [32]byte
 	if len(prevAnswers) == 0 {
 		vc.epochDb.WriteOwnShortAnswers(answers)
+		vc.epochDb.WriteOwnShortAnswersSession(sessionId)
 		hash = crypto.Hash(append(answers.Bytes(), salt[:]...))
 	} else {
 		vc.log.Warn("Repeated short answers submitting")
@@ -325,7 +345,59 @@ func (vc *ValidationCeremony) SubmitLongAnswers(answers *types.Answers) (common.
 	return hash, err
 }
 
+func createValidationSessionId(epoch uint16) (string, error) {
+	randomBytes := make([]byte, 12)
+	if _, err := crand.Read(randomBytes); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("validation-%d-%s", epoch, hex.EncodeToString(randomBytes)), nil
+}
+
+func (vc *ValidationCeremony) PrepareValidationSession(epoch uint16, sessionId string) (string, bool, error) {
+	vc.mutex.Lock()
+	defer vc.mutex.Unlock()
+
+	if epoch != 0 && epoch != vc.epoch {
+		return "", false, errors.Errorf("validation session epoch mismatch: expected %d got %d", vc.epoch, epoch)
+	}
+
+	activeSessionId := vc.liveValidationSessionId
+	if activeSessionId == "" {
+		activeSessionId = sessionId
+	}
+	if activeSessionId == "" {
+		generatedSessionId, err := createValidationSessionId(vc.epoch)
+		if err != nil {
+			return "", false, err
+		}
+		activeSessionId = generatedSessionId
+	}
+	if vc.liveValidationSessionId != activeSessionId {
+		vc.liveValidationSessionId = activeSessionId
+		vc.epochDb.WriteLiveValidationSession(activeSessionId)
+	}
+
+	if !vc.requiresLiveValidationSession() {
+		return activeSessionId, false, nil
+	}
+
+	storedAnswers := vc.epochDb.ReadOwnShortAnswersBits()
+	storedSessionId := vc.epochDb.ReadOwnShortAnswersSession()
+	if len(storedAnswers) == 0 {
+		return activeSessionId, false, nil
+	}
+
+	if storedSessionId == activeSessionId {
+		return activeSessionId, false, nil
+	}
+
+	vc.clearOwnShortAnswersLocked("clearing stale short answers for a new live validation session")
+	return activeSessionId, true, nil
+}
+
 func (vc *ValidationCeremony) restoreState() {
+	vc.liveValidationSessionId = vc.epochDb.ReadLiveValidationSession()
 	vc.generateFlipKeyWordPairs(vc.appState.State.FlipWordsSeed().Bytes())
 	vc.appState.EvidenceMap.SetShortSessionTime(vc.appState.State.NextValidationTime(), vc.config.Validation.GetShortSessionDuration())
 	vc.qualification.restore()
@@ -418,6 +490,7 @@ func (vc *ValidationCeremony) completeEpoch() {
 	vc.shortAnswersSent = false
 	vc.evidenceSent = false
 	vc.shortSessionStarted = false
+	vc.liveValidationSessionId = ""
 	vc.validationStats = nil
 	vc.validationStartCtxCancel = nil
 	vc.epochApplyingCache = make(map[uint64]epochApplyingCache)
@@ -833,6 +906,19 @@ func (vc *ValidationCeremony) broadcastShortAnswersTx() {
 	if vc.shortAnswersSent || !vc.shouldInteractWithNetwork() || !vc.isParticipant() {
 		return
 	}
+	if vc.requiresLiveValidationSession() {
+		if vc.liveValidationSessionId == "" {
+			vc.throttlingLogger.Warn("short answers broadcast skipped until live validation session is prepared")
+			return
+		}
+		storedSessionId := vc.epochDb.ReadOwnShortAnswersSession()
+		if storedSessionId != vc.liveValidationSessionId {
+			vc.mutex.Lock()
+			vc.clearOwnShortAnswersLocked("refusing stale short answers broadcast for a different validation session")
+			vc.mutex.Unlock()
+			return
+		}
+	}
 	answers := vc.epochDb.ReadOwnShortAnswersBits()
 	if answers == nil {
 		vc.log.Error("short session answers are missing")
@@ -849,6 +935,21 @@ func (vc *ValidationCeremony) broadcastShortAnswersTx() {
 		vc.shortAnswersSent = true
 	} else {
 		vc.log.Error("cannot send short answers tx", "err", err)
+	}
+}
+
+func (vc *ValidationCeremony) requiresLiveValidationSession() bool {
+	return vc.determineClientType() == ClientTypeDesktopWithBuiltInNode
+}
+
+func (vc *ValidationCeremony) clearOwnShortAnswersLocked(reason string) {
+	vc.epochDb.ClearOwnShortAnswers()
+	vc.epochDb.RemoveOwnTx(types.SubmitAnswersHashTx)
+	vc.epochDb.RemoveOwnTx(types.SubmitShortAnswersTx)
+	vc.epochDb.RemoveAnswerHash(vc.secStore.GetAddress())
+	vc.shortAnswersSent = false
+	if reason != "" {
+		vc.log.Warn(reason)
 	}
 }
 
@@ -1747,6 +1848,26 @@ func (vc *ValidationCeremony) GetFlipKeys(addr common.Address, cidBytes []byte) 
 	index := vc.getPrivateKeyPackageIndex(addr, author)
 	if index == -1 {
 		return nil, nil, errors.New("invalid private key index")
+	}
+
+	if vc.config != nil && vc.config.Validation != nil && vc.config.Validation.UseSharedFlipKeys {
+		sharedPublicKey := vc.flipper.GetFlipPublicEncryptionKey()
+		sharedPrivateKey := vc.flipper.GetFlipPrivateEncryptionKey()
+		recipientPubKey, err := crypto.UnmarshalPubkey(vc.secStore.GetPubKey())
+		if err != nil {
+			return nil, nil, errors.Wrap(err, "invalid recipient pubkey")
+		}
+		encryptedPrivateKey, err := ecies.Encrypt(
+			crand.Reader,
+			ecies.ImportECDSAPublic(recipientPubKey),
+			crypto.FromECDSA(sharedPrivateKey.ExportECDSA()),
+			nil,
+			nil,
+		)
+		if err != nil {
+			return nil, nil, errors.Wrap(err, "cannot encrypt rehearsal private flip key")
+		}
+		return crypto.FromECDSA(sharedPublicKey.ExportECDSA()), encryptedPrivateKey, nil
 	}
 
 	publicEncryptionKey, encryptedPrivateKey := vc.keysPool.GetPublicFlipKey(author), vc.keysPool.GetEncryptedPrivateFlipKey(index, author)

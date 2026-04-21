@@ -16,8 +16,10 @@ import {getNodeBridge} from '../../../shared/utils/node-bridge'
 import {ValidatonStatusToast} from '../components/toast'
 import {
   canOpenRehearsalValidation,
+  getRehearsalValidationEntryPath,
   getRehearsalValidationBlockedReason,
   normalizeRehearsalDevnetStatus,
+  openValidationLottery,
   REHEARSAL_DEVNET_STATUS_INITIAL,
 } from './use-start-validation'
 
@@ -58,6 +60,17 @@ export function useValidationToast() {
       }),
     [currentPeriod, isRehearsalNodeSession, rehearsalDevnetStatus]
   )
+  const blockedRehearsalButtonLabel = React.useMemo(() => {
+    if (rehearsalBlockedReason === 'failed-rehearsal') {
+      return 'Open node settings'
+    }
+
+    if (rehearsalBlockedReason) {
+      return 'Open session status'
+    }
+
+    return 'Open validation'
+  }, [rehearsalBlockedReason])
 
   React.useEffect(() => {
     if (!isRehearsalNodeSession || getNodeBridge().__idenaFallback) {
@@ -93,13 +106,23 @@ export function useValidationToast() {
   )
 
   const routeToRehearsalEntry = React.useCallback(() => {
-    if (rehearsalBlockedReason) {
-      router.push('/settings/node')
+    const nextPath = getRehearsalValidationEntryPath({
+      blockedReason: rehearsalBlockedReason,
+      canOpenValidation: rehearsalValidationOpenable,
+    })
+
+    if (nextPath === '/validation/lottery') {
+      openValidationLottery(router, {isRehearsalNodeSession})
       return
     }
 
-    router.push('/validation')
-  }, [rehearsalBlockedReason, router])
+    router.push(nextPath)
+  }, [
+    isRehearsalNodeSession,
+    rehearsalBlockedReason,
+    rehearsalValidationOpenable,
+    router,
+  ])
 
   useTrackEpochPeriod({
     onChangeCurrentPeriod: (nextPeriod) => {
@@ -129,7 +152,7 @@ export function useValidationToast() {
             <Button
               variant="unstyled"
               onClick={() => {
-                router.push('/validation/lottery')
+                openValidationLottery(router, {isRehearsalNodeSession})
               }}
             >
               {t('Show countdown')}
@@ -162,7 +185,7 @@ export function useValidationToast() {
             >
               {t(
                 isRehearsalNodeSession && rehearsalBlockedReason
-                  ? 'Open node settings'
+                  ? blockedRehearsalButtonLabel
                   : 'Open validation'
               )}
             </Button>
@@ -196,7 +219,7 @@ export function useValidationToast() {
               {t(
                 isRehearsalNodeSession &&
                   (!rehearsalValidationOpenable || rehearsalBlockedReason)
-                  ? 'Open node settings'
+                  ? blockedRehearsalButtonLabel
                   : 'Open validation'
               )}
             </Button>

@@ -14,7 +14,10 @@ import {SettingsProvider} from '../shared/providers/settings-context'
 import {AutoUpdateProvider} from '../shared/providers/update-context'
 import {ChainProvider} from '../shared/providers/chain-context'
 import {TimingProvider} from '../shared/providers/timing-context'
-import {EpochProvider} from '../shared/providers/epoch-context'
+import {
+  EpochProvider,
+  EpochValidationArchiveEffects,
+} from '../shared/providers/epoch-context'
 import {IdentityProvider} from '../shared/providers/identity-context'
 import {VotingNotificationProvider} from '../shared/providers/voting-notification-context'
 import {OnboardingProvider} from '../shared/providers/onboarding-context'
@@ -202,12 +205,17 @@ function syncLegacyBridgeGlobals(bridge = {}) {
     global.localAi = browserDevLocalAiBridge
   }
 
+  if (Number(bridgeGlobals.totalSystemMemoryBytes) > 0) {
+    global.totalSystemMemoryBytes = Number(bridgeGlobals.totalSystemMemoryBytes)
+  }
+
   syncSharedGlobal('env', global.env)
   syncSharedGlobal('logger', global.logger)
   syncSharedGlobal('openExternal', global.openExternal)
   syncSharedGlobal('aiSolver', global.aiSolver)
   syncSharedGlobal('aiTestUnit', global.aiTestUnit)
   syncSharedGlobal('localAi', global.localAi)
+  syncSharedGlobal('totalSystemMemoryBytes', 0)
   syncSharedGlobal('appVersion', APP_VERSION_FALLBACK)
   syncSharedGlobal('isDev', false)
   syncSharedGlobal('isTest', false)
@@ -307,6 +315,7 @@ function AppProviders(props) {
               <TimingProvider>
                 <EpochProvider>
                   <IdentityProvider>
+                    <EpochValidationArchiveEffects />
                     <OnboardingProvider>
                       <VotingNotificationProvider {...props} />
                     </OnboardingProvider>

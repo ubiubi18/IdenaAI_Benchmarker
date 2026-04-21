@@ -6,12 +6,23 @@ Golang implementation of the Idena network node
 
 ## Building the source
 
-Building `idena-go` required a Go (version 1.16 or later) and a C compiler. `idena-go` uses Go modules as a dependency manager. 
-Once the dependencies are installed, run
+Building `idena-go` requires a Go toolchain, a C compiler, and on macOS arm64 also the local `idena-wasm-binding` artifacts shipped in this workspace. The practical supported toolchain for this snapshot is `go1.19.13`.
+
+Use one of these repo-supported entry points instead of a bare `go build`:
 
 ```shell
-go build
+./scripts/run-go-toolchain.sh build
+make build
 ```
+
+For validation-focused checks:
+
+```shell
+make test-validation
+make test-wasm
+```
+
+The repository also includes `.go-version` and `.tool-versions` so `goenv`, `asdf`, or `mise` can select the compatible toolchain automatically when configured on your machine.
 
 ## Running `idena-go`
 

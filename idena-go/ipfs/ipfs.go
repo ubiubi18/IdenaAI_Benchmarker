@@ -600,9 +600,20 @@ func (p *ipfsProxy) Cid(data []byte) (cid.Cid, error) {
 
 func configureIpfs(cfg *config.IpfsConfig, eventBus eventbus.Bus) (*ipfsConf.Config, error) {
 	updateIpfsConfig := func(ipfsConfig *ipfsConf.Config) error {
-		ipfsConfig.Addresses.Swarm = []string{
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.IpfsPort),
-			fmt.Sprintf("/ip6/::/tcp/%d", cfg.IpfsPort),
+		swarmHost := strings.TrimSpace(cfg.SwarmListenHost)
+		if swarmHost == "" {
+			ipfsConfig.Addresses.Swarm = []string{
+				fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.IpfsPort),
+				fmt.Sprintf("/ip6/::/tcp/%d", cfg.IpfsPort),
+			}
+		} else if ip := net.ParseIP(swarmHost); ip != nil && ip.To4() == nil {
+			ipfsConfig.Addresses.Swarm = []string{
+				fmt.Sprintf("/ip6/%s/tcp/%d", swarmHost, cfg.IpfsPort),
+			}
+		} else {
+			ipfsConfig.Addresses.Swarm = []string{
+				fmt.Sprintf("/ip4/%s/tcp/%d", swarmHost, cfg.IpfsPort),
+			}
 		}
 
 		bps, err := ipfsConf.ParseBootstrapPeers(cfg.BootNodes)

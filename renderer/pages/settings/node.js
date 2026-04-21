@@ -24,6 +24,7 @@ import {
   useNodeState,
   useNodeDispatch,
 } from '../../shared/providers/node-context'
+import {useChainState} from '../../shared/providers/chain-context'
 import {HDivider, Input, Toast} from '../../shared/components/components'
 import {
   SettingsFormControl,
@@ -175,6 +176,7 @@ function NodeSettings() {
   } = useSettingsDispatch()
 
   const {nodeFailed} = useNodeState()
+  const {offline: chainOffline} = useChainState()
 
   const {tryRestartNode} = useNodeDispatch()
 
@@ -398,6 +400,7 @@ function NodeSettings() {
     settings.ephemeralExternalNodeConnected &&
     devnetStatus.primaryRpcUrl &&
     settings.url === devnetStatus.primaryRpcUrl
+  const rehearsalNodeRpcUnavailable = rehearsalNodeConnected && chainOffline
   const rehearsalNeedsConnection =
     devnetStatus.active && devnetStatus.primaryRpcUrl && !rehearsalNodeConnected
   const rehearsalNodeConnectable =
@@ -792,7 +795,7 @@ function NodeSettings() {
                       / {devnetStatus.nodeCount}
                     </Text>
                   )}
-                  {rehearsalNodeConnected && (
+                  {rehearsalNodeConnected && !rehearsalNodeRpcUnavailable && (
                     <Stack spacing={1}>
                       <Text color="green.500">
                         {t(
@@ -810,6 +813,20 @@ function NodeSettings() {
                           {rehearsalSessionMessage}
                         </Text>
                       )}
+                    </Stack>
+                  )}
+                  {rehearsalNodeRpcUnavailable && (
+                    <Stack spacing={1}>
+                      <Text color="red.500">
+                        {t(
+                          'IdenaAI selected the rehearsal node for this app session, but the rehearsal RPC is currently offline or unreachable.'
+                        )}
+                      </Text>
+                      <Text color="muted">
+                        {t(
+                          'The sidebar status is based on live RPC checks. If it shows Offline here, the rehearsal node is not reachable right now even if the last devnet snapshot still looked healthy.'
+                        )}
+                      </Text>
                     </Stack>
                   )}
                 </Stack>

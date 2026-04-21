@@ -902,6 +902,9 @@ func (h *IdenaGossipHandler) broadcastFlipKey(flipKey *types.PublicFlipKey, shar
 }
 
 func (h *IdenaGossipHandler) broadcastFlipKeysPackage(flipKeysPackage *types.PrivateFlipKeysPackage, shardId common.ShardId, own bool) {
+	b, _ := flipKeysPackage.ToBytes()
+	h.peers.SendWithFilterAndExpiration(FlipKeysPackage, msgKey(b), flipKeysPackage, shardId, own, flipKeyMsgCacheAliveTime)
+
 	hash := pushPullHash{
 		Type: pushKeyPackage,
 		Hash: flipKeysPackage.Hash128(),

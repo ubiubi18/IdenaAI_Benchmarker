@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
-DEFAULT_MODEL = "qwen2.5vl:7b"
+DEFAULT_MODEL = ""
 FALLBACK_MODEL = "moondream:latest"
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 DEFAULT_TIMEOUT_SECONDS = 120
@@ -956,8 +956,8 @@ def main() -> int:
         "--model",
         default=DEFAULT_MODEL,
         help=(
-            "Ollama model id. Recommended on stronger Macs: "
-            f"{DEFAULT_MODEL}. Smaller fallback: {FALLBACK_MODEL}"
+            "Ollama model id to benchmark. No default base model is approved at the "
+            f"moment. Example fallback for manual experiments: {FALLBACK_MODEL}"
         ),
     )
     parser.add_argument(
@@ -985,6 +985,12 @@ def main() -> int:
         help="optional path to write the benchmark report JSON",
     )
     args = parser.parse_args()
+
+    if not str(args.model or "").strip():
+        parser.error(
+            "--model is required while IdenaAI is in embryo stage and no local "
+            "runtime base is approved by default"
+        )
 
     flips = load_flips(Path(args.input))
     selected = flips[: max(1, args.max_flips)]

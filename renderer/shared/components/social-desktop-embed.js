@@ -18,7 +18,10 @@ import {useChainState} from '../providers/chain-context'
 import {BASE_API_URL, BASE_INTERNAL_API_PORT} from '../api/api-client'
 
 const SOCIAL_BOOTSTRAP_STORAGE_KEY = 'idenaSocialDesktopBootstrap'
-const SOCIAL_HISTORY_MODE_STORAGE_KEY = 'idenaSocialDesktopHistoryModeV2'
+const SOCIAL_HISTORY_MODE_STORAGE_KEY = 'idenaSocialDesktopHistoryModeV3'
+const SOCIAL_HISTORY_MODE_SESSION_STORAGE_KEY =
+  'idenaSocialDesktopHistoryModeSessionV1'
+const SOCIAL_HISTORY_MODE_LEGACY_STORAGE_KEY = 'idenaSocialDesktopHistoryModeV2'
 const SOCIAL_BOOTSTRAP_MESSAGE_TYPE = 'IDENA_SOCIAL_BOOTSTRAP'
 const SOCIAL_BOOTSTRAP_READY_MESSAGE_TYPE = 'IDENA_SOCIAL_READY'
 const SOCIAL_RPC_REQUEST_MESSAGE_TYPE = 'IDENA_SOCIAL_RPC_REQUEST'
@@ -241,11 +244,30 @@ export default function SocialDesktopEmbed({
   React.useEffect(() => {
     if (typeof window === 'undefined') return
     window.localStorage.removeItem(SOCIAL_BOOTSTRAP_STORAGE_KEY)
+
+    const sessionMode = window.sessionStorage.getItem(
+      SOCIAL_HISTORY_MODE_SESSION_STORAGE_KEY
+    )
     const savedMode = window.localStorage.getItem(
       SOCIAL_HISTORY_MODE_STORAGE_KEY
     )
-    if (savedMode === 'rpc' || savedMode === 'indexer-api') {
-      setHistoryMode(savedMode)
+    const legacySavedMode = window.localStorage.getItem(
+      SOCIAL_HISTORY_MODE_LEGACY_STORAGE_KEY
+    )
+
+    if (sessionMode === 'rpc' || sessionMode === 'indexer-api') {
+      setHistoryMode(sessionMode)
+      return
+    }
+
+    if (savedMode === 'indexer-api' || legacySavedMode === 'indexer-api') {
+      setHistoryMode('indexer-api')
+      return
+    }
+
+    if (savedMode === 'rpc' || legacySavedMode === 'rpc') {
+      window.localStorage.removeItem(SOCIAL_HISTORY_MODE_STORAGE_KEY)
+      window.localStorage.removeItem(SOCIAL_HISTORY_MODE_LEGACY_STORAGE_KEY)
     }
   }, [])
 
@@ -265,7 +287,23 @@ export default function SocialDesktopEmbed({
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return
-    window.localStorage.setItem(SOCIAL_HISTORY_MODE_STORAGE_KEY, historyMode)
+
+    window.sessionStorage.setItem(
+      SOCIAL_HISTORY_MODE_SESSION_STORAGE_KEY,
+      historyMode
+    )
+
+    if (historyMode === 'indexer-api') {
+      window.localStorage.setItem(SOCIAL_HISTORY_MODE_STORAGE_KEY, historyMode)
+      window.localStorage.setItem(
+        SOCIAL_HISTORY_MODE_LEGACY_STORAGE_KEY,
+        historyMode
+      )
+      return
+    }
+
+    window.localStorage.removeItem(SOCIAL_HISTORY_MODE_STORAGE_KEY)
+    window.localStorage.removeItem(SOCIAL_HISTORY_MODE_LEGACY_STORAGE_KEY)
   }, [historyMode])
 
   const postBootstrapToIframe = React.useCallback(() => {
@@ -454,8 +492,8 @@ export default function SocialDesktopEmbed({
                   }}
                 >
                   {usingIndexerFallback
-                    ? 'Use node RPC-only history'
-                    : 'Use official indexer for community history'}
+                    ? 'Try node RPC-only history (advanced)'
+                    : 'Restore full history (official indexer)'}
                 </Button>
                 <Button
                   variant="ghost"
@@ -470,13 +508,26 @@ export default function SocialDesktopEmbed({
             <HStack spacing={3} flexWrap="wrap">
               <Text color="muted" fontSize="xs">
                 {usingIndexerFallback
-                  ? 'Community history: official indexer fallback'
+                  ? 'Community history: official indexer'
                   : 'Community history: node RPC only'}
               </Text>
               <Text color="muted" fontSize="xs">
                 Posting: your own node RPC
               </Text>
             </HStack>
+            {usingIndexerFallback ? (
+              <Text color="green.500" fontSize="xs" lineHeight="tall">
+                Recommended mode is active. Community history is read from the
+                official indexer, while posting still uses your own node RPC.
+              </Text>
+            ) : (
+              <Text color="orange.500" fontSize="xs" lineHeight="tall">
+                RPC-only history is an advanced temporary mode. It can miss
+                older posts, your own past posts, or content your current node
+                cannot fetch from IPFS right now. Switch back to the official
+                indexer for reliable browsing.
+              </Text>
+            )}
             {(offline || syncing) && (
               <Text color="orange.500" fontSize="xs" lineHeight="tall">
                 Your node is currently {offline ? 'offline' : 'syncing'}. The
@@ -512,7 +563,7 @@ export default function SocialDesktopEmbed({
                       label={
                         usingIndexerFallback
                           ? `Older posts are currently loaded from the official Idena indexer at ${SOCIAL_OFFICIAL_INDEXER_URL}. This is read-only fallback for history lookup. Posting still goes through your own node RPC.`
-                          : 'Older posts are currently searched only through your own node RPC. Some nodes do not expose deep post history reliably or quickly.'
+                          : 'Older posts are currently searched only through your own node RPC and IPFS path. This can miss posts whenever the backfill is shallow or your current node cannot fetch the stored CID.'
                       }
                     />
                   </HStack>
@@ -555,7 +606,7 @@ export default function SocialDesktopEmbed({
                 <Text color="muted" fontSize="xs" lineHeight="tall">
                   {usingIndexerFallback
                     ? `Community history is currently read from ${SOCIAL_OFFICIAL_INDEXER_URL}. Posting still stays on your own node RPC.`
-                    : 'RPC-only history is active. This mode may miss broader community posts even when your node is synced.'}
+                    : 'RPC-only history is active for this session only. This mode can miss posts whenever block backfill is shallow or your node IPFS path cannot currently fetch the stored content.'}
                 </Text>
                 {footerContent}
               </Stack>

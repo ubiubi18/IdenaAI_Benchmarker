@@ -143,10 +143,26 @@ function getStoredValidationStatePayload() {
     }
   }
 
+  const normalizedLiveValidationSession = normalizeStoredValidationSession(
+    persistedState[VALIDATION_SESSION_PERSIST_KEY]
+  )
+
+  if (
+    normalizedLiveValidationSession &&
+    Object.keys(persistedState).every(
+      (key) => key === VALIDATION_SESSION_PERSIST_KEY
+    )
+  ) {
+    return {
+      liveValidationSession: normalizedLiveValidationSession,
+      meta: null,
+      snapshot: null,
+    }
+  }
+
   if (persistedState[VALIDATION_STATE_SNAPSHOT_KEY]) {
     return {
-      liveValidationSession:
-        persistedState[VALIDATION_SESSION_PERSIST_KEY] || null,
+      liveValidationSession: normalizedLiveValidationSession,
       meta: normalizeValidationStateMeta(
         persistedState[VALIDATION_STATE_META_KEY]
       ),
@@ -155,8 +171,7 @@ function getStoredValidationStatePayload() {
   }
 
   return {
-    liveValidationSession:
-      persistedState[VALIDATION_SESSION_PERSIST_KEY] || null,
+    liveValidationSession: normalizedLiveValidationSession,
     meta: null,
     snapshot: persistedState,
   }
@@ -294,6 +309,30 @@ export function buildValidationSessionScopeKey({
     : `${nextEpoch}:${nextAddress}:${nextNodeScope}`
 }
 
+function matchesStoredValidationSessionScope(sessionScopeKey, scope = {}) {
+  const fullScopeKey = buildValidationSessionScopeKey(scope)
+
+  if (!sessionScopeKey || !fullScopeKey) {
+    return false
+  }
+
+  if (sessionScopeKey === fullScopeKey) {
+    return true
+  }
+
+  const legacyIdentityScopeKey = buildValidationSessionScopeKey({
+    epoch: scope.epoch,
+    address: scope.address,
+    nodeScope: scope.nodeScope,
+  })
+
+  return Boolean(
+    legacyIdentityScopeKey &&
+      sessionScopeKey === legacyIdentityScopeKey &&
+      fullScopeKey.startsWith(`${legacyIdentityScopeKey}:`)
+  )
+}
+
 function normalizeStoredValidationSession(value) {
   if (value && typeof value === 'object' && value.scopeKey && value.sessionId) {
     return {
@@ -303,6 +342,50 @@ function normalizeStoredValidationSession(value) {
   }
 
   return null
+}
+
+function dropStoredValidationSession() {
+  runtimeValidationSession = null
+
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    if (window.__idenaValidationSession) {
+      delete window.__idenaValidationSession
+    }
+
+    if (window.sessionStorage) {
+      window.sessionStorage.removeItem(VALIDATION_SESSION_STORAGE_KEY)
+    }
+  } catch {
+    // ignore storage cleanup failures
+  }
+}
+
+function persistValidationPayload({
+  liveValidationSession = null,
+  meta = null,
+  snapshot = null,
+} = {}) {
+  const nextPayload = {}
+
+  if (liveValidationSession) {
+    nextPayload[VALIDATION_SESSION_PERSIST_KEY] = liveValidationSession
+  }
+
+  if (snapshot) {
+    if (meta) {
+      nextPayload[VALIDATION_STATE_META_KEY] = meta
+    }
+    nextPayload[VALIDATION_STATE_SNAPSHOT_KEY] = snapshot
+  }
+
+  persistState(
+    'validation2',
+    Object.keys(nextPayload).length ? nextPayload : null
+  )
 }
 
 function readStoredValidationSession(scopeKey = '') {
@@ -431,11 +514,27 @@ export function getCurrentValidationSessionId({
   }
 
   try {
-    const storedSession = readStoredValidationSession(scopeKey)
+    const storedSession = readStoredValidationSession()
 
-    if (storedSession && storedSession.scopeKey === scopeKey) {
-      runtimeValidationSession = storedSession
-      return storedSession.sessionId
+    if (storedSession) {
+      if (
+        matchesStoredValidationSessionScope(storedSession.scopeKey, {
+          epoch,
+          address,
+          nodeScope,
+          validationStart,
+        })
+      ) {
+        runtimeValidationSession = storedSession
+        return storedSession.sessionId
+      }
+
+      const persistedPayload = getStoredValidationStatePayload()
+      dropStoredValidationSession()
+      persistValidationPayload({
+        meta: persistedPayload.meta,
+        snapshot: persistedPayload.snapshot,
+      })
     }
   } catch {
     return ''
@@ -447,26 +546,32 @@ export function getCurrentValidationSessionId({
 export function __resetValidationSessionStateForTests({
   clearStorage = true,
 } = {}) {
-  runtimeValidationSession = null
+  dropStoredValidationSession()
 
   if (typeof window === 'undefined') {
     return
   }
 
   try {
-    if (window.__idenaValidationSession) {
-      delete window.__idenaValidationSession
-    }
-
-    if (clearStorage && window.sessionStorage) {
-      window.sessionStorage.removeItem(VALIDATION_SESSION_STORAGE_KEY)
-    }
-
     if (clearStorage) {
       persistState('validation2', null)
     }
   } catch {
     // ignore test cleanup failures
+  }
+}
+
+export function resetValidationSessionState() {
+  dropStoredValidationSession()
+
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    persistState('validation2', null)
+  } catch {
+    // ignore runtime cleanup failures
   }
 }
 
@@ -489,6 +594,22 @@ export function filterRegularFlips(flips) {
 export const readyNotFetchedFlip = ({ready, fetched}) => ready && !fetched
 
 export const solvableFlips = ({decoded}) => decoded
+
+export function isRenderableValidationFlip(flip) {
+  return Boolean(
+    flip &&
+      flip.decoded === true &&
+      flip.failed !== true &&
+      Array.isArray(flip.images) &&
+      flip.images.length > 0 &&
+      Array.isArray(flip.orders) &&
+      flip.orders.length > 0
+  )
+}
+
+export function hasRenderableValidationFlips(flips) {
+  return Array.isArray(flips) && flips.some(isRenderableValidationFlip)
+}
 /**
  * Fully fetched and decoded flips
  * @param {*} flips
@@ -606,7 +727,7 @@ export function loadValidationStateDefinition(scope = null) {
   }
 
   if (!matchesValidationStateScope(persistedPayload.meta, scope)) {
-    clearValidationState()
+    clearValidationState(scope)
     return null
   }
 
@@ -674,7 +795,7 @@ export function loadValidationStateForPeriod(currentPeriod, scope = null) {
   if (
     shouldDiscardPersistedValidationStateForPeriod(currentPeriod, restoredState)
   ) {
-    clearValidationState()
+    clearValidationState(scope)
     return null
   }
 
@@ -704,16 +825,22 @@ export function loadValidationStateByIdentityScope(scope = null) {
   }
 }
 
-export function clearValidationState() {
+export function clearValidationState(scope = null) {
   const persistedPayload = getStoredValidationStatePayload()
-  const {liveValidationSession} = persistedPayload
-
-  persistState(
-    'validation2',
-    liveValidationSession
-      ? {[VALIDATION_SESSION_PERSIST_KEY]: liveValidationSession}
+  const preservedSession =
+    persistedPayload.liveValidationSession &&
+    matchesStoredValidationSessionScope(
+      persistedPayload.liveValidationSession.scopeKey,
+      scope
+    )
+      ? persistedPayload.liveValidationSession
       : null
-  )
+
+  if (!preservedSession) {
+    dropStoredValidationSession()
+  }
+
+  persistValidationPayload({liveValidationSession: preservedSession})
 }
 
 export function shouldStartValidation(epoch, identity, scope = null) {
@@ -728,7 +855,7 @@ export function shouldStartValidation(epoch, identity, scope = null) {
       const isSameEpoch = epoch.epoch === persistedValidationState.context.epoch
 
       if (!isSameEpoch) {
-        clearValidationState()
+        clearValidationState(scope)
       }
 
       return !isDone || !isSameEpoch

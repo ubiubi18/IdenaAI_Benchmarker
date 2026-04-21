@@ -1,10 +1,31 @@
 import {IdentityStatus} from '../../shared/types'
 import {requestDb} from '../../shared/utils/db'
 
-export function createProfileDb(epoch) {
-  const requestProfileDb = () => global.sub(requestDb(), 'profile')
+function buildProfileScopeSuffix(scope) {
+  const address = String(scope?.address || '')
+    .trim()
+    .toLowerCase()
+  const nodeScope = String(scope?.nodeScope || '')
+    .trim()
+    .toLowerCase()
 
-  const planNextValidationkey = `didPlanNextValidation!!${epoch?.epoch ?? -1}`
+  if (!address && !nodeScope) {
+    return ''
+  }
+
+  return `!!${encodeURIComponent(nodeScope || 'default')}!!${encodeURIComponent(
+    address || 'default'
+  )}`
+}
+
+export function createProfileDb(epoch, scope = null) {
+  const requestProfileDb = () => global.sub(requestDb(), 'profile')
+  const scopeSuffix = buildProfileScopeSuffix(scope)
+
+  const planNextValidationkey = `didPlanNextValidation!!${
+    epoch?.epoch ?? -1
+  }${scopeSuffix}`
+  const didShowValidationResultsKey = `didShowValidationResults!!${epoch?.epoch}${scopeSuffix}`
 
   return {
     getDidPlanNextValidation() {
@@ -14,13 +35,10 @@ export function createProfileDb(epoch) {
       return requestProfileDb().put(planNextValidationkey, value)
     },
     getDidShowValidationResults() {
-      return requestProfileDb().get(`didShowValidationResults!!${epoch?.epoch}`)
+      return requestProfileDb().get(didShowValidationResultsKey)
     },
     putDidShowValidationResults() {
-      return requestProfileDb().put(
-        `didShowValidationResults!!${epoch?.epoch}`,
-        1
-      )
+      return requestProfileDb().put(didShowValidationResultsKey, 1)
     },
     clear() {
       return requestProfileDb().clear()

@@ -43,10 +43,6 @@ const PYTHON_COMMAND_CANDIDATES = [
 ]
 let cachedPythonCommand = null
 
-function looksLikeQwen35ModelPath(value) {
-  return /qwen(?:\/|[-_.])?qwen3\.5-9b|qwen3\.5-9b/i.test(String(value || ''))
-}
-
 function resolveRepoRoot() {
   return path.resolve(__dirname, '..', '..')
 }
@@ -1025,21 +1021,20 @@ function extractFailureReason(error) {
   return 'Developer FLIP training failed'
 }
 
-function formatTrainingFailureReason(error, modelPath) {
+function formatTrainingFailureReason(error) {
   const rawReason = extractFailureReason(error)
   const stderr = String(error && error.stderr ? error.stderr : '').trim()
   const stdout = String(error && error.stdout ? error.stdout : '').trim()
   const combined = `${rawReason}\n${stderr}\n${stdout}`
 
   if (
-    looksLikeQwen35ModelPath(modelPath) &&
-    /qwen3_5|No module named 'mlx_vlm\.models\.qwen3_5'|Model type qwen3_5 not supported/i.test(
+    /No module named 'mlx_vlm\.models\.[^']+'|Model type [a-z0-9_]+ not supported/i.test(
       combined
     )
   ) {
     return [
-      'Qwen3.5 local MLX training requires a newer mlx-vlm build than the current training environment provides.',
-      'Use Python 3.11 or newer, create a dedicated training venv, and install an mlx-vlm release that includes qwen3_5 support.',
+      'The selected local MLX base model is not supported by the current mlx-vlm build.',
+      'Use Python 3.11 or newer, create a dedicated training venv, and install an mlx-vlm release that supports your chosen base model family.',
       'Recommended setup: python3.11 -m venv .tmp/flip-train-venv-py311',
     ].join(' ')
   }
@@ -1932,10 +1927,7 @@ function createDeveloperTrainingRunner({logger, isDev = false} = {}) {
         status: 'failed',
         message: extractFailureReason(error),
       })
-      const failureReason = formatTrainingFailureReason(
-        error,
-        preferredModelPath
-      )
+      const failureReason = formatTrainingFailureReason(error)
 
       if (isDev && logger && typeof logger.error === 'function') {
         logger.error('Developer FLIP training failed', {

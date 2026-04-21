@@ -181,6 +181,8 @@ const RELEASE_REPOSITORY = {
 const RELEASE_URL = `https://api.github.com/repos/${RELEASE_REPOSITORY.owner}/${RELEASE_REPOSITORY.repo}/releases/latest`
 
 let runtimeExternalNodeOverride = null
+let validationDevnetConnectRequested = false
+let validationDevnetConnectCountdownSeconds = null
 
 function normalizeRuntimeExternalNodeOverride(value = null) {
   if (!value || typeof value !== 'object') {
@@ -520,6 +522,23 @@ function shouldEmitValidationDevnetConnectPayload(status, options = {}) {
       ? options.connectCountdownSeconds
       : null,
   })
+}
+
+function maybeEmitRequestedValidationDevnetConnectPayload(status) {
+  if (!validationDevnetConnectRequested) {
+    return false
+  }
+
+  if (
+    !status ||
+    !shouldEmitValidationDevnetConnectPayload(status, {
+      connectCountdownSeconds: validationDevnetConnectCountdownSeconds,
+    })
+  ) {
+    return false
+  }
+
+  return emitValidationDevnetConnectPayload()
 }
 
 async function performNodeRpc(payload = {}) {
@@ -1865,6 +1884,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
     }
     case 'start-local-node': {
       runtimeExternalNodeOverride = null
+      validationDevnetConnectRequested = false
+      validationDevnetConnectCountdownSeconds = null
       if (node && node.exitCode == null) {
         logger.info(`node already managed, PID: ${node.pid || 'unknown'}`)
         sendMainWindowMsg(NODE_EVENT, 'node-started')
@@ -1908,6 +1929,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
     }
     case 'stop-local-node': {
       runtimeExternalNodeOverride = null
+      validationDevnetConnectRequested = false
+      validationDevnetConnectCountdownSeconds = null
       stopNode(node)
         .then((log) => {
           logger.info(log)
@@ -1922,6 +1945,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
     }
     case 'clean-state': {
       runtimeExternalNodeOverride = null
+      validationDevnetConnectRequested = false
+      validationDevnetConnectCountdownSeconds = null
       stopNode(node)
         .then((log) => {
           logger.info(log)
@@ -1938,6 +1963,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
     }
     case 'restart-node': {
       runtimeExternalNodeOverride = null
+      validationDevnetConnectRequested = false
+      validationDevnetConnectCountdownSeconds = null
       stopNode(node)
         .then((log) => {
           logger.info(log)
@@ -1971,6 +1998,12 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'start-validation-devnet': {
+      validationDevnetConnectRequested = data?.connectApp === true
+      validationDevnetConnectCountdownSeconds = Number.isFinite(
+        data?.connectCountdownSeconds
+      )
+        ? data.connectCountdownSeconds
+        : null
       let didEmitConnectPayload = false
 
       validationDevnet
@@ -2014,6 +2047,12 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
     }
     case 'restart-validation-devnet': {
       runtimeExternalNodeOverride = null
+      validationDevnetConnectRequested = data?.connectApp === true
+      validationDevnetConnectCountdownSeconds = Number.isFinite(
+        data?.connectCountdownSeconds
+      )
+        ? data.connectCountdownSeconds
+        : null
       let didEmitConnectPayload = false
       validationDevnet
         .stop({quiet: true})
@@ -2059,6 +2098,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
     }
     case 'stop-validation-devnet': {
       runtimeExternalNodeOverride = null
+      validationDevnetConnectRequested = false
+      validationDevnetConnectCountdownSeconds = null
       validationDevnet
         .stop()
         .then((status) => {
@@ -2074,7 +2115,11 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
         .getStatus({
           onStatus(status) {
             sendMainWindowMsg(NODE_EVENT, 'validation-devnet-status', status)
+            maybeEmitRequestedValidationDevnetConnectPayload(status)
           },
+        })
+        .then((status) => {
+          maybeEmitRequestedValidationDevnetConnectPayload(status)
         })
         .catch((e) => {
           logger.error(
@@ -2105,6 +2150,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
       break
     }
     case 'connect-validation-devnet': {
+      validationDevnetConnectRequested = true
+      validationDevnetConnectCountdownSeconds = null
       validationDevnet
         .getStatus({
           onStatus(status) {
@@ -2131,6 +2178,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
     }
     case 'clear-external-node-override': {
       runtimeExternalNodeOverride = null
+      validationDevnetConnectRequested = false
+      validationDevnetConnectCountdownSeconds = null
       break
     }
 

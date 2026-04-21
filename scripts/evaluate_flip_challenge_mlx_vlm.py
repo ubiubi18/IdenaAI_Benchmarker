@@ -10,7 +10,6 @@ and writes an evaluation summary plus per-example results.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import re
 import time
@@ -20,7 +19,6 @@ from typing import Any, Dict, Optional
 
 import mlx.core as mx
 from datasets import load_from_disk
-from transformers.models.qwen2.tokenization_qwen2 import Qwen2Tokenizer
 
 try:
     from mlx_vlm.utils import generate, load, prepare_inputs
@@ -39,9 +37,7 @@ from prepare_flip_challenge_mlx_vlm import (
 )
 
 
-SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
-STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
-RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
+DEFAULT_RESEARCH_MODEL_PATH = ""
 
 
 def read_run_control(path: str) -> Dict[str, Any]:
@@ -95,25 +91,6 @@ def maybe_sleep_for_cooldown(
     time.sleep(float(resolved_cooldown_ms) / 1000.0)
 
 
-def looks_like_qwen35_model_path(value: str) -> bool:
-    return "qwen3.5-9b" in str(value or "").strip().lower()
-
-
-def ensure_model_runtime_support(model_path: str) -> None:
-    if not looks_like_qwen35_model_path(model_path):
-        return
-
-    if importlib.util.find_spec("mlx_vlm.models.qwen3_5") is not None:
-        return
-
-    raise RuntimeError(
-        "The selected base model requires mlx-vlm support for qwen3_5, but the "
-        "current evaluation environment does not provide that module. "
-        "Use Python 3.10+ and install a newer mlx-vlm release in a dedicated "
-        "training venv, for example: python3.11 -m venv .tmp/flip-train-venv-py311"
-    )
-
-
 def load_model_and_processor(model_path: str, adapter_path: Optional[Path] = None):
     load_kwargs = {
         "adapter_path": str(adapter_path) if adapter_path else None,
@@ -132,11 +109,6 @@ def load_model_and_processor(model_path: str, adapter_path: Optional[Path] = Non
         "trust_remote_code": True,
     }
     return load(model_path, **fallback_kwargs)
-
-
-def patch_qwen_tokenizer_vocab() -> None:
-    if not hasattr(Qwen2Tokenizer, "vocab"):
-        Qwen2Tokenizer.vocab = property(lambda self: self.get_vocab())
 
 
 def read_config_value(source: Any, *keys: str) -> Any:
@@ -970,9 +942,6 @@ def evaluate(args) -> int:
     adapter_path = normalize_adapter_path(args.adapter_path)
     output_path = Path(args.output).resolve() if args.output else None
 
-    patch_qwen_tokenizer_vocab()
-    ensure_model_runtime_support(args.model_path)
-
     print(f"Loading model from {args.model_path}")
     model, processor = load_model_and_processor(args.model_path, adapter_path)
 
@@ -1161,12 +1130,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--model-path",
-        default=RECOMMENDED_MAC_MODEL_PATH,
+        default=DEFAULT_RESEARCH_MODEL_PATH,
         help=(
             "MLX model repo or local path used as the base model. "
-            f"Recommended strong-Mac target: {RECOMMENDED_MAC_MODEL_PATH}. "
-            f"Stronger fallback: {STRONG_FALLBACK_MODEL_PATH}. "
-            f"Safe minimum fallback: {SAFE_FALLBACK_MODEL_PATH}."
+            "No approved local base ships by default while IdenaAI remains in "
+            "embryo stage."
         ),
     )
     parser.add_argument(
@@ -1222,7 +1190,7 @@ if __name__ == "__main__":
             "Evaluation mode: generate free-form answer, score fixed candidates, "
             "do both and prefer scored prediction, compare separate candidate analyses, "
             "or compare separate candidate winner/loser classifications. "
-            "The default score mode keeps Qwen3.5-style thinking output out of the main FLIP gate."
+            "The default score mode keeps free-form reasoning output out of the main FLIP gate."
         ),
     )
     parser.add_argument(
@@ -1263,4 +1231,12 @@ if __name__ == "__main__":
         ),
     )
 
-    raise SystemExit(evaluate(parser.parse_args()))
+    args = parser.parse_args()
+
+    if not str(args.model_path or "").strip():
+        parser.error(
+            "--model-path is required while no approved local research base is "
+            "bundled by default"
+        )
+
+    raise SystemExit(evaluate(args))

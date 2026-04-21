@@ -13,6 +13,8 @@ import (
 
 var (
 	OwnShortAnswerKey     = []byte("own-short")
+	OwnShortAnswerSession = []byte("own-short-session")
+	LiveValidationSession = []byte("live-validation-session")
 	AnswerHashPrefix      = []byte("hash")
 	ShortAnswersKey       = []byte("answers-short")
 	LongShortAnswersKey   = []byte("answers-long")
@@ -150,10 +152,35 @@ func (edb *EpochDb) WriteOwnShortAnswers(answers *types.Answers) {
 	assertNoError(edb.db.Set(OwnShortAnswerKey, answers.Bytes()))
 }
 
+func (edb *EpochDb) ClearOwnShortAnswers() {
+	assertNoError(edb.db.Delete(OwnShortAnswerKey))
+	assertNoError(edb.db.Delete(OwnShortAnswerSession))
+}
+
 func (edb *EpochDb) ReadOwnShortAnswersBits() []byte {
 	data, err := edb.db.Get(OwnShortAnswerKey)
 	assertNoError(err)
 	return data
+}
+
+func (edb *EpochDb) WriteOwnShortAnswersSession(sessionId string) {
+	assertNoError(edb.db.Set(OwnShortAnswerSession, []byte(sessionId)))
+}
+
+func (edb *EpochDb) ReadOwnShortAnswersSession() string {
+	data, err := edb.db.Get(OwnShortAnswerSession)
+	assertNoError(err)
+	return string(data)
+}
+
+func (edb *EpochDb) WriteLiveValidationSession(sessionId string) {
+	assertNoError(edb.db.Set(LiveValidationSession, []byte(sessionId)))
+}
+
+func (edb *EpochDb) ReadLiveValidationSession() string {
+	data, err := edb.db.Get(LiveValidationSession)
+	assertNoError(err)
+	return string(data)
 }
 
 func (edb *EpochDb) WriteAnswers(short []DbAnswer, long []DbAnswer) {

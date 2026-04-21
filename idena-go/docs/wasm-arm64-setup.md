@@ -53,10 +53,10 @@ GO
 
 ```bash
 cd $WORKSPACE/idena-go
-GOTOOLCHAIN=go1.19.13 go build -ldflags "-X main.version=1.1.2" -o "~/Library/Application Support/Idena/node/idena-go" .
+./scripts/run-go-toolchain.sh build -ldflags "-X main.version=1.1.2" -o "~/Library/Application Support/Idena/node/idena-go" .
 chmod 755 "~/Library/Application Support/Idena/node/idena-go"
 "~/Library/Application Support/Idena/node/idena-go" --version
-GOTOOLCHAIN=go1.19.13 go test ./vm/wasm -count=1
+./scripts/run-go-toolchain.sh test ./vm/wasm -count=1
 ```
 
 ## One-command rebuild helper

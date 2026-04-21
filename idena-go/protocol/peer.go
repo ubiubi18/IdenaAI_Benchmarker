@@ -252,7 +252,7 @@ func (p *protoPeer) makeBatches() {
 		flipKeyLoop:
 			for i := 0; i < batchSize-1; i++ {
 				select {
-				case flipKey = <-p.pushQueue:
+				case flipKey = <-p.flipKeyQueue:
 					batch.Data = append(batch.Data, convertItem(flipKey))
 				default:
 					break flipKeyLoop

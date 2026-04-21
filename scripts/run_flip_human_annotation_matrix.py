@@ -29,9 +29,7 @@ MODE_MAPPING = {
     "followup_reasoning": "followup_reasoning",
     "hybrid": "hybrid",
 }
-SAFE_FALLBACK_MODEL_PATH = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
-STRONG_FALLBACK_MODEL_PATH = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
-RECOMMENDED_MAC_MODEL_PATH = "mlx-community/Qwen3.5-9B-MLX-4bit"
+DEFAULT_RESEARCH_MODEL_PATH = ""
 
 
 def run_command(command: List[str]) -> None:
@@ -218,12 +216,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--model-path",
-        default=RECOMMENDED_MAC_MODEL_PATH,
+        default=DEFAULT_RESEARCH_MODEL_PATH,
         help=(
             "MLX model repo or local path for training and evaluation. "
-            f"Recommended strong-Mac target: {RECOMMENDED_MAC_MODEL_PATH}. "
-            f"Stronger fallback: {STRONG_FALLBACK_MODEL_PATH}. "
-            f"Safe minimum fallback: {SAFE_FALLBACK_MODEL_PATH}."
+            "No base model is approved by default while the project is back in "
+            "embryo stage."
         ),
     )
     parser.add_argument("--train-take", type=int, default=0, help="Optional cap on training examples after preparation")
@@ -246,6 +243,12 @@ def main() -> int:
         help="How many matrix-result epochs to keep under output-root/epochs (default: 3)",
     )
     args = parser.parse_args()
+
+    if not str(args.model_path or "").strip():
+        parser.error(
+            "--model-path is required while no approved local research base is "
+            "bundled by default"
+        )
 
     output_root = Path(args.output_root).resolve()
     output_root.mkdir(parents=True, exist_ok=True)

@@ -7,7 +7,9 @@ const {
   shouldRefreshValidationIdentity,
   hasAssignedRehearsalValidationHashes,
   getRehearsalValidationBlockedReason,
+  hasMissedRehearsalReadyWindow,
   canOpenRehearsalValidation,
+  getRehearsalValidationEntryPath,
 } = require('./use-start-validation')
 
 describe('validation auto-flow helpers', () => {
@@ -44,8 +46,27 @@ describe('validation auto-flow helpers', () => {
         },
         identityAddress: '0xabc',
         epochNumber: 42,
+        msUntilValidation: 30 * 1000,
       })
     ).toBe(false)
+  })
+
+  it('forces the lottery window back open near short-session start in session-auto mode', () => {
+    expect(
+      shouldAutoOpenLottery({
+        currentPeriod: EpochPeriod.FlipLottery,
+        pathname: '/home',
+        isCandidate: true,
+        sessionAutoMode: true,
+        dismissedLottery: {
+          address: '0xabc',
+          epoch: 42,
+        },
+        identityAddress: '0xabc',
+        epochNumber: 42,
+        msUntilValidation: 4 * 1000,
+      })
+    ).toBe(true)
   })
 
   it('respects a dismissed lottery screen outside session-auto mode', () => {
@@ -159,6 +180,32 @@ describe('validation auto-flow helpers', () => {
     ).toBe(true)
   })
 
+  it('keeps rehearsal in the countdown state before FlipLottery begins', () => {
+    expect(
+      getRehearsalValidationBlockedReason({
+        currentPeriod: EpochPeriod.None,
+        isRehearsalNodeSession: true,
+        devnetStatus: {
+          active: true,
+          countdownSeconds: 240,
+        },
+      })
+    ).toBe('before-flip-lottery')
+  })
+
+  it('treats FlipLottery as a countdown-only rehearsal state', () => {
+    expect(
+      getRehearsalValidationBlockedReason({
+        currentPeriod: EpochPeriod.FlipLottery,
+        isRehearsalNodeSession: true,
+        devnetStatus: {
+          active: true,
+          countdownSeconds: 120,
+        },
+      })
+    ).toBe('flip-lottery')
+  })
+
   it('blocks rehearsal validation while short-session decryption keys are not ready yet', () => {
     expect(
       getRehearsalValidationBlockedReason({
@@ -170,6 +217,55 @@ describe('validation auto-flow helpers', () => {
           primaryShortHashCount: 6,
           primaryShortHashReadyCount: 0,
         },
+        now: new Date('2026-04-21T12:00:21.000Z').getTime(),
+      })
+    ).toBe('keys-not-ready')
+  })
+
+  it('marks the rehearsal as failed once short session stays at zero ready flips past the grace window', () => {
+    expect(
+      hasMissedRehearsalReadyWindow({
+        currentPeriod: EpochPeriod.ShortSession,
+        isRehearsalNodeSession: true,
+        devnetStatus: {
+          active: true,
+          firstCeremonyAt: '2026-04-21T12:00:00.000Z',
+          primaryShortHashCount: 8,
+          primaryShortHashReadyCount: 0,
+        },
+        now: new Date('2026-04-21T12:00:46.000Z').getTime(),
+      })
+    ).toBe(true)
+
+    expect(
+      getRehearsalValidationBlockedReason({
+        currentPeriod: EpochPeriod.ShortSession,
+        isRehearsalNodeSession: true,
+        devnetStatus: {
+          active: true,
+          firstCeremonyAt: '2026-04-21T12:00:00.000Z',
+          primaryShortHashCount: 8,
+          primaryShortHashReadyCount: 0,
+        },
+        now: new Date('2026-04-21T12:00:46.000Z').getTime(),
+      })
+    ).toBe('failed-rehearsal')
+  })
+
+  it('keeps long-session rehearsal in a waiting state until the ready-flip grace window expires', () => {
+    expect(
+      getRehearsalValidationBlockedReason({
+        currentPeriod: EpochPeriod.LongSession,
+        isRehearsalNodeSession: true,
+        devnetStatus: {
+          active: true,
+          firstCeremonyAt: '2026-04-21T12:00:00.000Z',
+          primaryShortHashCount: 8,
+          primaryLongHashCount: 16,
+          primaryShortHashReadyCount: 0,
+          primaryLongHashReadyCount: 0,
+        },
+        now: new Date('2026-04-21T12:00:30.000Z').getTime(),
       })
     ).toBe('keys-not-ready')
   })
@@ -187,5 +283,23 @@ describe('validation auto-flow helpers', () => {
         },
       })
     ).toBe(true)
+  })
+
+  it('routes blocked rehearsal entry to the waiting-room lottery page', () => {
+    expect(
+      getRehearsalValidationEntryPath({
+        blockedReason: 'keys-not-ready',
+        canOpenValidation: false,
+      })
+    ).toBe('/validation/lottery')
+  })
+
+  it('routes failed rehearsal entry back to node settings', () => {
+    expect(
+      getRehearsalValidationEntryPath({
+        blockedReason: 'failed-rehearsal',
+        canOpenValidation: false,
+      })
+    ).toBe('/settings/node')
   })
 })

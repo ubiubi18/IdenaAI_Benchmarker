@@ -817,6 +817,7 @@ function buildValidationDevnetNodeConfig({
     },
     Validation: {
       ...plan.durations,
+      UseSharedFlipKeys: true,
     },
     Sync: {
       FastSync: false,
@@ -966,9 +967,10 @@ function createValidationDevnetController({
           : null,
       networkId: run && run.plan ? run.plan.networkId : null,
       nodeCount: run && run.nodes ? run.nodes.length : 0,
-      primaryRpcUrl: primaryNode
-        ? `http://127.0.0.1:${primaryNode.rpcPort}`
-        : null,
+      primaryRpcUrl:
+        primaryNode && primaryNode.rpcReady
+          ? `http://127.0.0.1:${primaryNode.rpcPort}`
+          : null,
       primaryValidationAssigned:
         primaryNode && primaryNode.validationAssigned === true,
       primaryShortHashCount:
@@ -1384,6 +1386,29 @@ function createValidationDevnetController({
 
     await Promise.all(state.run.nodes.map((node) => refreshNodeRuntime(node)))
     await refreshPrimaryValidationAssignment(state.run)
+
+    const primaryNode = state.run.nodes.find(
+      ({name}) => name === state.run.plan.primaryNodeName
+    )
+
+    if (
+      primaryNode &&
+      state.status.stage === VALIDATION_DEVNET_PHASE.RUNNING &&
+      (!primaryNode.process ||
+        primaryNode.process.exitCode != null ||
+        !primaryNode.rpcReady)
+    ) {
+      appendLog(
+        '[devnet] primary rehearsal node became unavailable while the rehearsal network was running'
+      )
+
+      return publishStatus({
+        stage: VALIDATION_DEVNET_PHASE.FAILED,
+        error: 'Primary rehearsal node became unavailable.',
+        message: 'Validation rehearsal network failed while running.',
+      })
+    }
+
     return publishStatus()
   }
 

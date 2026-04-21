@@ -18,12 +18,19 @@ import {
   computeValidationCeremonyReadiness,
   getCurrentValidationSessionId,
   rememberValidationSessionId,
+  resetValidationSessionState,
   shouldExpectValidationResults,
   shouldPrepareValidationSession,
   shouldStartValidation,
 } from '../utils'
 
 const DISMISSED_VALIDATION_SCREEN_STORAGE_KEY = 'didCloseValidationScreen'
+const DISMISSED_LOTTERY_SCREEN_STORAGE_KEY = 'didCloseLotteryScreen'
+export const SESSION_AUTO_LOTTERY_RETURN_LEAD_MS = 5 * 1000
+// In the real protocol, public flip keys are first broadcast at short-session
+// start, so a rehearsal run can legitimately have assigned-but-not-ready flips
+// for a while after FlipLottery ends.
+export const REHEARSAL_FLIP_READY_GRACE_MS = 45 * 1000
 export const REHEARSAL_DEVNET_STATUS_INITIAL = {
   active: false,
   stage: 'idle',
@@ -32,6 +39,8 @@ export const REHEARSAL_DEVNET_STATUS_INITIAL = {
   primaryShortHashReadyCount: null,
   primaryLongHashCount: null,
   primaryLongHashReadyCount: null,
+  countdownSeconds: null,
+  firstCeremonyAt: null,
 }
 
 export function isValidationSessionAutoMode(settings = {}) {
@@ -47,9 +56,12 @@ export function shouldAutoOpenLottery({
   currentPeriod,
   pathname = '',
   isCandidate = false,
+  sessionAutoMode = false,
   dismissedLottery = null,
   identityAddress = '',
   epochNumber = null,
+  msUntilValidation = null,
+  forceReturnLeadMs = SESSION_AUTO_LOTTERY_RETURN_LEAD_MS,
 } = {}) {
   if (
     currentPeriod !== EpochPeriod.FlipLottery ||
@@ -57,6 +69,15 @@ export function shouldAutoOpenLottery({
     pathname === '/validation/lottery'
   ) {
     return false
+  }
+
+  const shouldForceReturn =
+    sessionAutoMode &&
+    Number.isFinite(msUntilValidation) &&
+    msUntilValidation <= forceReturnLeadMs
+
+  if (shouldForceReturn) {
+    return true
   }
 
   return !(
@@ -187,13 +208,70 @@ export function normalizeRehearsalDevnetStatus(value) {
       typeof value.primaryLongHashReadyCount === 'number'
         ? value.primaryLongHashReadyCount
         : null,
+    countdownSeconds:
+      typeof value.countdownSeconds === 'number'
+        ? value.countdownSeconds
+        : null,
+    firstCeremonyAt: value.firstCeremonyAt || null,
   }
+}
+
+export function getRehearsalCountdownDurationMs(
+  devnetStatus = REHEARSAL_DEVNET_STATUS_INITIAL
+) {
+  if (typeof devnetStatus?.countdownSeconds === 'number') {
+    return Math.max(0, devnetStatus.countdownSeconds) * 1000
+  }
+
+  if (devnetStatus?.firstCeremonyAt) {
+    const firstCeremonyAt = new Date(devnetStatus.firstCeremonyAt).getTime()
+
+    if (Number.isFinite(firstCeremonyAt)) {
+      return Math.max(0, firstCeremonyAt - Date.now())
+    }
+  }
+
+  return null
+}
+
+export function hasMissedRehearsalReadyWindow({
+  currentPeriod,
+  devnetStatus = REHEARSAL_DEVNET_STATUS_INITIAL,
+  isRehearsalNodeSession = false,
+  now = Date.now(),
+  graceMs = REHEARSAL_FLIP_READY_GRACE_MS,
+} = {}) {
+  if (
+    !isRehearsalNodeSession ||
+    ![EpochPeriod.ShortSession, EpochPeriod.LongSession].includes(currentPeriod)
+  ) {
+    return false
+  }
+
+  const firstCeremonyAt = devnetStatus?.firstCeremonyAt
+    ? new Date(devnetStatus.firstCeremonyAt).getTime()
+    : null
+
+  if (
+    !Number.isFinite(firstCeremonyAt) ||
+    now < firstCeremonyAt + Math.max(0, graceMs)
+  ) {
+    return false
+  }
+
+  return (
+    Math.max(
+      Number(devnetStatus.primaryShortHashReadyCount || 0),
+      Number(devnetStatus.primaryLongHashReadyCount || 0)
+    ) < 1
+  )
 }
 
 export function getRehearsalValidationBlockedReason({
   currentPeriod,
   devnetStatus = REHEARSAL_DEVNET_STATUS_INITIAL,
   isRehearsalNodeSession = false,
+  now = Date.now(),
 } = {}) {
   if (!isRehearsalNodeSession) {
     return ''
@@ -207,8 +285,23 @@ export function getRehearsalValidationBlockedReason({
     return 'failed-rehearsal'
   }
 
-  if (currentPeriod === EpochPeriod.FlipLottery) {
+  if (
+    hasMissedRehearsalReadyWindow({
+      currentPeriod,
+      devnetStatus,
+      isRehearsalNodeSession,
+      now,
+    })
+  ) {
+    return 'failed-rehearsal'
+  }
+
+  if (!currentPeriod || currentPeriod === EpochPeriod.None) {
     return 'before-flip-lottery'
+  }
+
+  if (currentPeriod === EpochPeriod.FlipLottery) {
+    return 'flip-lottery'
   }
 
   if (currentPeriod === EpochPeriod.ShortSession) {
@@ -249,6 +342,36 @@ export function getRehearsalValidationBlockedReason({
 
 export function canOpenRehearsalValidation(args = {}) {
   return !getRehearsalValidationBlockedReason(args)
+}
+
+export function getRehearsalValidationEntryPath({
+  blockedReason = '',
+  canOpenValidation = false,
+} = {}) {
+  if (blockedReason === 'failed-rehearsal') {
+    return '/settings/node'
+  }
+
+  if (canOpenValidation) {
+    return '/validation'
+  }
+
+  return '/validation/lottery'
+}
+
+export function openValidationLottery(
+  router,
+  {isRehearsalNodeSession = false} = {}
+) {
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    window.sessionStorage.removeItem(DISMISSED_LOTTERY_SCREEN_STORAGE_KEY)
+  }
+
+  if (isRehearsalNodeSession) {
+    resetValidationSessionState()
+  }
+
+  return router.push('/validation/lottery')
 }
 
 export function hasAssignedRehearsalValidationHashes({
@@ -677,7 +800,6 @@ export function useAutoStartLottery() {
       settings.useExternalNode,
     ]
   )
-
   useInterval(
     () => {
       if (global.isDev && !global.isTest && !sessionAutoMode) {
@@ -719,6 +841,9 @@ export function useAutoStartLottery() {
           dismissedLottery: didCloseLotteryScreen,
           identityAddress: identity?.address,
           epochNumber: epoch?.epoch,
+          msUntilValidation: epoch?.nextValidation
+            ? Math.max(0, new Date(epoch.nextValidation).getTime() - Date.now())
+            : null,
         })
       ) {
         router.push('/validation/lottery')

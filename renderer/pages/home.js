@@ -17,6 +17,7 @@ import {useTranslation} from 'react-i18next'
 import {useRouter} from 'next/router'
 import {useIdentityState} from '../shared/providers/identity-context'
 import {useEpochState} from '../shared/providers/epoch-context'
+import {useSettingsState} from '../shared/providers/settings-context'
 import {
   UserInlineCard,
   UserStatList,
@@ -61,7 +62,11 @@ import {
   buildNextValidationCalendarLink,
   formatValidationDate,
 } from '../shared/utils/utils'
-import {shouldExpectValidationResults} from '../screens/validation/utils'
+import {
+  buildValidationIdentityScope,
+  buildValidationSessionNodeScope,
+  shouldExpectValidationResults,
+} from '../screens/validation/utils'
 import {InviteProvider} from '../shared/providers/invite-context'
 import {useChainState} from '../shared/providers/chain-context'
 import {
@@ -135,6 +140,7 @@ export default function ProfilePage() {
   } = identity
 
   const epoch = useEpochState()
+  const settings = useSettingsState()
 
   const {
     isOpen: isOpenNextValidationDialog,
@@ -142,13 +148,38 @@ export default function ProfilePage() {
     onClose: onCloseNextValidationDialog,
   } = useDisclosure()
 
-  const profileDb = React.useMemo(() => createProfileDb(epoch), [epoch])
+  const validationIdentityScope = React.useMemo(
+    () =>
+      buildValidationIdentityScope({
+        address,
+        nodeScope: buildValidationSessionNodeScope({
+          runInternalNode: settings.runInternalNode,
+          useExternalNode: settings.useExternalNode,
+          url: settings.url,
+          internalPort: settings.internalPort,
+        }),
+      }),
+    [
+      address,
+      settings.internalPort,
+      settings.runInternalNode,
+      settings.url,
+      settings.useExternalNode,
+    ]
+  )
+  const profileDb = React.useMemo(
+    () => createProfileDb(epoch, validationIdentityScope),
+    [epoch, validationIdentityScope]
+  )
 
   const [showValidationResults, setShowValidationResults] = React.useState()
 
   React.useEffect(() => {
     const epochNumber = epoch?.epoch
-    if (epoch && shouldExpectValidationResults(epochNumber)) {
+    if (
+      epoch &&
+      shouldExpectValidationResults(epochNumber, validationIdentityScope)
+    ) {
       profileDb
         .getDidShowValidationResults()
         .then((seen) => {
@@ -158,7 +189,7 @@ export default function ProfilePage() {
           setShowValidationResults(true)
         })
     }
-  }, [epoch, profileDb])
+  }, [epoch, profileDb, validationIdentityScope])
 
   React.useEffect(() => {
     if (showValidationResults === false)

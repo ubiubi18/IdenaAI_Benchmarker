@@ -38,6 +38,7 @@ var (
 var (
 	KeyIsAlreadyPublished = errors.New("sender has already published his keys")
 	KeySkipped            = errors.New("key has been skipped")
+	errKeyFlipsMissing    = errors.New("flips is missing")
 )
 
 type FlipKeysPool interface {
@@ -70,10 +71,12 @@ type KeysPool struct {
 	flipKeys           map[common.Address]*types.PublicFlipKey
 	publicKeyMutex     sync.RWMutex
 	flipKeysSyncCounts map[common.Address]int
+	pendingFlipKeys    map[common.Address]*types.PublicFlipKey
 
 	flipKeyPackages           map[common.Address]*types.PrivateFlipKeysPackage
 	privateKeysMutex          sync.RWMutex
 	flipKeyPackagesSyncCounts map[common.Hash128]int
+	pendingFlipKeyPackages    map[common.Address]*types.PrivateFlipKeysPackage
 
 	flipKeyPackagesByHash map[common.Hash128]*flipKeyPackageWrapper
 	privateKeysArrayCache map[common.Address]*keysArray
@@ -94,9 +97,11 @@ func NewKeysPool(db dbm.DB, appState *appstate.AppState, bus eventbus.Bus, secSt
 		log:                       log.New(),
 		flipKeys:                  make(map[common.Address]*types.PublicFlipKey),
 		flipKeysSyncCounts:        make(map[common.Address]int),
+		pendingFlipKeys:           make(map[common.Address]*types.PublicFlipKey),
 		flipKeyPackages:           make(map[common.Address]*types.PrivateFlipKeysPackage),
 		flipKeyPackagesByHash:     make(map[common.Hash128]*flipKeyPackageWrapper),
 		flipKeyPackagesSyncCounts: make(map[common.Hash128]int),
+		pendingFlipKeyPackages:    make(map[common.Address]*types.PrivateFlipKeysPackage),
 		privateKeysArrayCache:     make(map[common.Address]*keysArray),
 		secStore:                  secStore,
 		packagesLoadingCtx:        ctx,
@@ -115,6 +120,7 @@ func (p *KeysPool) Initialize(head *types.Header) {
 		func(e eventbus.Event) {
 			newBlockEvent := e.(*events.NewBlockEvent)
 			p.head = newBlockEvent.Block.Header
+			p.retryPendingKeys()
 		})
 	p.pushTracker.Run()
 
@@ -181,11 +187,18 @@ func (p *KeysPool) putPublicFlipKey(key *types.PublicFlipKey, appState *appstate
 	sender, _ := types.SenderFlipKey(key)
 
 	if old, ok := p.flipKeys[sender]; ok && old.Epoch >= key.Epoch {
+		delete(p.pendingFlipKeys, sender)
 		p.publicKeyMutex.Unlock()
 		return KeyIsAlreadyPublished
 	}
 
 	if err := validateFlipKey(appState, key); err != nil {
+		if shouldRetryKeyValidation(err) {
+			p.pendingFlipKeys[sender] = key
+			p.publicKeyMutex.Unlock()
+			p.log.Trace("PublicFlipKey is pending until sender flips are visible", "sender", sender.Hex(), "err", err)
+			return KeySkipped
+		}
 		p.publicKeyMutex.Unlock()
 		log.Trace("PublicFlipKey is not valid", "sender", sender.Hex(), "err", err)
 		return err
@@ -194,6 +207,7 @@ func (p *KeysPool) putPublicFlipKey(key *types.PublicFlipKey, appState *appstate
 	key.SetShardId(appState.State.ShardId(sender))
 	key.SetHighPriority(own)
 	p.flipKeys[sender] = key
+	delete(p.pendingFlipKeys, sender)
 
 	p.appState.EvidenceMap.NewFlipsKey(sender)
 
@@ -234,17 +248,25 @@ func (p *KeysPool) putPrivateFlipKeysPackage(keysPackage *types.PrivateFlipKeysP
 	p.privateKeysMutex.Lock()
 
 	if old, ok := p.flipKeyPackages[sender]; ok && old.Epoch >= keysPackage.Epoch {
+		delete(p.pendingFlipKeyPackages, sender)
 		p.privateKeysMutex.Unlock()
 		return KeyIsAlreadyPublished
 	}
 
 	if err := validateFlipKeysPackage(appState, keysPackage); err != nil {
+		if shouldRetryKeyValidation(err) {
+			p.pendingFlipKeyPackages[sender] = keysPackage
+			p.privateKeysMutex.Unlock()
+			p.log.Trace("PrivateFlipKeysPackage is pending until sender flips are visible", "sender", sender.Hex(), "err", err)
+			return KeySkipped
+		}
 		p.privateKeysMutex.Unlock()
 		log.Trace("PrivateFLipKeysPackage is not valid", "sender", sender.Hex(), "err", err)
 		return err
 	}
 
 	p.flipKeyPackages[sender] = keysPackage
+	delete(p.pendingFlipKeyPackages, sender)
 	shortHash := keysPackage.Hash128()
 	p.flipKeyPackagesByHash[shortHash] = &flipKeyPackageWrapper{keysPackage, appState.State.ShardId(sender), own}
 	p.pushTracker.RemovePull(shortHash)
@@ -408,8 +430,10 @@ func (p *KeysPool) Clear() {
 
 	p.cancelLoadingCtx()
 	p.flipKeys = make(map[common.Address]*types.PublicFlipKey)
+	p.pendingFlipKeys = make(map[common.Address]*types.PublicFlipKey)
 	p.flipKeyPackagesSyncCounts = map[common.Hash128]int{}
 	p.flipKeyPackages = make(map[common.Address]*types.PrivateFlipKeysPackage)
+	p.pendingFlipKeyPackages = make(map[common.Address]*types.PrivateFlipKeysPackage)
 	p.flipKeyPackagesByHash = make(map[common.Hash128]*flipKeyPackageWrapper)
 	p.flipKeyPackagesSyncCounts = map[common.Hash128]int{}
 	p.privateKeysArrayCache = make(map[common.Address]*keysArray)
@@ -475,9 +499,59 @@ func validateKey(sender common.Address, epoch uint16, appState *appstate.AppStat
 
 	identity := appState.State.GetIdentity(sender)
 	if len(identity.Flips) == 0 {
-		return errors.New("flips is missing")
+		return errKeyFlipsMissing
 	}
 	return nil
+}
+
+func shouldRetryKeyValidation(err error) bool {
+	return err == errKeyFlipsMissing
+}
+
+func (p *KeysPool) retryPendingKeys() {
+	if p.head == nil {
+		return
+	}
+
+	appState, err := p.appState.Readonly(p.head.Height())
+	if err != nil {
+		p.log.Trace("Unable to retry pending flip keys", "height", p.head.Height(), "err", err)
+		return
+	}
+
+	p.publicKeyMutex.RLock()
+	pendingFlipKeys := make([]*types.PublicFlipKey, 0, len(p.pendingFlipKeys))
+	for _, key := range p.pendingFlipKeys {
+		pendingFlipKeys = append(pendingFlipKeys, key)
+	}
+	p.publicKeyMutex.RUnlock()
+
+	for _, key := range pendingFlipKeys {
+		if err := p.putPublicFlipKey(key, appState, false); err != nil && !shouldRetryKeyValidation(err) && err != KeyIsAlreadyPublished {
+			sender, _ := types.SenderFlipKey(key)
+			p.publicKeyMutex.Lock()
+			delete(p.pendingFlipKeys, sender)
+			p.publicKeyMutex.Unlock()
+			p.log.Trace("Dropping pending public flip key", "sender", sender.Hex(), "err", err)
+		}
+	}
+
+	p.privateKeysMutex.RLock()
+	pendingFlipKeyPackages := make([]*types.PrivateFlipKeysPackage, 0, len(p.pendingFlipKeyPackages))
+	for _, keyPackage := range p.pendingFlipKeyPackages {
+		pendingFlipKeyPackages = append(pendingFlipKeyPackages, keyPackage)
+	}
+	p.privateKeysMutex.RUnlock()
+
+	for _, keyPackage := range pendingFlipKeyPackages {
+		if err := p.putPrivateFlipKeysPackage(keyPackage, appState, false); err != nil && !shouldRetryKeyValidation(err) && err != KeyIsAlreadyPublished {
+			sender, _ := types.SenderFlipKeysPackage(keyPackage)
+			p.privateKeysMutex.Lock()
+			delete(p.pendingFlipKeyPackages, sender)
+			p.privateKeysMutex.Unlock()
+			p.log.Trace("Dropping pending private flip keys package", "sender", sender.Hex(), "err", err)
+		}
+	}
 }
 
 type keysArray struct {

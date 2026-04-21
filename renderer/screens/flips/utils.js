@@ -46,8 +46,29 @@ export function isPendingKeywordPair(flips, id) {
   )
 }
 
-export function didArchiveFlips(epoch) {
-  const persistedState = loadPersistentStateValue('flipArchive', epoch)
+function buildFlipArchiveKey(epoch, scope = null) {
+  const nextEpoch = String(epoch ?? '').trim()
+  const address = String(scope?.address || '')
+    .trim()
+    .toLowerCase()
+  const nodeScope = String(scope?.nodeScope || '')
+    .trim()
+    .toLowerCase()
+
+  if (!address && !nodeScope) {
+    return epoch
+  }
+
+  return `${nextEpoch}::${encodeURIComponent(
+    nodeScope || 'default'
+  )}::${encodeURIComponent(address || 'default')}`
+}
+
+export function didArchiveFlips(epoch, scope = null) {
+  const persistedState = loadPersistentStateValue(
+    'flipArchive',
+    buildFlipArchiveKey(epoch, scope)
+  )
   if (persistedState) return persistedState.archived
   return false
 }
@@ -75,10 +96,11 @@ export function handleOutdatedFlips() {
   if (flips.filter(outdatedFlip).length > 0) saveFlips(flips.filter(freshFlip))
 }
 
-export function markFlipsArchived(epoch) {
-  const persistedState = loadPersistentStateValue('flipArchive', epoch)
+export function markFlipsArchived(epoch, scope = null) {
+  const archiveKey = buildFlipArchiveKey(epoch, scope)
+  const persistedState = loadPersistentStateValue('flipArchive', archiveKey)
   if (persistedState && persistedState.archived) return
-  persistItem('flipArchive', epoch, {
+  persistItem('flipArchive', archiveKey, {
     archived: true,
     archivedAt: new Date().toISOString(),
   })
