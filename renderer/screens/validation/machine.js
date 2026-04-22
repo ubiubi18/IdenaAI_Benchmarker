@@ -943,6 +943,10 @@ export const createValidationMachine = ({
                             log(),
                           ],
                         },
+                        SUBMIT_NOW: {
+                          target: 'submitLongSession',
+                          actions: log(),
+                        },
                         FINISH_FLIPS: {
                           target: 'finishFlips',
                           actions: log(),
@@ -975,7 +979,8 @@ export const createValidationMachine = ({
                         REPORT_WORDS: {
                           actions: ['reportFlip'],
                         },
-                        SUBMIT: 'review',
+                        SUBMIT: 'submitLongSession',
+                        SUBMIT_NOW: 'submitLongSession',
                         PICK_INDEX: {
                           actions: [
                             send((_, {index}) => ({
@@ -988,6 +993,7 @@ export const createValidationMachine = ({
                     },
                     review: {
                       on: {
+                        SUBMIT_NOW: 'submitLongSession',
                         CHECK_FLIPS: {
                           target: 'keywords',
                           actions: [

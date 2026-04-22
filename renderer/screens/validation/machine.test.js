@@ -189,4 +189,116 @@ describe('validation machine', () => {
 
     service.stop()
   })
+
+  it('submits long answers directly from the flip-answering stage', async () => {
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    URL.revokeObjectURL = jest.fn()
+
+    try {
+      const machine = createValidationMachine({
+        epoch: 1,
+        validationStart: Date.now() + 60 * 1000,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        validationSessionId: '',
+        locale: 'en',
+        initialValidationPeriod: 'long',
+        initialLongFlips: [
+          {
+            hash: '0xlong-submit-now',
+            decoded: true,
+            option: 1,
+            images: ['blob:long-submit-now'],
+          },
+        ],
+      })
+
+      const service = interpret(machine).start()
+
+      service.send('START_LONG_SESSION')
+      expect(service.state.matches('longSession.solve.answer.flips')).toBe(true)
+
+      service.send('SUBMIT_NOW')
+
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Timed out waiting for long submit success'))
+        }, 1000)
+
+        service.onTransition((state) => {
+          if (state.matches('validationSucceeded')) {
+            clearTimeout(timeout)
+            resolve()
+          }
+        })
+      })
+
+      expect(service.state.matches('validationSucceeded')).toBe(true)
+      expect(service.state.context.submitLongAnswersHash).toBe('0xtx')
+
+      service.stop()
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl
+    }
+  })
+
+  it('submits long answers directly from keywords without opening review', async () => {
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    URL.revokeObjectURL = jest.fn()
+
+    try {
+      const machine = createValidationMachine({
+        epoch: 1,
+        validationStart: Date.now() + 60 * 1000,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        validationSessionId: '',
+        locale: 'en',
+        initialValidationPeriod: 'long',
+        initialLongFlips: [
+          {
+            hash: '0xlong-keywords-submit',
+            decoded: true,
+            option: 1,
+            images: ['blob:long-keywords-submit'],
+          },
+        ],
+      })
+
+      const service = interpret(machine).start()
+
+      service.send('START_LONG_SESSION')
+      service.send('FINISH_FLIPS')
+      service.send('START_KEYWORDS_QUALIFICATION')
+
+      expect(service.state.matches('longSession.solve.answer.keywords')).toBe(
+        true
+      )
+
+      service.send('SUBMIT')
+
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Timed out waiting for keyword submit success'))
+        }, 1000)
+
+        service.onTransition((state) => {
+          if (state.matches('validationSucceeded')) {
+            clearTimeout(timeout)
+            resolve()
+          }
+        })
+      })
+
+      expect(service.state.matches('validationSucceeded')).toBe(true)
+      expect(service.state.matches('longSession.solve.answer.review')).toBe(
+        false
+      )
+      expect(service.state.context.submitLongAnswersHash).toBe('0xtx')
+
+      service.stop()
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl
+    }
+  })
 })

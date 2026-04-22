@@ -44,12 +44,42 @@ export function ValidationReportSummary({onClose}) {
     earningsScore,
     totalMissedReward,
     validationResult,
+    rehearsalBenchmarkSummary,
     isLoading,
   } = useValidationReportSummary()
 
   const {
     short: {score: shortScore},
   } = lastValidationScore
+
+  let resolvedTotalScore = Number.isFinite(totalScore) ? totalScore : null
+  if (resolvedTotalScore === null && rehearsalBenchmarkSummary.available) {
+    resolvedTotalScore = rehearsalBenchmarkSummary.accuracy
+  }
+
+  let resolvedShortScore = Number.isFinite(shortScore) ? shortScore : null
+  if (resolvedShortScore === null && rehearsalBenchmarkSummary.available) {
+    resolvedShortScore = rehearsalBenchmarkSummary.sessions.short.accuracy
+  }
+
+  let scoreGaugeValue = 2
+  if (Number.isFinite(resolvedTotalScore)) {
+    scoreGaugeValue = resolvedTotalScore * 100
+  } else if (Number.isFinite(resolvedShortScore)) {
+    scoreGaugeValue = resolvedShortScore * 100
+  }
+  const scoreGaugeLabel =
+    rehearsalBenchmarkSummary.available && !Number.isFinite(totalScore)
+      ? t('Benchmark accuracy')
+      : t('Score')
+  const consensusSubsetText = rehearsalBenchmarkSummary.rawConsensusAvailable
+    ? t('{{correct}}/{{total}} flips matched the raw vote-backed subset.', {
+        correct: rehearsalBenchmarkSummary.consensusBacked.correct,
+        total: rehearsalBenchmarkSummary.consensusBacked.total,
+      })
+    : t(
+        'This rehearsal slice only includes agreed-answer benchmark labels; raw vote counts were not bundled here.'
+      )
 
   const dna = toLocaleDna(i18n.language, {maximumFractionDigits: 3})
 
@@ -114,19 +144,24 @@ export function ValidationReportSummary({onClose}) {
                 <ValidationReportGaugeBox>
                   {isValidated ? (
                     <ValidationReportGaugeBar
-                      value={totalScore * 100}
+                      value={scoreGaugeValue}
                       color={
                         // eslint-disable-next-line no-nested-ternary
-                        totalScore <= 0.75
+                        (resolvedTotalScore ?? resolvedShortScore ?? 0) <= 0.75
                           ? colors.red[500]
-                          : totalScore <= 0.9
+                          : (resolvedTotalScore ?? resolvedShortScore ?? 0) <=
+                            0.9
                           ? colors.orange[500]
                           : colors.green[500]
                       }
                     />
                   ) : (
                     <ValidationReportGaugeBar
-                      value={shortScore || 2}
+                      value={
+                        Number.isFinite(resolvedShortScore)
+                          ? resolvedShortScore * 100
+                          : 2
+                      }
                       color={colors.red[500]}
                     />
                   )}
@@ -135,7 +170,9 @@ export function ValidationReportSummary({onClose}) {
                 <ValidationReportGaugeStat>
                   {isValidated ? (
                     <ValidationReportGaugeStatValue>
-                      {toPercent(totalScore)}
+                      {Number.isFinite(resolvedTotalScore)
+                        ? toPercent(resolvedTotalScore)
+                        : '–'}
                     </ValidationReportGaugeStatValue>
                   ) : (
                     <ValidationReportGaugeStatValue color="red.500">
@@ -146,7 +183,7 @@ export function ValidationReportSummary({onClose}) {
                     {[
                       ValidationResult.Success,
                       ValidationResult.Penalty,
-                    ].includes(validationResult) && t('Score')}
+                    ].includes(validationResult) && scoreGaugeLabel}
                     {validationResult === ValidationResult.LateSubmission &&
                       t('Late submission')}
                     {validationResult === ValidationResult.MissedValidation &&
@@ -202,6 +239,11 @@ export function ValidationReportSummary({onClose}) {
             </Flex>
             <Flex justify="space-between">
               <Box>
+                {rehearsalBenchmarkSummary.available ? (
+                  <SmallText color="muted" mb="2">
+                    {consensusSubsetText}
+                  </SmallText>
+                ) : null}
                 <TextLink
                   href="/validation/report"
                   fontWeight={500}

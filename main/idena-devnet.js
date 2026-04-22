@@ -76,6 +76,7 @@ const VALIDATION_DEVNET_DEFAULT_SEED_FILES = [
     'flip-challenge-test-5-decoded-labeled.json'
   ),
 ]
+const VALIDATION_DEVNET_MIN_CONSENSUS_BACKED_COVERAGE = 1 / 3
 const VALIDATION_DEVNET_LOCAL_FALLBACK_SEED_FILES = [
   path.join(
     __dirname,
@@ -379,13 +380,108 @@ function normalizeValidationDevnetSeedWords(value, extras = {}) {
     .slice(0, 2)
 }
 
+function normalizeValidationDevnetSeedAnswer(value) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return ['left', 'right', 'skip'].includes(next) ? next : null
+}
+
+function normalizeValidationDevnetSeedStrength(value) {
+  const next = String(value || '').trim()
+  return next || null
+}
+
+function normalizeValidationDevnetSeedVotes(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const left = Number.parseInt(value.Left ?? value.left, 10)
+  const right = Number.parseInt(value.Right ?? value.right, 10)
+  const reported = Number.parseInt(
+    value.Reported ?? value.reported ?? value.skip ?? value.inappropriate,
+    10
+  )
+  const normalized = {
+    left: Number.isFinite(left) && left >= 0 ? left : 0,
+    right: Number.isFinite(right) && right >= 0 ? right : 0,
+    reported: Number.isFinite(reported) && reported >= 0 ? reported : 0,
+  }
+  const total = normalized.left + normalized.right + normalized.reported
+
+  return total > 0
+    ? {
+        ...normalized,
+        total,
+      }
+    : null
+}
+
+function hasValidationDevnetSeedConsensusVotes(flip) {
+  return Boolean(
+    normalizeValidationDevnetSeedVotes(flip?.consensusVotes || flip?.votes)
+  )
+}
+
+function prioritizeValidationDevnetSeedFlips(flips = []) {
+  const consensusBacked = []
+  const benchmarkOnly = []
+
+  ;(Array.isArray(flips) ? flips : []).forEach((flip) => {
+    if (hasValidationDevnetSeedConsensusVotes(flip)) {
+      consensusBacked.push(flip)
+    } else {
+      benchmarkOnly.push(flip)
+    }
+  })
+
+  return consensusBacked.concat(benchmarkOnly)
+}
+
 function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
   return (Array.isArray(flips) ? flips : []).reduce((result, flip) => {
     const hash = String(flip?.hash || '').trim()
-    const expectedAnswer = String(flip?.expectedAnswer || '')
-      .trim()
-      .toLowerCase()
-    const expectedStrength = String(flip?.expectedStrength || '').trim()
+    const expectedAnswer =
+      normalizeValidationDevnetSeedAnswer(flip?.expectedAnswer) ||
+      normalizeValidationDevnetSeedAnswer(flip?.consensusAnswer) ||
+      normalizeValidationDevnetSeedAnswer(
+        Array.isArray(flip?.agreedAnswer) && flip.agreedAnswer[0]
+      ) ||
+      normalizeValidationDevnetSeedAnswer(
+        Array.isArray(flip?.agreed_answer) && flip.agreed_answer[0]
+      )
+    const expectedStrength =
+      normalizeValidationDevnetSeedStrength(flip?.expectedStrength) ||
+      normalizeValidationDevnetSeedStrength(flip?.consensusStrength) ||
+      normalizeValidationDevnetSeedStrength(
+        Array.isArray(flip?.agreedAnswer) && flip.agreedAnswer[1]
+      ) ||
+      normalizeValidationDevnetSeedStrength(
+        Array.isArray(flip?.agreed_answer) && flip.agreed_answer[1]
+      )
+    const consensusAnswer =
+      normalizeValidationDevnetSeedAnswer(flip?.consensusAnswer) ||
+      normalizeValidationDevnetSeedAnswer(
+        Array.isArray(flip?.agreedAnswer) && flip.agreedAnswer[0]
+      ) ||
+      normalizeValidationDevnetSeedAnswer(
+        Array.isArray(flip?.agreed_answer) && flip.agreed_answer[0]
+      ) ||
+      expectedAnswer
+    const consensusStrength =
+      normalizeValidationDevnetSeedStrength(flip?.consensusStrength) ||
+      normalizeValidationDevnetSeedStrength(
+        Array.isArray(flip?.agreedAnswer) && flip.agreedAnswer[1]
+      ) ||
+      normalizeValidationDevnetSeedStrength(
+        Array.isArray(flip?.agreed_answer) && flip.agreed_answer[1]
+      ) ||
+      expectedStrength
+    const consensusVotes = normalizeValidationDevnetSeedVotes(
+      flip?.consensusVotes || flip?.votes
+    )
     const words = normalizeValidationDevnetSeedWords(
       flip?.words || flip?.keywords,
       {
@@ -396,11 +492,20 @@ function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
       }
     )
 
-    if (hash && ['left', 'right', 'skip'].includes(expectedAnswer)) {
+    if (hash && expectedAnswer) {
       result[hash] = {
         expectedAnswer,
-        expectedStrength: expectedStrength || null,
+        expectedStrength,
+        consensusAnswer,
+        consensusStrength,
+        consensusVotes,
         words,
+        sourceDataset: String(
+          flip?.sourceDataset || flip?.source_dataset || ''
+        ).trim(),
+        sourceSplit: String(
+          flip?.sourceSplit || flip?.source_split || ''
+        ).trim(),
       }
     }
 
@@ -596,6 +701,33 @@ function collectSeedFlipCandidate(
     `${candidatePath}:${collectedFlips.length}:${flip?.images?.[0] || ''}`
 
   if (seenHashes.has(dedupeKey)) {
+    if (flipHash) {
+      const existingIndex = collectedFlips.findIndex(
+        (candidate) =>
+          normalizeValidationDevnetSeedHash(candidate?.hash || '') === flipHash
+      )
+
+      if (existingIndex >= 0) {
+        const existingFlip = collectedFlips[existingIndex]
+        collectedFlips[existingIndex] = {
+          ...existingFlip,
+          expectedAnswer: existingFlip.expectedAnswer || flip.expectedAnswer,
+          expectedStrength:
+            existingFlip.expectedStrength || flip.expectedStrength,
+          consensusAnswer: existingFlip.consensusAnswer || flip.consensusAnswer,
+          consensusStrength:
+            existingFlip.consensusStrength || flip.consensusStrength,
+          consensusVotes: existingFlip.consensusVotes || flip.consensusVotes,
+          words:
+            Array.isArray(existingFlip.words) && existingFlip.words.length > 0
+              ? existingFlip.words
+              : flip.words,
+          sourceDataset: existingFlip.sourceDataset || flip.sourceDataset,
+          sourceSplit: existingFlip.sourceSplit || flip.sourceSplit,
+        }
+      }
+    }
+
     return false
   }
 
@@ -683,7 +815,24 @@ async function collectValidationDevnetPreparedSeedFlips(
             orders: orders.slice(0, 2),
             expectedAnswer: String(record?.expected_answer || '').trim(),
             expectedStrength: String(record?.expected_strength || '').trim(),
+            agreedAnswer: record?.agreed_answer || record?.agreedAnswer,
+            consensusAnswer: String(
+              record?.consensus_answer || record?.consensusAnswer || ''
+            ).trim(),
+            consensusStrength: String(
+              record?.consensus_strength || record?.consensusStrength || ''
+            ).trim(),
+            consensusVotes:
+              record?.consensus_votes ||
+              record?.consensusVotes ||
+              record?.votes,
             words,
+            sourceDataset: String(
+              record?.source_dataset || record?.sourceDataset || ''
+            ).trim(),
+            sourceSplit: String(
+              record?.source_split || record?.sourceSplit || ''
+            ).trim(),
           }
 
           if (isValidSeedFlipCandidate(flip)) {
@@ -732,6 +881,10 @@ async function loadValidationDevnetSeedFlips({
     annotatedFlipHashes,
     validationResultsPath,
   })
+  const minimumConsensusBackedCount = Math.max(
+    1,
+    Math.ceil(desiredCount * VALIDATION_DEVNET_MIN_CONSENSUS_BACKED_COVERAGE)
+  )
   let resolvedSource = 'aplesner-eth/FLIP-Challenge'
   let resolvedSourceFile = null
 
@@ -780,18 +933,30 @@ async function loadValidationDevnetSeedFlips({
               reviewedFlipHashes
             )
 
-            if (collectedFlips.length >= desiredCount) {
+            if (
+              collectedFlips.length >= desiredCount &&
+              prioritizeValidationDevnetSeedFlips(collectedFlips).filter(
+                hasValidationDevnetSeedConsensusVotes
+              ).length >= minimumConsensusBackedCount
+            ) {
               break
             }
           }
         }
       }
 
-      if (collectedFlips.length >= desiredCount) {
+      const prioritizedFlips =
+        prioritizeValidationDevnetSeedFlips(collectedFlips)
+
+      if (
+        prioritizedFlips.length >= desiredCount &&
+        prioritizedFlips.filter(hasValidationDevnetSeedConsensusVotes).length >=
+          minimumConsensusBackedCount
+      ) {
         return {
           source: resolvedSource,
           sourceFile: resolvedSourceFile,
-          flips: collectedFlips.slice(0, desiredCount),
+          flips: prioritizedFlips.slice(0, desiredCount),
         }
       }
     } catch {
@@ -800,13 +965,14 @@ async function loadValidationDevnetSeedFlips({
   }
 
   if (collectedFlips.length > 0) {
-    const reusableFlips = collectedFlips.slice()
+    const reusableFlips = prioritizeValidationDevnetSeedFlips(collectedFlips)
+    const finalizedFlips = reusableFlips.slice()
     let duplicateIndex = 0
 
-    while (collectedFlips.length < desiredCount) {
+    while (finalizedFlips.length < desiredCount) {
       const baseFlip = reusableFlips[duplicateIndex % reusableFlips.length]
       duplicateIndex += 1
-      collectedFlips.push(
+      finalizedFlips.push(
         cloneValidationDevnetSeedFlip(baseFlip, duplicateIndex)
       )
     }
@@ -814,7 +980,7 @@ async function loadValidationDevnetSeedFlips({
     return {
       source: resolvedSource,
       sourceFile: resolvedSourceFile,
-      flips: collectedFlips.slice(0, desiredCount),
+      flips: finalizedFlips.slice(0, desiredCount),
     }
   }
 

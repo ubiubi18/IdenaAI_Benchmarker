@@ -2186,7 +2186,7 @@ function ValidationSession({
         status
       )
 
-      send('SUBMIT')
+      send('SUBMIT_NOW')
     },
     [notifyAi, send, state, t]
   )
@@ -2362,7 +2362,7 @@ function ValidationSession({
             )
       )
 
-      send('SUBMIT')
+      send('SUBMIT_NOW')
     } catch (error) {
       autoReportSubmitPendingRef.current = false
       notifyAi(t('AI auto-report failed'), formatErrorForToast(error), 'error')
@@ -2406,8 +2406,14 @@ function ValidationSession({
       return
     }
 
+    if (isLongSessionFlips(state) || isLongSessionKeywords(state)) {
+      beginManualReporting()
+      send('SUBMIT_NOW')
+      return
+    }
+
     send('SUBMIT')
-  }, [forceAiPreview, notifyAi, send, t])
+  }, [beginManualReporting, forceAiPreview, notifyAi, send, state, t])
 
   useEffect(() => {
     if (
@@ -2849,6 +2855,20 @@ function ValidationSession({
     peersCount,
     t,
   })
+  const isAutoManagedValidation = isSessionAutoMode && !forceAiPreview
+  const submitActionLabel = t(
+    isAutoManagedValidation ? 'Submit now' : 'Submit answers'
+  )
+  const keywordActionLabel = t(
+    isAutoManagedValidation ? 'Review reports now' : 'Start checking keywords'
+  )
+  let manualAiActionLabel = t('AI solve long session')
+
+  if (isAutoManagedValidation) {
+    manualAiActionLabel = t('Retry AI now')
+  } else if (isShortSession(state)) {
+    manualAiActionLabel = t('AI solve short session')
+  }
 
   return (
     <ValidationScene bg={isShortSession(state) ? 'black' : 'white'}>
@@ -3224,15 +3244,25 @@ function ValidationSession({
                     {aiProgress}
                   </Text>
                 )}
-                <SecondaryButton
-                  isDisabled={!canRunAiSolve || aiProviderStatus.checking}
-                  isLoading={aiSolving}
-                  onClick={handleRunAiSolve}
-                >
-                  {isShortSession(state)
-                    ? t('AI solve short session')
-                    : t('AI solve long session')}
-                </SecondaryButton>
+                {isSessionAutoMode &&
+                !forceAiPreview &&
+                aiLastRun?.status !== 'failed' ? (
+                  <Text
+                    fontSize="xs"
+                    color={isShortSession(state) ? 'whiteAlpha.800' : 'muted'}
+                    fontWeight={600}
+                  >
+                    {t('AI auto-run active')}
+                  </Text>
+                ) : (
+                  <SecondaryButton
+                    isDisabled={!canRunAiSolve || aiProviderStatus.checking}
+                    isLoading={aiSolving}
+                    onClick={handleRunAiSolve}
+                  >
+                    {manualAiActionLabel}
+                  </SecondaryButton>
+                )}
               </Stack>
             )}
           {canOpenLocalResultsShortcut && (
@@ -3255,7 +3285,7 @@ function ValidationSession({
                 }
                 onClick={handleSubmit}
               >
-                {t('Submit answers')}
+                {submitActionLabel}
               </PrimaryButton>
             ) : (
               <Tooltip label={t('Go to last flip')}>
@@ -3269,17 +3299,34 @@ function ValidationSession({
                   }
                   onClick={handleSubmit}
                 >
-                  {t('Submit answers')}
+                  {submitActionLabel}
                 </PrimaryButton>
               </Tooltip>
             ))}
           {isLongSessionFlips(state) && (
-            <PrimaryButton
-              isDisabled={!canSubmit(state)}
-              onClick={() => send('FINISH_FLIPS')}
-            >
-              {t('Start checking keywords')}
-            </PrimaryButton>
+            <Stack isInline spacing={2}>
+              <SecondaryButton
+                isDisabled={isSubmitting(state) || autoReportRunning}
+                onClick={() => {
+                  beginManualReporting()
+                  send('FINISH_FLIPS')
+                }}
+              >
+                {keywordActionLabel}
+              </SecondaryButton>
+              <PrimaryButton
+                isDisabled={!canSubmit(state) || autoReportRunning}
+                isLoading={isSubmitting(state) || autoReportRunning}
+                loadingText={
+                  autoReportRunning
+                    ? t('AI reviewing...')
+                    : t('Submitting answers...')
+                }
+                onClick={handleSubmit}
+              >
+                {submitActionLabel}
+              </PrimaryButton>
+            </Stack>
           )}
         </ActionBarItem>
       </ActionBar>
@@ -3868,12 +3915,10 @@ function canSubmit(state) {
     return hasAnyAnsweredFlip(state) && !isSubmitting(state)
 
   if (isLongSessionFlips(state))
-    return (hasAllAnswers(state) || isLastFlip(state)) && !isSubmitting(state)
+    return hasAnyAnsweredFlip(state) && !isSubmitting(state)
 
   if (isLongSessionKeywords(state))
-    return (
-      (hasAllRelevanceMarks(state) || isLastFlip(state)) && !isSubmitting(state)
-    )
+    return hasAnyAnsweredFlip(state) && !isSubmitting(state)
 }
 
 function sessionFlips(state) {
@@ -3883,16 +3928,6 @@ function sessionFlips(state) {
   return isShortSession(state)
     ? rearrangeFlips(filterRegularFlips(shortFlips))
     : rearrangeFlips(longFlips.filter(readyFlip))
-}
-
-function hasAllAnswers(state) {
-  const {
-    context: {shortFlips, longFlips},
-  } = state
-  const flips = isShortSession(state)
-    ? shortFlips.filter(({decoded, extra}) => decoded && !extra)
-    : longFlips.filter(({decoded}) => decoded)
-  return flips.length && flips.every(({option}) => option)
 }
 
 function hasAnyAnsweredFlip(state) {

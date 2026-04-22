@@ -59,6 +59,7 @@ describe('rehearsal benchmark helpers', () => {
         '0x1': {
           expectedAnswer: 'LEFT',
           expectedStrength: 'Strong',
+          consensusVotes: {Left: 7, Right: 2, Reported: 1},
           words: [{name: 'apple', desc: 'fruit'}],
         },
         '0x2': {expectedAnswer: 'unknown'},
@@ -68,7 +69,12 @@ describe('rehearsal benchmark helpers', () => {
       '0x1': {
         expectedAnswer: 'left',
         expectedStrength: 'Strong',
+        consensusAnswer: 'left',
+        consensusStrength: 'Strong',
+        consensusVotes: {left: 7, right: 2, reported: 1, total: 10},
         words: [{name: 'apple', desc: 'fruit'}],
+        sourceDataset: null,
+        sourceSplit: null,
       },
     })
   })
@@ -81,6 +87,7 @@ describe('rehearsal benchmark helpers', () => {
           '0x1': {
             expectedAnswer: 'left',
             expectedStrength: 'Strong',
+            consensusVotes: {Left: 7, Right: 2, Reported: 1},
             words: [{name: 'apple', desc: 'fruit'}],
           },
           '0x2': {expectedAnswer: 'right', expectedStrength: 'Weak', words: []},
@@ -91,13 +98,23 @@ describe('rehearsal benchmark helpers', () => {
         hash: '0x1',
         expectedAnswer: 'left',
         expectedStrength: 'Strong',
+        consensusAnswer: 'left',
+        consensusStrength: 'Strong',
+        consensusVotes: {left: 7, right: 2, reported: 1, total: 10},
         words: [{name: 'apple', desc: 'fruit'}],
+        sourceDataset: null,
+        sourceSplit: null,
       },
       {
         hash: '0x2',
         expectedAnswer: 'right',
         expectedStrength: 'Weak',
+        consensusAnswer: 'right',
+        consensusStrength: 'Weak',
+        consensusVotes: null,
         words: [],
+        sourceDataset: null,
+        sourceSplit: null,
       },
     ])
   })
@@ -123,6 +140,7 @@ describe('rehearsal benchmark helpers', () => {
             hash: '0xd',
             option: 2,
             expectedAnswer: 'right',
+            consensusVotes: {left: 1, right: 5, total: 6},
             relevance: 2,
           },
           {hash: '0xe', expectedAnswer: 'left'},
@@ -140,9 +158,23 @@ describe('rehearsal benchmark helpers', () => {
       incorrect: 1,
       unanswered: 1,
       reported: 1,
+      rawConsensusAvailable: true,
+      consensusBacked: {
+        total: 1,
+        correct: 1,
+        coverage: 0.25,
+      },
       sessions: {
-        short: {total: 2, correct: 1},
-        long: {total: 2, correct: 1},
+        short: {
+          total: 2,
+          correct: 1,
+          consensusBacked: {total: 0, correct: 0},
+        },
+        long: {
+          total: 2,
+          correct: 1,
+          consensusBacked: {total: 1, correct: 1},
+        },
       },
     })
   })

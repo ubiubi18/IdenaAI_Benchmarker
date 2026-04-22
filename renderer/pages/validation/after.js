@@ -471,6 +471,29 @@ export default function AfterValidationPage() {
                       }
                     )}
                   </Text>
+                  <Text color="xwhite.050" fontSize="sm">
+                    {rehearsalBenchmarkSummary.rawConsensusAvailable
+                      ? t(
+                          'Consensus-backed subset: {{correct}}/{{total}} correct ({{coverage}} coverage of the rehearsal benchmark set).',
+                          {
+                            correct:
+                              rehearsalBenchmarkSummary.consensusBacked.correct,
+                            total:
+                              rehearsalBenchmarkSummary.consensusBacked.total,
+                            coverage:
+                              rehearsalBenchmarkSummary.consensusBacked
+                                .coverage !== null
+                                ? `${(
+                                    rehearsalBenchmarkSummary.consensusBacked
+                                      .coverage * 100
+                                  ).toFixed(1)}%`
+                                : '–',
+                          }
+                        )
+                      : t(
+                          'Raw vote counts were not bundled for this local rehearsal slice, so the benchmark currently uses agreed-answer labels only.'
+                        )}
+                  </Text>
 
                   <Stack direction={['column', 'row']} spacing="3">
                     <Button

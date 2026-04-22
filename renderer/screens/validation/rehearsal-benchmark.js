@@ -22,6 +22,40 @@ function normalizeExpectedStrength(value) {
   return next || null
 }
 
+function normalizeConsensusCount(value) {
+  const next = Number.parseInt(value, 10)
+  return Number.isFinite(next) && next >= 0 ? next : 0
+}
+
+function normalizeConsensusVotes(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const left = normalizeConsensusCount(value.Left ?? value.left)
+  const right = normalizeConsensusCount(value.Right ?? value.right)
+  const reported = normalizeConsensusCount(
+    value.Reported ?? value.reported ?? value.skip ?? value.inappropriate
+  )
+  const total = left + right + reported
+
+  if (total < 1) {
+    return null
+  }
+
+  return {
+    left,
+    right,
+    reported,
+    total,
+  }
+}
+
+function normalizeSeedSourceLabel(value) {
+  const next = String(value || '').trim()
+  return next || null
+}
+
 function normalizeSeedWordEntry(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
@@ -53,16 +87,55 @@ export function normalizeRehearsalSeedFlipMeta(value = {}) {
     return null
   }
 
-  const expectedAnswer = normalizeExpectedAnswer(value.expectedAnswer)
+  const expectedAnswer =
+    normalizeExpectedAnswer(value.expectedAnswer) ||
+    normalizeExpectedAnswer(value.consensusAnswer) ||
+    normalizeExpectedAnswer(
+      Array.isArray(value.agreedAnswer) && value.agreedAnswer[0]
+    ) ||
+    normalizeExpectedAnswer(
+      Array.isArray(value.agreed_answer) && value.agreed_answer[0]
+    )
 
   if (!expectedAnswer) {
     return null
   }
 
+  const consensusAnswer =
+    normalizeExpectedAnswer(value.consensusAnswer) ||
+    normalizeExpectedAnswer(
+      Array.isArray(value.agreedAnswer) && value.agreedAnswer[0]
+    ) ||
+    normalizeExpectedAnswer(
+      Array.isArray(value.agreed_answer) && value.agreed_answer[0]
+    ) ||
+    expectedAnswer
+  const consensusStrength =
+    normalizeExpectedStrength(value.consensusStrength) ||
+    normalizeExpectedStrength(
+      Array.isArray(value.agreedAnswer) && value.agreedAnswer[1]
+    ) ||
+    normalizeExpectedStrength(
+      Array.isArray(value.agreed_answer) && value.agreed_answer[1]
+    ) ||
+    normalizeExpectedStrength(value.expectedStrength)
+
   return {
     expectedAnswer,
-    expectedStrength: normalizeExpectedStrength(value.expectedStrength),
+    expectedStrength:
+      normalizeExpectedStrength(value.expectedStrength) || consensusStrength,
+    consensusAnswer,
+    consensusStrength,
+    consensusVotes: normalizeConsensusVotes(
+      value.consensusVotes || value.votes
+    ),
     words: normalizeSeedWords(value.words),
+    sourceDataset: normalizeSeedSourceLabel(
+      value.sourceDataset || value.source_dataset
+    ),
+    sourceSplit: normalizeSeedSourceLabel(
+      value.sourceSplit || value.source_split
+    ),
   }
 }
 
@@ -98,8 +171,14 @@ export function mergeRehearsalSeedMetaIntoFlips(flips, metaByHash = {}) {
     if (
       flip.expectedAnswer === meta.expectedAnswer &&
       (flip.expectedStrength || null) === meta.expectedStrength &&
+      (flip.consensusAnswer || null) === meta.consensusAnswer &&
+      (flip.consensusStrength || null) === meta.consensusStrength &&
+      JSON.stringify(flip.consensusVotes || null) ===
+        JSON.stringify(meta.consensusVotes || null) &&
       JSON.stringify(Array.isArray(flip.words) ? flip.words : []) ===
-        JSON.stringify(meta.words)
+        JSON.stringify(meta.words) &&
+      (flip.sourceDataset || null) === meta.sourceDataset &&
+      (flip.sourceSplit || null) === meta.sourceSplit
     ) {
       return flip
     }
@@ -110,10 +189,15 @@ export function mergeRehearsalSeedMetaIntoFlips(flips, metaByHash = {}) {
       ...flip,
       expectedAnswer: meta.expectedAnswer,
       expectedStrength: meta.expectedStrength,
+      consensusAnswer: meta.consensusAnswer,
+      consensusStrength: meta.consensusStrength,
+      consensusVotes: meta.consensusVotes,
       words:
         Array.isArray(flip.words) && flip.words.length > 0
           ? flip.words
           : meta.words,
+      sourceDataset: flip.sourceDataset || meta.sourceDataset,
+      sourceSplit: flip.sourceSplit || meta.sourceSplit,
     }
   })
 
@@ -163,6 +247,14 @@ function buildBenchmarkItemsForSession(flips, sessionType) {
         selectedAnswer,
         expectedAnswer,
         expectedStrength: normalizeExpectedStrength(flip?.expectedStrength),
+        consensusAnswer:
+          normalizeExpectedAnswer(flip?.consensusAnswer) || expectedAnswer,
+        consensusStrength:
+          normalizeExpectedStrength(flip?.consensusStrength) ||
+          normalizeExpectedStrength(flip?.expectedStrength),
+        consensusVotes: normalizeConsensusVotes(flip?.consensusVotes),
+        sourceDataset: normalizeSeedSourceLabel(flip?.sourceDataset),
+        sourceSplit: normalizeSeedSourceLabel(flip?.sourceSplit),
         isCorrect: Boolean(
           selectedAnswer && expectedAnswer && selectedAnswer === expectedAnswer
         ),
@@ -205,25 +297,73 @@ function computeBenchmarkStats(items = []) {
   }
 }
 
+function hasConsensusVotes(item) {
+  return Number(item?.consensusVotes?.total) > 0
+}
+
+function computeConsensusCoverage(total, consensusTotal) {
+  return total > 0 ? consensusTotal / total : null
+}
+
+function buildRehearsalBenchmarkNote({
+  total = 0,
+  consensusBackedTotal = 0,
+  sourceDataset = null,
+} = {}) {
+  const datasetLabel = sourceDataset || 'FLIP-Challenge'
+
+  if (consensusBackedTotal > 0) {
+    return `${datasetLabel} agreed-answer labels are available for this rehearsal run. Raw vote consensus is bundled for ${consensusBackedTotal}/${total} benchmark flips and is tracked as a consensus-backed subset.`
+  }
+
+  return `${datasetLabel} agreed-answer labels are available for this rehearsal run, but this local rehearsal slice does not include raw vote counts. Benchmark accuracy is therefore label-based rather than vote-backed consensus accuracy.`
+}
+
 export function computeRehearsalBenchmarkSummary(validationState) {
   const items = buildRehearsalBenchmarkItems(validationState)
-  const short = computeBenchmarkStats(
-    items.filter(({sessionType}) => sessionType === 'short')
-  )
-  const long = computeBenchmarkStats(
-    items.filter(({sessionType}) => sessionType === 'long')
-  )
+  const shortItems = items.filter(({sessionType}) => sessionType === 'short')
+  const longItems = items.filter(({sessionType}) => sessionType === 'long')
+  const shortConsensusItems = shortItems.filter(hasConsensusVotes)
+  const longConsensusItems = longItems.filter(hasConsensusVotes)
+  const consensusItems = items.filter(hasConsensusVotes)
+  const short = {
+    ...computeBenchmarkStats(shortItems),
+    consensusBacked: computeBenchmarkStats(shortConsensusItems),
+  }
+  const long = {
+    ...computeBenchmarkStats(longItems),
+    consensusBacked: computeBenchmarkStats(longConsensusItems),
+  }
+  const overallStats = computeBenchmarkStats(items)
+  const consensusBacked = computeBenchmarkStats(consensusItems)
+  const sourceDataset =
+    items.find((item) => item?.sourceDataset)?.sourceDataset || 'FLIP-Challenge'
 
   return {
     available: items.length > 0,
-    sourceLabel: 'FLIP-Challenge seed benchmark',
-    note: 'Bundled FLIP-Challenge seed labels are available for this rehearsal run. They are benchmark labels, not live network consensus.',
+    sourceLabel:
+      consensusBacked.total > 0
+        ? 'FLIP-Challenge benchmark + consensus subset'
+        : 'FLIP-Challenge seed benchmark',
+    note: buildRehearsalBenchmarkNote({
+      total: overallStats.total,
+      consensusBackedTotal: consensusBacked.total,
+      sourceDataset,
+    }),
     items,
+    rawConsensusAvailable: consensusBacked.total > 0,
+    consensusBacked: {
+      ...consensusBacked,
+      coverage: computeConsensusCoverage(
+        overallStats.total,
+        consensusBacked.total
+      ),
+    },
     sessions: {
       short,
       long,
     },
-    ...computeBenchmarkStats(items),
+    ...overallStats,
   }
 }
 
@@ -352,6 +492,9 @@ function normalizeRehearsalBenchmarkAnnotationDatasetEntry(value = {}) {
     sessionType: normalizeBenchmarkSessionType(source.sessionType),
     expectedAnswer: normalizeExpectedAnswer(source.expectedAnswer),
     expectedStrength: normalizeExpectedStrength(source.expectedStrength),
+    consensusAnswer: normalizeExpectedAnswer(source.consensusAnswer),
+    consensusStrength: normalizeExpectedStrength(source.consensusStrength),
+    consensusVotes: normalizeConsensusVotes(source.consensusVotes),
     selectedAnswer: normalizeExpectedAnswer(source.selectedAnswer),
     reported: source.reported === true,
     best: source.best === true,
@@ -436,6 +579,9 @@ export function persistRehearsalBenchmarkAnnotationDataset({
       sessionType: item?.sessionType,
       expectedAnswer: item?.expectedAnswer,
       expectedStrength: item?.expectedStrength,
+      consensusAnswer: item?.consensusAnswer,
+      consensusStrength: item?.consensusStrength,
+      consensusVotes: item?.consensusVotes,
       selectedAnswer: item?.selectedAnswer,
       reported: item?.reported,
       best: item?.best,

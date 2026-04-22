@@ -327,10 +327,13 @@ describe('validation devnet helpers', () => {
           hash: '0xflip-1',
           expectedAnswer: 'LEFT',
           expectedStrength: 'Strong',
+          consensusVotes: {Left: 9, Right: 1, Reported: 0},
           words: [
             {name: 'apple', desc: 'fruit'},
             {name: 'ghost', desc: 'spirit'},
           ],
+          sourceDataset: 'aplesner-eth/FLIP-Challenge',
+          sourceSplit: 'test',
         },
         {
           hash: '0xflip-2',
@@ -341,10 +344,15 @@ describe('validation devnet helpers', () => {
       '0xflip-1': {
         expectedAnswer: 'left',
         expectedStrength: 'Strong',
+        consensusAnswer: 'left',
+        consensusStrength: 'Strong',
+        consensusVotes: {left: 9, right: 1, reported: 0, total: 10},
         words: [
           {name: 'apple', desc: 'fruit'},
           {name: 'ghost', desc: 'spirit'},
         ],
+        sourceDataset: 'aplesner-eth/FLIP-Challenge',
+        sourceSplit: 'test',
       },
     })
   })
@@ -354,6 +362,10 @@ describe('validation devnet helpers', () => {
 
     expect(seedSet.source).toBeTruthy()
     expect(seedSet.flips).toHaveLength(27)
+    expect(
+      seedSet.flips.filter((flip) => Number(flip?.consensusVotes?.total) > 0)
+        .length
+    ).toBeGreaterThanOrEqual(9)
   })
 
   it('skips rehearsal seed flips that were already annotated in prior review runs', async () => {

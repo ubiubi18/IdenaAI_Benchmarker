@@ -1372,6 +1372,37 @@ def build_training_record(
         if len(agreed_answer) > 1 and isinstance(agreed_answer[1], str):
             expected_strength = agreed_answer[1].strip()
 
+    votes = task_data.get("votes") or {}
+    consensus_votes = None
+    if isinstance(votes, dict):
+        try:
+            left_votes = int(votes.get("Left") or votes.get("left") or 0)
+        except (TypeError, ValueError):
+            left_votes = 0
+        try:
+            right_votes = int(votes.get("Right") or votes.get("right") or 0)
+        except (TypeError, ValueError):
+            right_votes = 0
+        try:
+            reported_votes = int(
+                votes.get("Reported")
+                or votes.get("reported")
+                or votes.get("skip")
+                or votes.get("inappropriate")
+                or 0
+            )
+        except (TypeError, ValueError):
+            reported_votes = 0
+
+        total_votes = left_votes + right_votes + reported_votes
+        if total_votes > 0:
+            consensus_votes = {
+                "left": left_votes,
+                "right": right_votes,
+                "reported": reported_votes,
+                "total": total_votes,
+            }
+
     if not expected_answer:
         raise ValueError(f"Task {task_id} has no agreed answer")
 
@@ -1496,6 +1527,9 @@ def build_training_record(
                     "assistant_target": assistant_target,
                     "expected_answer": expected_answer,
                     "expected_strength": expected_strength or "",
+                    "consensus_answer": expected_answer,
+                    "consensus_strength": expected_strength or "",
+                    "consensus_votes": consensus_votes,
                     "candidate_label": candidate_label,
                     "candidate_maps_to": candidate_maps_to,
                     "candidate_order": candidate_order,
@@ -1549,6 +1583,9 @@ def build_training_record(
         "assistant_target": assistant_target,
         "expected_answer": expected_answer,
         "expected_strength": expected_strength or "",
+        "consensus_answer": expected_answer,
+        "consensus_strength": expected_strength or "",
+        "consensus_votes": consensus_votes,
         "left_order": left_stack,
         "right_order": right_stack,
         "option_a_maps_to": option_a_maps_to,

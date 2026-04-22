@@ -166,16 +166,50 @@ def build_flip(task_id: str, task_data: dict, image_bytes: Dict[str, bytes]) -> 
                 expected_answer = "skip"
         if len(agreed_answer) > 1 and isinstance(agreed_answer[1], str):
             expected_strength = agreed_answer[1].strip()
+    votes = task_data.get("votes") or {}
+    consensus_votes = None
+    if isinstance(votes, dict):
+        try:
+            left_votes = int(votes.get("Left") or votes.get("left") or 0)
+        except (TypeError, ValueError):
+            left_votes = 0
+        try:
+            right_votes = int(votes.get("Right") or votes.get("right") or 0)
+        except (TypeError, ValueError):
+            right_votes = 0
+        try:
+            reported_votes = int(
+                votes.get("Reported")
+                or votes.get("reported")
+                or votes.get("skip")
+                or votes.get("inappropriate")
+                or 0
+            )
+        except (TypeError, ValueError):
+            reported_votes = 0
+        total_votes = left_votes + right_votes + reported_votes
+        if total_votes > 0:
+            consensus_votes = {
+                "left": left_votes,
+                "right": right_votes,
+                "reported": reported_votes,
+                "total": total_votes,
+            }
 
     result = {
         "hash": task_id,
         "images": ordered_images,
         "orders": [left_stack, right_stack],
+        "sourceDataset": DATASET_ID,
     }
     if expected_answer:
         result["expectedAnswer"] = expected_answer
+        result["consensusAnswer"] = expected_answer
     if expected_strength:
         result["expectedStrength"] = expected_strength
+        result["consensusStrength"] = expected_strength
+    if consensus_votes:
+        result["consensusVotes"] = consensus_votes
     return result
 
 

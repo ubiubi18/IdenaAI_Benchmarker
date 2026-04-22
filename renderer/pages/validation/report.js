@@ -79,6 +79,7 @@ export default function ValidationReport() {
     missedStakingReward,
     candidateReward,
     missedCandidateReward,
+    rehearsalBenchmarkSummary,
     isLoading,
   } = useValidationReportSummary()
 
@@ -86,6 +87,45 @@ export default function ValidationReport() {
     short: {score: shortScore, ...shortResults},
     long: {score: longScore, ...longResults},
   } = lastValidationScore
+
+  let resolvedTotalScore = Number.isFinite(totalScore) ? totalScore : null
+  if (resolvedTotalScore === null && rehearsalBenchmarkSummary.available) {
+    resolvedTotalScore = rehearsalBenchmarkSummary.accuracy
+  }
+
+  let resolvedShortScore = Number.isFinite(shortScore) ? shortScore : null
+  if (resolvedShortScore === null && rehearsalBenchmarkSummary.available) {
+    resolvedShortScore = rehearsalBenchmarkSummary.sessions.short.accuracy
+  }
+
+  let resolvedScoreGaugeValue = 2
+  if (Number.isFinite(resolvedTotalScore)) {
+    resolvedScoreGaugeValue = resolvedTotalScore * 100
+  } else if (Number.isFinite(resolvedShortScore)) {
+    resolvedScoreGaugeValue = resolvedShortScore * 100
+  }
+
+  const usesBenchmarkScoreFallback =
+    rehearsalBenchmarkSummary.available && !Number.isFinite(totalScore)
+  const scoreGaugeLabel = usesBenchmarkScoreFallback
+    ? t('Benchmark accuracy')
+    : t('Total score')
+  const benchmarkConsensusSubsetText =
+    rehearsalBenchmarkSummary.rawConsensusAvailable
+      ? t(
+          '{{correct}}/{{total}} flips matched the raw vote-backed subset ({{coverage}} coverage).',
+          {
+            correct: rehearsalBenchmarkSummary.consensusBacked.correct,
+            total: rehearsalBenchmarkSummary.consensusBacked.total,
+            coverage:
+              rehearsalBenchmarkSummary.consensusBacked.coverage !== null
+                ? toPercent(rehearsalBenchmarkSummary.consensusBacked.coverage)
+                : '–',
+          }
+        )
+      : t(
+          'Raw vote counts were not bundled into this local rehearsal slice, so the benchmark uses agreed-answer labels only.'
+        )
 
   const dna = toLocaleDna(i18n.language, {maximumFractionDigits: 3})
 
@@ -96,6 +136,39 @@ export default function ValidationReport() {
     !amount || Number.isNaN(amount)
       ? '–'
       : amount.toLocaleString(i18n.language, {maximumFractionDigits: 3})
+
+  const maybePercent = (value) =>
+    Number.isFinite(value) ? toPercent(value, i18n.language) : '–'
+
+  const formatChainSessionValue = (score, results = {}) =>
+    t('{{score}} ({{point}} out of {{flipsCount}})', {
+      score: toPercent(score),
+      point: results.point,
+      flipsCount: results.flipsCount,
+    })
+
+  const formatBenchmarkSessionValue = (stats = {}) =>
+    stats.total > 0
+      ? t('{{score}} ({{correct}} correct / {{total}} benchmark flips)', {
+          score: maybePercent(stats.accuracy),
+          correct: stats.correct,
+          total: stats.total,
+        })
+      : '–'
+
+  let shortSessionValue = '–'
+  if (validationResult !== ValidationResult.MissedValidation) {
+    shortSessionValue = usesBenchmarkScoreFallback
+      ? formatBenchmarkSessionValue(rehearsalBenchmarkSummary.sessions.short)
+      : formatChainSessionValue(shortScore, shortResults)
+  }
+
+  let longSessionValue = '–'
+  if (validationResult !== ValidationResult.MissedValidation) {
+    longSessionValue = usesBenchmarkScoreFallback
+      ? formatBenchmarkSessionValue(rehearsalBenchmarkSummary.sessions.long)
+      : formatChainSessionValue(longScore, longResults)
+  }
 
   const epochNumber = epoch?.epoch
 
@@ -139,12 +212,15 @@ export default function ValidationReport() {
                     <ValidationReportGaugeBox>
                       {isValidated ? (
                         <ValidationReportGaugeBar
-                          value={totalScore * 100}
+                          value={resolvedScoreGaugeValue}
                           color={
                             // eslint-disable-next-line no-nested-ternary
-                            totalScore <= 0.75
+                            (resolvedTotalScore ?? resolvedShortScore ?? 0) <=
+                            0.75
                               ? colors.red[500]
-                              : totalScore <= 0.9
+                              : (resolvedTotalScore ??
+                                  resolvedShortScore ??
+                                  0) <= 0.9
                               ? colors.orange[500]
                               : colors.green[500]
                           }
@@ -152,7 +228,11 @@ export default function ValidationReport() {
                         />
                       ) : (
                         <ValidationReportGaugeBar
-                          value={shortScore || 2}
+                          value={
+                            Number.isFinite(resolvedShortScore)
+                              ? resolvedShortScore * 100
+                              : 2
+                          }
                           color={colors.red[500]}
                           bg={colors.brandGray['005']}
                         />
@@ -167,7 +247,7 @@ export default function ValidationReport() {
                       >
                         {isValidated ? (
                           <ValidationReportGaugeStatValue>
-                            {toPercent(totalScore)}
+                            {maybePercent(resolvedTotalScore)}
                           </ValidationReportGaugeStatValue>
                         ) : (
                           <ValidationReportGaugeStatValue color="red.500">
@@ -181,7 +261,7 @@ export default function ValidationReport() {
                         endColor={colors.gray[300]}
                       >
                         <ValidationReportGaugeStatLabel>
-                          {isValidated && t('Total score')}
+                          {isValidated && scoreGaugeLabel}
                           {validationResult ===
                             ValidationResult.LateSubmission &&
                             t('Late submission')}
@@ -204,15 +284,7 @@ export default function ValidationReport() {
                     >
                       <ValidationReportStat
                         label={t('Short session')}
-                        value={
-                          validationResult === ValidationResult.MissedValidation
-                            ? '–'
-                            : t('{{score}} ({{point}} out of {{flipsCount}})', {
-                                score: toPercent(shortScore),
-                                point: shortResults.point,
-                                flipsCount: shortResults.flipsCount,
-                              })
-                        }
+                        value={shortSessionValue}
                       />
                     </Skeleton>
                   </Flex>
@@ -224,15 +296,7 @@ export default function ValidationReport() {
                     >
                       <ValidationReportStat
                         label={t('Long session')}
-                        value={
-                          validationResult === ValidationResult.MissedValidation
-                            ? '–'
-                            : t('{{score}} ({{point}} out of {{flipsCount}})', {
-                                score: toPercent(longScore),
-                                point: longResults.point,
-                                flipsCount: longResults.flipsCount,
-                              })
-                        }
+                        value={longSessionValue}
                       />
                     </Skeleton>
                   </Flex>
@@ -317,6 +381,61 @@ export default function ValidationReport() {
               </Stack>
             </ValidationReportBlockOverview>
           </Stack>
+          {rehearsalBenchmarkSummary.available && (
+            <Stack spacing={5}>
+              <Box>
+                <Heading color="brandGray.500" fontSize="lg" fontWeight={500}>
+                  {t('Rehearsal benchmark context')}
+                </Heading>
+                <Text color="muted" mt="2">
+                  {t(rehearsalBenchmarkSummary.note)}
+                </Text>
+                <Text color="muted" mt="1">
+                  {benchmarkConsensusSubsetText}
+                </Text>
+              </Box>
+              <ValidationReportBlockOverview>
+                <Stack spacing={4}>
+                  <Flex justify="space-between" wrap="wrap" gridGap={4}>
+                    <ValidationReportStat
+                      label={t('Benchmark accuracy')}
+                      value={maybePercent(rehearsalBenchmarkSummary.accuracy)}
+                    />
+                    <ValidationReportStat
+                      label={t('Correct / total')}
+                      value={`${rehearsalBenchmarkSummary.correct}/${rehearsalBenchmarkSummary.total}`}
+                    />
+                    <ValidationReportStat
+                      label={t('Answered / total')}
+                      value={`${rehearsalBenchmarkSummary.answered}/${rehearsalBenchmarkSummary.total}`}
+                    />
+                    <ValidationReportStat
+                      label={t('Consensus-backed subset')}
+                      value={
+                        rehearsalBenchmarkSummary.rawConsensusAvailable
+                          ? `${rehearsalBenchmarkSummary.consensusBacked.correct}/${rehearsalBenchmarkSummary.consensusBacked.total}`
+                          : t('Not bundled')
+                      }
+                    />
+                  </Flex>
+                  <Flex justify="space-between" wrap="wrap" gridGap={4}>
+                    <ValidationReportStat
+                      label={t('Short benchmark')}
+                      value={formatBenchmarkSessionValue(
+                        rehearsalBenchmarkSummary.sessions.short
+                      )}
+                    />
+                    <ValidationReportStat
+                      label={t('Long benchmark')}
+                      value={formatBenchmarkSessionValue(
+                        rehearsalBenchmarkSummary.sessions.long
+                      )}
+                    />
+                  </Flex>
+                </Stack>
+              </ValidationReportBlockOverview>
+            </Stack>
+          )}
           <Stack spacing={5}>
             <Box>
               <Heading color="brandGray.500" fontSize="lg" fontWeight={500}>
