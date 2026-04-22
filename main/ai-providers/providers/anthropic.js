@@ -115,6 +115,7 @@ async function callAnthropic({
   model,
   flip,
   prompt,
+  systemPrompt,
   profile,
   providerConfig,
 }) {
@@ -129,6 +130,9 @@ async function callAnthropic({
     endpoint,
     {
       model,
+      ...(String(systemPrompt || '').trim()
+        ? {system: String(systemPrompt).trim()}
+        : {}),
       max_tokens: resolveAnthropicMaxTokens(profile),
       temperature: profile.temperature,
       messages: [

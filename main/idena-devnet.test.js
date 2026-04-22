@@ -327,6 +327,10 @@ describe('validation devnet helpers', () => {
           hash: '0xflip-1',
           expectedAnswer: 'LEFT',
           expectedStrength: 'Strong',
+          words: [
+            {name: 'apple', desc: 'fruit'},
+            {name: 'ghost', desc: 'spirit'},
+          ],
         },
         {
           hash: '0xflip-2',
@@ -337,6 +341,10 @@ describe('validation devnet helpers', () => {
       '0xflip-1': {
         expectedAnswer: 'left',
         expectedStrength: 'Strong',
+        words: [
+          {name: 'apple', desc: 'fruit'},
+          {name: 'ghost', desc: 'spirit'},
+        ],
       },
     })
   })

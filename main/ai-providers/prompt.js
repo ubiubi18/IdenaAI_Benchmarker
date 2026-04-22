@@ -41,14 +41,24 @@ function normalizePromptPhase(value) {
   return 'decision'
 }
 
+function systemPromptTemplate() {
+  return `
+You are a careful visual reasoning judge for the Idena FLIP benchmark.
+- Candidate labels such as left/right, option A/B, story 1/2, and first/second are arbitrary placeholders, never evidence.
+- Judge only from visible chronology, cause -> effect links, consistent entities, and the final scene state.
+- Do not anchor on the first shown candidate or the label wording.
+- Return only the requested JSON and no extra prose.
+`.trim()
+}
+
 function buildAllowedAnswers(forceDecision) {
-  return forceDecision ? 'left|right' : 'left|right|skip'
+  return forceDecision ? 'a|b' : 'a|b|skip'
 }
 
 function buildDecisionRules({forceDecision, secondPass, repromptRule}) {
   const allowedAnswers = buildAllowedAnswers(forceDecision)
   const uncertaintyRule = forceDecision
-    ? '- You must choose left or right. If the evidence stays close, pick the better supported side, but never because it appeared first.'
+    ? '- You must choose option A or B. If the evidence stays close, pick the better supported side, but never because it appeared first.'
     : '- If the evidence is weak or conflicting, return "skip" instead of defaulting to the first shown side.'
   const passRule = secondPass
     ? '- This is a second-pass uncertainty review. Re-check both sides from scratch and do not anchor on the first listed candidate or your earlier lean.'
@@ -64,7 +74,7 @@ function buildDecisionRules({forceDecision, secondPass, repromptRule}) {
 
 function buildAntiPositionRules() {
   return [
-    '- LEFT/RIGHT names, first-vs-second presentation, and candidate slot are arbitrary.',
+    '- LEFT/RIGHT names, OPTION A/B labels, STORY 1/2 labels, first-vs-second presentation, and candidate slot are arbitrary.',
     '- Candidate order is never evidence.',
     '- Compare story identity, visible chronology, and cause -> effect links, not slot position.',
     '- Never choose a side just because it was shown first.',
@@ -90,25 +100,25 @@ function buildCompositePrompt({
   const antiPositionRules = buildAntiPositionRules()
   return `
 You are solving an Idena short-session flip benchmark.
-You are given one 2x2 composite image with four panels:
+You are given two candidate 2x2 composite images:
+- The first attached image is OPTION A
+- The second attached image is OPTION B
+
+Each candidate image contains four panels:
 - Panel 1 = top-left
 - Panel 2 = top-right
 - Panel 3 = bottom-left
 - Panel 4 = bottom-right
 
-Two candidate story orders are proposed:
-- LEFT order
-- RIGHT order
-
 Task:
 1) Inspect each panel separately and identify the main actors, actions, and visible state.
 2) If any readable text appears, transcribe it and translate it to English if needed.
-3) Mentally simulate LEFT and RIGHT as chronological stories.
+3) Mentally simulate OPTION A and OPTION B as chronological stories.
 4) Choose the story with the clearest causal chain and consistent entity progression.
 5) Return JSON only.
 
 Allowed JSON schema:
-{"answer":"left|right|skip","confidence":0.0,"reasoning":"short optional note"}
+{"answer":"a|b|skip","confidence":0.0,"reasoning":"short optional note"}
 
 Rules:
 - Use only ${allowedAnswers} for "answer"
@@ -136,19 +146,19 @@ function buildFramesSinglePassPrompt({
   return `
 You are solving an Idena short-session flip benchmark.
 You are given 8 ordered frame images:
-- Images 1-4 belong to the LEFT story (in temporal order)
-- Images 5-8 belong to the RIGHT story (in temporal order)
+- Images 1-4 belong to OPTION A (in temporal order)
+- Images 5-8 belong to OPTION B (in temporal order)
 
 Task:
 1) Inspect each frame separately and identify actors, actions, and visible state changes.
 2) If any readable text appears, transcribe it and translate it to English if needed.
-3) Build one short story summary for LEFT and one short story summary for RIGHT.
+3) Build one short story summary for OPTION A and one short story summary for OPTION B.
 4) Compare coherence using common-sense chronology and visible cause -> effect links.
 5) Choose the most meaningful story.
 6) Return JSON only.
 
 Allowed JSON schema:
-{"answer":"left|right|skip","confidence":0.0,"reasoning":"short optional note"}
+{"answer":"a|b|skip","confidence":0.0,"reasoning":"short optional note"}
 
 Rules:
 - Use only ${allowedAnswers} for "answer"
@@ -169,35 +179,35 @@ function buildFramesReasoningPrompt({hash}) {
   return `
 You are solving an Idena flip benchmark in analysis mode.
 You are given 8 ordered frame images:
-- Images 1-4 belong to the LEFT story (in temporal order)
-- Images 5-8 belong to the RIGHT story (in temporal order)
+- Images 1-4 belong to OPTION A (in temporal order)
+- Images 5-8 belong to OPTION B (in temporal order)
 
 Task:
 1) For each frame, write one short factual caption.
 2) Extract any readable text from each frame and translate it to English if needed.
-3) Build one concise story summary for LEFT and RIGHT.
-4) Estimate one coherence score from 0 to 100 for LEFT and RIGHT.
+3) Build one concise story summary for OPTION A and OPTION B.
+4) Estimate one coherence score from 0 to 100 for OPTION A and OPTION B.
 5) Flag report risk if the flip is clearly report-worthy.
 6) Return JSON only.
 
 Allowed JSON schema:
 {
-  "leftFrames":[
+  "optionAFrames":[
     {"caption":"...", "text":"...", "translation":"..."},
     {"caption":"...", "text":"...", "translation":"..."},
     {"caption":"...", "text":"...", "translation":"..."},
     {"caption":"...", "text":"...", "translation":"..."}
   ],
-  "rightFrames":[
+  "optionBFrames":[
     {"caption":"...", "text":"...", "translation":"..."},
     {"caption":"...", "text":"...", "translation":"..."},
     {"caption":"...", "text":"...", "translation":"..."},
     {"caption":"...", "text":"...", "translation":"..."}
   ],
-  "leftStory":"...",
-  "rightStory":"...",
-  "coherenceLeft":0,
-  "coherenceRight":0,
+  "optionAStory":"...",
+  "optionBStory":"...",
+  "coherenceA":0,
+  "coherenceB":0,
   "reportRisk": false,
   "reportReason":""
 }
@@ -207,7 +217,7 @@ Rules:
 - Use "" for text and translation when no readable text exists
 - Keep story summaries concise
 - coherence scores must be integers between 0 and 100
-- Evaluate LEFT and RIGHT independently before comparing them
+- Evaluate OPTION A and OPTION B independently before comparing them
 - Do not let the first listed side inherit a higher coherence score by default
 - Set reportRisk=true if reading text is required to solve the flip
 - Set reportRisk=true if visible order labels, numbers, letters, arrows, captions, or sequence markers appear on the images
@@ -230,7 +240,7 @@ function buildFramesDecisionPrompt({
   const antiPositionRules = buildAntiPositionRules()
   return `
 You are solving an Idena short-session flip benchmark.
-You are given pre-analysis JSON for LEFT and RIGHT story frames.
+You are given pre-analysis JSON for OPTION A and OPTION B story frames.
 
 Task:
 1) Read the captions, extracted text, translations, story summaries, coherence scores, and report flags.
@@ -240,7 +250,7 @@ Task:
 5) Return JSON only.
 
 Allowed JSON schema:
-{"answer":"left|right|skip","confidence":0.0,"reasoning":"short optional note"}
+{"answer":"a|b|skip","confidence":0.0,"reasoning":"short optional note"}
 
 Rules:
 - Use only ${allowedAnswers} for "answer"
@@ -325,5 +335,6 @@ function promptTemplate({
 }
 
 module.exports = {
+  systemPromptTemplate,
   promptTemplate,
 }

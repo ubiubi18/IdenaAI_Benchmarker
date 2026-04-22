@@ -33,7 +33,6 @@ describe('validation machine', () => {
     const service = interpret(machine).start()
 
     service.send('SUBMIT')
-    service.send('SUBMIT')
 
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -75,7 +74,6 @@ describe('validation machine', () => {
     const service = interpret(machine).start()
 
     service.send('SUBMIT')
-    service.send('SUBMIT')
 
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -99,6 +97,61 @@ describe('validation machine', () => {
     expect(service.state.matches('longSession')).toBe(true)
 
     service.stop()
+  })
+
+  it('submits short answers directly without a second confirmation event', async () => {
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    URL.revokeObjectURL = jest.fn()
+
+    try {
+      const machine = createValidationMachine({
+        epoch: 1,
+        validationStart: Date.now() + 60 * 1000,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        validationSessionId: '',
+        locale: 'en',
+        initialShortFlips: [
+          {
+            hash: '0xshort',
+            decoded: true,
+            option: 1,
+            images: ['blob:short-1'],
+          },
+        ],
+      })
+
+      const service = interpret(machine).start()
+
+      service.send('SUBMIT')
+
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Timed out waiting for submitted state'))
+        }, 1000)
+
+        service.onTransition((state) => {
+          if (
+            state.matches(
+              'shortSession.solve.answer.submitShortSession.submitted'
+            )
+          ) {
+            clearTimeout(timeout)
+            resolve()
+          }
+        })
+      })
+
+      expect(
+        service.state.matches(
+          'shortSession.solve.answer.submitShortSession.submitted'
+        )
+      ).toBe(true)
+
+      service.stop()
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl
+    }
   })
 
   it('merges rehearsal benchmark metadata into matching flips', () => {

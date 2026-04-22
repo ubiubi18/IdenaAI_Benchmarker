@@ -34,6 +34,7 @@ import {
   buildValidationSessionNodeScope,
   buildValidationStateScope,
   isValidationCeremonyPeriod,
+  canOpenValidationCeremonyLocalResults,
   getValidationSessionPhaseDeadlineAt,
   getValidationSessionPhaseRemainingMs,
   getValidationAutoReportDelayMs,
@@ -71,7 +72,6 @@ import {
   ReviewValidationDialog,
   EncourageReportDialog,
   BadFlipDialog,
-  ReviewShortSessionDialog,
   SynchronizingValidationAlert,
   OfflineValidationAlert,
 } from '../screens/validation/components'
@@ -116,6 +116,9 @@ import {getNodeBridge} from '../shared/utils/node-bridge'
 import {useInterval} from '../shared/hooks/use-interval'
 import {
   getValidationAiSessionType,
+  getValidationLongAiSolveStatus,
+  getValidationReportKeywordStatus,
+  shouldFinishLongSessionAiSolve,
   shouldBlockSessionAutoInDev,
   shouldAutoRunSessionForPeriod,
   shouldShowValidationAiUi,
@@ -128,6 +131,9 @@ const previewAiSampleSet = require('../../samples/flips/flip-challenge-test-5-de
 const AUTO_REPORT_DEFAULT_DELAY_MINUTES = 10
 const SESSION_AUTO_PROVIDER_RETRY_MS = 5 * 1000
 const MIN_AUTO_REPORT_DELAY_MS = 15 * 1000
+const AUTO_REPORT_KEYWORD_WAIT_MS = 20 * 1000
+const AUTO_REPORT_KEYWORD_RETRY_MS = 5 * 1000
+const LONG_SESSION_LOADING_GRACE_MS = 15 * 60 * 1000
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
   provider: 'openai',
@@ -888,10 +894,13 @@ function ValidationSession({
   const [isCheckingLocalAiRecommendation, setIsCheckingLocalAiRecommendation] =
     useState(false)
   const autoSolveStartedRef = useRef({short: false, long: false})
+  const autoSolveLongSignatureRef = useRef('')
   const shortSessionDecodeRecoveryAttemptedRef = useRef(false)
   const longSessionDecodeRecoveryAttemptedRef = useRef(false)
   const manualReportingStartedRef = useRef(false)
   const autoReportSubmitPendingRef = useRef(false)
+  const autoReportKeywordWaitStartedAtRef = useRef(null)
+  const autoReportKeywordWaitNotifiedRef = useRef(false)
   const localAiCaptureSyncRef = useRef({})
   const preparedValidationSessionRef = useRef({
     epoch: null,
@@ -1022,6 +1031,8 @@ function ValidationSession({
     longFlips,
     didReport,
   } = state.context
+  const canOpenLocalResultsShortcut =
+    canOpenValidationCeremonyLocalResults(state)
 
   useEffect(() => {
     if (validationSessionId) {
@@ -1485,6 +1496,9 @@ function ValidationSession({
   const aiSessionType = getValidationAiSessionType({
     state,
     submitting: isSubmitting(state),
+    hasRenderableLongFlips: hasRenderableValidationFlips(
+      state.context?.longFlips || []
+    ),
   })
 
   const canAutoRunAiSolveForCurrentPeriod = shouldAutoRunSessionForPeriod({
@@ -1681,6 +1695,15 @@ function ValidationSession({
     enabled: aiSolverSettings.enabled,
     providerReady: aiProviderSetupReady,
   })
+  const longSessionAiSolveStatus = useMemo(
+    () =>
+      getValidationLongAiSolveStatus({
+        longFlips: state.context?.longFlips || [],
+      }),
+    [state]
+  )
+  const longSessionAutoSolveSignature =
+    longSessionAiSolveStatus.decodedUnansweredHashes.join(',')
   const renderableSessionFlipsAvailable = useMemo(
     () => hasRenderableValidationFlips(sessionFlips(state)),
     [state]
@@ -2035,14 +2058,43 @@ function ValidationSession({
         Array.isArray(result.results) &&
         result.results.length > 0
       ) {
-        setAwaitingHumanReporting(true)
-        send('FINISH_FLIPS')
+        const solvedHashes = result.answers.map(({hash}) => hash)
+        const nextLongAiSolveStatus = getValidationLongAiSolveStatus({
+          longFlips: state.context.longFlips,
+          solvedHashes,
+        })
+        const longSessionStartedAt =
+          dayjs(validationStart).valueOf() + shortSessionDuration * 1000
+        const longSessionElapsedMs = Math.max(
+          0,
+          Date.now() - longSessionStartedAt
+        )
+
+        if (
+          shouldFinishLongSessionAiSolve({
+            longFlips: state.context.longFlips,
+            solvedHashes,
+            longSessionElapsedMs,
+            loadingGraceMs: LONG_SESSION_LOADING_GRACE_MS,
+          })
+        ) {
+          setAwaitingHumanReporting(true)
+          send('FINISH_FLIPS')
+        } else if (
+          !nextLongAiSolveStatus.hasDecodedUnansweredFlips &&
+          nextLongAiSolveStatus.hasLoadingFlips
+        ) {
+          autoSolveLongSignatureRef.current = ''
+        }
       }
     } catch (error) {
       const errorMessage = formatErrorForToast(error)
 
       if (error?.code === 'provider_not_ready') {
         autoSolveStartedRef.current[sessionType] = false
+        if (sessionType === 'long') {
+          autoSolveLongSignatureRef.current = ''
+        }
       }
 
       notifyAi(t('AI helper failed'), errorMessage, 'error')
@@ -2179,7 +2231,37 @@ function ValidationSession({
         throw new Error(formatAiProviderReadinessError(readiness, t))
       }
 
-      const candidateSourceFlips = longFlips.filter(decodedWithKeywords)
+      const keywordStatus = getValidationReportKeywordStatus({
+        state,
+        longFlips,
+      })
+      const candidateSourceFlips = keywordStatus.keywordReadyFlips
+
+      if (!candidateSourceFlips.length) {
+        const waitedMs = autoReportKeywordWaitStartedAtRef.current
+          ? Date.now() - autoReportKeywordWaitStartedAtRef.current
+          : 0
+
+        if (
+          keywordStatus.keywordsPending &&
+          waitedMs < AUTO_REPORT_KEYWORD_WAIT_MS
+        ) {
+          setAutoReportDeadlineAt(Date.now() + AUTO_REPORT_KEYWORD_RETRY_MS)
+
+          if (!autoReportKeywordWaitNotifiedRef.current) {
+            autoReportKeywordWaitNotifiedRef.current = true
+            notifyAi(
+              t('Getting flip keywords'),
+              t(
+                'Automatic report review is waiting for long-session keywords to load before making report decisions.'
+              )
+            )
+          }
+
+          return
+        }
+      }
+
       const candidateFlips = await Promise.all(
         candidateSourceFlips.map(async (flip) => ({
           hash: flip.hash,
@@ -2194,9 +2276,14 @@ function ValidationSession({
       if (!candidateFlips.length) {
         submitLongSessionAutomatically({
           title: t('AI report review skipped'),
-          description: t(
-            'No keyword-ready flips are available for automatic report review. Long-session answers will be submitted automatically.'
-          ),
+          description:
+            keywordStatus.decodedFlipCount > 0
+              ? t(
+                  'Flip keywords are still unavailable, so automatic report review cannot run. Long-session answers will be submitted automatically without extra report decisions.'
+                )
+              : t(
+                  'No keyword-ready flips are available for automatic report review. Long-session answers will be submitted automatically.'
+                ),
         })
         return
       }
@@ -2251,16 +2338,28 @@ function ValidationSession({
 
       notifyAi(
         t('AI auto-report completed'),
-        t(
-          'Applied {{reported}} report decisions and {{approved}} approvals. Long session answers will be submitted automatically.',
-          {
-            reported: reportHashSet.size,
-            approved: Math.max(
-              0,
-              candidateSourceFlips.length - reportHashSet.size
-            ),
-          }
-        )
+        keywordStatus.missingKeywordFlipCount > 0
+          ? t(
+              'Applied {{reported}} report decisions and {{approved}} approvals. Skipped {{skipped}} flip(s) with missing keywords. Long session answers will be submitted automatically.',
+              {
+                reported: reportHashSet.size,
+                approved: Math.max(
+                  0,
+                  candidateSourceFlips.length - reportHashSet.size
+                ),
+                skipped: keywordStatus.missingKeywordFlipCount,
+              }
+            )
+          : t(
+              'Applied {{reported}} report decisions and {{approved}} approvals. Long session answers will be submitted automatically.',
+              {
+                reported: reportHashSet.size,
+                approved: Math.max(
+                  0,
+                  candidateSourceFlips.length - reportHashSet.size
+                ),
+              }
+            )
       )
 
       send('SUBMIT')
@@ -2314,11 +2413,11 @@ function ValidationSession({
     if (
       isSessionAutoMode &&
       canRunAiSolve &&
-      aiSessionType &&
+      aiSessionType === 'short' &&
       canAutoRunAiSolveForCurrentPeriod &&
-      !autoSolveStartedRef.current[aiSessionType]
+      !autoSolveStartedRef.current.short
     ) {
-      autoSolveStartedRef.current[aiSessionType] = true
+      autoSolveStartedRef.current.short = true
       runAiSolve()
     }
   }, [
@@ -2327,6 +2426,46 @@ function ValidationSession({
     canRunAiSolve,
     isSessionAutoMode,
     runAiSolve,
+  ])
+
+  useEffect(() => {
+    if (
+      currentPeriod !== EpochPeriod.LongSession ||
+      !state.matches('longSession.solve.answer.flips')
+    ) {
+      autoSolveStartedRef.current.long = false
+      autoSolveLongSignatureRef.current = ''
+      return
+    }
+
+    if (
+      !isSessionAutoMode ||
+      !canRunAiSolve ||
+      aiSessionType !== 'long' ||
+      !canAutoRunAiSolveForCurrentPeriod ||
+      aiSolving ||
+      !longSessionAutoSolveSignature
+    ) {
+      return
+    }
+
+    if (autoSolveLongSignatureRef.current === longSessionAutoSolveSignature) {
+      return
+    }
+
+    autoSolveStartedRef.current.long = true
+    autoSolveLongSignatureRef.current = longSessionAutoSolveSignature
+    runAiSolve()
+  }, [
+    aiSessionType,
+    aiSolving,
+    canAutoRunAiSolveForCurrentPeriod,
+    canRunAiSolve,
+    currentPeriod,
+    isSessionAutoMode,
+    longSessionAutoSolveSignature,
+    runAiSolve,
+    state,
   ])
 
   useEffect(() => {
@@ -2405,6 +2544,7 @@ function ValidationSession({
 
     longSessionDecodeRecoveryAttemptedRef.current = true
     autoSolveStartedRef.current.long = false
+    autoSolveLongSignatureRef.current = ''
     send('REFETCH_FLIPS')
   }, [currentPeriod, forceAiPreview, send, state])
 
@@ -2424,6 +2564,18 @@ function ValidationSession({
       autoReportSubmitPendingRef.current = false
       setAutoReportDeadlineAt(null)
     }
+  }, [state])
+
+  useEffect(() => {
+    if (state.matches('longSession.solve.answer.keywords')) {
+      if (!autoReportKeywordWaitStartedAtRef.current) {
+        autoReportKeywordWaitStartedAtRef.current = Date.now()
+      }
+      return
+    }
+
+    autoReportKeywordWaitStartedAtRef.current = null
+    autoReportKeywordWaitNotifiedRef.current = false
   }, [state])
 
   useEffect(() => {
@@ -3083,6 +3235,14 @@ function ValidationSession({
                 </SecondaryButton>
               </Stack>
             )}
+          {canOpenLocalResultsShortcut && (
+            <SecondaryButton
+              mr={3}
+              onClick={() => router.push('/validation/after')}
+            >
+              {t('Open local stats & audit')}
+            </SecondaryButton>
+          )}
           {(isShortSession(state) || isLongSessionKeywords(state)) &&
             (hasAllRelevanceMarks(state) || isLastFlip(state) ? (
               <PrimaryButton
@@ -3211,20 +3371,6 @@ function ValidationSession({
         }}
       />
 
-      <ReviewShortSessionDialog
-        flips={flips.filter(solvableFlips)}
-        isOpen={state.matches(
-          'shortSession.solve.answer.submitShortSession.confirm'
-        )}
-        onSubmit={handleSubmit}
-        onClose={() => {
-          send('CANCEL')
-        }}
-        onCancel={() => {
-          send('CANCEL')
-        }}
-      />
-
       <EncourageReportDialog
         isOpen={isOpenEncourageReportDialog}
         onClose={onCloseEncourageReportDialog}
@@ -3329,6 +3475,29 @@ function formatAiDecisionTrace(item = {}) {
     parts.push('raw skip')
   }
 
+  if (item.ensembleTieBreakApplied) {
+    const selectedAnswer = String(
+      item.finalAnswerAfterRemap || item.answer || ''
+    )
+      .trim()
+      .toUpperCase()
+    const tiedAnswers = Array.isArray(item.ensembleTieBreakCandidates)
+      ? item.ensembleTieBreakCandidates
+          .map((answer) =>
+            String(answer || '')
+              .trim()
+              .toUpperCase()
+          )
+          .filter(Boolean)
+      : []
+
+    parts.push(
+      tiedAnswers.length > 1 && selectedAnswer
+        ? `ensemble tie-break ${selectedAnswer} from ${tiedAnswers.join('/')}`
+        : 'ensemble tie-break'
+    )
+  }
+
   if (item.error) {
     parts.push('provider error')
   }
@@ -3428,6 +3597,17 @@ function AiTelemetryPanel({
               telemetry.sessionType || 'short'
             )})`}
           </Text>
+          {telemetry.profile && (
+            <Text fontSize="xs" color={bodyColor}>
+              {`profile ${
+                telemetry.profile.benchmarkProfile || 'strict'
+              }, vision ${
+                telemetry.profile.flipVisionMode || 'composite'
+              }, timeout ${formatLatency(
+                telemetry.profile.requestTimeoutMs
+              )}, gap ${formatLatency(telemetry.profile.interFlipDelayMs)}`}
+            </Text>
+          )}
 
           {telemetry.status === 'running' && (
             <Text fontSize="xs" color={bodyColor}>
@@ -3476,6 +3656,8 @@ function AiTelemetryPanel({
                   telemetry.summary.diagnostics?.uncertaintyReprompts || 0
                 }, frame-review ${
                   telemetry.summary.diagnostics?.annotatedFrameReviews || 0
+                }, ensemble-tie ${
+                  telemetry.summary.diagnostics?.ensembleTieBreaks || 0
                 }, forced ${
                   telemetry.summary.diagnostics?.forcedDecisions || 0
                 }, random ${
@@ -3682,7 +3864,10 @@ function hasManyFlips(state) {
 }
 
 function canSubmit(state) {
-  if (isShortSession(state) || isLongSessionFlips(state))
+  if (isShortSession(state))
+    return hasAnyAnsweredFlip(state) && !isSubmitting(state)
+
+  if (isLongSessionFlips(state))
     return (hasAllAnswers(state) || isLastFlip(state)) && !isSubmitting(state)
 
   if (isLongSessionKeywords(state))
@@ -3708,6 +3893,17 @@ function hasAllAnswers(state) {
     ? shortFlips.filter(({decoded, extra}) => decoded && !extra)
     : longFlips.filter(({decoded}) => decoded)
   return flips.length && flips.every(({option}) => option)
+}
+
+function hasAnyAnsweredFlip(state) {
+  const {
+    context: {shortFlips, longFlips},
+  } = state
+  const flips = isShortSession(state)
+    ? shortFlips.filter(({decoded, extra}) => decoded && !extra)
+    : longFlips.filter(({decoded}) => decoded)
+
+  return flips.some(({option}) => option > 0)
 }
 
 function hasAllRelevanceMarks({context: {longFlips}}) {

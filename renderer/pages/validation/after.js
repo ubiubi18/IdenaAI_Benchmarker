@@ -9,7 +9,6 @@ import {
   SimpleGrid,
   Stack,
   Text,
-  useBoolean,
 } from '@chakra-ui/react'
 import dayjs from 'dayjs'
 import NextLink from 'next/link'
@@ -27,7 +26,9 @@ import {
   buildValidationIdentityScope,
   buildValidationSessionNodeScope,
   buildValidationSessionScopeKey,
+  canOpenValidationCeremonyLocalResults,
   canValidate,
+  hasSubmittedLongSessionAnswers,
 } from '../../screens/validation/utils'
 import {
   computeRehearsalBenchmarkSummary,
@@ -38,6 +39,7 @@ import {
   persistRehearsalBenchmarkReview,
 } from '../../screens/validation/rehearsal-benchmark'
 import {
+  computeValidationAiCostBreakdown,
   computeValidationAiCostTotals,
   loadValidationAiCostLedger,
 } from '../../screens/validation/ai-cost-tracker'
@@ -52,13 +54,12 @@ import {
 import {useTimingState} from '../../shared/providers/timing-context'
 import {useChainState} from '../../shared/providers/chain-context'
 import {EpochPeriod, IdentityStatus} from '../../shared/types'
+import {HASH_IN_MEMPOOL} from '../../shared/utils/utils'
 
 export default function AfterValidationPage() {
   const {t} = useTranslation()
 
   const router = useRouter()
-
-  const [{isPending}, setIsPending] = useBoolean()
 
   const settings = useSettingsState()
   const [identity] = useIdentity()
@@ -87,6 +88,7 @@ export default function AfterValidationPage() {
 
   const {data: validationState} = usePersistedValidationState({
     scope: validationIdentityScope,
+    live: true,
   })
   const rehearsalBenchmarkSummary = React.useMemo(
     () => computeRehearsalBenchmarkSummary(validationState),
@@ -154,21 +156,88 @@ export default function AfterValidationPage() {
     () => computeValidationAiCostTotals(validationAiCostLedger),
     [validationAiCostLedger]
   )
+  const validationAiCostBreakdown = React.useMemo(
+    () => computeValidationAiCostBreakdown(validationAiCostLedger),
+    [validationAiCostLedger]
+  )
+  const submitLongAnswersHash = String(
+    validationState?.context?.submitLongAnswersHash || ''
+  ).trim()
+  const {data: submitLongAnswersTx} = useTrackTx(submitLongAnswersHash)
+  const hasSubmittedLongAnswers = React.useMemo(
+    () => hasSubmittedLongSessionAnswers(validationState),
+    [validationState]
+  )
+  const isLongSubmitPending = React.useMemo(() => {
+    if (!submitLongAnswersHash) {
+      return false
+    }
 
-  useTrackTx(validationState?.submitLongAnswersHash, {
-    onMined: () => {
-      setIsPending.off()
-    },
-  })
+    if (!submitLongAnswersTx?.blockHash) {
+      return true
+    }
+
+    return submitLongAnswersTx.blockHash === HASH_IN_MEMPOOL
+  }, [submitLongAnswersHash, submitLongAnswersTx?.blockHash])
+  const canOpenLocalResultsDuringCeremony = React.useMemo(
+    () => canOpenValidationCeremonyLocalResults(validationState),
+    [validationState]
+  )
 
   const epoch = useEpochState()
   const currentPeriod = epoch?.currentPeriod
 
   const isAfterLongSession = currentPeriod === EpochPeriod.AfterLongSession
+  const isLongSession = currentPeriod === EpochPeriod.LongSession
   const isValidationCeremony = [
     EpochPeriod.ShortSession,
     EpochPeriod.LongSession,
   ].includes(currentPeriod)
+  const longSessionStatusMessage = React.useMemo(() => {
+    if (!isLongSession || !canOpenLocalResultsDuringCeremony) {
+      return ''
+    }
+
+    if (!hasSubmittedLongAnswers) {
+      return t(
+        'Long-session countdown is still running. Local stats and benchmark audit are already available now, and you can return to validation any time to keep reporting or submit answers.'
+      )
+    }
+
+    if (isLongSubmitPending) {
+      return t(
+        'Your long-session answers are being submitted. Local stats and benchmark audit are already available while the countdown continues.'
+      )
+    }
+
+    return t(
+      'Your long-session answers are submitted. Local stats and benchmark audit are already available while the countdown continues.'
+    )
+  }, [
+    canOpenLocalResultsDuringCeremony,
+    hasSubmittedLongAnswers,
+    isLongSession,
+    isLongSubmitPending,
+    t,
+  ])
+  const returnToValidationLabel = React.useMemo(
+    () =>
+      hasSubmittedLongAnswers
+        ? t('Back to validation countdown')
+        : t('Return to validation'),
+    [hasSubmittedLongAnswers, t]
+  )
+  const pageHeading = React.useMemo(() => {
+    if (isAfterLongSession) {
+      return t('Waiting for the Idena validation results')
+    }
+
+    if (canOpenLocalResultsDuringCeremony) {
+      return t('Local validation results are ready')
+    }
+
+    return t('Waiting for the end of the long session')
+  }, [canOpenLocalResultsDuringCeremony, isAfterLongSession, t])
 
   const timing = useTimingState()
 
@@ -284,9 +353,7 @@ export default function AfterValidationPage() {
           <Stack spacing="6">
             <Stack spacing="2">
               <Heading fontSize="lg" fontWeight={500}>
-                {isAfterLongSession
-                  ? t('Waiting for the Idena validation results')
-                  : t('Waiting for the end of the long session')}
+                {pageHeading}
               </Heading>
 
               {isAfterLongSession && (
@@ -295,17 +362,35 @@ export default function AfterValidationPage() {
                 </Text>
               )}
 
-              {isValidationCeremony && (
+              {isLongSession && canOpenLocalResultsDuringCeremony && (
                 <Text color="xwhite.050" fontSize="mdx">
-                  {isEligible &&
-                    isPending &&
-                    t('Please wait. Your answers are being submitted...')}
-                  {isEligible &&
-                    !isPending &&
-                    t('Your answers are successfully submitted')}
+                  {longSessionStatusMessage}
                 </Text>
               )}
+
+              {isValidationCeremony &&
+                !isAfterLongSession &&
+                !canOpenLocalResultsDuringCeremony && (
+                  <Text color="xwhite.050" fontSize="mdx">
+                    {isEligible &&
+                      isLongSubmitPending &&
+                      t('Please wait. Your answers are being submitted...')}
+                    {isEligible &&
+                      !isLongSubmitPending &&
+                      t('Your answers are successfully submitted')}
+                  </Text>
+                )}
             </Stack>
+            {isLongSession && canOpenLocalResultsDuringCeremony && (
+              <Stack direction={['column', 'row']} spacing="3">
+                <Button
+                  alignSelf="flex-start"
+                  onClick={() => router.push('/validation')}
+                >
+                  {returnToValidationLabel}
+                </Button>
+              </Stack>
+            )}
             {isAfterLongSession ? null : (
               <ValidationCountdown duration={validationEnd.diff(dayjs())} />
             )}
@@ -451,6 +536,29 @@ export default function AfterValidationPage() {
                     />
                   </SimpleGrid>
 
+                  <SimpleGrid columns={[1, 2]} spacing="3">
+                    <ValidationAiCostBreakdownCard
+                      label={t('Short session')}
+                      totals={validationAiCostBreakdown.short}
+                    />
+                    <ValidationAiCostBreakdownCard
+                      label={t('Long session')}
+                      totals={validationAiCostBreakdown.long}
+                    />
+                    <ValidationAiCostBreakdownCard
+                      label={t('Reporting')}
+                      totals={validationAiCostBreakdown.reporting}
+                    />
+                    <ValidationAiCostBreakdownCard
+                      label={t('Short + long solve')}
+                      totals={validationAiCostBreakdown.solveCombined}
+                    />
+                    <ValidationAiCostBreakdownCard
+                      label={t('All AI steps')}
+                      totals={validationAiCostBreakdown.overall}
+                    />
+                  </SimpleGrid>
+
                   <Stack spacing="2" maxH="240px" overflowY="auto" pr="1">
                     {validationAiCostLedger.entries.map((entry) => (
                       <Box
@@ -593,6 +701,36 @@ function BenchmarkStat({label, value}) {
       <Text fontSize="md" fontWeight={600}>
         {value}
       </Text>
+    </Box>
+  )
+}
+
+function ValidationAiCostBreakdownCard({label, totals}) {
+  return (
+    <Box
+      borderWidth="1px"
+      borderColor="whiteAlpha.200"
+      borderRadius="md"
+      px="3"
+      py="2"
+      bg="whiteAlpha.100"
+    >
+      <Text color="xwhite.050" fontSize="xs" textTransform="uppercase">
+        {label}
+      </Text>
+      <Stack spacing="1" mt="1">
+        <Text fontSize="sm" fontWeight={600}>
+          {`${formatTokenCount(totals?.totalTokens)} tok`}
+        </Text>
+        <Text color="xwhite.050" fontSize="xs">
+          {`est ${formatUsd(totals?.estimatedUsd)} | actual ${formatUsd(
+            totals?.actualUsd
+          )}`}
+        </Text>
+        <Text color="xwhite.050" fontSize="xs">
+          {`${String(totals?.count || 0)} actions`}
+        </Text>
+      </Stack>
     </Box>
   )
 }

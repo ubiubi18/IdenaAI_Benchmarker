@@ -19,6 +19,8 @@ import {
   loadValidationState,
   loadValidationStateForPeriod,
   loadValidationStateByIdentityScope,
+  canOpenValidationCeremonyLocalResults,
+  hasSubmittedLongSessionAnswers,
   pendingDecodeHashes,
   persistValidationState,
   rememberValidationSessionId,
@@ -1481,6 +1483,45 @@ describe('shouldStartValidation', () => {
         {isRehearsalNodeSession: true}
       )
     ).toBe(true)
+  })
+})
+
+describe('canOpenValidationCeremonyLocalResults', () => {
+  it('allows opening local results during long-session keyword review', () => {
+    const restoredState = {
+      context: {},
+      matches(statePath) {
+        return statePath === 'longSession.solve.answer.keywords'
+      },
+    }
+
+    expect(canOpenValidationCeremonyLocalResults(restoredState)).toBe(true)
+    expect(hasSubmittedLongSessionAnswers(restoredState)).toBe(false)
+  })
+
+  it('allows opening local results after long answers were submitted', () => {
+    const restoredState = {
+      context: {
+        submitLongAnswersHash: '0xsubmit',
+      },
+      matches() {
+        return false
+      },
+    }
+
+    expect(hasSubmittedLongSessionAnswers(restoredState)).toBe(true)
+    expect(canOpenValidationCeremonyLocalResults(restoredState)).toBe(true)
+  })
+
+  it('keeps the shortcut closed before long-session reporting starts', () => {
+    expect(
+      canOpenValidationCeremonyLocalResults({
+        context: {},
+        matches() {
+          return false
+        },
+      })
+    ).toBe(false)
   })
 })
 

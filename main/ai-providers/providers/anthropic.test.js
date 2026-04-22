@@ -24,6 +24,7 @@ describe('anthropic provider adapter', () => {
         hash: 'flip-1',
       },
       prompt: 'Decide left or right',
+      systemPrompt: 'system prompt',
       profile: {
         temperature: 0,
         maxOutputTokens: 0,
@@ -33,6 +34,7 @@ describe('anthropic provider adapter', () => {
     })
 
     expect(httpClient.post).toHaveBeenCalledTimes(1)
+    expect(httpClient.post.mock.calls[0][1].system).toBe('system prompt')
     expect(httpClient.post.mock.calls[0][1].max_tokens).toBe(1024)
   })
 })

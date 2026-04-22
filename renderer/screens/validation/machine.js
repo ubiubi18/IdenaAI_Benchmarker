@@ -447,7 +447,7 @@ export const createValidationMachine = ({
                           ],
                         },
                         SUBMIT: {
-                          target: 'submitShortSession',
+                          target: 'submitShortSession.submitting',
                         },
                       },
                       after: {
@@ -464,35 +464,7 @@ export const createValidationMachine = ({
                       },
                     },
                     submitShortSession: {
-                      initial: 'checkAnswers',
                       states: {
-                        checkAnswers: {
-                          always: [
-                            {
-                              target: 'confirm',
-                              cond: ({shortFlips}) => {
-                                const solvableFlips =
-                                  filterRegularFlips(shortFlips)
-                                return (
-                                  solvableFlips.length === 0 ||
-                                  solvableFlips.some(
-                                    ({option = 0, decoded, ready, loading}) =>
-                                      (decoded && option === 0) ||
-                                      (ready && loading)
-                                  )
-                                )
-                              },
-                            },
-                            {target: 'submitting'},
-                          ],
-                        },
-                        confirm: {
-                          on: {
-                            SUBMIT: 'submitting',
-                            CANCEL:
-                              '#validation.shortSession.solve.answer.normal',
-                          },
-                        },
                         submitting: {
                           invoke: {
                             // eslint-disable-next-line no-shadow
@@ -621,10 +593,15 @@ export const createValidationMachine = ({
                               }),
                             ],
                             // eslint-disable-next-line no-shadow
-                            cond: ({longFlips, validationStart}) =>
+                            cond: ({
+                              longFlips,
+                              validationStart: currentValidationStart,
+                              longSessionDuration: currentLongSessionDuration,
+                            }) =>
                               shouldPollLongFlips(longFlips, {
-                                validationStart,
+                                validationStart: currentValidationStart,
                                 shortSessionDuration,
+                                longSessionDuration: currentLongSessionDuration,
                               }),
                           },
                           {
@@ -1222,11 +1199,21 @@ export const createValidationMachine = ({
             shortSessionDuration - 10 + nextLongSessionDuration
           ) * 1000,
         // eslint-disable-next-line no-shadow
-        FINALIZE_LONG_FLIPS: ({validationStart, shortSessionDuration}) =>
+        FINALIZE_LONG_FLIPS: ({
+          validationStart: currentValidationStart,
+          shortSessionDuration: currentShortSessionDuration,
+          longSessionDuration: nextLongSessionDuration,
+        }) =>
           Math.max(
             adjustDurationInSeconds(
-              validationStart,
-              shortSessionDuration + (global.env?.FINALIZE_LONG_FLIPS || 4 * 60)
+              currentValidationStart,
+              currentShortSessionDuration +
+                Math.min(
+                  nextLongSessionDuration ||
+                    global.env?.FINALIZE_LONG_FLIPS ||
+                    15 * 60,
+                  global.env?.FINALIZE_LONG_FLIPS || 15 * 60
+                )
             ),
             5
           ) * 1000,

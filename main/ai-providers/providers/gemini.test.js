@@ -30,6 +30,7 @@ describe('gemini provider adapter', () => {
         hash: 'flip-1',
       },
       prompt: 'Decide left or right',
+      systemPrompt: 'system prompt',
       profile: {
         temperature: 0,
         maxOutputTokens: 0,
@@ -39,6 +40,9 @@ describe('gemini provider adapter', () => {
     })
 
     expect(httpClient.post).toHaveBeenCalledTimes(1)
+    expect(httpClient.post.mock.calls[0][1].systemInstruction).toStrictEqual({
+      parts: [{text: 'system prompt'}],
+    })
     expect(
       httpClient.post.mock.calls[0][1].generationConfig.maxOutputTokens
     ).toBeUndefined()

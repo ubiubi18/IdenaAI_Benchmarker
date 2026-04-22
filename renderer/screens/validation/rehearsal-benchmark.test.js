@@ -56,12 +56,20 @@ describe('rehearsal benchmark helpers', () => {
   it('normalizes seed metadata by hash and removes invalid entries', () => {
     expect(
       normalizeRehearsalSeedFlipMetaByHash({
-        '0x1': {expectedAnswer: 'LEFT', expectedStrength: 'Strong'},
+        '0x1': {
+          expectedAnswer: 'LEFT',
+          expectedStrength: 'Strong',
+          words: [{name: 'apple', desc: 'fruit'}],
+        },
         '0x2': {expectedAnswer: 'unknown'},
         '': {expectedAnswer: 'right'},
       })
     ).toEqual({
-      '0x1': {expectedAnswer: 'left', expectedStrength: 'Strong'},
+      '0x1': {
+        expectedAnswer: 'left',
+        expectedStrength: 'Strong',
+        words: [{name: 'apple', desc: 'fruit'}],
+      },
     })
   })
 
@@ -70,8 +78,12 @@ describe('rehearsal benchmark helpers', () => {
       mergeRehearsalSeedMetaIntoFlips(
         [{hash: '0x1'}, {hash: '0x2', expectedAnswer: 'right'}],
         {
-          '0x1': {expectedAnswer: 'left', expectedStrength: 'Strong'},
-          '0x2': {expectedAnswer: 'right', expectedStrength: 'Weak'},
+          '0x1': {
+            expectedAnswer: 'left',
+            expectedStrength: 'Strong',
+            words: [{name: 'apple', desc: 'fruit'}],
+          },
+          '0x2': {expectedAnswer: 'right', expectedStrength: 'Weak', words: []},
         }
       )
     ).toEqual([
@@ -79,11 +91,13 @@ describe('rehearsal benchmark helpers', () => {
         hash: '0x1',
         expectedAnswer: 'left',
         expectedStrength: 'Strong',
+        words: [{name: 'apple', desc: 'fruit'}],
       },
       {
         hash: '0x2',
         expectedAnswer: 'right',
         expectedStrength: 'Weak',
+        words: [],
       },
     ])
   })

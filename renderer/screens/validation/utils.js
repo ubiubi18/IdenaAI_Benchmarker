@@ -1030,6 +1030,29 @@ export function loadValidationStateByIdentityScope(scope = null) {
   }
 }
 
+export function hasSubmittedLongSessionAnswers(validationState) {
+  return Boolean(
+    String(validationState?.context?.submitLongAnswersHash || '').trim()
+  )
+}
+
+export function canOpenValidationCeremonyLocalResults(validationState) {
+  if (!validationState || typeof validationState.matches !== 'function') {
+    return false
+  }
+
+  if (hasSubmittedLongSessionAnswers(validationState)) {
+    return true
+  }
+
+  return [
+    'longSession.solve.answer.keywords',
+    'longSession.solve.answer.review',
+    'longSession.solve.answer.submitLongSession',
+    'validationSucceeded',
+  ].some((statePath) => validationState.matches(statePath))
+}
+
 export function clearValidationState(scope = null) {
   const persistedPayload = getStoredValidationStatePayload()
   const preservedSession =
@@ -1200,14 +1223,21 @@ export function shouldTranslate(translations, flip) {
 
 export function shouldPollLongFlips(
   flips,
-  {validationStart, shortSessionDuration}
+  {validationStart, shortSessionDuration, longSessionDuration}
 ) {
+  const longSeconds = Math.max(0, Number(longSessionDuration) || 0)
+  const loadingGraceSeconds =
+    Math.min(
+      longSeconds || global.env?.LONG_SESSION_LOADING_GRACE_SECONDS || 15 * 60,
+      global.env?.LONG_SESSION_LOADING_GRACE_SECONDS || 15 * 60
+    ) || 0
+
   return (
     flips.some(({ready}) => !ready) &&
     dayjs().isBefore(
       (isDayjs(validationStart) ? validationStart : dayjs(validationStart))
         .add(shortSessionDuration, 's')
-        .add(2, 'minute')
+        .add(loadingGraceSeconds, 's')
     )
   )
 }

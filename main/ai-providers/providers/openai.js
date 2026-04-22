@@ -161,6 +161,7 @@ function buildMessageContent(prompt, images = []) {
 function buildOpenAiPayload({
   model,
   prompt,
+  systemPrompt,
   images,
   profile,
   tokenField,
@@ -175,6 +176,9 @@ function buildOpenAiPayload({
   const payload = {
     model,
     messages: [
+      ...(String(systemPrompt || '').trim()
+        ? [{role: 'system', content: String(systemPrompt).trim()}]
+        : []),
       {
         role: 'user',
         content: buildMessageContent(prompt, images),
@@ -235,6 +239,7 @@ function stringifyJsonLike(value) {
 function buildOpenAiPayloadVariants({
   model,
   prompt,
+  systemPrompt,
   images,
   profile,
   promptOptions = {},
@@ -260,6 +265,7 @@ function buildOpenAiPayloadVariants({
     buildOpenAiPayload({
       model,
       prompt,
+      systemPrompt,
       images,
       profile,
       tokenField: 'max_tokens',
@@ -274,6 +280,7 @@ function buildOpenAiPayloadVariants({
     buildOpenAiPayload({
       model,
       prompt,
+      systemPrompt,
       images,
       profile,
       tokenField: 'max_completion_tokens',
@@ -288,6 +295,7 @@ function buildOpenAiPayloadVariants({
     buildOpenAiPayload({
       model,
       prompt,
+      systemPrompt,
       images,
       profile,
       tokenField: 'max_completion_tokens',
@@ -301,6 +309,7 @@ function buildOpenAiPayloadVariants({
     buildOpenAiPayload({
       model,
       prompt,
+      systemPrompt,
       images,
       profile,
       tokenField: 'max_completion_tokens',
@@ -314,6 +323,7 @@ function buildOpenAiPayloadVariants({
     buildOpenAiPayload({
       model,
       prompt,
+      systemPrompt,
       images,
       profile,
       tokenField: 'max_completion_tokens',
@@ -327,6 +337,7 @@ function buildOpenAiPayloadVariants({
     buildOpenAiPayload({
       model,
       prompt,
+      systemPrompt,
       images,
       profile,
       tokenField: 'max_completion_tokens',
@@ -340,6 +351,7 @@ function buildOpenAiPayloadVariants({
     buildOpenAiPayload({
       model,
       prompt,
+      systemPrompt,
       images,
       profile,
       tokenField: null,
@@ -522,6 +534,7 @@ async function callOpenAi({
   model,
   flip,
   prompt,
+  systemPrompt,
   profile,
   providerConfig,
   promptOptions = {},
@@ -540,6 +553,7 @@ async function callOpenAi({
       payloadVariants: buildOpenAiPayloadVariants({
         model,
         prompt,
+        systemPrompt,
         images,
         profile,
         promptOptions,

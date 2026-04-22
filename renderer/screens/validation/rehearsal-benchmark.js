@@ -22,6 +22,32 @@ function normalizeExpectedStrength(value) {
   return next || null
 }
 
+function normalizeSeedWordEntry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const name = String(value.name || '').trim()
+  const desc = String(value.desc || value.description || '').trim()
+
+  if (!(name || desc)) {
+    return null
+  }
+
+  return {
+    name,
+    desc,
+  }
+}
+
+function normalizeSeedWords(value) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.map(normalizeSeedWordEntry).filter(Boolean).slice(0, 2)
+}
+
 export function normalizeRehearsalSeedFlipMeta(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
@@ -36,6 +62,7 @@ export function normalizeRehearsalSeedFlipMeta(value = {}) {
   return {
     expectedAnswer,
     expectedStrength: normalizeExpectedStrength(value.expectedStrength),
+    words: normalizeSeedWords(value.words),
   }
 }
 
@@ -70,7 +97,9 @@ export function mergeRehearsalSeedMetaIntoFlips(flips, metaByHash = {}) {
 
     if (
       flip.expectedAnswer === meta.expectedAnswer &&
-      (flip.expectedStrength || null) === meta.expectedStrength
+      (flip.expectedStrength || null) === meta.expectedStrength &&
+      JSON.stringify(Array.isArray(flip.words) ? flip.words : []) ===
+        JSON.stringify(meta.words)
     ) {
       return flip
     }
@@ -81,6 +110,10 @@ export function mergeRehearsalSeedMetaIntoFlips(flips, metaByHash = {}) {
       ...flip,
       expectedAnswer: meta.expectedAnswer,
       expectedStrength: meta.expectedStrength,
+      words:
+        Array.isArray(flip.words) && flip.words.length > 0
+          ? flip.words
+          : meta.words,
     }
   })
 

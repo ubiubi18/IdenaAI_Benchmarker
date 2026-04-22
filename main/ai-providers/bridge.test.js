@@ -1131,6 +1131,50 @@ describe('createAiProviderBridge', () => {
     })
   })
 
+  it('breaks exact ensemble ties without defaulting to left', async () => {
+    const invokeProvider = jest.fn().mockImplementation(({provider, model}) => {
+      if (provider === 'openai' && model === 'gpt-4o-mini') {
+        return Promise.resolve('{"answer":"left","confidence":1.0}')
+      }
+      if (provider === 'gemini' && model === 'gemini-2.0-flash') {
+        return Promise.resolve('{"answer":"right","confidence":1.0}')
+      }
+      return Promise.resolve('{"answer":"skip","confidence":0}')
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {
+      invokeProvider,
+      writeBenchmarkLog: jest.fn().mockResolvedValue(undefined),
+    })
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test-openai'})
+    bridge.setProviderKey({provider: 'gemini', apiKey: 'sk-test-gemini'})
+
+    const result = await bridge.solveFlipBatch({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      flips: [
+        {
+          hash: 'flip-ensemble-tie-1',
+          leftImage: 'left',
+          rightImage: 'right',
+        },
+      ],
+      consultProviders: [{provider: 'gemini', model: 'gemini-2.0-flash'}],
+    })
+
+    expect(result.results[0]).toMatchObject({
+      answer: 'right',
+      ensembleTieBreakApplied: true,
+      ensembleTieBreakCandidates: ['left', 'right'],
+      ensembleProbabilities: {
+        left: 0.5,
+        right: 0.5,
+        skip: 0,
+      },
+    })
+    expect(result.results[0].reasoning).toContain('tie-break right over left')
+  })
+
   it('adds legacy heuristic strategy as an extra weighted consultant', async () => {
     const invokeProvider = jest
       .fn()

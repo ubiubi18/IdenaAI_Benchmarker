@@ -61,6 +61,11 @@ This section should stay current and act as a short roadmap of what has already 
   rehearsal runs now expose end-of-session benchmark stats, optional audit/review
   flows, persistent human annotations by flip hash, and validation AI cost
   tracking on the post-session dashboard.
+- Early local-results access:
+  once long-session reporting starts, the app now exposes local stats and
+  benchmark audit immediately instead of forcing the user to wait through the
+  full realistic ceremony tail first; those local results pages stay live while
+  the countdown continues and can jump back into validation at any time.
 - OpenAI short-session fast mode:
   the app now supports an optional short-session-only OpenAI fast lane using
   `service_tier=priority` and `reasoning_effort=none`, with a visible fallback
@@ -163,6 +168,11 @@ Behavior notes:
   summaries for those decisions
 - rehearsal results can be audited afterwards, or skipped in one click and
   revisited later, with annotations stored for later local-training research
+- local stats and benchmark annotation can now open during the long-session
+  countdown as soon as reporting is available, instead of only after the full
+  post-session wait has ended
+- those local results and annotation screens now refresh live from persisted
+  validation state while the countdown is still running
 - this is still experimental and can still break in edge cases
 
 ## Local AI Preparations

@@ -72,6 +72,7 @@ export default function ValidationBenchmarkReviewPage() {
 
   const {data: validationState} = usePersistedValidationState({
     scope: validationIdentityScope,
+    live: true,
   })
   const benchmarkSummary = React.useMemo(
     () => computeRehearsalBenchmarkSummary(validationState),

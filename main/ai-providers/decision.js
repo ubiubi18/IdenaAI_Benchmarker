@@ -93,11 +93,33 @@ function normalizeAnswer(answer) {
     .trim()
     .toLowerCase()
 
-  if (['left', 'l', '1'].includes(value)) {
+  if (
+    [
+      'left',
+      'l',
+      '1',
+      'a',
+      'option a',
+      'candidate a',
+      'story 1',
+      'order 1',
+    ].includes(value)
+  ) {
     return 'left'
   }
 
-  if (['right', 'r', '2'].includes(value)) {
+  if (
+    [
+      'right',
+      'r',
+      '2',
+      'b',
+      'option b',
+      'candidate b',
+      'story 2',
+      'order 2',
+    ].includes(value)
+  ) {
     return 'right'
   }
 

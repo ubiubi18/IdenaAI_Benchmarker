@@ -161,3 +161,55 @@ export function computeValidationAiCostTotals(ledger = {}) {
     actualUsd: totals.entriesWithActual > 0 ? totals.actualUsd : null,
   }
 }
+
+function classifyValidationAiCostEntry(entry = {}) {
+  const action = String(entry.action || '')
+    .trim()
+    .toLowerCase()
+  const sessionType = String(entry.sessionType || '')
+    .trim()
+    .toLowerCase()
+
+  if (action === 'short-session solve' || sessionType === 'short') {
+    return 'short'
+  }
+
+  if (action === 'long-session solve' || sessionType === 'long') {
+    return 'long'
+  }
+
+  if (
+    action === 'long-session report review' ||
+    sessionType === 'long-report-review'
+  ) {
+    return 'reporting'
+  }
+
+  return 'other'
+}
+
+export function computeValidationAiCostBreakdown(ledger = {}) {
+  const normalizedLedger = normalizeValidationAiCostLedger(ledger)
+  const entries = normalizedLedger.entries || []
+  const shortEntries = entries.filter(
+    (entry) => classifyValidationAiCostEntry(entry) === 'short'
+  )
+  const longEntries = entries.filter(
+    (entry) => classifyValidationAiCostEntry(entry) === 'long'
+  )
+  const reportingEntries = entries.filter(
+    (entry) => classifyValidationAiCostEntry(entry) === 'reporting'
+  )
+  const solveEntries = entries.filter((entry) => {
+    const category = classifyValidationAiCostEntry(entry)
+    return category === 'short' || category === 'long'
+  })
+
+  return {
+    short: computeValidationAiCostTotals({entries: shortEntries}),
+    long: computeValidationAiCostTotals({entries: longEntries}),
+    reporting: computeValidationAiCostTotals({entries: reportingEntries}),
+    solveCombined: computeValidationAiCostTotals({entries: solveEntries}),
+    overall: computeValidationAiCostTotals(normalizedLedger),
+  }
+}

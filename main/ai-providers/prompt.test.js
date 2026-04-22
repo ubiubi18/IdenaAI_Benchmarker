@@ -1,4 +1,4 @@
-const {promptTemplate} = require('./prompt')
+const {promptTemplate, systemPromptTemplate} = require('./prompt')
 
 describe('provider solver prompt template', () => {
   it('uses anti-slot-bias guidance in composite decision mode', () => {
@@ -13,6 +13,10 @@ describe('provider solver prompt template', () => {
     expect(prompt).toContain(
       'Never choose a side just because it was shown first.'
     )
+    expect(prompt).toContain('OPTION A')
+    expect(prompt).toContain('OPTION B')
+    expect(prompt).not.toContain('LEFT order')
+    expect(prompt).not.toContain('RIGHT order')
     expect(prompt).toContain(
       'return "skip" instead of defaulting to the first shown side'
     )
@@ -29,6 +33,8 @@ describe('provider solver prompt template', () => {
     expect(prompt).toContain(
       'Do not let the first listed side inherit a higher coherence score by default'
     )
+    expect(prompt).toContain('optionAFrames')
+    expect(prompt).toContain('optionBFrames')
     expect(prompt).toContain('Candidate order is never evidence.')
     expect(prompt).not.toMatch(/human-teacher|local training/i)
   })
@@ -68,5 +74,13 @@ describe('provider solver prompt template', () => {
     expect(frameReasoningPrompt).toContain(
       'You are solving an Idena flip benchmark in analysis mode.'
     )
+  })
+
+  it('provides a system prompt that bans positional bias', () => {
+    const systemPrompt = systemPromptTemplate()
+
+    expect(systemPrompt).toContain('Candidate labels such as left/right')
+    expect(systemPrompt).toContain('Do not anchor on the first shown candidate')
+    expect(systemPrompt).toContain('Return only the requested JSON')
   })
 })

@@ -10,7 +10,7 @@ const {
   PROVIDER_CONFIG_DEFAULTS,
   OPENAI_COMPATIBLE_PROVIDERS,
 } = require('./constants')
-const {promptTemplate} = require('./prompt')
+const {promptTemplate, systemPromptTemplate} = require('./prompt')
 const {sanitizeBenchmarkProfile} = require('./profile')
 const {
   extractJsonBlock,
@@ -4976,7 +4976,42 @@ function decisionToDistribution(decision = {}) {
   return distribution
 }
 
-function aggregateConsultantDecisions(decisions = []) {
+function resolveProbabilityWinner(probabilities, tieBreakerKey = '') {
+  const answers = ['left', 'right', 'skip']
+  const maxProbability = Math.max(
+    probabilities.left,
+    probabilities.right,
+    probabilities.skip
+  )
+  const tiedAnswers = answers.filter(
+    (answer) => Math.abs(probabilities[answer] - maxProbability) < 1e-9
+  )
+
+  if (tiedAnswers.length <= 1) {
+    return {
+      answer: tiedAnswers[0] || 'skip',
+      tieBreakApplied: false,
+      tieBreakCandidates: null,
+    }
+  }
+
+  const rankedAnswers = tiedAnswers.slice().sort((a, b) => {
+    const scoreDelta =
+      hashScore(`${tieBreakerKey}:${b}`) - hashScore(`${tieBreakerKey}:${a}`)
+    if (scoreDelta !== 0) {
+      return scoreDelta
+    }
+    return a.localeCompare(b)
+  })
+
+  return {
+    answer: rankedAnswers[0],
+    tieBreakApplied: true,
+    tieBreakCandidates: tiedAnswers,
+  }
+}
+
+function aggregateConsultantDecisions(decisions = [], tieBreakerKey = '') {
   if (!Array.isArray(decisions) || decisions.length === 0) {
     return {
       answer: 'skip',
@@ -4985,6 +5020,8 @@ function aggregateConsultantDecisions(decisions = []) {
       probabilities: null,
       contributors: 0,
       totalWeight: 0,
+      tieBreakApplied: false,
+      tieBreakCandidates: null,
     }
   }
 
@@ -4997,6 +5034,8 @@ function aggregateConsultantDecisions(decisions = []) {
       probabilities: null,
       contributors: item.error ? 0 : 1,
       totalWeight: item.error ? 0 : normalizeConsultantWeight(item.weight, 1),
+      tieBreakApplied: false,
+      tieBreakCandidates: null,
     }
   }
 
@@ -5025,6 +5064,8 @@ function aggregateConsultantDecisions(decisions = []) {
       probabilities: null,
       contributors: 0,
       totalWeight: 0,
+      tieBreakApplied: false,
+      tieBreakCandidates: null,
     }
   }
 
@@ -5034,11 +5075,8 @@ function aggregateConsultantDecisions(decisions = []) {
     skip: totals.skip / totalWeight,
   }
 
-  const ranked = ['left', 'right', 'skip'].sort((a, b) => {
-    if (probabilities[b] === probabilities[a]) return 0
-    return probabilities[b] - probabilities[a]
-  })
-  const answer = ranked[0]
+  const {answer, tieBreakApplied, tieBreakCandidates} =
+    resolveProbabilityWinner(probabilities, tieBreakerKey)
 
   return {
     answer,
@@ -5047,10 +5085,18 @@ function aggregateConsultantDecisions(decisions = []) {
       3
     )}, right=${probabilities.right.toFixed(
       3
-    )}, skip=${probabilities.skip.toFixed(3)}`,
+    )}, skip=${probabilities.skip.toFixed(3)}${
+      tieBreakApplied
+        ? `, tie-break ${answer} over ${tieBreakCandidates
+            .filter((item) => item !== answer)
+            .join('/')}`
+        : ''
+    }`,
     probabilities,
     contributors,
     totalWeight,
+    tieBreakApplied,
+    tieBreakCandidates,
   }
 }
 
@@ -6064,6 +6110,7 @@ Flip hash: ${hash}
         promptPhase: promptOptions.promptPhase || 'decision',
         frameReasoning: promptOptions.frameReasoning || '',
       })
+    const systemPrompt = systemPromptTemplate()
 
     if (isOpenAiCompatibleProvider(provider)) {
       return callOpenAi({
@@ -6072,6 +6119,7 @@ Flip hash: ${hash}
         model,
         flip,
         prompt,
+        systemPrompt,
         profile,
         providerConfig: resolvedProviderConfig,
         promptOptions,
@@ -6085,6 +6133,7 @@ Flip hash: ${hash}
         model,
         flip,
         prompt,
+        systemPrompt,
         profile,
         providerConfig: resolvedProviderConfig,
         promptOptions,
@@ -6097,6 +6146,7 @@ Flip hash: ${hash}
       model,
       flip,
       prompt,
+      systemPrompt,
       profile,
       providerConfig: resolvedProviderConfig,
       promptOptions,
@@ -9591,7 +9641,10 @@ Flip hash: ${hash}
           )
         )
 
-        const aggregate = aggregateConsultantDecisions(consultantDecisions)
+        const aggregate = aggregateConsultantDecisions(
+          consultantDecisions,
+          flip.hash
+        )
         const consultantTokenUsage = consultantDecisions.reduce(
           (acc, item) => addTokenUsage(acc, item.tokenUsage),
           createEmptyTokenUsage()
@@ -9661,6 +9714,8 @@ Flip hash: ${hash}
           ensembleContributors: aggregate.contributors,
           ensembleTotalWeight: aggregate.totalWeight,
           ensembleConsulted: consultantDecisions.length,
+          ensembleTieBreakApplied: aggregate.tieBreakApplied,
+          ensembleTieBreakCandidates: aggregate.tieBreakCandidates,
           fastMode,
         }
       }

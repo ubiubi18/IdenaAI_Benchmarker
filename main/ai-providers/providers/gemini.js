@@ -214,6 +214,7 @@ async function callGemini({
   model,
   flip,
   prompt,
+  systemPrompt,
   profile,
   providerConfig,
   promptOptions = {},
@@ -240,6 +241,13 @@ async function callGemini({
   const response = await httpClient.post(
     resolveGeminiEndpoint({model, apiKey, providerConfig}),
     {
+      ...(String(systemPrompt || '').trim()
+        ? {
+            systemInstruction: {
+              parts: [{text: String(systemPrompt).trim()}],
+            },
+          }
+        : {}),
       contents: [
         {
           role: 'user',

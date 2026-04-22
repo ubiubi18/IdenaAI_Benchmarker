@@ -323,6 +323,62 @@ function pickPendingNodeNames(overrideValue, persistedValue) {
   return []
 }
 
+function normalizeValidationDevnetSeedWord(entry) {
+  if (typeof entry === 'string') {
+    const stringName = String(entry || '').trim()
+    return stringName ? {name: stringName, desc: ''} : null
+  }
+
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return null
+  }
+
+  const objectName = String(
+    entry.name || entry.keyword || entry.word || entry.label || ''
+  ).trim()
+  const desc = String(entry.desc || entry.description || '').trim()
+
+  if (!(objectName || desc)) {
+    return null
+  }
+
+  return {
+    name: objectName,
+    desc,
+  }
+}
+
+function normalizeValidationDevnetSeedWords(value, extras = {}) {
+  const directWords = Array.isArray(value) ? value : []
+  const extraWords = [
+    extras.keywordA,
+    extras.keywordB,
+    extras.keyword1,
+    extras.keyword2,
+  ]
+  const normalized = directWords
+    .concat(extraWords)
+    .map(normalizeValidationDevnetSeedWord)
+    .filter(Boolean)
+
+  if (!normalized.length) {
+    return []
+  }
+
+  const seen = new Set()
+
+  return normalized
+    .filter((word) => {
+      const dedupeKey = `${word.name}\u0000${word.desc}`.trim()
+      if (!dedupeKey || seen.has(dedupeKey)) {
+        return false
+      }
+      seen.add(dedupeKey)
+      return true
+    })
+    .slice(0, 2)
+}
+
 function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
   return (Array.isArray(flips) ? flips : []).reduce((result, flip) => {
     const hash = String(flip?.hash || '').trim()
@@ -330,11 +386,21 @@ function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
       .trim()
       .toLowerCase()
     const expectedStrength = String(flip?.expectedStrength || '').trim()
+    const words = normalizeValidationDevnetSeedWords(
+      flip?.words || flip?.keywords,
+      {
+        keywordA: flip?.keywordA || flip?.keyword_a,
+        keywordB: flip?.keywordB || flip?.keyword_b,
+        keyword1: flip?.keyword1 || flip?.keyword_1,
+        keyword2: flip?.keyword2 || flip?.keyword_2,
+      }
+    )
 
     if (hash && ['left', 'right', 'skip'].includes(expectedAnswer)) {
       result[hash] = {
         expectedAnswer,
         expectedStrength: expectedStrength || null,
+        words,
       }
     }
 
@@ -602,12 +668,22 @@ async function collectValidationDevnetPreparedSeedFlips(
         }
 
         if (encodedImages) {
+          const words = normalizeValidationDevnetSeedWords(
+            record?.words || record?.keywords,
+            {
+              keywordA: record?.keywordA || record?.keyword_a,
+              keywordB: record?.keywordB || record?.keyword_b,
+              keyword1: record?.keyword1 || record?.keyword_1,
+              keyword2: record?.keyword2 || record?.keyword_2,
+            }
+          )
           const flip = {
             hash: flipHash,
             images: encodedImages,
             orders: orders.slice(0, 2),
             expectedAnswer: String(record?.expected_answer || '').trim(),
             expectedStrength: String(record?.expected_strength || '').trim(),
+            words,
           }
 
           if (isValidSeedFlipCandidate(flip)) {

@@ -37,6 +37,8 @@ describe('decision helpers', () => {
 
   it('normalizes answer and confidence bounds', () => {
     expect(normalizeAnswer('R')).toBe('right')
+    expect(normalizeAnswer('option a')).toBe('left')
+    expect(normalizeAnswer('story 2')).toBe('right')
     expect(normalizeAnswer('unknown')).toBe('skip')
     expect(normalizeConfidence(2)).toBe(1)
     expect(normalizeConfidence(-1)).toBe(0)

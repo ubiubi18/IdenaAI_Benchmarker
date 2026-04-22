@@ -25,6 +25,12 @@ const LOCAL_AI_STRICT_PROFILE_OVERRIDES = {
   interFlipDelayMs: 0,
   flipVisionMode: 'frames_single_pass',
 }
+const LONG_SESSION_STRICT_PROFILE_OVERRIDES = {
+  deadlineMs: 90 * 1000,
+  requestTimeoutMs: 15 * 1000,
+  interFlipDelayMs: 300,
+  flipVisionMode: 'frames_two_pass',
+}
 const MIN_SOLVE_GUARD_MS = 1500
 const IMAGE_PREP_BASE_MS = 2000
 const IMAGE_PREP_PER_FLIP_MS = {
@@ -35,6 +41,12 @@ const FRAME_REVIEW_PREP_MIN_MS = 900
 const MIN_PER_FLIP_SOLVE_BUDGET_MS = 2500
 const SHORT_SESSION_OPENAI_FAST_MODELS = ['gpt-5.4-mini', 'gpt-5.4']
 const RETRY_BACKOFF_BASE_MS = 700
+const EXPECTED_PASS_RUNTIME_MS = {
+  default: 4500,
+  openai: 3500,
+  'local-ai': 7000,
+}
+const EXPECTED_OPENAI_SHORT_FAST_PASS_MS = 2500
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -70,20 +82,9 @@ function normalizeVisionMode(value, fallback = 'composite') {
   return fallback
 }
 
-function getSolvePassCount({
-  flipVisionMode = 'composite',
-  uncertaintyRepromptEnabled = false,
-} = {}) {
+function getBaseSolvePassCount({flipVisionMode = 'composite'} = {}) {
   const normalizedVisionMode = normalizeVisionMode(flipVisionMode)
-  const basePassCount = normalizedVisionMode === 'frames_two_pass' ? 2 : 1
-
-  if (!uncertaintyRepromptEnabled) {
-    return basePassCount
-  }
-
-  // The uncertainty fallback always re-runs the decision through
-  // frame-by-frame reasoning plus a follow-up decision pass.
-  return basePassCount + 2
+  return normalizedVisionMode === 'frames_two_pass' ? 2 : 1
 }
 
 function getRetryBackoffBudgetMs(maxRetries = 0) {
@@ -97,21 +98,86 @@ function getRetryBackoffBudgetMs(maxRetries = 0) {
   return totalMs
 }
 
-function estimatePerFlipSolveRuntimeMs(profile = {}) {
-  const solvePassCount = getSolvePassCount({
-    flipVisionMode: profile.flipVisionMode,
-    uncertaintyRepromptEnabled: profile.uncertaintyRepromptEnabled,
-  })
-  const retryAttemptCount = Math.max(
-    1,
-    toNumberOrFallback(profile.maxRetries, 0) + 1
+function estimateExpectedPassRuntimeMs({
+  sessionType = 'short',
+  provider = 'openai',
+  requestTimeoutMs = DEFAULT_PROFILE.requestTimeoutMs,
+  promptOptions = null,
+} = {}) {
+  const normalizedProvider = String(provider || '')
+    .trim()
+    .toLowerCase()
+  const expectedBaselineMs =
+    normalizedProvider === 'openai' &&
+    sessionType === 'short' &&
+    promptOptions &&
+    promptOptions.openAiServiceTier === 'priority' &&
+    promptOptions.openAiReasoningEffort === 'none'
+      ? EXPECTED_OPENAI_SHORT_FAST_PASS_MS
+      : EXPECTED_PASS_RUNTIME_MS[normalizedProvider] ||
+        EXPECTED_PASS_RUNTIME_MS.default
+  const timeoutMs = toNumberOrFallback(
+    requestTimeoutMs,
+    DEFAULT_PROFILE.requestTimeoutMs
   )
-  const retryBackoffBudgetMs = getRetryBackoffBudgetMs(profile.maxRetries)
 
   return Math.max(
     MIN_PER_FLIP_SOLVE_BUDGET_MS,
-    profile.requestTimeoutMs * solvePassCount * retryAttemptCount +
-      retryBackoffBudgetMs +
+    Math.min(timeoutMs, expectedBaselineMs)
+  )
+}
+
+function estimateRetryReserveMs({
+  flipCount = 0,
+  maxRetries = 0,
+  expectedPassRuntimeMs = MIN_PER_FLIP_SOLVE_BUDGET_MS,
+} = {}) {
+  const retries = Math.max(0, toNumberOrFallback(maxRetries, 0))
+  if (retries < 1 || flipCount < 1) {
+    return 0
+  }
+
+  return (
+    Math.min(flipCount, retries) * Math.max(1000, expectedPassRuntimeMs * 0.5) +
+    getRetryBackoffBudgetMs(retries)
+  )
+}
+
+function estimateUncertaintyReviewFlipCount({
+  sessionType = 'short',
+  flipCount = 0,
+  uncertaintyRepromptEnabled = false,
+} = {}) {
+  if (!uncertaintyRepromptEnabled || flipCount < 1) {
+    return 0
+  }
+
+  if (sessionType === 'short') {
+    return Math.min(flipCount, Math.max(1, Math.ceil(flipCount / 4)))
+  }
+
+  return Math.min(flipCount, Math.max(1, Math.ceil(flipCount / 3)))
+}
+
+function estimatePerFlipSolveRuntimeMs({
+  sessionType = 'short',
+  provider = 'openai',
+  profile = {},
+  promptOptions = null,
+} = {}) {
+  const solvePassCount = getBaseSolvePassCount({
+    flipVisionMode: profile.flipVisionMode,
+  })
+  const expectedPassRuntimeMs = estimateExpectedPassRuntimeMs({
+    sessionType,
+    provider,
+    requestTimeoutMs: profile.requestTimeoutMs,
+    promptOptions,
+  })
+
+  return Math.max(
+    MIN_PER_FLIP_SOLVE_BUDGET_MS,
+    expectedPassRuntimeMs * solvePassCount +
       Math.max(0, toNumberOrFallback(profile.interFlipDelayMs, 0))
   )
 }
@@ -182,25 +248,40 @@ function normalizeProfile(input = {}) {
   }
 }
 
-function buildEffectiveProfile(profile, provider) {
+function buildEffectiveProfile(profile, provider, sessionType = 'short') {
+  let nextProfile = profile
+
+  if (profile.benchmarkProfile !== 'custom' && sessionType === 'long') {
+    nextProfile = {
+      ...nextProfile,
+      deadlineMs: LONG_SESSION_STRICT_PROFILE_OVERRIDES.deadlineMs,
+      requestTimeoutMs: LONG_SESSION_STRICT_PROFILE_OVERRIDES.requestTimeoutMs,
+      interFlipDelayMs: LONG_SESSION_STRICT_PROFILE_OVERRIDES.interFlipDelayMs,
+      flipVisionMode:
+        nextProfile.flipVisionMode === 'composite'
+          ? LONG_SESSION_STRICT_PROFILE_OVERRIDES.flipVisionMode
+          : nextProfile.flipVisionMode,
+    }
+  }
+
   if (
     String(provider || '')
       .trim()
       .toLowerCase() !== 'local-ai' ||
-    profile.benchmarkProfile === 'custom'
+    nextProfile.benchmarkProfile === 'custom'
   ) {
-    return profile
+    return nextProfile
   }
 
   return {
-    ...profile,
+    ...nextProfile,
     deadlineMs: LOCAL_AI_STRICT_PROFILE_OVERRIDES.deadlineMs,
     requestTimeoutMs: LOCAL_AI_STRICT_PROFILE_OVERRIDES.requestTimeoutMs,
     interFlipDelayMs: LOCAL_AI_STRICT_PROFILE_OVERRIDES.interFlipDelayMs,
     flipVisionMode:
-      profile.flipVisionMode === 'composite'
+      nextProfile.flipVisionMode === 'composite'
         ? LOCAL_AI_STRICT_PROFILE_OVERRIDES.flipVisionMode
-        : profile.flipVisionMode,
+        : nextProfile.flipVisionMode,
   }
 }
 
@@ -498,7 +579,12 @@ function buildConsultProviders(aiSolver = {}, providerConfig = null) {
 
 function isSolvableFlip(flip) {
   return Boolean(
-    flip && flip.decoded && !flip.failed && flip.images && flip.orders
+    flip &&
+      flip.decoded &&
+      !flip.failed &&
+      !(Number(flip.option) > 0) &&
+      flip.images &&
+      flip.orders
   )
 }
 
@@ -627,6 +713,9 @@ function summarizeResults(results, startedAt) {
         (item) =>
           item && item.forcedDecision && item.forcedDecisionPolicy === 'random'
       ).length,
+      ensembleTieBreaks: results.filter(
+        (item) => item && item.ensembleTieBreakApplied
+      ).length,
       annotatedFrameReviews: results.filter(
         (item) => item && item.secondPassStrategy === 'annotated_frame_review'
       ).length,
@@ -707,7 +796,7 @@ export function planValidationAiSolve({
   const provider = String(aiSolver.provider || 'openai')
     .trim()
     .toLowerCase()
-  const effectiveProfile = buildEffectiveProfile(profile, provider)
+  const effectiveProfile = buildEffectiveProfile(profile, provider, sessionType)
   const defaultModel = String(aiSolver.model || 'gpt-5.4').trim() || 'gpt-5.4'
   const shortSessionOpenAiFastMode = resolveShortSessionOpenAiFastMode({
     sessionType,
@@ -726,6 +815,7 @@ export function planValidationAiSolve({
   })
 
   return {
+    sessionType,
     profile,
     provider,
     effectiveProfile,
@@ -739,7 +829,13 @@ export function planValidationAiSolve({
 
 export function estimateValidationAiSolveBudget(options = {}) {
   const solvePlan = planValidationAiSolve(options)
-  const {provider, effectiveProfile, candidateFlips} = solvePlan
+  const {
+    provider,
+    effectiveProfile,
+    candidateFlips,
+    promptOptions,
+    sessionType,
+  } = solvePlan
   const shouldPrepareFramePayloads =
     effectiveProfile.flipVisionMode !== 'composite' ||
     provider === 'local-ai' ||
@@ -750,14 +846,46 @@ export function estimateValidationAiSolveBudget(options = {}) {
         IMAGE_PREP_PER_FLIP_MS[provider] || IMAGE_PREP_PER_FLIP_MS.default
       )
     : IMAGE_PREP_PER_FLIP_MS[provider] || IMAGE_PREP_PER_FLIP_MS.default
-  const perFlipSolveMs = estimatePerFlipSolveRuntimeMs(effectiveProfile)
+  const perFlipSolveMs = estimatePerFlipSolveRuntimeMs({
+    sessionType,
+    provider,
+    profile: effectiveProfile,
+    promptOptions,
+  })
+  const uncertaintyReviewFlipCount = estimateUncertaintyReviewFlipCount({
+    sessionType,
+    flipCount: candidateFlips.length,
+    uncertaintyRepromptEnabled: effectiveProfile.uncertaintyRepromptEnabled,
+  })
+  const expectedPassRuntimeMs = estimateExpectedPassRuntimeMs({
+    sessionType,
+    provider,
+    requestTimeoutMs: effectiveProfile.requestTimeoutMs,
+    promptOptions,
+  })
+  const uncertaintyReviewReserveMs =
+    uncertaintyReviewFlipCount > 0
+      ? uncertaintyReviewFlipCount * (prepPerFlipMs + expectedPassRuntimeMs * 2)
+      : 0
+  const retryReserveMs = estimateRetryReserveMs({
+    flipCount: candidateFlips.length,
+    maxRetries: effectiveProfile.maxRetries,
+    expectedPassRuntimeMs,
+  })
 
   return {
     ...solvePlan,
     flipCount: candidateFlips.length,
+    prepPerFlipMs,
+    perFlipSolveMs,
+    uncertaintyReviewFlipCount,
+    uncertaintyReviewReserveMs,
+    retryReserveMs,
     estimatedMs:
       IMAGE_PREP_BASE_MS +
-      candidateFlips.length * (prepPerFlipMs + perFlipSolveMs),
+      candidateFlips.length * (prepPerFlipMs + perFlipSolveMs) +
+      uncertaintyReviewReserveMs +
+      retryReserveMs,
   }
 }
 
@@ -803,7 +931,6 @@ export async function solveValidationSessionWithAi({
         Date.now() + Math.max(effectiveProfile.deadlineMs, 15 * 1000)
       )
     : Date.now() + Math.max(effectiveProfile.deadlineMs, 15 * 1000)
-  const payloadFlips = []
   const useFrameVision =
     effectiveProfile.flipVisionMode !== 'composite' || provider === 'local-ai'
   const prepareFramePayloads =
@@ -813,14 +940,13 @@ export async function solveValidationSessionWithAi({
       ? {frameWidth: 384, frameHeight: 288}
       : {frameWidth: 512, frameHeight: 384}
 
-  for (
-    let candidateIndex = 0;
-    candidateIndex < candidateFlips.length;
-    candidateIndex += 1
-  ) {
+  const results = []
+  const totalFlips = candidateFlips.length
+
+  for (let index = 0; index < candidateFlips.length; index += 1) {
     ensureRuntimeRemaining(sessionDeadlineAt, MIN_SOLVE_GUARD_MS)
     if (Date.now() >= buildDeadlineAt) break
-    const flip = candidateFlips[candidateIndex]
+    const flip = candidateFlips[index]
     const leftImage =
       effectiveProfile.flipVisionMode === 'composite'
         ? await composeFlipVariant({
@@ -851,21 +977,20 @@ export async function solveValidationSessionWithAi({
           ...frameRenderSize,
         })
       : []
-    const payload = {
+    const payloadFlip = {
       hash: flip.hash,
       leftImage,
       rightImage,
       leftFrames,
       rightFrames,
     }
-    payloadFlips.push(payload)
 
     if (onProgress) {
       onProgress({
         stage: 'prepared',
         sessionType,
-        index: candidateIndex + 1,
-        total: candidateFlips.length,
+        index: index + 1,
+        total: totalFlips,
         hash: flip.hash,
         leftImage,
         rightImage,
@@ -873,16 +998,7 @@ export async function solveValidationSessionWithAi({
         rightFrames,
       })
     }
-  }
 
-  if (!payloadFlips.length) {
-    throw new Error('Unable to prepare flip image payload before deadline')
-  }
-
-  const results = []
-
-  for (let index = 0; index < payloadFlips.length; index += 1) {
-    const payloadFlip = payloadFlips[index]
     ensureRuntimeRemaining(
       sessionDeadlineAt,
       Math.max(MIN_SOLVE_GUARD_MS, effectiveProfile.requestTimeoutMs)
@@ -893,7 +1009,7 @@ export async function solveValidationSessionWithAi({
         stage: 'solving',
         sessionType,
         index: index + 1,
-        total: payloadFlips.length,
+        total: totalFlips,
         hash: payloadFlip.hash,
         leftImage: payloadFlip.leftImage,
         rightImage: payloadFlip.rightImage,
@@ -941,7 +1057,7 @@ export async function solveValidationSessionWithAi({
         ...(sessionMeta || {}),
         sessionType,
         flipIndex: index + 1,
-        totalFlips: payloadFlips.length,
+        totalFlips,
       },
     })
 
@@ -963,7 +1079,7 @@ export async function solveValidationSessionWithAi({
     const decision = {
       sessionType,
       index: index + 1,
-      total: payloadFlips.length,
+      total: totalFlips,
       hash: solved.hash,
       answer: solved.answer,
       option,
@@ -985,6 +1101,12 @@ export async function solveValidationSessionWithAi({
       forcedDecision: Boolean(solved.forcedDecision),
       forcedDecisionPolicy: solved.forcedDecisionPolicy || null,
       forcedDecisionReason: solved.forcedDecisionReason || null,
+      ensembleTieBreakApplied: Boolean(solved.ensembleTieBreakApplied),
+      ensembleTieBreakCandidates: Array.isArray(
+        solved.ensembleTieBreakCandidates
+      )
+        ? solved.ensembleTieBreakCandidates
+        : null,
       secondPassStrategy: solved.secondPassStrategy || null,
       frameReasoningUsed: Boolean(solved.frameReasoningUsed),
       firstPass: solved.firstPass || null,
@@ -1005,7 +1127,7 @@ export async function solveValidationSessionWithAi({
       0,
       toNumberOrFallback(effectiveProfile.interFlipDelayMs, 0)
     )
-    if (delayMs > 0 && index < payloadFlips.length - 1) {
+    if (delayMs > 0 && index < totalFlips - 1) {
       const remainingBeforeDelayMs = getTimeRemainingMs(sessionDeadlineAt)
       const waitMs = Number.isFinite(remainingBeforeDelayMs)
         ? Math.min(
@@ -1018,7 +1140,7 @@ export async function solveValidationSessionWithAi({
           stage: 'waiting',
           sessionType,
           index: index + 1,
-          total: payloadFlips.length,
+          total: totalFlips,
           waitMs,
         })
       }
@@ -1026,6 +1148,10 @@ export async function solveValidationSessionWithAi({
         await sleep(waitMs)
       }
     }
+  }
+
+  if (!results.length) {
+    throw new Error('Unable to prepare flip image payload before deadline')
   }
 
   const answers = results
@@ -1049,7 +1175,7 @@ export async function solveValidationSessionWithAi({
       stage: 'completed',
       sessionType,
       summary,
-      total: payloadFlips.length,
+      total: results.length,
       appliedAnswers: answers.length,
     })
   }

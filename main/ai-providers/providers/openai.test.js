@@ -152,6 +152,7 @@ describe('openai provider adapter', () => {
         rightImage: 'data:image/png;base64,BBB',
       },
       prompt: 'test prompt',
+      systemPrompt: 'system prompt',
       profile: {
         temperature: 0,
         maxOutputTokens: 96,
@@ -168,6 +169,10 @@ describe('openai provider adapter', () => {
     expect(httpClient.post.mock.calls[0][1]).toMatchObject({
       service_tier: 'priority',
       reasoning_effort: 'none',
+    })
+    expect(httpClient.post.mock.calls[0][1].messages[0]).toStrictEqual({
+      role: 'system',
+      content: 'system prompt',
     })
   })
 
