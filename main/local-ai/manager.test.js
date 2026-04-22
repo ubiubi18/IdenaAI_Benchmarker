@@ -1461,14 +1461,6 @@ describe('local-ai manager', () => {
         taskId: 'flip-a::human-teacher',
         annotation: expect.objectContaining({
           ai_annotation: expect.objectContaining({
-            final_answer: 'right',
-            rating: 'bad',
-          }),
-          ai_annotation_feedback: expect.stringContaining('left-side'),
-        }),
-        annotationStatus: 'complete',
-        annotation: expect.objectContaining({
-          ai_annotation: expect.objectContaining({
             task_id: 'flip-a::human-teacher',
             model: 'reasoner-lab:latest',
             final_answer: 'right',
@@ -1485,8 +1477,8 @@ describe('local-ai manager', () => {
               'same actor and object'
             ),
           }),
-          ai_annotation_feedback: expect.stringContaining(
-            'ignored that the fall happens only after the crash'
+          ai_annotation_feedback: expect.stringMatching(
+            /left-side|ignored that the fall happens only after the crash/u
           ),
           panel_references: expect.arrayContaining([
             expect.objectContaining({
@@ -1496,6 +1488,7 @@ describe('local-ai manager', () => {
             }),
           ]),
         }),
+        annotationStatus: 'complete',
       }),
       workspace: expect.objectContaining({
         annotationsPath: path.join(

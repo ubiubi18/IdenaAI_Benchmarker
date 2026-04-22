@@ -29,7 +29,6 @@ const {
 const {
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
   resolveLocalAiRuntimeAdapter,
-  validateLocalAiBaseUrl,
 } = require('./runtime-adapter')
 
 const CAPTURE_INDEX_VERSION = 1

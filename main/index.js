@@ -279,13 +279,6 @@ function handleTrusted(channel, listener) {
   })
 }
 
-function handleOnceTrusted(channel, listener) {
-  ipcMain.handleOnce(channel, async (event, ...args) => {
-    assertTrustedSender(event)
-    return toIpcCloneable(await listener(event, ...args))
-  })
-}
-
 function onTrusted(channel, listener) {
   ipcMain.on(channel, (event, ...args) => {
     assertTrustedSender(event)
@@ -2073,8 +2066,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
                 connectCountdownSeconds: data?.connectCountdownSeconds,
               })
             ) {
-              didEmitConnectPayload =
-                emitValidationDevnetConnectPayloadOnce()
+              didEmitConnectPayload = emitValidationDevnetConnectPayloadOnce()
             }
           },
           onLog(line) {
@@ -2124,8 +2116,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
                   connectCountdownSeconds: data?.connectCountdownSeconds,
                 })
               ) {
-                didEmitConnectPayload =
-                  emitValidationDevnetConnectPayloadOnce()
+                didEmitConnectPayload = emitValidationDevnetConnectPayloadOnce()
               }
             },
             onLog(line) {

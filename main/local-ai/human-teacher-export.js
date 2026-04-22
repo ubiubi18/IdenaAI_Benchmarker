@@ -240,7 +240,7 @@ async function exportHumanTeacherTasks({
   const teacherPackage = assertExportableTeacherPackage(
     await fs.readJson(resolvedPackagePath)
   )
-  const items = teacherPackage.items
+  const {items} = teacherPackage
 
   const selectedItems = take > 0 ? items.slice(0, take) : items
   const tasksDir = path.join(resolvedOutputDir, 'tasks')
@@ -349,11 +349,7 @@ async function exportHumanTeacherTasks({
     ? `${templateRows.map((row) => JSON.stringify(row)).join('\n')}\n`
     : ''
 
-  await fs.writeFile(
-    manifestPath,
-    manifestContent,
-    'utf8'
-  )
+  await fs.writeFile(manifestPath, manifestContent, 'utf8')
   await fs.writeFile(templatePath, templateContent, 'utf8')
   await fs.writeFile(filledPath, templateContent, 'utf8')
 

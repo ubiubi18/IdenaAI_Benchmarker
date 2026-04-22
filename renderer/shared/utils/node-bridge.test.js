@@ -1,9 +1,7 @@
+import {getNodeBridge} from './node-bridge'
+
 describe('node bridge', () => {
   const originalIdena = global.window?.idena
-
-  beforeEach(() => {
-    jest.resetModules()
-  })
 
   afterEach(() => {
     if (typeof originalIdena === 'undefined') {
@@ -26,8 +24,6 @@ describe('node bridge', () => {
     }
 
     const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now)
-
-    const {getNodeBridge} = require('./node-bridge')
     const bridge = getNodeBridge()
 
     bridge.getValidationDevnetStatus()

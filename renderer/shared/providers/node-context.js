@@ -233,7 +233,6 @@ export function NodeProvider({children}) {
       return
     }
 
-    const node = getNodeBridge()
     if (settings.runInternalNode) {
       if (!state.nodeStarted) {
         getNodeBridge().initLocalNode()
@@ -255,7 +254,7 @@ export function NodeProvider({children}) {
     dispatch({type: NODE_REINIT})
   }, [dispatch])
 
-  const importNodeKey = (shouldResetNode) => {
+  const importNodeKey = useCallback((shouldResetNode) => {
     if (!hasNodeBridge()) {
       return
     }
@@ -265,7 +264,7 @@ export function NodeProvider({children}) {
     } else {
       getNodeBridge().restartNode()
     }
-  }
+  }, [])
 
   return (
     <NodeStateContext.Provider value={state}>

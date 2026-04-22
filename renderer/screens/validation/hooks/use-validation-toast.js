@@ -39,8 +39,7 @@ export function useValidationToast() {
 
   const closeToast = useCloseToast()
   const currentPeriod = epoch?.currentPeriod
-  const isRehearsalNodeSession =
-    isValidationRehearsalNodeSettings(settings)
+  const isRehearsalNodeSession = isValidationRehearsalNodeSettings(settings)
   const [rehearsalDevnetStatus, setRehearsalDevnetStatus] = React.useState(
     REHEARSAL_DEVNET_STATUS_INITIAL
   )

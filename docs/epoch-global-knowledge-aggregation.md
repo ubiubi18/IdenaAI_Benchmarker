@@ -265,9 +265,9 @@ The global knowledge path should avoid:
 
 This idea extends, but should remain separate from:
 
-- [docs/human-teacher-annotation-architecture.md](/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/docs/human-teacher-annotation-architecture.md)
-- [docs/federated-human-teacher-protocol.md](/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/docs/federated-human-teacher-protocol.md)
-- [docs/local-ai-mvp-architecture.md](/Users/jz/Documents/idena-benchmark-workspace/IdenaAI/docs/local-ai-mvp-architecture.md)
+- [docs/human-teacher-annotation-architecture.md](./human-teacher-annotation-architecture.md)
+- [docs/federated-human-teacher-protocol.md](./federated-human-teacher-protocol.md)
+- [docs/local-ai-mvp-architecture.md](./local-ai-mvp-architecture.md)
 
 Those documents are currently closer to task supervision, annotation, and
 federated model update flows. This proposal is about capability retention and

@@ -123,7 +123,9 @@ function resolveRendererNodeLaunch(env) {
 
 function resolveElectronLaunch(env) {
   const requestedHeapMb = Number.parseInt(
-    env.IDENA_DESKTOP_ELECTRON_HEAP_MB || env.IDENA_DESKTOP_DEV_HEAP_MB || '8192',
+    env.IDENA_DESKTOP_ELECTRON_HEAP_MB ||
+      env.IDENA_DESKTOP_DEV_HEAP_MB ||
+      '8192',
     10
   )
 
