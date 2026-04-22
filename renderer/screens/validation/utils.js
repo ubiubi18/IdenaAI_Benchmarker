@@ -14,6 +14,7 @@ export const VALIDATION_NODE_STABILITY_GRACE_MS = 20 * 1000
 export const SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS = 10
 export const LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS = 15
 export const AUTO_REPORT_REVIEW_RUNTIME_BUFFER_MS = 20 * 1000
+export const SHORT_SESSION_RESULT_TELEMETRY_HOLD_MS = 6 * 1000
 
 const VALIDATION_SESSION_STORAGE_KEY = 'idena-validation-session'
 const VALIDATION_SESSION_PERSIST_KEY = 'liveValidationSession'
@@ -246,6 +247,58 @@ export function getValidationSessionPhaseRemainingMs({
   }
 
   return deadlineAt - Number(now)
+}
+
+export function getShortSessionLongSessionTransitionAt({
+  validationStart,
+  shortSessionDuration,
+  shortSessionSubmittedAt,
+} = {}) {
+  const validationStartMs = Number(validationStart)
+  const shortDurationSeconds = Number(shortSessionDuration)
+  const submittedAtMs = Number(shortSessionSubmittedAt)
+
+  const sessionBoundaryAt =
+    Number.isFinite(validationStartMs) && Number.isFinite(shortDurationSeconds)
+      ? validationStartMs + Math.max(0, shortDurationSeconds) * 1000
+      : null
+  const holdUntilAt =
+    Number.isFinite(submittedAtMs) && submittedAtMs > 0
+      ? submittedAtMs + SHORT_SESSION_RESULT_TELEMETRY_HOLD_MS
+      : null
+
+  if (Number.isFinite(sessionBoundaryAt) && Number.isFinite(holdUntilAt)) {
+    return Math.max(sessionBoundaryAt, holdUntilAt)
+  }
+
+  if (Number.isFinite(sessionBoundaryAt)) {
+    return sessionBoundaryAt
+  }
+
+  if (Number.isFinite(holdUntilAt)) {
+    return holdUntilAt
+  }
+
+  return null
+}
+
+export function getShortSessionLongSessionTransitionDelayMs({
+  validationStart,
+  shortSessionDuration,
+  shortSessionSubmittedAt,
+  now = Date.now(),
+} = {}) {
+  const transitionAt = getShortSessionLongSessionTransitionAt({
+    validationStart,
+    shortSessionDuration,
+    shortSessionSubmittedAt,
+  })
+
+  if (!Number.isFinite(transitionAt)) {
+    return 0
+  }
+
+  return Math.max(0, transitionAt - Number(now))
 }
 
 export function getValidationAutoReportDelayMs({
@@ -674,37 +727,105 @@ export function exponentialBackoff(retry) {
   return Math.min(2 ** retry + Math.random(), 32)
 }
 
+const PERSISTED_VALIDATION_EVENT_TYPE = 'RESTORE'
+
+function isTransientValidationImageSource(source) {
+  return typeof source === 'string' && source.startsWith('blob:')
+}
+
+function normalizePersistableValidationFlip(flip) {
+  if (!flip || typeof flip !== 'object' || Array.isArray(flip)) {
+    return flip
+  }
+
+  const images = Array.isArray(flip.images) ? flip.images : []
+
+  if (!images.some(isTransientValidationImageSource)) {
+    return flip
+  }
+
+  return {
+    ...flip,
+    decoded: false,
+    fetched: false,
+    missing: false,
+    images: [],
+    orders: [],
+  }
+}
+
+function normalizePersistableValidationFlips(flips) {
+  return Array.isArray(flips)
+    ? flips.map(normalizePersistableValidationFlip)
+    : []
+}
+
+function buildPersistedValidationEvent() {
+  return {
+    type: PERSISTED_VALIDATION_EVENT_TYPE,
+  }
+}
+
+function buildPersistedValidationScxmlEvent() {
+  return {
+    name: PERSISTED_VALIDATION_EVENT_TYPE,
+    data: buildPersistedValidationEvent(),
+    $$type: 'scxml',
+    type: 'external',
+  }
+}
+
 function toPersistableValidationState(state) {
   if (!state) return null
 
   const snapshot =
     typeof state.toJSON === 'function' ? state.toJSON() : {...state}
 
-  const {
-    value,
-    context = {},
-    event = null,
-    _event = null,
-    _sessionid = null,
-    done = false,
-    historyValue = undefined,
-    changed = undefined,
-  } = snapshot
+  const {value, context = {}, done = false, historyValue = undefined} = snapshot
 
   return {
     value,
-    event,
-    _event,
-    _sessionid,
+    event: buildPersistedValidationEvent(),
+    _event: buildPersistedValidationScxmlEvent(),
     done,
-    changed,
     ...(typeof historyValue === 'undefined' ? {} : {historyValue}),
     context: {
       ...context,
+      shortFlips: normalizePersistableValidationFlips(
+        context.shortFlips ?? state.context?.shortFlips
+      ),
+      longFlips: normalizePersistableValidationFlips(
+        context.longFlips ?? state.context?.longFlips
+      ),
       reports: Array.isArray(state.context?.reports)
         ? state.context.reports
         : [...(state.context?.reports ?? [])],
     },
+  }
+}
+
+function normalizeRestorableValidationStateDefinition(stateDef) {
+  if (!stateDef || typeof stateDef !== 'object') {
+    return null
+  }
+
+  return {
+    ...stateDef,
+    event: buildPersistedValidationEvent(),
+    _event: buildPersistedValidationScxmlEvent(),
+    context: {
+      ...stateDef.context,
+      shortFlips: normalizePersistableValidationFlips(
+        stateDef.context?.shortFlips
+      ),
+      longFlips: normalizePersistableValidationFlips(
+        stateDef.context?.longFlips
+      ),
+    },
+    children:
+      stateDef.children && typeof stateDef.children === 'object'
+        ? stateDef.children
+        : {},
   }
 }
 
@@ -755,7 +876,7 @@ export function loadValidationStateDefinition(scope = null) {
     return null
   }
 
-  return persistedPayload.snapshot
+  return normalizeRestorableValidationStateDefinition(persistedPayload.snapshot)
 }
 
 export function loadValidationStateDefinitionByIdentityScope(scope = null) {
@@ -769,7 +890,7 @@ export function loadValidationStateDefinitionByIdentityScope(scope = null) {
     return null
   }
 
-  return persistedPayload.snapshot
+  return normalizeRestorableValidationStateDefinition(persistedPayload.snapshot)
 }
 
 export function loadValidationState(scope = null) {
@@ -787,10 +908,6 @@ export function loadValidationState(scope = null) {
 
     return State.create({
       ...stateDef,
-      children:
-        stateDef.children && typeof stateDef.children === 'object'
-          ? stateDef.children
-          : {},
       context: {
         ...stateDef.context,
         reports,
@@ -852,6 +969,20 @@ export function shouldDiscardPersistedValidationStateForPeriod(
     currentPeriod === EpochPeriod.LongSession &&
     persistedState.matches('shortSession')
   ) {
+    if (
+      persistedState.matches(
+        'shortSession.solve.answer.submitShortSession.submitted'
+      ) &&
+      getShortSessionLongSessionTransitionDelayMs({
+        validationStart: persistedState.context?.validationStart,
+        shortSessionDuration: persistedState.context?.shortSessionDuration,
+        shortSessionSubmittedAt:
+          persistedState.context?.shortSessionSubmittedAt,
+      }) > 0
+    ) {
+      return false
+    }
+
     return true
   }
 
@@ -891,10 +1022,6 @@ export function loadValidationStateByIdentityScope(scope = null) {
 
     return State.create({
       ...stateDef,
-      children:
-        stateDef.children && typeof stateDef.children === 'object'
-          ? stateDef.children
-          : {},
       context: {
         ...stateDef.context,
         reports,
@@ -921,10 +1048,15 @@ export function clearValidationState(scope = null) {
   persistValidationPayload({liveValidationSession: preservedSession})
 }
 
-export function shouldStartValidation(epoch, identity, scope = null) {
+export function shouldStartValidation(
+  epoch,
+  identity,
+  scope = null,
+  options = {}
+) {
   const isValidationRunning = isValidationCeremonyPeriod(epoch?.currentPeriod)
 
-  if (isValidationRunning && canValidate(identity)) {
+  if (isValidationRunning && canValidate(identity, options)) {
     const validationStateDefinition = loadValidationStateDefinition(scope)
     if (validationStateDefinition) {
       const persistedValidationState = State.create(validationStateDefinition)
@@ -948,18 +1080,6 @@ export function shouldStartValidation(epoch, identity, scope = null) {
 export function isValidationCeremonyPeriod(currentPeriod) {
   return [EpochPeriod.ShortSession, EpochPeriod.LongSession].includes(
     currentPeriod
-  )
-}
-
-export function shouldPrepareValidationSession(epoch, identity) {
-  return (
-    canValidate(identity) &&
-    !!epoch &&
-    [
-      EpochPeriod.FlipLottery,
-      EpochPeriod.ShortSession,
-      EpochPeriod.LongSession,
-    ].includes(epoch.currentPeriod)
   )
 }
 
@@ -1099,9 +1219,25 @@ export function availableReportsNumber(flips) {
   return Math.floor(flips.length / 3)
 }
 
-export function canValidate(identity) {
+export function shouldPrepareValidationSession(epoch, identity, options = {}) {
+  return (
+    canValidate(identity, options) &&
+    !!epoch &&
+    [
+      EpochPeriod.FlipLottery,
+      EpochPeriod.ShortSession,
+      EpochPeriod.LongSession,
+    ].includes(epoch.currentPeriod)
+  )
+}
+
+export function canValidate(identity, {isRehearsalNodeSession = false} = {}) {
   if (!identity) {
     return false
+  }
+
+  if (isRehearsalNodeSession) {
+    return true
   }
 
   const {requiredFlips, state} = identity

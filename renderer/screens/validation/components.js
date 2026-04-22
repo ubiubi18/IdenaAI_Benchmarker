@@ -64,19 +64,28 @@ const Scroll = require('react-scroll')
 const {ScrollElement} = Scroll
 const {scroller} = Scroll
 const ElementFlipImage = ScrollElement(AspectRatio)
+const VALIDATION_FLIP_PANEL_HEIGHT = 'clamp(320px, calc(100vh - 360px), 720px)'
+const VALIDATION_FLIP_FRAME_HEIGHT =
+  'calc(var(--validation-flip-panel-height) / 4)'
+const VALIDATION_FLIP_PANEL_WIDTH =
+  'calc(var(--validation-flip-panel-height) / 3)'
 
 export function ValidationScene(props) {
   return (
     <Flex
       direction="column"
-      h="100vh"
+      minH="100vh"
       w="full"
       pt={6}
-      pb={3}
+      pb={6}
       pl={10}
       pr={6}
-      overflow="hidden"
+      overflowX="hidden"
+      overflowY="auto"
       position="relative"
+      sx={{
+        '--validation-flip-panel-height': VALIDATION_FLIP_PANEL_HEIGHT,
+      }}
       {...props}
     />
   )
@@ -98,7 +107,7 @@ export function Title(props) {
 }
 
 export function CurrentStep(props) {
-  return <Flex justify="center" flex={1} mb={6} {...props} />
+  return <Flex justify="center" flex="0 0 auto" mb={6} {...props} />
 }
 
 export function FlipChallenge(props) {
@@ -180,7 +189,7 @@ export function Flip({
         {reorderList(images, orders[variant - 1]).map((src, idx) => (
           <Box
             key={idx}
-            height="calc((100vh - 260px) / 4)"
+            height={VALIDATION_FLIP_FRAME_HEIGHT}
             position="relative"
             overflow="hidden"
             onClick={(e) => {
@@ -346,8 +355,8 @@ function FlipHolder({isZoomHovered = false, ...props}) {
         position="relative"
         transitionProperty="opacity, transform"
         willChange="opacity, transform"
-        height="calc(100vh - 260px)"
-        width="calc((100vh - 240px) / 3)"
+        height="var(--validation-flip-panel-height)"
+        width={VALIDATION_FLIP_PANEL_WIDTH}
         {...props}
       />
     </Tooltip>
@@ -390,7 +399,7 @@ export function FailedFlip() {
           borderBottomRightRadius={
             idx === defaultOrder.length - 1 ? 'lg' : 'none'
           }
-          height="calc((100vh - 260px) / 4)"
+          height={VALIDATION_FLIP_FRAME_HEIGHT}
           overflow="hidden"
         >
           <Image

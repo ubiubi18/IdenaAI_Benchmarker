@@ -1,5 +1,30 @@
 import {EpochPeriod} from '../types'
 
+export function getValidationAiSessionType({
+  state = null,
+  submitting = false,
+} = {}) {
+  if (!state || typeof state.matches !== 'function' || submitting) {
+    return null
+  }
+
+  if (
+    state.matches('shortSession.solve.answer.normal') &&
+    state.matches('shortSession.fetch.done')
+  ) {
+    return 'short'
+  }
+
+  if (
+    state.matches('longSession.solve.answer.flips') &&
+    state.matches('longSession.fetch.flips.done')
+  ) {
+    return 'long'
+  }
+
+  return null
+}
+
 export function shouldBlockSessionAutoInDev({
   isDev = false,
   forceAiPreview = false,

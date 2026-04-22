@@ -45,7 +45,10 @@ import {ErrorAlert} from '../../shared/components/components'
 import {Status} from '../../shared/components/sidebar'
 import {useEpochState} from '../../shared/providers/epoch-context'
 import {useIdentity} from '../../shared/providers/identity-context'
-import {useSettingsState} from '../../shared/providers/settings-context'
+import {
+  isValidationRehearsalNodeSettings,
+  useSettingsState,
+} from '../../shared/providers/settings-context'
 import {useTimingState} from '../../shared/providers/timing-context'
 import {useChainState} from '../../shared/providers/chain-context'
 import {EpochPeriod, IdentityStatus} from '../../shared/types'
@@ -60,6 +63,7 @@ export default function AfterValidationPage() {
   const settings = useSettingsState()
   const [identity] = useIdentity()
   const {loading, offline, syncing} = useChainState()
+  const isRehearsalNodeSession = isValidationRehearsalNodeSettings(settings)
 
   const validationIdentityScope = React.useMemo(
     () =>
@@ -168,7 +172,7 @@ export default function AfterValidationPage() {
 
   const timing = useTimingState()
 
-  const isEligible = canValidate(identity)
+  const isEligible = canValidate(identity, {isRehearsalNodeSession})
   const showEligibilityError =
     !isEligible &&
     !loading &&

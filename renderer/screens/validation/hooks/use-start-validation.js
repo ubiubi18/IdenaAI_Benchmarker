@@ -587,7 +587,10 @@ export function useAutoStartValidation() {
   const lastPrepareAttemptAtRef = React.useRef(0)
   const lastIdentityRefreshAtRef = React.useRef(0)
 
-  const isCandidate = React.useMemo(() => canValidate(identity), [identity])
+  const isCandidate = React.useMemo(
+    () => canValidate(identity, {isRehearsalNodeSession}),
+    [identity, isRehearsalNodeSession]
+  )
   const shouldPrimeValidationIdentity =
     (settings.ephemeralExternalNodeConnected || isSessionAutoMode) &&
     rpcReady &&
@@ -708,7 +711,9 @@ export function useAutoStartValidation() {
 
       if (
         rpcReady &&
-        shouldPrepareValidationSession(epoch, identity) &&
+        shouldPrepareValidationSession(epoch, identity, {
+          isRehearsalNodeSession,
+        }) &&
         Date.now() - lastPrepareAttemptAtRef.current >= 5000 &&
         !hasPreparedSessionForScope
       ) {
@@ -744,7 +749,9 @@ export function useAutoStartValidation() {
       if (
         // Enter the validation route as soon as the ceremony actually starts.
         // The validation page already handles any remaining node/bootstrap wait.
-        shouldStartValidation(epoch, identity, validationStateScope) &&
+        shouldStartValidation(epoch, identity, validationStateScope, {
+          isRehearsalNodeSession,
+        }) &&
         rehearsalValidationOpenable &&
         router.pathname !== '/validation' &&
         !shouldSuppressValidationAutoOpen({
@@ -781,12 +788,16 @@ export function useAutoStartLottery() {
   const epoch = useEpochState()
   const [identity] = useIdentity()
   const settings = useSettingsState()
+  const isRehearsalNodeSession = isValidationRehearsalNodeSettings(settings)
   const sessionAutoMode = React.useMemo(
     () => isValidationSessionAutoMode(settings),
     [settings]
   )
 
-  const isCandidate = React.useMemo(() => canValidate(identity), [identity])
+  const isCandidate = React.useMemo(
+    () => canValidate(identity, {isRehearsalNodeSession}),
+    [identity, isRehearsalNodeSession]
+  )
   const validationIdentityScope = React.useMemo(
     () =>
       buildValidationIdentityScope({

@@ -1,5 +1,6 @@
 const {EpochPeriod} = require('../types')
 const {
+  getValidationAiSessionType,
   shouldBlockSessionAutoInDev,
   shouldAutoRunSessionForPeriod,
   shouldShowValidationAiUi,
@@ -7,6 +8,51 @@ const {
 } = require('./validation-ai-auto')
 
 describe('validation ai auto gating', () => {
+  it('detects a short-session AI solve window only in the short answer state', () => {
+    const activeStates = new Set([
+      'shortSession.solve.answer.normal',
+      'shortSession.fetch.done',
+    ])
+
+    expect(
+      getValidationAiSessionType({
+        state: {
+          matches: (value) => activeStates.has(value),
+        },
+      })
+    ).toBe('short')
+  })
+
+  it('detects a long-session AI solve window when long flips are fetched', () => {
+    const activeStates = new Set([
+      'longSession.solve.answer.flips',
+      'longSession.fetch.flips.done',
+    ])
+
+    expect(
+      getValidationAiSessionType({
+        state: {
+          matches: (value) => activeStates.has(value),
+        },
+      })
+    ).toBe('long')
+  })
+
+  it('does not offer long-session AI solve before long flips finish fetching', () => {
+    const activeStates = new Set([
+      'longSession.solve.answer.flips',
+      'longSession.fetch.keywords.success',
+    ])
+
+    expect(
+      getValidationAiSessionType({
+        state: {
+          matches: (value) => activeStates.has(value),
+        },
+      })
+    ).toBe(null)
+  })
+
   it('blocks real session auto mode in dev builds', () => {
     expect(
       shouldBlockSessionAutoInDev({

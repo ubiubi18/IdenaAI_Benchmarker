@@ -277,7 +277,7 @@ function NodeSettings() {
         case 'validation-devnet-logs':
           dispatch({type: 'SET_DEVNET_LOGS', data})
           break
-        case 'validation-devnet-connect-payload':
+        case 'validation-devnet-connect-payload': {
           if (!data || !data.url || !data.apiKey) {
             break
           }
@@ -309,6 +309,7 @@ function NodeSettings() {
             })
           }
           break
+        }
         default:
       }
     }
@@ -319,8 +320,7 @@ function NodeSettings() {
     clearEphemeralExternalNode,
     connectEphemeralExternalNode,
     dispatch,
-    settings.ephemeralExternalNodeConnected,
-    settings.useExternalNode,
+    settings,
     t,
     toast,
   ])
@@ -506,20 +506,14 @@ function NodeSettings() {
         'The validation rehearsal network is unavailable because the desktop bridge is not ready.'
       )
 
-  const startRehearsalNetwork = ({
-    connectApp = false,
-    fastForward = false,
-  } = {}) =>
+  const startRehearsalNetwork = ({connectApp = false} = {}) =>
     getNodeBridge().startValidationDevnet(
-      buildRehearsalNetworkPayload({connectApp, fastForward})
+      buildRehearsalNetworkPayload({connectApp})
     )
 
-  const restartRehearsalNetwork = ({
-    connectApp = true,
-    fastForward = false,
-  } = {}) =>
+  const restartRehearsalNetwork = ({connectApp = true} = {}) =>
     getNodeBridge().restartValidationDevnet(
-      buildRehearsalNetworkPayload({connectApp, fastForward})
+      buildRehearsalNetworkPayload({connectApp})
     )
 
   return (
@@ -855,18 +849,6 @@ function NodeSettings() {
                     >
                       {t('Start in background')}
                     </SecondaryButton>
-
-                    <SecondaryButton
-                      onClick={() =>
-                        startRehearsalNetwork({
-                          connectApp: true,
-                          fastForward: true,
-                        })
-                      }
-                      isDisabled={!canUseIpcRenderer || isStartingDevnet}
-                    >
-                      {t('Fast forward to session')}
-                    </SecondaryButton>
                   </>
                 ) : (
                   <>
@@ -966,19 +948,6 @@ function NodeSettings() {
                       isDisabled={!canUseIpcRenderer || isStartingDevnet}
                     >
                       {t('Restart fresh rehearsal')}
-                    </SecondaryButton>
-
-                    <SecondaryButton
-                      onClick={() =>
-                        restartRehearsalNetwork({
-                          connectApp:
-                            rehearsalNodeConnected || rehearsalNeedsConnection,
-                          fastForward: true,
-                        })
-                      }
-                      isDisabled={!canUseIpcRenderer || isStartingDevnet}
-                    >
-                      {t('Fast forward to session')}
                     </SecondaryButton>
 
                     <SecondaryButton

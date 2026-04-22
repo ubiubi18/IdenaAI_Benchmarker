@@ -1,6 +1,7 @@
 import {
   estimateValidationAiSolveBudget,
   planValidationAiSolve,
+  solveValidationSessionWithAi,
 } from './solver-orchestrator'
 
 function createDecodedFlip(hash) {
@@ -86,5 +87,241 @@ describe('solver-orchestrator planning', () => {
     })
     expect(longPlan.model).toBe('gpt-5.4')
     expect(longPlan.promptOptions).toBeNull()
+  })
+
+  it('budgets extra model passes for uncertainty reprompts and two-pass vision', () => {
+    const shortFlips = [createDecodedFlip('short-budget-1')]
+
+    const singlePassBudget = estimateValidationAiSolveBudget({
+      sessionType: 'short',
+      shortFlips,
+      aiSolver: {
+        provider: 'openai',
+        benchmarkProfile: 'custom',
+        requestTimeoutMs: 9000,
+        interFlipDelayMs: 650,
+        flipVisionMode: 'composite',
+        uncertaintyRepromptEnabled: false,
+      },
+    })
+
+    const repromptBudget = estimateValidationAiSolveBudget({
+      sessionType: 'short',
+      shortFlips,
+      aiSolver: {
+        provider: 'openai',
+        benchmarkProfile: 'custom',
+        requestTimeoutMs: 9000,
+        interFlipDelayMs: 650,
+        flipVisionMode: 'composite',
+        uncertaintyRepromptEnabled: true,
+      },
+    })
+
+    const framesTwoPassBudget = estimateValidationAiSolveBudget({
+      sessionType: 'short',
+      shortFlips,
+      aiSolver: {
+        provider: 'openai',
+        benchmarkProfile: 'custom',
+        requestTimeoutMs: 9000,
+        interFlipDelayMs: 650,
+        flipVisionMode: 'frames_two_pass',
+        uncertaintyRepromptEnabled: true,
+      },
+    })
+
+    expect(repromptBudget.estimatedMs).toBeGreaterThan(
+      singlePassBudget.estimatedMs
+    )
+    expect(framesTwoPassBudget.estimatedMs).toBeGreaterThan(
+      repromptBudget.estimatedMs
+    )
+  })
+
+  it('budgets retry attempts and backoff into the preflight estimate', () => {
+    const shortFlips = [createDecodedFlip('short-retry-budget-1')]
+
+    const noRetryBudget = estimateValidationAiSolveBudget({
+      sessionType: 'short',
+      shortFlips,
+      aiSolver: {
+        provider: 'openai',
+        benchmarkProfile: 'custom',
+        requestTimeoutMs: 9000,
+        interFlipDelayMs: 650,
+        maxRetries: 0,
+        uncertaintyRepromptEnabled: true,
+      },
+    })
+
+    const retryBudget = estimateValidationAiSolveBudget({
+      sessionType: 'short',
+      shortFlips,
+      aiSolver: {
+        provider: 'openai',
+        benchmarkProfile: 'custom',
+        requestTimeoutMs: 9000,
+        interFlipDelayMs: 650,
+        maxRetries: 2,
+        uncertaintyRepromptEnabled: true,
+      },
+    })
+
+    expect(retryBudget.estimatedMs).toBeGreaterThan(noRetryBudget.estimatedMs)
+  })
+
+  it('surfaces image load failures as readable errors', async () => {
+    const originalImage = global.Image
+    const originalAiSolver = global.aiSolver
+
+    class BrokenImage {
+      set src(value) {
+        this.currentSrc = value
+        setTimeout(() => {
+          this.onerror?.({
+            type: 'error',
+            target: {currentSrc: value},
+          })
+        }, 0)
+      }
+    }
+
+    global.Image = BrokenImage
+    global.aiSolver = {
+      solveFlipBatch: jest.fn(),
+    }
+
+    await expect(
+      solveValidationSessionWithAi({
+        sessionType: 'short',
+        shortFlips: [createDecodedFlip('short-broken-1')],
+        aiSolver: {
+          provider: 'openai',
+          model: 'gpt-5.4',
+        },
+        hardDeadlineAt: Date.now() + 60 * 1000,
+      })
+    ).rejects.toThrow('Unable to load validation flip image (panel-1)')
+
+    global.Image = originalImage
+    global.aiSolver = originalAiSolver
+  })
+
+  it('forwards second-pass trace fields into solved progress events', async () => {
+    const originalImage = global.Image
+    const originalAiSolver = global.aiSolver
+    const originalCreateElement = document.createElement.bind(document)
+    const createElementSpy = jest.spyOn(document, 'createElement')
+    const onProgress = jest.fn()
+
+    function ReadyImage() {
+      this.width = 100
+      this.height = 100
+      this.naturalWidth = 100
+      this.naturalHeight = 100
+    }
+
+    Object.defineProperty(ReadyImage.prototype, 'src', {
+      set(value) {
+        this.currentSrc = value
+        setTimeout(() => {
+          this.onload?.()
+        }, 0)
+      },
+    })
+
+    global.Image = ReadyImage
+    global.aiSolver = {
+      solveFlipBatch: jest.fn().mockResolvedValue({
+        results: [
+          {
+            hash: 'short-forward-1',
+            answer: 'right',
+            confidence: 0.31,
+            latencyMs: 234,
+            reasoning: 'right story stays more coherent',
+            rawAnswerBeforeRemap: 'skip',
+            finalAnswerAfterRemap: 'right',
+            sideSwapped: false,
+            tokenUsage: {
+              promptTokens: 11,
+              completionTokens: 7,
+              totalTokens: 18,
+            },
+            costs: {
+              estimatedUsd: 0.001,
+              actualUsd: 0.001,
+            },
+            uncertaintyRepromptUsed: true,
+            forcedDecision: true,
+            forcedDecisionPolicy: 'random',
+            forcedDecisionReason: 'uncertain_or_skip',
+            secondPassStrategy: 'annotated_frame_review',
+            frameReasoningUsed: true,
+            firstPass: {
+              answer: 'skip',
+              confidence: 0.12,
+              reasoning: 'initial pass could not separate the stories',
+              strategy: 'initial_decision',
+            },
+          },
+        ],
+      }),
+    }
+    createElementSpy.mockImplementation((tagName, ...args) => {
+      if (tagName === 'canvas') {
+        return {
+          width: 0,
+          height: 0,
+          getContext: () => ({
+            fillStyle: '#000000',
+            fillRect: jest.fn(),
+            drawImage: jest.fn(),
+          }),
+          toDataURL: jest.fn(() => 'data:image/png;base64,MOCK'),
+        }
+      }
+
+      return originalCreateElement(tagName, ...args)
+    })
+
+    try {
+      await solveValidationSessionWithAi({
+        sessionType: 'short',
+        shortFlips: [createDecodedFlip('short-forward-1')],
+        aiSolver: {
+          provider: 'openai',
+          model: 'gpt-5.4',
+          benchmarkProfile: 'custom',
+        },
+        hardDeadlineAt: Date.now() + 60 * 1000,
+        onProgress,
+      })
+
+      const solvedEvent = onProgress.mock.calls
+        .map(([event]) => event)
+        .find((event) => event.stage === 'solved')
+
+      expect(solvedEvent).toMatchObject({
+        hash: 'short-forward-1',
+        answer: 'right',
+        reasoning: 'right story stays more coherent',
+        uncertaintyRepromptUsed: true,
+        forcedDecision: true,
+        forcedDecisionPolicy: 'random',
+        forcedDecisionReason: 'uncertain_or_skip',
+        secondPassStrategy: 'annotated_frame_review',
+        frameReasoningUsed: true,
+        firstPass: expect.objectContaining({
+          answer: 'skip',
+          strategy: 'initial_decision',
+        }),
+      })
+    } finally {
+      createElementSpy.mockRestore()
+      global.Image = originalImage
+      global.aiSolver = originalAiSolver
+    }
   })
 })

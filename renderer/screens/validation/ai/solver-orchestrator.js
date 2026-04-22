@@ -31,8 +31,10 @@ const IMAGE_PREP_PER_FLIP_MS = {
   default: 600,
   'local-ai': 1000,
 }
+const FRAME_REVIEW_PREP_MIN_MS = 900
 const MIN_PER_FLIP_SOLVE_BUDGET_MS = 2500
 const SHORT_SESSION_OPENAI_FAST_MODELS = ['gpt-5.4-mini', 'gpt-5.4']
+const RETRY_BACKOFF_BASE_MS = 700
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -66,6 +68,52 @@ function normalizeVisionMode(value, fallback = 'composite') {
     return mode
   }
   return fallback
+}
+
+function getSolvePassCount({
+  flipVisionMode = 'composite',
+  uncertaintyRepromptEnabled = false,
+} = {}) {
+  const normalizedVisionMode = normalizeVisionMode(flipVisionMode)
+  const basePassCount = normalizedVisionMode === 'frames_two_pass' ? 2 : 1
+
+  if (!uncertaintyRepromptEnabled) {
+    return basePassCount
+  }
+
+  // The uncertainty fallback always re-runs the decision through
+  // frame-by-frame reasoning plus a follow-up decision pass.
+  return basePassCount + 2
+}
+
+function getRetryBackoffBudgetMs(maxRetries = 0) {
+  const retries = Math.max(0, toNumberOrFallback(maxRetries, 0))
+  let totalMs = 0
+
+  for (let retryIndex = 0; retryIndex < retries; retryIndex += 1) {
+    totalMs += Math.max(500, RETRY_BACKOFF_BASE_MS * (retryIndex + 1))
+  }
+
+  return totalMs
+}
+
+function estimatePerFlipSolveRuntimeMs(profile = {}) {
+  const solvePassCount = getSolvePassCount({
+    flipVisionMode: profile.flipVisionMode,
+    uncertaintyRepromptEnabled: profile.uncertaintyRepromptEnabled,
+  })
+  const retryAttemptCount = Math.max(
+    1,
+    toNumberOrFallback(profile.maxRetries, 0) + 1
+  )
+  const retryBackoffBudgetMs = getRetryBackoffBudgetMs(profile.maxRetries)
+
+  return Math.max(
+    MIN_PER_FLIP_SOLVE_BUDGET_MS,
+    profile.requestTimeoutMs * solvePassCount * retryAttemptCount +
+      retryBackoffBudgetMs +
+      Math.max(0, toNumberOrFallback(profile.interFlipDelayMs, 0))
+  )
 }
 
 function normalizeProfile(input = {}) {
@@ -160,7 +208,13 @@ function loadImage(source) {
   return new Promise((resolve, reject) => {
     const image = new Image()
     image.onload = () => resolve(image)
-    image.onerror = reject
+    image.onerror = () => {
+      reject(
+        new Error(
+          `Unable to load validation flip image${source ? ` (${source})` : ''}`
+        )
+      )
+    }
     image.src = source
   })
 }
@@ -499,7 +553,9 @@ function summarizeResults(results, startedAt) {
       return {
         estimatedUsd:
           acc.estimatedUsd +
-          (Number.isFinite(nextCosts.estimatedUsd) ? nextCosts.estimatedUsd : 0),
+          (Number.isFinite(nextCosts.estimatedUsd)
+            ? nextCosts.estimatedUsd
+            : 0),
         actualUsd:
           acc.actualUsd +
           (Number.isFinite(nextCosts.actualUsd) ? nextCosts.actualUsd : 0),
@@ -562,6 +618,18 @@ function summarizeResults(results, startedAt) {
         return item.rawAnswerBeforeRemap !== item.finalAnswerAfterRemap
       }).length,
       providerErrors: results.filter((item) => Boolean(item.error)).length,
+      uncertaintyReprompts: results.filter(
+        (item) => item && item.uncertaintyRepromptUsed
+      ).length,
+      forcedDecisions: results.filter((item) => item && item.forcedDecision)
+        .length,
+      randomForcedDecisions: results.filter(
+        (item) =>
+          item && item.forcedDecision && item.forcedDecisionPolicy === 'random'
+      ).length,
+      annotatedFrameReviews: results.filter(
+        (item) => item && item.secondPassStrategy === 'annotated_frame_review'
+      ).length,
     },
   }
 }
@@ -672,13 +740,17 @@ export function planValidationAiSolve({
 export function estimateValidationAiSolveBudget(options = {}) {
   const solvePlan = planValidationAiSolve(options)
   const {provider, effectiveProfile, candidateFlips} = solvePlan
-  const prepPerFlipMs =
-    IMAGE_PREP_PER_FLIP_MS[provider] || IMAGE_PREP_PER_FLIP_MS.default
-  const perFlipSolveMs = Math.max(
-    MIN_PER_FLIP_SOLVE_BUDGET_MS,
-    effectiveProfile.requestTimeoutMs +
-      Math.max(0, toNumberOrFallback(effectiveProfile.interFlipDelayMs, 0))
-  )
+  const shouldPrepareFramePayloads =
+    effectiveProfile.flipVisionMode !== 'composite' ||
+    provider === 'local-ai' ||
+    effectiveProfile.uncertaintyRepromptEnabled
+  const prepPerFlipMs = shouldPrepareFramePayloads
+    ? Math.max(
+        FRAME_REVIEW_PREP_MIN_MS,
+        IMAGE_PREP_PER_FLIP_MS[provider] || IMAGE_PREP_PER_FLIP_MS.default
+      )
+    : IMAGE_PREP_PER_FLIP_MS[provider] || IMAGE_PREP_PER_FLIP_MS.default
+  const perFlipSolveMs = estimatePerFlipSolveRuntimeMs(effectiveProfile)
 
   return {
     ...solvePlan,
@@ -734,6 +806,8 @@ export async function solveValidationSessionWithAi({
   const payloadFlips = []
   const useFrameVision =
     effectiveProfile.flipVisionMode !== 'composite' || provider === 'local-ai'
+  const prepareFramePayloads =
+    useFrameVision || effectiveProfile.uncertaintyRepromptEnabled
   const frameRenderSize =
     provider === 'local-ai'
       ? {frameWidth: 384, frameHeight: 288}
@@ -763,14 +837,14 @@ export async function solveValidationSessionWithAi({
             ...frameRenderSize,
           })
         : null
-    const leftFrames = useFrameVision
+    const leftFrames = prepareFramePayloads
       ? await composeFlipFrames({
           flip,
           variant: AnswerType.Left,
           ...frameRenderSize,
         })
       : []
-    const rightFrames = useFrameVision
+    const rightFrames = prepareFramePayloads
       ? await composeFlipFrames({
           flip,
           variant: AnswerType.Right,
@@ -906,6 +980,14 @@ export async function solveValidationSessionWithAi({
       sideSwapped: solved.sideSwapped,
       tokenUsage: normalizeTokenUsage(solved.tokenUsage),
       costs: normalizeCostSummary(solved.costs),
+      reasoning: solved.reasoning,
+      uncertaintyRepromptUsed: Boolean(solved.uncertaintyRepromptUsed),
+      forcedDecision: Boolean(solved.forcedDecision),
+      forcedDecisionPolicy: solved.forcedDecisionPolicy || null,
+      forcedDecisionReason: solved.forcedDecisionReason || null,
+      secondPassStrategy: solved.secondPassStrategy || null,
+      frameReasoningUsed: Boolean(solved.frameReasoningUsed),
+      firstPass: solved.firstPass || null,
     }
 
     if (onProgress) {

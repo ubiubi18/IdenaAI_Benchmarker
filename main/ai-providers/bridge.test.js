@@ -654,6 +654,7 @@ describe('createAiProviderBridge', () => {
   })
 
   it('forces non-skip answer when forceDecision is enabled', async () => {
+    const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.2)
     const invokeProvider = jest
       .fn()
       .mockResolvedValue('{"answer":"skip","confidence":0.1}')
@@ -664,19 +665,26 @@ describe('createAiProviderBridge', () => {
     })
     bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
 
-    const result = await bridge.solveFlipBatch({
-      provider: 'openai',
-      model: 'gpt-4o-mini',
-      benchmarkProfile: 'custom',
-      forceDecision: true,
-      uncertaintyRepromptEnabled: false,
-      flips: [{hash: 'flip-force-1'}],
-    })
+    try {
+      const result = await bridge.solveFlipBatch({
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        benchmarkProfile: 'custom',
+        forceDecision: true,
+        uncertaintyRepromptEnabled: false,
+        flips: [{hash: 'flip-force-1'}],
+      })
 
-    expect(result.results[0].answer).not.toBe('skip')
-    expect(result.results[0]).toMatchObject({
-      forcedDecision: true,
-    })
+      expect(result.results[0]).toMatchObject({
+        answer: 'left',
+        forcedDecision: true,
+        forcedDecisionPolicy: 'random',
+        forcedDecisionReason: 'uncertain_or_skip',
+      })
+      expect(result.results[0].reasoning).toContain('random fallback left')
+    } finally {
+      randomSpy.mockRestore()
+    }
   })
 
   it('runs an uncertainty second pass when confidence is below threshold', async () => {
@@ -706,6 +714,141 @@ describe('createAiProviderBridge', () => {
     expect(result.results[0]).toMatchObject({
       uncertaintyRepromptUsed: true,
     })
+  })
+
+  it('escalates uncertain skips into annotated frame review before deciding', async () => {
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValueOnce('{"answer":"skip","confidence":0.15}')
+      .mockResolvedValueOnce(
+        'Left story: hand reaches for mug, mug is lifted, mug is carried, mug is placed.'
+      )
+      .mockResolvedValueOnce(
+        '{"answer":"right","confidence":0.81,"reasoning":"right story stays more consistent"}'
+      )
+
+    const bridge = createAiProviderBridge(mockLogger(), {
+      invokeProvider,
+      writeBenchmarkLog: jest.fn().mockResolvedValue(undefined),
+    })
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.solveFlipBatch({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      benchmarkProfile: 'custom',
+      forceDecision: true,
+      uncertaintyRepromptEnabled: true,
+      uncertaintyConfidenceThreshold: 0.7,
+      uncertaintyRepromptMinRemainingMs: 500,
+      flips: [
+        {
+          hash: 'flip-frame-review-1',
+          leftImage: 'data:image/png;base64,AAA=',
+          rightImage: 'data:image/png;base64,BBB=',
+          leftFrames: [
+            'data:image/png;base64,L1=',
+            'data:image/png;base64,L2=',
+            'data:image/png;base64,L3=',
+            'data:image/png;base64,L4=',
+          ],
+          rightFrames: [
+            'data:image/png;base64,R1=',
+            'data:image/png;base64,R2=',
+            'data:image/png;base64,R3=',
+            'data:image/png;base64,R4=',
+          ],
+        },
+      ],
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(3)
+    expect(invokeProvider.mock.calls[0][0].promptOptions).toMatchObject({
+      promptPhase: 'decision',
+      secondPass: false,
+    })
+    expect(invokeProvider.mock.calls[1][0].promptOptions).toMatchObject({
+      promptPhase: 'frame_reasoning',
+      secondPass: true,
+      flipVisionMode: 'frames_two_pass',
+    })
+    expect(invokeProvider.mock.calls[2][0].promptOptions).toMatchObject({
+      promptPhase: 'decision_from_frame_reasoning',
+      secondPass: true,
+      flipVisionMode: 'frames_two_pass',
+    })
+    expect(result.results[0]).toMatchObject({
+      uncertaintyRepromptUsed: true,
+      frameReasoningUsed: true,
+      secondPassStrategy: 'annotated_frame_review',
+      firstPass: expect.objectContaining({
+        answer: 'skip',
+        strategy: 'initial_decision',
+      }),
+    })
+    expect(['left', 'right']).toContain(result.results[0].answer)
+  })
+
+  it('uses random fallback when annotated frame review still cannot decide', async () => {
+    const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.2)
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValueOnce('{"answer":"skip","confidence":0.11}')
+      .mockResolvedValueOnce(
+        'Both stories are noisy, but here is the frame-by-frame note set.'
+      )
+      .mockResolvedValueOnce(
+        '{"answer":"skip","confidence":0.2,"reasoning":"still ambiguous after review"}'
+      )
+
+    const bridge = createAiProviderBridge(mockLogger(), {
+      invokeProvider,
+      writeBenchmarkLog: jest.fn().mockResolvedValue(undefined),
+    })
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    try {
+      const result = await bridge.solveFlipBatch({
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        benchmarkProfile: 'custom',
+        forceDecision: true,
+        uncertaintyRepromptEnabled: true,
+        uncertaintyConfidenceThreshold: 0.7,
+        uncertaintyRepromptMinRemainingMs: 500,
+        flips: [
+          {
+            hash: 'flip-random-fallback-1',
+            leftImage: 'data:image/png;base64,AAA=',
+            rightImage: 'data:image/png;base64,BBB=',
+            leftFrames: [
+              'data:image/png;base64,L1=',
+              'data:image/png;base64,L2=',
+              'data:image/png;base64,L3=',
+              'data:image/png;base64,L4=',
+            ],
+            rightFrames: [
+              'data:image/png;base64,R1=',
+              'data:image/png;base64,R2=',
+              'data:image/png;base64,R3=',
+              'data:image/png;base64,R4=',
+            ],
+          },
+        ],
+      })
+
+      expect(result.results[0]).toMatchObject({
+        answer: 'left',
+        uncertaintyRepromptUsed: true,
+        forcedDecision: true,
+        forcedDecisionPolicy: 'random',
+        forcedDecisionReason: 'uncertain_or_skip',
+        secondPassStrategy: 'annotated_frame_review',
+      })
+      expect(result.results[0].reasoning).toContain('random fallback left')
+    } finally {
+      randomSpy.mockRestore()
+    }
   })
 
   it('uses frame-by-frame single-pass mode when frame payload exists', async () => {

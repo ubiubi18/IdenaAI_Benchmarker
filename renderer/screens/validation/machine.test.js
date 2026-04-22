@@ -62,6 +62,45 @@ describe('validation machine', () => {
     service.stop()
   })
 
+  it('can enter long session immediately once the live period switches after short submit', async () => {
+    const machine = createValidationMachine({
+      epoch: 1,
+      validationStart: Date.now() + 60 * 1000,
+      shortSessionDuration: 120,
+      longSessionDuration: 300,
+      validationSessionId: '',
+      locale: 'en',
+    })
+
+    const service = interpret(machine).start()
+
+    service.send('SUBMIT')
+    service.send('SUBMIT')
+
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Timed out waiting for submitted state'))
+      }, 1000)
+
+      service.onTransition((state) => {
+        if (
+          state.matches(
+            'shortSession.solve.answer.submitShortSession.submitted'
+          )
+        ) {
+          clearTimeout(timeout)
+          resolve()
+        }
+      })
+    })
+
+    service.send('START_LONG_SESSION')
+
+    expect(service.state.matches('longSession')).toBe(true)
+
+    service.stop()
+  })
+
   it('merges rehearsal benchmark metadata into matching flips', () => {
     const machine = createValidationMachine({
       epoch: 1,

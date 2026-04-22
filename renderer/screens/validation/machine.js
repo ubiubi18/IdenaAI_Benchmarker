@@ -25,6 +25,7 @@ import {
   shouldPollLongFlips,
   readyFlip,
   availableReportsNumber,
+  getShortSessionLongSessionTransitionDelayMs,
 } from './utils'
 import {forEachAsync, wait} from '../../shared/utils/fn'
 import {fetchConfirmedKeywordTranslations} from '../flips/utils'
@@ -94,6 +95,7 @@ export const createValidationMachine = ({
         translations: {},
         reports: new Set(),
         submitLongAnswersHash: null,
+        shortSessionSubmittedAt: null,
       },
       on: {
         SET_VALIDATION_SESSION_ID: {
@@ -508,13 +510,21 @@ export const createValidationMachine = ({
                               ),
                             onDone: {
                               target: 'submitted',
-                              actions: [log()],
+                              actions: [
+                                assign({
+                                  shortSessionSubmittedAt: () => Date.now(),
+                                }),
+                                log(),
+                              ],
                             },
                             onError: [
                               {
                                 target: 'submitted',
                                 cond: (_, {data}) =>
                                   data === 'tx with same hash already exists',
+                                actions: assign({
+                                  shortSessionSubmittedAt: () => Date.now(),
+                                }),
                               },
                               {
                                 target: 'fail',
@@ -535,6 +545,9 @@ export const createValidationMachine = ({
                           entry: log(
                             'Short session submitted, waiting for long session'
                           ),
+                          on: {
+                            START_LONG_SESSION: '#validation.longSession',
+                          },
                           after: {
                             WAIT_FOR_LONG_SESSION: '#validation.longSession',
                           },
@@ -1193,14 +1206,13 @@ export const createValidationMachine = ({
         WAIT_FOR_LONG_SESSION: ({
           validationStart: nextValidationStart,
           shortSessionDuration: nextShortSessionDuration,
+          shortSessionSubmittedAt,
         }) =>
-          Math.max(
-            0,
-            adjustDurationInSeconds(
-              nextValidationStart,
-              nextShortSessionDuration
-            )
-          ) * 1000,
+          getShortSessionLongSessionTransitionDelayMs({
+            validationStart: nextValidationStart,
+            shortSessionDuration: nextShortSessionDuration,
+            shortSessionSubmittedAt,
+          }),
         LONG_SESSION_CHECK: ({
           validationStart: nextValidationStart,
           longSessionDuration: nextLongSessionDuration,
@@ -1214,7 +1226,7 @@ export const createValidationMachine = ({
           Math.max(
             adjustDurationInSeconds(
               validationStart,
-              shortSessionDuration + (global.env.FINALIZE_LONG_FLIPS || 4 * 60)
+              shortSessionDuration + (global.env?.FINALIZE_LONG_FLIPS || 4 * 60)
             ),
             5
           ) * 1000,
@@ -1224,7 +1236,7 @@ export const createValidationMachine = ({
             adjustDurationInSeconds(
               validationStart,
               shortSessionDuration +
-                (global.env.FINALIZE_ALL_LONG_FLIPS || 25 * 60)
+                (global.env?.FINALIZE_ALL_LONG_FLIPS || 25 * 60)
             ),
             5
           ) * 1000,

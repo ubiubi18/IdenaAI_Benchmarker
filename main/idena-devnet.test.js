@@ -57,33 +57,6 @@ describe('validation devnet helpers', () => {
     )
   })
 
-  it('accepts a 20-second first ceremony lead for fast-forward rehearsal runs', () => {
-    const plan = buildValidationDevnetPlan({
-      baseDir: '/tmp/idena-validation-devnet',
-      now: () => new Date('2026-04-21T12:00:00.000Z').getTime(),
-      networkId: 44001,
-      firstCeremonyLeadSeconds: 20,
-    })
-
-    expect(plan.firstCeremonyUnix).toBe(1776772820)
-  })
-
-  it('can remove post-validation reward padding for fast-forward rehearsal runs', () => {
-    const plan = buildValidationDevnetPlan({
-      baseDir: '/tmp/idena-validation-devnet',
-      now: () => new Date('2026-04-21T12:00:00.000Z').getTime(),
-      networkId: 44001,
-      firstCeremonyLeadSeconds: 20,
-      afterLongSessionSeconds: 0,
-      validationPaddingSeconds: 0,
-    })
-
-    expect(plan.durations.ValidationInterval).toBe(2040000000000)
-    expect(plan.durations.FlipLotteryDuration).toBe(300000000000)
-    expect(plan.durations.ShortSessionDuration).toBe(120000000000)
-    expect(plan.durations.LongSessionDuration).toBe(1620000000000)
-  })
-
   it('builds isolated node config with shared genesis and bootnodes', () => {
     const plan = buildValidationDevnetPlan({
       baseDir: '/tmp/idena-validation-devnet',

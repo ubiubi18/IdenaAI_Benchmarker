@@ -4,7 +4,13 @@ function loadImage(source) {
   return new Promise((resolve, reject) => {
     const image = new Image()
     image.onload = () => resolve(image)
-    image.onerror = reject
+    image.onerror = () => {
+      reject(
+        new Error(
+          `Unable to load validation flip image${source ? ` (${source})` : ''}`
+        )
+      )
+    }
     image.src = source
   })
 }

@@ -59,7 +59,7 @@ export default function LotteryPage() {
     REHEARSAL_DEVNET_STATUS_INITIAL
   )
 
-  const isIneligible = !canValidate(identity)
+  const isIneligible = !canValidate(identity, {isRehearsalNodeSession})
   const showEligibilityError =
     isIneligible &&
     !loading &&

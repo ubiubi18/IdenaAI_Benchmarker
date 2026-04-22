@@ -5054,8 +5054,16 @@ function aggregateConsultantDecisions(decisions = []) {
   }
 }
 
-function chooseDeterministicSide(hash) {
-  return hashScore(String(hash || '')) % 2 === 0 ? 'left' : 'right'
+function chooseRandomSide() {
+  return Math.random() < 0.5 ? 'left' : 'right'
+}
+
+function resolveSecondPassStrategy({useFrameReasoning, secondPass}) {
+  if (useFrameReasoning) {
+    return secondPass ? 'annotated_frame_review' : 'frame_reasoning'
+  }
+
+  return secondPass ? 'uncertainty_recheck' : 'initial_decision'
 }
 
 function normalizeImageList(value) {
@@ -5386,12 +5394,14 @@ function summarizeCostSummary(results = []) {
       const costs = normalizeCostSummary(item && item.costs)
       return {
         estimatedUsd:
-          acc.estimatedUsd + (costs.estimatedUsd == null ? 0 : costs.estimatedUsd),
+          acc.estimatedUsd +
+          (costs.estimatedUsd == null ? 0 : costs.estimatedUsd),
         actualUsd:
           acc.actualUsd + (costs.actualUsd == null ? 0 : costs.actualUsd),
         itemsWithEstimated:
           acc.itemsWithEstimated + (costs.estimatedUsd == null ? 0 : 1),
-        itemsWithActual: acc.itemsWithActual + (costs.actualUsd == null ? 0 : 1),
+        itemsWithActual:
+          acc.itemsWithActual + (costs.actualUsd == null ? 0 : 1),
       }
     },
     {
@@ -5403,8 +5413,7 @@ function summarizeCostSummary(results = []) {
   )
 
   return {
-    estimatedUsd:
-      totals.itemsWithEstimated > 0 ? totals.estimatedUsd : null,
+    estimatedUsd: totals.itemsWithEstimated > 0 ? totals.estimatedUsd : null,
     actualUsd: totals.itemsWithActual > 0 ? totals.actualUsd : null,
     itemsWithEstimated: totals.itemsWithEstimated,
     itemsWithActual: totals.itemsWithActual,
@@ -9336,17 +9345,27 @@ Flip hash: ${hash}
       const flipStartedAt = now()
       const swapped = swapPlan[flipIndex] === true
       const vision = resolveVisionModeForFlip(profile, flip)
+      const availableLeftFrames = normalizeImageList(flip.leftFrames).slice(
+        0,
+        4
+      )
+      const availableRightFrames = normalizeImageList(flip.rightFrames).slice(
+        0,
+        4
+      )
+      const deepFrameReviewAvailable =
+        availableLeftFrames.length > 0 && availableRightFrames.length > 0
 
       if (flipStartedAt >= deadlineAt) {
         if (profile.forceDecision) {
-          const forcedAnswer = chooseDeterministicSide(flip.hash)
+          const forcedAnswer = chooseRandomSide()
           return {
             hash: flip.hash,
             answer: forcedAnswer,
             rawAnswerBeforeRemap: 'skip',
             finalAnswerAfterRemap: forcedAnswer,
             confidence: 0,
-            reasoning: `deadline exceeded, forced ${forcedAnswer}`,
+            reasoning: `deadline exceeded, random fallback ${forcedAnswer}`,
             latencyMs: 0,
             error: 'deadline_exceeded',
             sideSwapped: swapped,
@@ -9355,6 +9374,7 @@ Flip hash: ${hash}
             flipVisionModeFallback: vision.fallbackReason,
             forcedDecision: true,
             forcedDecisionReason: 'deadline_exceeded',
+            forcedDecisionPolicy: 'random',
             tokenUsage: createEmptyTokenUsage(),
           }
         }
@@ -9382,6 +9402,15 @@ Flip hash: ${hash}
         leftFrames: vision.leftFrames,
         rightFrames: vision.rightFrames,
       })
+      const deepFrameReviewFlip = deepFrameReviewAvailable
+        ? buildProviderFlipForVision({
+            flip,
+            swapped,
+            visionMode: 'frames_two_pass',
+            leftFrames: availableLeftFrames,
+            rightFrames: availableRightFrames,
+          })
+        : null
 
       emitFlipStart({
         type: 'flip-start',
@@ -9400,14 +9429,23 @@ Flip hash: ${hash}
       const callProviderPass = async ({
         secondPass = false,
         allowSkip = true,
+        deepFrameReview = false,
       } = {}) => {
+        const useFrameReasoning =
+          vision.applied === 'frames_two_pass' ||
+          (deepFrameReview && deepFrameReviewAvailable)
+        const passFlipVisionMode = useFrameReasoning
+          ? 'frames_two_pass'
+          : vision.applied
+        const passFlip = useFrameReasoning ? deepFrameReviewFlip : providerFlip
+
         const invokeConsultantOnce = async (consultant, promptOptions) =>
           withRetries(profile.maxRetries, async (attempt) => {
             try {
               return await invokeProvider({
                 provider: consultant.provider,
                 model: consultant.model,
-                flip: providerFlip,
+                flip: passFlip,
                 profile,
                 apiKey: consultant.apiKey,
                 providerConfig: consultant.providerConfig || providerConfig,
@@ -9428,7 +9466,7 @@ Flip hash: ${hash}
           try {
             if (consultant.internalStrategy === LEGACY_HEURISTIC_STRATEGY) {
               const heuristicRawDecision = solveLegacyHeuristicDecision({
-                flip: providerFlip,
+                flip: passFlip,
               })
               const heuristicDecision = remapDecisionIfSwapped(
                 heuristicRawDecision,
@@ -9459,14 +9497,14 @@ Flip hash: ${hash}
             let combinedTokenUsage = createEmptyTokenUsage()
             let frameReasoningUsed = false
 
-            if (vision.applied === 'frames_two_pass') {
+            if (useFrameReasoning) {
               const frameReasoningResponse = await invokeConsultantOnce(
                 consultant,
                 {
                   ...basePromptOptions,
                   secondPass,
                   forceDecision: false,
-                  flipVisionMode: vision.applied,
+                  flipVisionMode: 'frames_two_pass',
                   promptPhase: 'frame_reasoning',
                 }
               )
@@ -9483,7 +9521,7 @@ Flip hash: ${hash}
                 ...basePromptOptions,
                 secondPass,
                 forceDecision: !allowSkip,
-                flipVisionMode: vision.applied,
+                flipVisionMode: 'frames_two_pass',
                 promptPhase: 'decision_from_frame_reasoning',
                 frameReasoning: normalizedFrameReasoning.rawText,
               })
@@ -9492,7 +9530,7 @@ Flip hash: ${hash}
                 ...basePromptOptions,
                 secondPass,
                 forceDecision: !allowSkip,
-                flipVisionMode: vision.applied,
+                flipVisionMode: passFlipVisionMode,
                 promptPhase: 'decision',
               })
             }
@@ -9610,9 +9648,14 @@ Flip hash: ${hash}
           tokenUsage: consultantTokenUsage,
           costs: consultantCosts,
           secondPass,
+          secondPassStrategy: resolveSecondPassStrategy({
+            useFrameReasoning,
+            secondPass,
+          }),
           frameReasoningUsed: consultantDecisions.some(
             (item) => item.frameReasoningUsed
           ),
+          deepFrameReviewAvailable,
           consultedProviders,
           ensembleProbabilities: aggregate.probabilities,
           ensembleContributors: aggregate.contributors,
@@ -9649,6 +9692,7 @@ Flip hash: ${hash}
         const secondPassResult = await callProviderPass({
           secondPass: true,
           allowSkip: false,
+          deepFrameReview: true,
         })
         mergedTokenUsage = addTokenUsage(
           mergedTokenUsage,
@@ -9662,23 +9706,27 @@ Flip hash: ${hash}
             answer: firstPassResult.answer,
             confidence: firstPassResult.confidence,
             error: firstPassResult.error,
+            reasoning: firstPassResult.reasoning,
+            rawAnswerBeforeRemap: firstPassResult.rawAnswerBeforeRemap,
+            strategy: firstPassResult.secondPassStrategy,
           },
         }
       }
 
       if (profile.forceDecision && finalResult.answer === 'skip') {
-        const forcedAnswer = chooseDeterministicSide(flip.hash)
+        const forcedAnswer = chooseRandomSide()
         finalResult = {
           ...finalResult,
           answer: forcedAnswer,
           finalAnswerAfterRemap: forcedAnswer,
           forcedDecision: true,
+          forcedDecisionPolicy: 'random',
           forcedDecisionReason: finalResult.error
             ? 'provider_error'
             : 'uncertain_or_skip',
           reasoning: finalResult.reasoning
-            ? `${finalResult.reasoning}; forced ${forcedAnswer}`
-            : `forced ${forcedAnswer}`,
+            ? `${finalResult.reasoning}; random fallback ${forcedAnswer}`
+            : `random fallback ${forcedAnswer}`,
         }
       }
 
@@ -9798,7 +9846,10 @@ Flip hash: ${hash}
           tokenUsage,
           uncertaintyRepromptUsed,
           forcedDecision,
+          forcedDecisionPolicy,
           forcedDecisionReason,
+          firstPass,
+          secondPassStrategy,
           frameReasoningUsed,
           flipVisionModeRequested,
           flipVisionModeApplied,
@@ -9821,7 +9872,10 @@ Flip hash: ${hash}
           tokenUsage,
           uncertaintyRepromptUsed,
           forcedDecision,
+          forcedDecisionPolicy,
           forcedDecisionReason,
+          firstPass,
+          secondPassStrategy,
           frameReasoningUsed,
           flipVisionModeRequested,
           flipVisionModeApplied,

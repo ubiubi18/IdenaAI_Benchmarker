@@ -38,8 +38,7 @@ This section should stay current and act as a short roadmap of what has already 
 - Validation rehearsal devnet:
   the app now exposes a private multi-node rehearsal network in `Settings -> Node`
   with seeded FLIP-Challenge flips, background start, restart/stop controls,
-  app-only rehearsal switching, and fast-forward to roughly 90 seconds before
-  session start.
+  and app-only rehearsal switching.
 - Rehearsal validation gating:
   the app now waits until the primary rehearsal node has actually been assigned
   validation hashes before allowing the handoff into validation, and the node
@@ -53,6 +52,15 @@ This section should stay current and act as a short roadmap of what has already 
   automatic route entry, provider-readiness retries during validation, ceremony-
   aware AI timing checks, and long-session auto-submit fallback when delayed AI
   report review is unavailable or misses its window.
+- Validation AI fallback and telemetry:
+  uncertain flips now escalate into an annotated frame-review second pass before
+  the solver gives up, and unresolved flips are forced into an explicit random
+  fallback vote that is surfaced in AI benchmark telemetry together with first-
+  pass traces, reasoning, token usage, and price estimates where available.
+- Rehearsal result review:
+  rehearsal runs now expose end-of-session benchmark stats, optional audit/review
+  flows, persistent human annotations by flip hash, and validation AI cost
+  tracking on the post-session dashboard.
 - OpenAI short-session fast mode:
   the app now supports an optional short-session-only OpenAI fast lane using
   `service_tier=priority` and `reasoning_effort=none`, with a visible fallback
@@ -134,7 +142,6 @@ What you can do from `Settings -> Node`:
 - start it in the background without switching the app over yet
 - restart a fresh rehearsal network
 - stop the rehearsal network
-- fast-forward to a session start window with about 90 seconds left on the countdown
 
 Behavior notes:
 - the app can connect to the rehearsal node for the current app session only
@@ -148,6 +155,14 @@ Behavior notes:
 - if a rehearsal run still enters validation without flips, the validation page
   should now offer a restart path instead of hanging indefinitely in a silent
   `0 / 0` waiting state
+- short-session AI results now remain visible briefly after submission so the
+  benchmark telemetry can still be inspected before the UI switches into long
+  session
+- long-session AI telemetry now shows per-flip decision traces, including raw
+  skips, reprompt frame-review passes, random fallback votes, and reasoning
+  summaries for those decisions
+- rehearsal results can be audited afterwards, or skipped in one click and
+  revisited later, with annotations stored for later local-training research
 - this is still experimental and can still break in edge cases
 
 ## Local AI Preparations
@@ -188,6 +203,10 @@ Current intended behavior:
   processing and reduced reasoning effort, while automatically degrading to the
   normal OpenAI plan if the API shape changes or fast-lane handling is rejected
 - refuse late AI runs when too little short- or long-session time remains
+- escalate uncertain flips into an annotated frame-review second pass instead of
+  silently leaving them as skips
+- if a flip still cannot be resolved after that second pass, apply a random
+  fallback vote and record that fact in telemetry rather than hiding the outcome
 - submit long-session answers automatically even when delayed AI report review is
   disabled, unsupported, or fails
 
@@ -284,7 +303,7 @@ Related notes:
 - [docs/federated-model-distribution.md](docs/federated-model-distribution.md)
 - [docs/federated-human-teacher-protocol.md](docs/federated-human-teacher-protocol.md)
 
-## Large Bundled Artifacts
+## Large bundled artifacts
 
 This repo intentionally carries large static libraries in `idena-wasm-binding/lib/` for reproducible local builds.
 

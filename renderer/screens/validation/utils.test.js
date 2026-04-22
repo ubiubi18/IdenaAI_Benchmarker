@@ -28,14 +28,18 @@ import {
   canValidate,
   isValidationCeremonyPeriod,
   shouldPrepareValidationSession,
+  shouldStartValidation,
   getValidationSessionPhaseDeadlineAt,
   getValidationSessionPhaseRemainingMs,
   getValidationAutoReportDelayMs,
+  getShortSessionLongSessionTransitionAt,
+  getShortSessionLongSessionTransitionDelayMs,
   isRenderableValidationFlip,
   hasRenderableValidationFlips,
   SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
   LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
   AUTO_REPORT_REVIEW_RUNTIME_BUFFER_MS,
+  SHORT_SESSION_RESULT_TELEMETRY_HOLD_MS,
   resetValidationSessionState,
 } from './utils'
 import {EpochPeriod, IdentityStatus} from '../../shared/types'
@@ -844,6 +848,19 @@ describe('canValidate', () => {
       })
     ).toBe(true)
   })
+
+  it('accepts rehearsal identities even if normal invite activation is incomplete', () => {
+    expect(
+      canValidate(
+        {
+          state: IdentityStatus.Invite,
+          requiredFlips: 0,
+          flips: [],
+        },
+        {isRehearsalNodeSession: true}
+      )
+    ).toBe(true)
+  })
 })
 
 describe('scoped validation state persistence', () => {
@@ -938,17 +955,56 @@ describe('scoped validation state persistence', () => {
 
     expect(validationSessionStoreState.validationStateSnapshot).toEqual({
       value: {shortSession: {fetch: 'done'}},
+      event: {type: 'RESTORE'},
+      _event: {
+        name: 'RESTORE',
+        data: {type: 'RESTORE'},
+        $$type: 'scxml',
+        type: 'external',
+      },
       context: {
         epoch: 0,
+        shortFlips: [],
+        longFlips: [],
         reports: ['0xflip'],
       },
-      event: {type: 'RESTORE'},
-      _event: {name: 'RESTORE'},
-      _sessionid: 'x:1',
       done: false,
-      changed: true,
       historyValue: {current: 'shortSession'},
     })
+  })
+
+  it('normalizes legacy persisted snapshots that are missing xstate event metadata', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    validationSessionStoreState = {
+      validationStateMeta: scope,
+      validationStateSnapshot: {
+        value: 'shortSession',
+        context: {
+          epoch: 0,
+          reports: ['0xflip'],
+        },
+        done: false,
+      },
+    }
+
+    const restoredState = loadValidationState(scope)
+
+    expect(restoredState?.event).toEqual({type: 'RESTORE'})
+    expect(restoredState?._event).toEqual({
+      name: 'RESTORE',
+      data: {type: 'RESTORE'},
+      $$type: 'scxml',
+      type: 'external',
+    })
+    expect(Array.from(restoredState?.context?.reports || [])).toEqual([
+      '0xflip',
+    ])
   })
 
   it('drops a stale validation snapshot when a different node/session scope is active', () => {
@@ -1060,6 +1116,122 @@ describe('scoped validation state persistence', () => {
 
     expect(restoredState).toBeNull()
     expect(validationSessionStoreState.validationStateSnapshot).toBeUndefined()
+  })
+
+  it('sanitizes persisted blob-backed validation images so they refetch after restore', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    persistValidationState(
+      createPersistableValidationState({
+        context: {
+          epoch: 0,
+          shortFlips: [
+            {
+              hash: '0xshort',
+              ready: true,
+              fetched: true,
+              decoded: true,
+              failed: false,
+              images: ['blob:left', 'blob:right'],
+              orders: [
+                [0, 1, 2, 3],
+                [0, 1, 2, 3],
+              ],
+            },
+          ],
+        },
+      }),
+      scope
+    )
+
+    const restoredState = loadValidationState(scope)
+
+    expect(restoredState.context.shortFlips[0]).toMatchObject({
+      hash: '0xshort',
+      ready: true,
+      fetched: false,
+      decoded: false,
+      failed: false,
+      images: [],
+      orders: [],
+    })
+  })
+
+  it('keeps persisted submitted short-session state during the telemetry hold after long-session starts', () => {
+    const validationStart = Date.now() - 130 * 1000
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart,
+    })
+    const persistedState = createPersistableValidationState({
+      context: {
+        epoch: 0,
+        validationStart,
+        shortFlips: [{hash: '0xshort'}],
+        shortSessionDuration: 120,
+        shortSessionSubmittedAt: Date.now() - 2000,
+        reports: new Set(['0xflip']),
+      },
+    })
+
+    persistValidationState(
+      {
+        ...persistedState,
+        value: {
+          shortSession: {
+            fetch: 'done',
+            solve: {
+              nav: 'firstFlip',
+              answer: {
+                submitShortSession: 'submitted',
+              },
+            },
+          },
+        },
+        toJSON() {
+          return {
+            ...persistedState.toJSON(),
+            value: {
+              shortSession: {
+                fetch: 'done',
+                solve: {
+                  nav: 'firstFlip',
+                  answer: {
+                    submitShortSession: 'submitted',
+                  },
+                },
+              },
+            },
+          }
+        },
+      },
+      scope
+    )
+
+    expect(
+      shouldDiscardPersistedValidationStateForPeriod(
+        EpochPeriod.LongSession,
+        loadValidationState(scope)
+      )
+    ).toBe(false)
+
+    const restoredState = loadValidationStateForPeriod(
+      EpochPeriod.LongSession,
+      scope
+    )
+
+    expect(
+      restoredState.matches(
+        'shortSession.solve.answer.submitShortSession.submitted'
+      )
+    ).toBe(true)
   })
 
   it('drops persisted long-session state when the node is still in short session', () => {
@@ -1279,6 +1451,37 @@ describe('shouldPrepareValidationSession', () => {
       )
     ).toBe(false)
   })
+
+  it('prepares rehearsal sessions even for invite-only rehearsal identities', () => {
+    expect(
+      shouldPrepareValidationSession(
+        {currentPeriod: EpochPeriod.FlipLottery},
+        {
+          state: IdentityStatus.Invite,
+          requiredFlips: 0,
+          flips: [],
+        },
+        {isRehearsalNodeSession: true}
+      )
+    ).toBe(true)
+  })
+})
+
+describe('shouldStartValidation', () => {
+  it('starts rehearsal validation during ceremony even for invite-only rehearsal identities', () => {
+    expect(
+      shouldStartValidation(
+        {epoch: 42, currentPeriod: EpochPeriod.ShortSession},
+        {
+          state: IdentityStatus.Invite,
+          requiredFlips: 0,
+          flips: [],
+        },
+        null,
+        {isRehearsalNodeSession: true}
+      )
+    ).toBe(true)
+  })
 })
 
 describe('isValidationCeremonyPeriod', () => {
@@ -1309,5 +1512,42 @@ describe('createValidationMachine initial period', () => {
     })
 
     expect(machine.initialState.matches('longSession')).toBe(true)
+  })
+})
+
+describe('short-session long-session transition hold', () => {
+  it('waits until both the long-session boundary and the telemetry hold are satisfied', () => {
+    const validationStart = Date.now() - 125 * 1000
+    const submittedAt = Date.now() - 2000
+
+    const transitionAt = getShortSessionLongSessionTransitionAt({
+      validationStart,
+      shortSessionDuration: 120,
+      shortSessionSubmittedAt: submittedAt,
+    })
+
+    expect(transitionAt).toBe(
+      submittedAt + SHORT_SESSION_RESULT_TELEMETRY_HOLD_MS
+    )
+    expect(
+      getShortSessionLongSessionTransitionDelayMs({
+        validationStart,
+        shortSessionDuration: 120,
+        shortSessionSubmittedAt: submittedAt,
+      })
+    ).toBeGreaterThan(0)
+  })
+
+  it('switches immediately once the hold already elapsed after the long-session boundary', () => {
+    const validationStart = Date.now() - 130 * 1000
+    const submittedAt = Date.now() - 10 * 1000
+
+    expect(
+      getShortSessionLongSessionTransitionDelayMs({
+        validationStart,
+        shortSessionDuration: 120,
+        shortSessionSubmittedAt: submittedAt,
+      })
+    ).toBe(0)
   })
 })
