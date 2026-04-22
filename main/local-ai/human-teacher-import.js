@@ -98,7 +98,15 @@ function normalizePanelReferenceIndex(value) {
     return null
   }
 
-  return parsed
+  if (parsed <= 1) {
+    return Math.min(5, Math.max(1, Math.round(parsed * 4 + 1)))
+  }
+
+  if (parsed > 5) {
+    return null
+  }
+
+  return Math.round(parsed)
 }
 
 function normalizePanelReferenceCoordinate(value) {
@@ -169,6 +177,79 @@ function readAnnotationField(annotationRow, snakeKey, camelKey) {
   }
 
   return undefined
+}
+
+function normalizeAiAnnotationRating(value) {
+  const next = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  return ['good', 'bad', 'wrong'].includes(next) ? next : ''
+}
+
+function hasAiAnnotation(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+
+  return Boolean(
+    value.generated_at ||
+      value.runtime_backend ||
+      value.runtime_type ||
+      value.model ||
+      value.vision_model ||
+      value.final_answer ||
+      value.why_answer ||
+      value.option_a_summary ||
+      value.option_b_summary ||
+      value.rating ||
+      value.report_reason ||
+      value.text_required !== null ||
+      value.sequence_markers_present !== null ||
+      value.report_required !== null ||
+      value.confidence !== null
+  )
+}
+
+function normalizeAiAnnotation(value) {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const finalAnswer = trimText(
+    source.final_answer ?? source.finalAnswer,
+    16
+  ).toLowerCase()
+  const next = {
+    generated_at: trimText(source.generated_at ?? source.generatedAt, 64),
+    runtime_backend: trimText(
+      source.runtime_backend ?? source.runtimeBackend,
+      64
+    ),
+    runtime_type: trimText(source.runtime_type ?? source.runtimeType, 64),
+    model: trimText(source.model, 256),
+    vision_model: trimText(source.vision_model ?? source.visionModel, 256),
+    final_answer: VALID_FINAL_ANSWERS.has(finalAnswer) ? finalAnswer : '',
+    why_answer: trimText(source.why_answer ?? source.whyAnswer, 900),
+    confidence: normalizeConfidence(source.confidence),
+    text_required: normalizeBool(source.text_required ?? source.textRequired),
+    sequence_markers_present: normalizeBool(
+      source.sequence_markers_present ?? source.sequenceMarkersPresent
+    ),
+    report_required: normalizeBool(
+      source.report_required ?? source.reportRequired
+    ),
+    report_reason: trimText(source.report_reason ?? source.reportReason, 400),
+    option_a_summary: trimText(
+      source.option_a_summary ?? source.optionASummary,
+      400
+    ),
+    option_b_summary: trimText(
+      source.option_b_summary ?? source.optionBSummary,
+      400
+    ),
+    rating: normalizeAiAnnotationRating(source.rating),
+  }
+
+  return hasAiAnnotation(next) ? next : null
 }
 
 function validateFinalAnswer(value) {

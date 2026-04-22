@@ -1,6 +1,7 @@
 import React, {useEffect} from 'react'
 import {useInterval} from '../hooks/use-interval'
 import {useSettingsState} from './settings-context'
+import {useNodeState} from './node-context'
 import {callRpc} from '../utils/utils'
 import {RPC_CONNECTION_CHANGED_EVENT} from '../utils/rpc-connection-events'
 

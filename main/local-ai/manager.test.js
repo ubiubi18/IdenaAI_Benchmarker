@@ -1459,6 +1459,13 @@ describe('local-ai manager', () => {
       epoch: 12,
       task: expect.objectContaining({
         taskId: 'flip-a::human-teacher',
+        annotation: expect.objectContaining({
+          ai_annotation: expect.objectContaining({
+            final_answer: 'right',
+            rating: 'bad',
+          }),
+          ai_annotation_feedback: expect.stringContaining('left-side'),
+        }),
         annotationStatus: 'complete',
         annotation: expect.objectContaining({
           ai_annotation: expect.objectContaining({
@@ -1630,6 +1637,19 @@ describe('local-ai manager', () => {
       demo: true,
       task: expect.objectContaining({
         taskId: firstTaskId,
+        annotation: expect.objectContaining({
+          ai_annotation: expect.objectContaining({
+            final_answer: 'left',
+            text_required: false,
+            sequence_markers_present: false,
+            report_required: false,
+            rating: 'good',
+          }),
+          ai_annotation_feedback: expect.stringContaining('missed one clue'),
+          text_required: false,
+          sequence_markers_present: false,
+          report_required: false,
+        }),
         annotationStatus: 'complete',
       }),
     })
@@ -4181,6 +4201,15 @@ describe('local-ai manager', () => {
         }),
       ],
     })
+    expect(normalizedRows).toEqual([
+      expect.objectContaining({
+        task_id: 'flip-a::human-teacher',
+        text_required: false,
+        sequence_markers_present: false,
+        report_required: false,
+        confidence: 5,
+      }),
+    ])
     await expect(
       storage.exists(
         path.join(exportResult.outputDir, 'annotations.normalized.jsonl')

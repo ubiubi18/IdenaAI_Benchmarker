@@ -4173,8 +4173,20 @@ export default function AiSettingsPage() {
                               shortSessionOpenAiFastEnabled: e.target.checked,
                             })
                           }
+                          minH="120px"
+                          maxH="280px"
+                          w="xl"
+                          placeholder={t(
+                            'Use {{hash}}, {{allowSkip}}, {{secondPass}}, {{allowedAnswers}}, {{visionMode}}, {{promptPhase}}. Leave blank to use the built-in anti-slot-bias solver prompt.'
+                          )}
                         />
-                      </Flex>
+                        <Text color="muted" fontSize="sm" mt={1}>
+                          {t(
+                            'Applies to provider flip solving and provider benchmark/test-unit runs only. It does not change provider-based flip generation or local human-teacher training.'
+                          )}
+                        </Text>
+                      </SettingsFormControl>
+                    )}
 
                       {aiSolver.shortSessionOpenAiFastEnabled ? (
                         <SettingsFormControl>

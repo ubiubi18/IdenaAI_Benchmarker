@@ -221,6 +221,14 @@ function createRootBridgeDb() {
   }
 }
 
+export function createSublevelDb(db, prefix, options = {}) {
+  if (!db || typeof db.sub !== 'function') {
+    throw new Error('db should provide a sub() method')
+  }
+
+  return db.sub(prefix, options)
+}
+
 export function requestDb(name = 'db') {
   const normalizedName =
     typeof name === 'string' && name.trim() ? name.trim() : 'db'

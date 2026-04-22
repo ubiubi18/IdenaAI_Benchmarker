@@ -1,5 +1,5 @@
 import {IdentityStatus} from '../../shared/types'
-import {requestDb} from '../../shared/utils/db'
+import {createSublevelDb, requestDb} from '../../shared/utils/db'
 
 function buildProfileScopeSuffix(scope) {
   const address = String(scope?.address || '')

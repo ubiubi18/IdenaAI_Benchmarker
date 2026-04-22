@@ -1,4 +1,4 @@
-# IdenaAI
+# IdenaAI Benchmarker NOT PRODUCTION READY, DONT USE!
 
 `IdenaAI` is an experimental desktop fork of `idena-desktop` focused on:
 - local and hosted AI integration

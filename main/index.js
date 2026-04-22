@@ -2314,17 +2314,19 @@ nodeUpdater.on('update-downloaded', (info) => {
   sendMainWindowMsg(AUTO_UPDATE_EVENT, 'node-update-ready', info)
 })
 
-autoUpdater.on('download-progress', (info) => {
-  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
-})
+if (autoUpdater) {
+  autoUpdater.on('download-progress', (info) => {
+    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-download-progress', info)
+  })
 
-autoUpdater.on('update-downloaded', (info) => {
-  sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
-})
+  autoUpdater.on('update-downloaded', (info) => {
+    sendMainWindowMsg(AUTO_UPDATE_EVENT, 'ui-update-ready', info)
+  })
 
-autoUpdater.on('error', (error) => {
-  logger.error('error while checking UI update', error.toString())
-})
+  autoUpdater.on('error', (error) => {
+    logger.error('error while checking UI update', error.toString())
+  })
+}
 
 onTrusted(AUTO_UPDATE_COMMAND, async (event, command, data) => {
   logger.info(`new autoupdate command`, command, data)
@@ -2384,7 +2386,7 @@ function checkForUpdates() {
             })
           }, 30000)
         }
-      } else {
+      } else if (autoUpdater) {
         await autoUpdater.checkForUpdates()
       }
     } catch (e) {

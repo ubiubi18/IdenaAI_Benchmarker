@@ -31,10 +31,6 @@ does not change the current MVP scope.
 - `main/local-ai/sidecar.test.js`: sidecar reachability and parsing tests.
 - `docs/local-ai-mvp-architecture.md`: current Local AI architecture and trust
   boundaries.
-- `docs/deep-research-private-notes.md`: private-repo research notes that now
-  need a freshness review.
-- `docs/private-repo-codex-context.md`: repo-targeting guardrails for future
-  Codex work.
 - `docs/deep-research-index.json`: deep-research entrypoint index; currently
   partly stale and still worth checking before relying on it.
 
@@ -58,12 +54,11 @@ does not change the current MVP scope.
 
 ## C. Likely cleanup targets later
 
-- `docs/deep-research-index.json`: repository and branch metadata still reflect
-  older public-repo assumptions.
-- `docs/deep-research-private-notes.md`,
-  `docs/private-repo-codex-context.md`,
-  `docs/local-ai-mvp-architecture.md`, and this file: overlapping documentation
-  that may be consolidated after the next research pass.
+- `docs/deep-research-index.json`: repository metadata may drift from the
+  current code layout and should be checked before relying on it.
+- `docs/deep-research-integration.md`,
+  `docs/local-ai-mvp-architecture.md`, and this file: overlapping
+  documentation that may be consolidated after the next research pass.
 - `main/index.js`, `main/preload.js`, and `renderer/pages/_app.js`: thin Local
   AI bridge wiring that may be simplified once the interface stabilizes.
 - `renderer/pages/settings/ai.js` and
