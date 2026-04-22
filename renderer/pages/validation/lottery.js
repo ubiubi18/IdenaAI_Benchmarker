@@ -33,7 +33,10 @@ import {canValidate} from '../../screens/validation/utils'
 import {useIdentity} from '../../shared/providers/identity-context'
 import {useChainState} from '../../shared/providers/chain-context'
 import {Status} from '../../shared/components/sidebar'
-import {useSettingsState} from '../../shared/providers/settings-context'
+import {
+  useSettingsState,
+  isValidationRehearsalNodeSettings,
+} from '../../shared/providers/settings-context'
 import {getNodeBridge} from '../../shared/utils/node-bridge'
 
 const shouldForwardProp = (prop) =>
@@ -51,9 +54,7 @@ export default function LotteryPage() {
   const [identity] = useIdentity()
   const settings = useSettingsState()
   const {loading, offline, syncing} = useChainState()
-  const isRehearsalNodeSession =
-    settings.useExternalNode &&
-    settings.externalNodeLabel === 'Validation rehearsal node'
+  const isRehearsalNodeSession = isValidationRehearsalNodeSettings(settings)
   const [rehearsalDevnetStatus, setRehearsalDevnetStatus] = React.useState(
     REHEARSAL_DEVNET_STATUS_INITIAL
   )
@@ -209,6 +210,7 @@ export default function LotteryPage() {
       lotteryContent = (
         <Stack
           spacing="4"
+          w="full"
           borderWidth="1px"
           borderColor={rehearsalStatusBorderColor}
           bg="whiteAlpha.100"
@@ -216,9 +218,17 @@ export default function LotteryPage() {
           px="5"
           py="4"
         >
-          <Box>
-            <Text fontWeight={600}>{rehearsalStatusTitle}</Text>
-            <Text color="xwhite.050" fontSize="sm">
+          <Box minW={0}>
+            <Text fontWeight={600} lineHeight="short">
+              {rehearsalStatusTitle}
+            </Text>
+            <Text
+              color="xwhite.050"
+              fontSize="sm"
+              lineHeight="tall"
+              whiteSpace="normal"
+              overflowWrap="anywhere"
+            >
               {rehearsalStatusBody}
             </Text>
           </Box>
@@ -278,8 +288,8 @@ export default function LotteryPage() {
         </NextLink>
       </Flex>
 
-      <Center minH="100vh" overflow="hidden">
-        <Stack spacing="12" w={['xs', '640px']}>
+      <Center minH="100vh" overflowX="hidden" overflowY="auto" py={6}>
+        <Stack spacing="12" w="full" maxW={['xs', '4xl']}>
           <Box>
             <MotionBox
               initial={{

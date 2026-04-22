@@ -10,7 +10,10 @@ import {assign, choose} from 'xstate/lib/actions'
 import {useCloseToast} from '../../../shared/hooks/use-toast'
 import {useInterval} from '../../../shared/hooks/use-interval'
 import {useEpochState} from '../../../shared/providers/epoch-context'
-import {useSettingsState} from '../../../shared/providers/settings-context'
+import {
+  useSettingsState,
+  isValidationRehearsalNodeSettings,
+} from '../../../shared/providers/settings-context'
 import {EpochPeriod} from '../../../shared/types'
 import {getNodeBridge} from '../../../shared/utils/node-bridge'
 import {ValidatonStatusToast} from '../components/toast'
@@ -37,8 +40,7 @@ export function useValidationToast() {
   const closeToast = useCloseToast()
   const currentPeriod = epoch?.currentPeriod
   const isRehearsalNodeSession =
-    settings.useExternalNode &&
-    settings.externalNodeLabel === 'Validation rehearsal node'
+    isValidationRehearsalNodeSettings(settings)
   const [rehearsalDevnetStatus, setRehearsalDevnetStatus] = React.useState(
     REHEARSAL_DEVNET_STATUS_INITIAL
   )

@@ -5324,6 +5324,93 @@ function summarizeTokenUsage(results) {
   )
 }
 
+function normalizeUsdCost(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function createEmptyCostSummary() {
+  return {
+    estimatedUsd: null,
+    actualUsd: null,
+  }
+}
+
+function normalizeCostSummary(costs = {}) {
+  return {
+    estimatedUsd: normalizeUsdCost(costs.estimatedUsd),
+    actualUsd: normalizeUsdCost(costs.actualUsd),
+  }
+}
+
+function addCostSummary(left = {}, right = {}) {
+  const a = normalizeCostSummary(left)
+  const b = normalizeCostSummary(right)
+
+  return {
+    estimatedUsd:
+      a.estimatedUsd == null && b.estimatedUsd == null
+        ? null
+        : (a.estimatedUsd || 0) + (b.estimatedUsd || 0),
+    actualUsd:
+      a.actualUsd == null && b.actualUsd == null
+        ? null
+        : (a.actualUsd || 0) + (b.actualUsd || 0),
+  }
+}
+
+function estimateProviderTextCostSummary(provider, model, usage = {}) {
+  if (
+    !provider ||
+    provider === LEGACY_HEURISTIC_PROVIDER ||
+    isLocalAiProvider(provider)
+  ) {
+    return createEmptyCostSummary()
+  }
+
+  if (!isOpenAiCompatibleProvider(provider)) {
+    return createEmptyCostSummary()
+  }
+
+  const estimatedUsd = estimateTextCostUsd(usage, model)
+
+  return {
+    estimatedUsd: normalizeUsdCost(estimatedUsd),
+    actualUsd: normalizeUsdCost(estimatedUsd),
+  }
+}
+
+function summarizeCostSummary(results = []) {
+  const totals = results.reduce(
+    (acc, item) => {
+      const costs = normalizeCostSummary(item && item.costs)
+      return {
+        estimatedUsd:
+          acc.estimatedUsd + (costs.estimatedUsd == null ? 0 : costs.estimatedUsd),
+        actualUsd:
+          acc.actualUsd + (costs.actualUsd == null ? 0 : costs.actualUsd),
+        itemsWithEstimated:
+          acc.itemsWithEstimated + (costs.estimatedUsd == null ? 0 : 1),
+        itemsWithActual: acc.itemsWithActual + (costs.actualUsd == null ? 0 : 1),
+      }
+    },
+    {
+      estimatedUsd: 0,
+      actualUsd: 0,
+      itemsWithEstimated: 0,
+      itemsWithActual: 0,
+    }
+  )
+
+  return {
+    estimatedUsd:
+      totals.itemsWithEstimated > 0 ? totals.estimatedUsd : null,
+    actualUsd: totals.itemsWithActual > 0 ? totals.actualUsd : null,
+    itemsWithEstimated: totals.itemsWithEstimated,
+    itemsWithActual: totals.itemsWithActual,
+  }
+}
+
 function normalizeValidationReportKeywords(keywords = []) {
   if (!Array.isArray(keywords)) {
     return []
@@ -9363,6 +9450,7 @@ Flip hash: ${hash}
                 ),
                 error: null,
                 tokenUsage: createEmptyTokenUsage(),
+                costs: createEmptyCostSummary(),
                 frameReasoningUsed: false,
               }
             }
@@ -9428,6 +9516,11 @@ Flip hash: ${hash}
               finalAnswerAfterRemap: normalizeAnswer(decision.answer),
               error: null,
               tokenUsage: combinedTokenUsage,
+              costs: estimateProviderTextCostSummary(
+                consultant.provider,
+                consultant.model,
+                combinedTokenUsage
+              ),
               frameReasoningUsed,
               providerMeta,
             }
@@ -9447,6 +9540,7 @@ Flip hash: ${hash}
               reasoning: 'provider error',
               error: message,
               tokenUsage: createEmptyTokenUsage(),
+              costs: createEmptyCostSummary(),
               frameReasoningUsed: false,
               providerMeta: null,
             }
@@ -9463,6 +9557,10 @@ Flip hash: ${hash}
         const consultantTokenUsage = consultantDecisions.reduce(
           (acc, item) => addTokenUsage(acc, item.tokenUsage),
           createEmptyTokenUsage()
+        )
+        const consultantCosts = consultantDecisions.reduce(
+          (acc, item) => addCostSummary(acc, item.costs),
+          createEmptyCostSummary()
         )
         const consultedProviders = consultantDecisions.map(
           ({
@@ -9510,6 +9608,7 @@ Flip hash: ${hash}
           flipVisionModeApplied: vision.applied,
           flipVisionModeFallback: vision.fallbackReason,
           tokenUsage: consultantTokenUsage,
+          costs: consultantCosts,
           secondPass,
           frameReasoningUsed: consultantDecisions.some(
             (item) => item.frameReasoningUsed
@@ -9535,6 +9634,10 @@ Flip hash: ${hash}
         createEmptyTokenUsage(),
         firstPassResult.tokenUsage
       )
+      let mergedCosts = addCostSummary(
+        createEmptyCostSummary(),
+        firstPassResult.costs
+      )
 
       const shouldReprompt =
         profile.uncertaintyRepromptEnabled &&
@@ -9551,6 +9654,7 @@ Flip hash: ${hash}
           mergedTokenUsage,
           secondPassResult.tokenUsage
         )
+        mergedCosts = addCostSummary(mergedCosts, secondPassResult.costs)
         finalResult = {
           ...secondPassResult,
           uncertaintyRepromptUsed: true,
@@ -9582,6 +9686,7 @@ Flip hash: ${hash}
         ...finalResult,
         latencyMs: now() - flipStartedAt,
         tokenUsage: mergedTokenUsage,
+        costs: mergedCosts,
       }
     }
 
@@ -9624,6 +9729,7 @@ Flip hash: ${hash}
     }
 
     const tokenUsageSummary = summarizeTokenUsage(results)
+    const costSummary = summarizeCostSummary(results)
     const reportedProvider = legacyOnlyMode
       ? LEGACY_HEURISTIC_PROVIDER
       : provider
@@ -9642,6 +9748,7 @@ Flip hash: ${hash}
         })
       ),
       tokens: tokenUsageSummary,
+      costs: costSummary,
       diagnostics: {
         swapped: results.filter((x) => x.sideSwapped === true).length,
         notSwapped: results.filter((x) => x.sideSwapped !== true).length,
@@ -9789,6 +9896,7 @@ Flip hash: ${hash}
           error: 'missing_images',
           latencyMs: now() - flipStartedAt,
           tokenUsage: createEmptyTokenUsage(),
+          costs: createEmptyCostSummary(),
           consultedProviders: [],
         }
       }
@@ -9847,6 +9955,11 @@ Flip hash: ${hash}
               triggeredRules: review.triggeredRules,
               error: null,
               tokenUsage: normalizedResponse.tokenUsage,
+              costs: estimateProviderTextCostSummary(
+                consultant.provider,
+                consultant.model,
+                normalizedResponse.tokenUsage
+              ),
             }
           } catch (error) {
             const message = createProviderErrorMessage({
@@ -9866,6 +9979,7 @@ Flip hash: ${hash}
               triggeredRules: [],
               error: message,
               tokenUsage: createEmptyTokenUsage(),
+              costs: createEmptyCostSummary(),
             }
           }
         })
@@ -9875,6 +9989,10 @@ Flip hash: ${hash}
       const consultantTokenUsage = consultantReviews.reduce(
         (acc, item) => addTokenUsage(acc, item.tokenUsage),
         createEmptyTokenUsage()
+      )
+      const consultantCosts = consultantReviews.reduce(
+        (acc, item) => addCostSummary(acc, item.costs),
+        createEmptyCostSummary()
       )
       const providerErrors = consultantReviews
         .filter((item) => item.error)
@@ -9892,6 +10010,7 @@ Flip hash: ${hash}
             : null,
         latencyMs: now() - flipStartedAt,
         tokenUsage: consultantTokenUsage,
+        costs: consultantCosts,
         consultedProviders: consultantReviews.map(
           ({
             provider: consultProvider,
@@ -9925,6 +10044,7 @@ Flip hash: ${hash}
     }
 
     const tokenUsageSummary = summarizeTokenUsage(results)
+    const costSummary = summarizeCostSummary(results)
     const summary = {
       totalFlips: results.length,
       elapsedMs: now() - startedAt,
@@ -9938,6 +10058,7 @@ Flip hash: ${hash}
         })
       ),
       tokens: tokenUsageSummary,
+      costs: costSummary,
       diagnostics: {
         providerErrors: results.filter((item) => Boolean(item.error)).length,
       },

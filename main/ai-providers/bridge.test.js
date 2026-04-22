@@ -291,12 +291,24 @@ describe('createAiProviderBridge', () => {
   it('reviews long-session keyword report decisions with the provider bridge', async () => {
     const invokeProvider = jest
       .fn()
-      .mockResolvedValueOnce(
-        '{"decision":"report","confidence":0.91,"reason":"Numbers show the frame order","triggeredRules":["order_labels"]}'
-      )
-      .mockResolvedValueOnce(
-        '{"decision":"approve","confidence":0.74,"reason":"Keywords are visible and no clear report rule is violated","triggeredRules":[]}'
-      )
+      .mockResolvedValueOnce({
+        rawText:
+          '{"decision":"report","confidence":0.91,"reason":"Numbers show the frame order","triggeredRules":["order_labels"]}',
+        usage: {
+          promptTokens: 120,
+          completionTokens: 24,
+          totalTokens: 144,
+        },
+      })
+      .mockResolvedValueOnce({
+        rawText:
+          '{"decision":"approve","confidence":0.74,"reason":"Keywords are visible and no clear report rule is violated","triggeredRules":[]}',
+        usage: {
+          promptTokens: 120,
+          completionTokens: 24,
+          totalTokens: 144,
+        },
+      })
 
     const bridge = createAiProviderBridge(mockLogger(), {
       invokeProvider,
@@ -345,6 +357,10 @@ describe('createAiProviderBridge', () => {
       approved: 1,
       reported: 1,
     })
+    expect(result.results[0].costs.estimatedUsd).toBeCloseTo(0.0000324, 10)
+    expect(result.results[0].costs.actualUsd).toBeCloseTo(0.0000324, 10)
+    expect(result.summary.costs.estimatedUsd).toBeCloseTo(0.0000648, 10)
+    expect(result.summary.costs.actualUsd).toBeCloseTo(0.0000648, 10)
     expect(result.results[0]).toMatchObject({
       hash: 'flip-report-1',
       decision: 'report',
@@ -577,12 +593,16 @@ describe('createAiProviderBridge', () => {
         totalTokens: 224,
       },
     })
+    expect(result.results[0].costs.estimatedUsd).toBeCloseTo(0.0000399, 10)
+    expect(result.results[0].costs.actualUsd).toBeCloseTo(0.0000399, 10)
     expect(result.summary.tokens).toMatchObject({
       promptTokens: 420,
       completionTokens: 28,
       totalTokens: 448,
       flipsWithUsage: 2,
     })
+    expect(result.summary.costs.estimatedUsd).toBeCloseTo(0.0000798, 10)
+    expect(result.summary.costs.actualUsd).toBeCloseTo(0.0000798, 10)
   })
 
   it('uses strict sequential pacing and emits per-flip progress', async () => {

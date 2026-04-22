@@ -34,6 +34,19 @@ const RUNTIME_APP_NAME = 'IdenaAI'
 const RUNTIME_STORAGE_NAME = 'IdenaAI'
 const RUNTIME_APP_ID = 'io.idena.ai'
 
+function resolveElectronHeapMb(env = {}) {
+  const requestedHeapMb = Number.parseInt(
+    env.IDENA_DESKTOP_ELECTRON_HEAP_MB || '',
+    10
+  )
+
+  return Number.isFinite(requestedHeapMb) && requestedHeapMb > 0
+    ? requestedHeapMb
+    : null
+}
+
+const requestedElectronHeapMb = resolveElectronHeapMb(process.env)
+
 app.setName(RUNTIME_APP_NAME)
 
 if (isWin && typeof app.setAppUserModelId === 'function') {
@@ -45,6 +58,13 @@ app.commandLine.appendSwitch(
   'disk-cache-dir',
   join(runtimeUserDataPath, 'Cache')
 )
+
+if (requestedElectronHeapMb) {
+  app.commandLine.appendSwitch(
+    'js-flags',
+    `--max-old-space-size=${requestedElectronHeapMb}`
+  )
+}
 
 if (process.env.NODE_ENV === 'e2e') {
   app.setPath('userData', join(app.getPath('userData'), 'tests'))
@@ -63,6 +83,12 @@ const logger = require('./logger')
 const {toIpcCloneable} = require('./utils/ipc-cloneable')
 
 logger.info('idena started', appVersion)
+
+if (requestedElectronHeapMb) {
+  logger.info('Configured Electron V8 heap size', {
+    heapMb: requestedElectronHeapMb,
+  })
+}
 
 const {
   AUTO_UPDATE_EVENT,
@@ -172,6 +198,7 @@ const nodeUpdater = new NodeUpdater(logger)
 
 let dnaUrl
 let isCheckingForUpdates = false
+let mainWindowRendererReady = false
 
 const RELEASE_REPOSITORY = {
   owner: 'ubiubi18',
@@ -516,6 +543,17 @@ function emitValidationDevnetConnectPayload() {
   }
 }
 
+function emitValidationDevnetConnectPayloadOnce() {
+  const didEmit = emitValidationDevnetConnectPayload()
+
+  if (didEmit) {
+    validationDevnetConnectRequested = false
+    validationDevnetConnectCountdownSeconds = null
+  }
+
+  return didEmit
+}
+
 function shouldEmitValidationDevnetConnectPayload(status, options = {}) {
   return shouldConnectValidationDevnetStatus(status, {
     connectCountdownSeconds: Number.isFinite(options.connectCountdownSeconds)
@@ -538,7 +576,7 @@ function maybeEmitRequestedValidationDevnetConnectPayload(status) {
     return false
   }
 
-  return emitValidationDevnetConnectPayload()
+  return emitValidationDevnetConnectPayloadOnce()
 }
 
 async function performNodeRpc(payload = {}) {
@@ -1441,6 +1479,8 @@ const createMainWindow = () => {
     show: false,
   })
 
+  mainWindowRendererReady = false
+
   loadRoute(mainWindow, 'home')
 
   mainWindow.webContents.on(
@@ -1479,6 +1519,8 @@ const createMainWindow = () => {
   })
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
+    mainWindowRendererReady = false
+
     if (isTrustedRendererUrl(url)) {
       return
     }
@@ -1493,9 +1535,20 @@ const createMainWindow = () => {
     })
   })
 
+  mainWindow.webContents.on('did-start-loading', () => {
+    mainWindowRendererReady = false
+  })
+
+  mainWindow.webContents.on('did-stop-loading', () => {
+    mainWindowRendererReady = true
+  })
+
   mainWindow.webContents.on(
     'did-fail-load',
     (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (isMainFrame) {
+        mainWindowRendererReady = false
+      }
       logger.error(
         `Renderer failed to load (${isMainFrame ? 'main' : 'sub'} frame): ` +
           `${errorCode} ${errorDescription} ${validatedUrl}`
@@ -1522,6 +1575,7 @@ const createMainWindow = () => {
   })
 
   mainWindow.on('closed', () => {
+    mainWindowRendererReady = false
     mainWindow = null
   })
 }
@@ -1840,7 +1894,7 @@ app.on('window-all-closed', () => {
   }
 })
 
-handleOnceTrusted('CHECK_DNA_LINK', () => dnaUrl)
+handleTrusted('CHECK_DNA_LINK', () => dnaUrl)
 
 onTrusted(NODE_COMMAND, async (_event, command, data) => {
   logger.info(`new node command`, command, data)
@@ -2019,7 +2073,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
                 connectCountdownSeconds: data?.connectCountdownSeconds,
               })
             ) {
-              didEmitConnectPayload = emitValidationDevnetConnectPayload()
+              didEmitConnectPayload =
+                emitValidationDevnetConnectPayloadOnce()
             }
           },
           onLog(line) {
@@ -2038,7 +2093,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
             return
           }
 
-          didEmitConnectPayload = emitValidationDevnetConnectPayload()
+          didEmitConnectPayload = emitValidationDevnetConnectPayloadOnce()
         })
         .catch((e) => {
           logger.error('error while starting validation devnet', e.toString())
@@ -2069,7 +2124,8 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
                   connectCountdownSeconds: data?.connectCountdownSeconds,
                 })
               ) {
-                didEmitConnectPayload = emitValidationDevnetConnectPayload()
+                didEmitConnectPayload =
+                  emitValidationDevnetConnectPayloadOnce()
               }
             },
             onLog(line) {
@@ -2089,7 +2145,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
             return
           }
 
-          didEmitConnectPayload = emitValidationDevnetConnectPayload()
+          didEmitConnectPayload = emitValidationDevnetConnectPayloadOnce()
         })
         .catch((e) => {
           logger.error('error while restarting validation devnet', e.toString())
@@ -2166,7 +2222,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
             return
           }
 
-          emitValidationDevnetConnectPayload()
+          emitValidationDevnetConnectPayloadOnce()
         })
         .catch((e) => {
           logger.error(
@@ -2370,12 +2426,40 @@ handleTrusted(WINDOW_COMMAND, (event, command) => {
 })
 
 function sendMainWindowMsg(channel, message, data) {
-  if (!mainWindow || !mainWindow.webContents || mainWindow.forceClose) {
+  if (
+    !mainWindow ||
+    mainWindow.forceClose ||
+    !mainWindowRendererReady ||
+    (typeof mainWindow.isDestroyed === 'function' &&
+      mainWindow.isDestroyed()) ||
+    !mainWindow.webContents ||
+    mainWindow.webContents.isDestroyed()
+  ) {
     return
   }
+
+  const {webContents} = mainWindow
+  const {mainFrame} = webContents
+
+  if (
+    mainFrame &&
+    typeof mainFrame.isDestroyed === 'function' &&
+    mainFrame.isDestroyed()
+  ) {
+    return
+  }
+
   try {
-    mainWindow.webContents.send(channel, message, data)
+    webContents.send(channel, message, data)
   } catch (e) {
+    if (
+      String((e && e.message) || e || '').includes(
+        'Render frame was disposed before WebFrameMain could be accessed'
+      )
+    ) {
+      mainWindowRendererReady = false
+      return
+    }
     logger.error('cannot send msg to main window', e.toString())
   }
 }

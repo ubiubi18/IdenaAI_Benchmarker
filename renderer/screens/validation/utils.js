@@ -625,6 +625,9 @@ export const availableExtraFlip = ({extra, decoded}) => extra && decoded
 
 export const missingFlip = ({ready, missing}) => ready && missing
 
+export const pendingDecodeFlip = ({ready, missing, decoded, failed}) =>
+  ready && failed !== true && (missing || decoded !== true)
+
 export function rearrangeFlips(flips) {
   const solvable = []
   const loading = []
@@ -663,6 +666,10 @@ export function missingHashes(flips) {
   return flips.filter(missingFlip).map(({hash}) => hash)
 }
 
+export function pendingDecodeHashes(flips) {
+  return flips.filter(pendingDecodeFlip).map(({hash}) => hash)
+}
+
 export function exponentialBackoff(retry) {
   return Math.min(2 ** retry + Math.random(), 32)
 }
@@ -673,10 +680,27 @@ function toPersistableValidationState(state) {
   const snapshot =
     typeof state.toJSON === 'function' ? state.toJSON() : {...state}
 
+  const {
+    value,
+    context = {},
+    event = null,
+    _event = null,
+    _sessionid = null,
+    done = false,
+    historyValue = undefined,
+    changed = undefined,
+  } = snapshot
+
   return {
-    ...snapshot,
+    value,
+    event,
+    _event,
+    _sessionid,
+    done,
+    changed,
+    ...(typeof historyValue === 'undefined' ? {} : {historyValue}),
     context: {
-      ...snapshot.context,
+      ...context,
       reports: Array.isArray(state.context?.reports)
         ? state.context.reports
         : [...(state.context?.reports ?? [])],
@@ -763,6 +787,10 @@ export function loadValidationState(scope = null) {
 
     return State.create({
       ...stateDef,
+      children:
+        stateDef.children && typeof stateDef.children === 'object'
+          ? stateDef.children
+          : {},
       context: {
         ...stateDef.context,
         reports,
@@ -771,12 +799,53 @@ export function loadValidationState(scope = null) {
   }
 }
 
+function hasPersistedValidationHashes(flips) {
+  return Array.isArray(flips)
+    ? flips.some(({hash}) => String(hash || '').trim().length > 0)
+    : false
+}
+
+export function shouldDiscardPersistedValidationStateForIncompleteFetch(
+  persistedState
+) {
+  if (!persistedState) {
+    return false
+  }
+
+  if (persistedState.matches('shortSession.fetch')) {
+    return !hasPersistedValidationHashes(persistedState.context?.shortFlips)
+  }
+
+  if (persistedState.matches('longSession.fetch')) {
+    return !hasPersistedValidationHashes(persistedState.context?.longFlips)
+  }
+
+  return false
+}
+
 export function shouldDiscardPersistedValidationStateForPeriod(
   currentPeriod,
   persistedState
 ) {
   if (!persistedState || !currentPeriod) {
     return false
+  }
+
+  if (
+    ![EpochPeriod.ShortSession, EpochPeriod.LongSession].includes(
+      currentPeriod
+    ) &&
+    (persistedState.matches('shortSession') ||
+      persistedState.matches('longSession'))
+  ) {
+    return true
+  }
+
+  if (
+    currentPeriod === EpochPeriod.ShortSession &&
+    persistedState.matches('longSession')
+  ) {
+    return true
   }
 
   if (
@@ -799,6 +868,11 @@ export function loadValidationStateForPeriod(currentPeriod, scope = null) {
     return null
   }
 
+  if (shouldDiscardPersistedValidationStateForIncompleteFetch(restoredState)) {
+    clearValidationState(scope)
+    return null
+  }
+
   return restoredState
 }
 
@@ -817,6 +891,10 @@ export function loadValidationStateByIdentityScope(scope = null) {
 
     return State.create({
       ...stateDef,
+      children:
+        stateDef.children && typeof stateDef.children === 'object'
+          ? stateDef.children
+          : {},
       context: {
         ...stateDef.context,
         reports,

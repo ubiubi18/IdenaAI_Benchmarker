@@ -137,6 +137,15 @@ function persistEphemeralExternalNode(value) {
   }
 }
 
+export function isValidationRehearsalNodeSettings(settings = {}) {
+  return Boolean(
+    settings &&
+      settings.useExternalNode &&
+      (settings.ephemeralExternalNodeConnected === true ||
+        settings.externalNodeLabel === 'Validation rehearsal node')
+  )
+}
+
 export function buildEffectiveSettingsState(
   state,
   ephemeralExternalNode = null

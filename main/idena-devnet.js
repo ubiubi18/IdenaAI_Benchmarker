@@ -46,6 +46,13 @@ const VALIDATION_DEVNET_VALIDATOR_ONLINE_TIMEOUT_MS = 3 * 60 * 1000
 const VALIDATION_DEVNET_SEED_CONFIRM_TIMEOUT_MS = 2 * 60 * 1000
 const VALIDATION_DEVNET_PRIMARY_SEED_VISIBILITY_TIMEOUT_MS = 2 * 60 * 1000
 const VALIDATION_DEVNET_MIN_PRIMARY_PEERS = 3
+const REHEARSAL_BENCHMARK_REVIEW_STORAGE_SUFFIX = 'rehearsal-benchmark-review'
+const REHEARSAL_BENCHMARK_ANNOTATION_DATASET_STORAGE_KEY =
+  'rehearsal-benchmark-annotations'
+const VALIDATION_DEVNET_ANSI_ESCAPE_PATTERN = new RegExp(
+  `${String.fromCharCode(27)}\\[[0-9;]*m`,
+  'gu'
+)
 const VALIDATION_DEVNET_DEFAULT_SEED_FILES = [
   path.join(
     __dirname,
@@ -148,6 +155,130 @@ function uniqStrings(values) {
   return [...new Set((values || []).filter(Boolean))]
 }
 
+function normalizeValidationDevnetSeedHash(value) {
+  return String(value || '').trim()
+}
+
+function hasMeaningfulRehearsalBenchmarkAnnotation(value = {}) {
+  const annotation =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+
+  return Boolean(
+    annotation.status || annotation.reportStatus || annotation.note
+  )
+}
+
+function collectAnnotatedValidationDevnetSeedFlipHashes(source = {}) {
+  const state =
+    source && typeof source === 'object' && !Array.isArray(source) ? source : {}
+  const annotatedFlipHashes = new Set()
+  const globalDataset =
+    state[REHEARSAL_BENCHMARK_ANNOTATION_DATASET_STORAGE_KEY] &&
+    typeof state[REHEARSAL_BENCHMARK_ANNOTATION_DATASET_STORAGE_KEY] ===
+      'object' &&
+    !Array.isArray(state[REHEARSAL_BENCHMARK_ANNOTATION_DATASET_STORAGE_KEY])
+      ? state[REHEARSAL_BENCHMARK_ANNOTATION_DATASET_STORAGE_KEY]
+      : null
+  const datasetAnnotations =
+    globalDataset &&
+    globalDataset.annotationsByHash &&
+    typeof globalDataset.annotationsByHash === 'object' &&
+    !Array.isArray(globalDataset.annotationsByHash)
+      ? globalDataset.annotationsByHash
+      : {}
+
+  Object.entries(datasetAnnotations).forEach(([hash, annotation]) => {
+    const normalizedHash = normalizeValidationDevnetSeedHash(hash)
+
+    if (
+      normalizedHash &&
+      hasMeaningfulRehearsalBenchmarkAnnotation(annotation)
+    ) {
+      annotatedFlipHashes.add(normalizedHash)
+    }
+  })
+
+  Object.entries(state).forEach(([key, value]) => {
+    if (
+      !String(key || '').endsWith(
+        `:${REHEARSAL_BENCHMARK_REVIEW_STORAGE_SUFFIX}`
+      )
+    ) {
+      return
+    }
+
+    const annotationsByHash =
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      value.annotationsByHash &&
+      typeof value.annotationsByHash === 'object' &&
+      !Array.isArray(value.annotationsByHash)
+        ? value.annotationsByHash
+        : {}
+
+    Object.entries(annotationsByHash).forEach(([hash, annotation]) => {
+      const normalizedHash = normalizeValidationDevnetSeedHash(hash)
+
+      if (
+        normalizedHash &&
+        hasMeaningfulRehearsalBenchmarkAnnotation(annotation)
+      ) {
+        annotatedFlipHashes.add(normalizedHash)
+      }
+    })
+  })
+
+  return annotatedFlipHashes
+}
+
+async function loadAnnotatedValidationDevnetSeedFlipHashes({
+  annotatedFlipHashes,
+  validationResultsPath,
+} = {}) {
+  if (annotatedFlipHashes instanceof Set) {
+    return new Set(
+      uniqStrings(
+        Array.from(annotatedFlipHashes)
+          .map(normalizeValidationDevnetSeedHash)
+          .filter(Boolean)
+      )
+    )
+  }
+
+  if (Array.isArray(annotatedFlipHashes)) {
+    return new Set(
+      uniqStrings(
+        annotatedFlipHashes
+          .map(normalizeValidationDevnetSeedHash)
+          .filter(Boolean)
+      )
+    )
+  }
+
+  const explicitPath = String(validationResultsPath || '').trim()
+  const defaultPath = (() => {
+    try {
+      return path.join(appDataPath('userData'), 'validationResults.json')
+    } catch {
+      return ''
+    }
+  })()
+  const nextValidationResultsPath = explicitPath || defaultPath
+
+  if (!nextValidationResultsPath) {
+    return new Set()
+  }
+
+  try {
+    return collectAnnotatedValidationDevnetSeedFlipHashes(
+      await fs.readJson(nextValidationResultsPath)
+    )
+  } catch {
+    return new Set()
+  }
+}
+
 function trimLogLine(value) {
   return String(value || '').trimEnd()
 }
@@ -190,6 +321,25 @@ function pickPendingNodeNames(overrideValue, persistedValue) {
   }
 
   return []
+}
+
+function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
+  return (Array.isArray(flips) ? flips : []).reduce((result, flip) => {
+    const hash = String(flip?.hash || '').trim()
+    const expectedAnswer = String(flip?.expectedAnswer || '')
+      .trim()
+      .toLowerCase()
+    const expectedStrength = String(flip?.expectedStrength || '').trim()
+
+    if (hash && ['left', 'right', 'skip'].includes(expectedAnswer)) {
+      result[hash] = {
+        expectedAnswer,
+        expectedStrength: expectedStrength || null,
+      }
+    }
+
+    return result
+  }, {})
 }
 
 function serializeValidationDevnetConfig(config) {
@@ -364,9 +514,17 @@ function collectSeedFlipCandidate(
   flip,
   candidatePath,
   collectedFlips,
-  seenHashes
+  seenHashes,
+  annotatedFlipHashes = new Set()
 ) {
-  const flipHash = String(flip && flip.hash ? flip.hash : '').trim()
+  const flipHash = normalizeValidationDevnetSeedHash(
+    flip && flip.hash ? flip.hash : ''
+  )
+
+  if (flipHash && annotatedFlipHashes.has(flipHash)) {
+    return false
+  }
+
   const dedupeKey =
     flipHash ||
     `${candidatePath}:${collectedFlips.length}:${flip?.images?.[0] || ''}`
@@ -397,7 +555,8 @@ async function collectValidationDevnetPreparedSeedFlips(
   candidatePath,
   desiredCount,
   collectedFlips,
-  seenHashes
+  seenHashes,
+  annotatedFlipHashes = new Set()
 ) {
   const text = await fs.readFile(candidatePath, 'utf8')
   const lines = String(text || '')
@@ -452,9 +611,17 @@ async function collectValidationDevnetPreparedSeedFlips(
           }
 
           if (isValidSeedFlipCandidate(flip)) {
-            seenHashes.add(dedupeKey)
-            collectedFlips.push(flip)
-            addedCount += 1
+            if (
+              collectSeedFlipCandidate(
+                flip,
+                candidatePath,
+                collectedFlips,
+                seenHashes,
+                annotatedFlipHashes
+              )
+            ) {
+              addedCount += 1
+            }
 
             if (collectedFlips.length >= desiredCount) {
               break
@@ -471,7 +638,12 @@ async function collectValidationDevnetPreparedSeedFlips(
   }
 }
 
-async function loadValidationDevnetSeedFlips({seedFile, seedFlipCount} = {}) {
+async function loadValidationDevnetSeedFlips({
+  seedFile,
+  seedFlipCount,
+  annotatedFlipHashes,
+  validationResultsPath,
+} = {}) {
   const desiredCount = normalizeSeedFlipCount(seedFlipCount)
   const candidates = uniqStrings([
     seedFile,
@@ -480,6 +652,10 @@ async function loadValidationDevnetSeedFlips({seedFile, seedFlipCount} = {}) {
   ])
   const collectedFlips = []
   const seenHashes = new Set()
+  const reviewedFlipHashes = await loadAnnotatedValidationDevnetSeedFlipHashes({
+    annotatedFlipHashes,
+    validationResultsPath,
+  })
   let resolvedSource = 'aplesner-eth/FLIP-Challenge'
   let resolvedSourceFile = null
 
@@ -491,7 +667,8 @@ async function loadValidationDevnetSeedFlips({seedFile, seedFlipCount} = {}) {
           candidatePath,
           desiredCount,
           collectedFlips,
-          seenHashes
+          seenHashes,
+          reviewedFlipHashes
         )
 
         if (result.addedCount > 0) {
@@ -523,7 +700,8 @@ async function loadValidationDevnetSeedFlips({seedFile, seedFlipCount} = {}) {
               flip,
               candidatePath,
               collectedFlips,
-              seenHashes
+              seenHashes,
+              reviewedFlipHashes
             )
 
             if (collectedFlips.length >= desiredCount) {
@@ -573,6 +751,8 @@ function buildValidationDurations({
   flipLotterySeconds = VALIDATION_DEVNET_DEFAULT_FLIP_LOTTERY_SECONDS,
   shortSessionSeconds = VALIDATION_DEVNET_DEFAULT_SHORT_SESSION_SECONDS,
   longSessionSeconds,
+  afterLongSessionSeconds = VALIDATION_DEVNET_DEFAULT_AFTER_LONG_SESSION_SECONDS,
+  validationPaddingSeconds = VALIDATION_DEVNET_DEFAULT_VALIDATION_PADDING_SECONDS,
 } = {}) {
   const resolvedLongSessionSeconds =
     normalizePositiveInteger(longSessionSeconds, 0) ||
@@ -581,8 +761,8 @@ function buildValidationDurations({
     flipLotterySeconds +
     shortSessionSeconds +
     resolvedLongSessionSeconds +
-    VALIDATION_DEVNET_DEFAULT_AFTER_LONG_SESSION_SECONDS +
-    VALIDATION_DEVNET_DEFAULT_VALIDATION_PADDING_SECONDS
+    Math.max(0, Number(afterLongSessionSeconds) || 0) +
+    Math.max(0, Number(validationPaddingSeconds) || 0)
   const resolvedValidationIntervalSeconds = Math.max(
     minimumValidationIntervalSeconds,
     normalizePositiveInteger(validationIntervalSeconds, 30 * 60)
@@ -665,6 +845,24 @@ function countReadyValidationHashItems(result) {
   ).length
 }
 
+function getValidationHashQueryCapabilities(currentPeriod) {
+  const normalizedPeriod = String(currentPeriod || '').trim()
+
+  return {
+    short:
+      normalizedPeriod === 'FlipLottery' || normalizedPeriod === 'ShortSession',
+    long: normalizedPeriod === 'LongSession',
+  }
+}
+
+function shouldSuppressValidationDevnetLogLine(line) {
+  const normalizedLine = String(line || '')
+    .replace(VALIDATION_DEVNET_ANSI_ESCAPE_PATTERN, '')
+    .trim()
+
+  return /\b(short|long) hashes (request|response)\b/u.test(normalizedLine)
+}
+
 function canConnectValidationDevnetStatus(status = {}) {
   if (!status || !status.primaryRpcUrl) {
     return false
@@ -699,6 +897,8 @@ function buildValidationDevnetPlan({
   firstCeremonyUnix,
   initialEpoch = VALIDATION_DEVNET_DEFAULT_INITIAL_EPOCH,
   networkId,
+  afterLongSessionSeconds,
+  validationPaddingSeconds,
   now = () => Date.now(),
 } = {}) {
   const nextNodeCount = Math.max(3, normalizePositiveInteger(nodeCount, 5))
@@ -777,7 +977,11 @@ function buildValidationDevnetPlan({
     initialEpoch: nextInitialEpoch,
     requiredFlipsPerIdentity,
     swarmKey: sharedSwarmKey,
-    durations: buildValidationDurations({nodeCount: nextNodeCount}),
+    durations: buildValidationDurations({
+      nodeCount: nextNodeCount,
+      afterLongSessionSeconds,
+      validationPaddingSeconds,
+    }),
     godAddress: nodes[0].address,
     nodes,
     alloc,
@@ -868,6 +1072,7 @@ function createValidationDevnetController({
     logs: [],
     statusTicker: null,
     statusRefreshInFlight: false,
+    statusRefreshPromise: null,
     status: {
       active: false,
       stage: VALIDATION_DEVNET_PHASE.IDLE,
@@ -893,6 +1098,10 @@ function createValidationDevnetController({
   function appendLog(line) {
     const nextLine = trimLogLine(line)
     if (!nextLine) {
+      return
+    }
+
+    if (shouldSuppressValidationDevnetLogLine(nextLine)) {
       return
     }
 
@@ -930,13 +1139,10 @@ function createValidationDevnetController({
         return
       }
 
-      state.statusRefreshInFlight = true
       try {
-        await refreshRunRuntime()
+        await refreshRunRuntimeSerialized()
       } catch {
         publishStatus()
-      } finally {
-        state.statusRefreshInFlight = false
       }
     }, 1000)
   }
@@ -1033,6 +1239,14 @@ function createValidationDevnetController({
         overrides.seedPrimaryPendingNodeNames,
         run && run.seed && run.seed.primaryPendingNodeNames
       ),
+      seedFlipMetaByHash:
+        (overrides.seedFlipMetaByHash &&
+        typeof overrides.seedFlipMetaByHash === 'object' &&
+        !Array.isArray(overrides.seedFlipMetaByHash)
+          ? overrides.seedFlipMetaByHash
+          : null) ||
+        (run && run.seed && run.seed.flipMetaByHash) ||
+        {},
       nodes:
         run && run.nodes ? run.nodes.map(summarizeValidationDevnetNode) : [],
       logsAvailable: state.logs.length > 0,
@@ -1330,10 +1544,8 @@ function createValidationDevnetController({
     }
 
     const currentPeriod = String(primaryNode.currentPeriod || '').trim()
-    const canQueryShortHashes =
-      currentPeriod === 'FlipLottery' || currentPeriod === 'ShortSession'
-    const canQueryLongHashes =
-      canQueryShortHashes || currentPeriod === 'LongSession'
+    const {short: canQueryShortHashes, long: canQueryLongHashes} =
+      getValidationHashQueryCapabilities(currentPeriod)
 
     if (!canQueryShortHashes && !canQueryLongHashes) {
       return
@@ -1410,6 +1622,24 @@ function createValidationDevnetController({
     }
 
     return publishStatus()
+  }
+
+  async function refreshRunRuntimeSerialized() {
+    if (state.statusRefreshPromise) {
+      return state.statusRefreshPromise
+    }
+
+    state.statusRefreshInFlight = true
+    state.statusRefreshPromise = (async () => {
+      try {
+        return await refreshRunRuntime()
+      } finally {
+        state.statusRefreshPromise = null
+        state.statusRefreshInFlight = false
+      }
+    })()
+
+    return state.statusRefreshPromise
   }
 
   function spawnNodeProcess(node) {
@@ -1787,6 +2017,7 @@ function createValidationDevnetController({
     const initialSeedState = {
       source: seedSet.source,
       sourceFile: seedSet.sourceFile,
+      flipMetaByHash: buildValidationDevnetSeedFlipMetaByHash(seedSet.flips),
       requested: requestedCount,
       submitted: submittedCount,
       confirmed: confirmedPrimaryFlipCount || initialPrimaryConfirmedCount || 0,
@@ -1895,7 +2126,7 @@ function createValidationDevnetController({
           )
         }
 
-        await refreshRunRuntime()
+        await refreshRunRuntimeSerialized()
       } catch (error) {
         if (state.run && state.run === run) {
           appendLog(
@@ -1966,6 +2197,8 @@ function createValidationDevnetController({
         firstCeremonyUnix: payload.firstCeremonyUnix,
         initialEpoch: payload.initialEpoch,
         networkId: payload.networkId,
+        afterLongSessionSeconds: payload.afterLongSessionSeconds,
+        validationPaddingSeconds: payload.validationPaddingSeconds,
         now,
       })
 
@@ -2048,7 +2281,7 @@ function createValidationDevnetController({
         const seeded = await seedValidationFlips(run, payload)
         run.seed = seeded.seed
       }
-      await refreshRunRuntime()
+      await refreshRunRuntimeSerialized()
 
       publishStatus({
         stage: VALIDATION_DEVNET_PHASE.RUNNING,
@@ -2059,7 +2292,7 @@ function createValidationDevnetController({
         error: null,
       })
 
-      return refreshRunRuntime()
+      return refreshRunRuntimeSerialized()
     } catch (error) {
       logger.error('validation devnet failed to start', error.toString())
       appendLog(`[devnet] start failed: ${error.message}`)
@@ -2129,7 +2362,7 @@ function createValidationDevnetController({
   async function getStatus(payload = {}) {
     setEmitters(payload)
 
-    return refreshRunRuntime()
+    return refreshRunRuntimeSerialized()
   }
 
   function getLogs(payload = {}) {
@@ -2162,8 +2395,11 @@ module.exports = {
   summarizeValidationDevnetNode,
   getValidationDevnetPrimaryPeerTarget,
   countReadyValidationHashItems,
+  getValidationHashQueryCapabilities,
+  shouldSuppressValidationDevnetLogLine,
   canConnectValidationDevnetStatus,
   shouldConnectValidationDevnetStatus,
+  buildValidationDevnetSeedFlipMetaByHash,
   createValidationDevnetController,
   createDefaultValidationDevnetController,
 }

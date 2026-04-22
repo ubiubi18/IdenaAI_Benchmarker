@@ -19,8 +19,10 @@ import {
   loadValidationState,
   loadValidationStateForPeriod,
   loadValidationStateByIdentityScope,
+  pendingDecodeHashes,
   persistValidationState,
   rememberValidationSessionId,
+  shouldDiscardPersistedValidationStateForIncompleteFetch,
   shouldDiscardPersistedValidationStateForPeriod,
   VALIDATION_NODE_STABILITY_GRACE_MS,
   canValidate,
@@ -200,6 +202,28 @@ describe('exponentialBackoff', () => {
       expect(exponentialBackoff(n)).toBeGreaterThan(2 ** n)
     })
     expect(exponentialBackoff(10)).toBe(32)
+  })
+})
+
+describe('pendingDecodeHashes', () => {
+  it('retries ready flips that are still missing', () => {
+    expect(
+      pendingDecodeHashes([
+        {hash: '0x1', ready: true, missing: true, decoded: false},
+        {hash: '0x2', ready: true, missing: false, decoded: true},
+      ])
+    ).toEqual(['0x1'])
+  })
+
+  it('retries ready flips that were fetched but are still undecoded', () => {
+    expect(
+      pendingDecodeHashes([
+        {hash: '0x1', ready: true, missing: false, decoded: false},
+        {hash: '0x2', ready: true, missing: false, decoded: true},
+        {hash: '0x3', ready: false, missing: false, decoded: false},
+        {hash: '0x4', ready: true, missing: true, decoded: false, failed: true},
+      ])
+    ).toEqual(['0x1'])
   })
 })
 
@@ -863,6 +887,68 @@ describe('scoped validation state persistence', () => {
     expect(Array.from(restoredState?.context?.reports || [])).toEqual([
       '0xflip',
     ])
+    expect(restoredState?.children).toEqual({})
+  })
+
+  it('persists only the minimal serializable validation snapshot fields', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    persistValidationState(
+      {
+        ...createPersistableValidationState({
+          context: {
+            epoch: 0,
+            reports: new Set(['0xflip']),
+          },
+        }),
+        toJSON() {
+          return {
+            value: {shortSession: {fetch: 'done'}},
+            context: {
+              epoch: 0,
+              reports: ['0xflip'],
+            },
+            event: {type: 'RESTORE'},
+            _event: {name: 'RESTORE'},
+            _sessionid: 'x:1',
+            done: false,
+            changed: true,
+            historyValue: {current: 'shortSession'},
+            activities: {
+              noisy: {
+                activity: {
+                  onDone: [{type: 'xstate.assign'}],
+                },
+              },
+            },
+            children: {
+              noisy: {},
+            },
+            tags: ['debug'],
+          }
+        },
+      },
+      scope
+    )
+
+    expect(validationSessionStoreState.validationStateSnapshot).toEqual({
+      value: {shortSession: {fetch: 'done'}},
+      context: {
+        epoch: 0,
+        reports: ['0xflip'],
+      },
+      event: {type: 'RESTORE'},
+      _event: {name: 'RESTORE'},
+      _sessionid: 'x:1',
+      done: false,
+      changed: true,
+      historyValue: {current: 'shortSession'},
+    })
   })
 
   it('drops a stale validation snapshot when a different node/session scope is active', () => {
@@ -939,6 +1025,7 @@ describe('scoped validation state persistence', () => {
     expect(Array.from(restoredState?.context?.reports || [])).toEqual([
       '0xflip',
     ])
+    expect(restoredState?.children).toEqual({})
   })
 
   it('drops persisted short-session state when the node already returned in long session', () => {
@@ -973,6 +1060,190 @@ describe('scoped validation state persistence', () => {
 
     expect(restoredState).toBeNull()
     expect(validationSessionStoreState.validationStateSnapshot).toBeUndefined()
+  })
+
+  it('drops persisted long-session state when the node is still in short session', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    const persistedState = createPersistableValidationState({
+      context: {
+        epoch: 0,
+        longFlips: [{hash: '0xlong'}],
+        reports: new Set(['0xflip']),
+      },
+    })
+
+    persistValidationState(
+      {
+        ...persistedState,
+        value: {
+          longSession: {
+            fetch: {
+              hashes: 'success',
+              flips: {
+                done: true,
+              },
+              done: true,
+            },
+            solve: {
+              nav: 'firstFlip',
+              answer: 'flips',
+            },
+          },
+        },
+        toJSON() {
+          return {
+            ...persistedState.toJSON(),
+            value: {
+              longSession: {
+                fetch: {
+                  hashes: 'success',
+                  flips: {
+                    done: true,
+                  },
+                  done: true,
+                },
+                solve: {
+                  nav: 'firstFlip',
+                  answer: 'flips',
+                },
+              },
+            },
+          }
+        },
+      },
+      scope
+    )
+
+    expect(
+      shouldDiscardPersistedValidationStateForPeriod(
+        EpochPeriod.ShortSession,
+        loadValidationState(scope)
+      )
+    ).toBe(true)
+
+    const restoredState = loadValidationStateForPeriod(
+      EpochPeriod.ShortSession,
+      scope
+    )
+
+    expect(restoredState).toBeNull()
+    expect(validationSessionStoreState.validationStateSnapshot).toBeUndefined()
+  })
+
+  it('drops persisted validation state outside the active ceremony phases', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    persistValidationState(
+      createPersistableValidationState({
+        context: {
+          epoch: 0,
+          shortFlips: [{hash: '0xshort'}],
+        },
+      }),
+      scope
+    )
+
+    expect(
+      shouldDiscardPersistedValidationStateForPeriod(
+        EpochPeriod.FlipLottery,
+        loadValidationState(scope)
+      )
+    ).toBe(true)
+
+    const restoredState = loadValidationStateForPeriod(
+      EpochPeriod.FlipLottery,
+      scope
+    )
+
+    expect(restoredState).toBeNull()
+    expect(validationSessionStoreState.validationStateSnapshot).toBeUndefined()
+  })
+
+  it('drops persisted in-flight short-session fetch state when no hashes were ever loaded', () => {
+    const scope = buildValidationStateScope({
+      epoch: 0,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: Date.UTC(2026, 3, 21, 6, 35, 22),
+    })
+
+    const persistedState = createPersistableValidationState({
+      context: {
+        epoch: 0,
+        shortFlips: [],
+        reports: new Set(),
+      },
+    })
+
+    persistValidationState(
+      {
+        ...persistedState,
+        value: {
+          shortSession: {
+            fetch: {
+              polling: {
+                fetchHashes: 'fetching',
+                fetchFlips: 'check',
+              },
+            },
+            solve: {
+              nav: 'firstFlip',
+              answer: 'normal',
+            },
+          },
+        },
+        toJSON() {
+          return {
+            ...persistedState.toJSON(),
+            value: {
+              shortSession: {
+                fetch: {
+                  polling: {
+                    fetchHashes: 'fetching',
+                    fetchFlips: 'check',
+                  },
+                },
+                solve: {
+                  nav: 'firstFlip',
+                  answer: 'normal',
+                },
+              },
+            },
+          }
+        },
+      },
+      scope
+    )
+
+    const restoredState = loadValidationStateForPeriod(
+      EpochPeriod.ShortSession,
+      scope
+    )
+
+    expect(restoredState).toBeNull()
+    expect(validationSessionStoreState.validationStateSnapshot).toBeUndefined()
+  })
+})
+
+describe('shouldDiscardPersistedValidationStateForIncompleteFetch', () => {
+  it('keeps non-fetch states intact', () => {
+    expect(
+      shouldDiscardPersistedValidationStateForIncompleteFetch({
+        matches: () => false,
+        context: {},
+      })
+    ).toBe(false)
   })
 })
 

@@ -1,15 +1,20 @@
+const os = require('os')
 const path = require('path')
+const fs = require('fs-extra')
 
 const {
   buildValidationDevnetPlan,
   buildValidationDevnetNodeConfig,
   buildValidationDevnetSeedFlipSubmitArgs,
+  buildValidationDevnetSeedFlipMetaByHash,
   countReadyValidationHashItems,
   getValidationDevnetPrimaryPeerTarget,
   getValidationDevnetPublishedFlipCount,
   loadValidationDevnetSeedFlips,
   serializeValidationDevnetConfig,
   summarizeValidationDevnetNode,
+  shouldSuppressValidationDevnetLogLine,
+  getValidationHashQueryCapabilities,
   canConnectValidationDevnetStatus,
   shouldConnectValidationDevnetStatus,
   VALIDATION_DEVNET_PHASE,
@@ -61,6 +66,22 @@ describe('validation devnet helpers', () => {
     })
 
     expect(plan.firstCeremonyUnix).toBe(1776772820)
+  })
+
+  it('can remove post-validation reward padding for fast-forward rehearsal runs', () => {
+    const plan = buildValidationDevnetPlan({
+      baseDir: '/tmp/idena-validation-devnet',
+      now: () => new Date('2026-04-21T12:00:00.000Z').getTime(),
+      networkId: 44001,
+      firstCeremonyLeadSeconds: 20,
+      afterLongSessionSeconds: 0,
+      validationPaddingSeconds: 0,
+    })
+
+    expect(plan.durations.ValidationInterval).toBe(2040000000000)
+    expect(plan.durations.FlipLotteryDuration).toBe(300000000000)
+    expect(plan.durations.ShortSessionDuration).toBe(120000000000)
+    expect(plan.durations.LongSessionDuration).toBe(1620000000000)
   })
 
   it('builds isolated node config with shared genesis and bootnodes', () => {
@@ -203,6 +224,43 @@ describe('validation devnet helpers', () => {
     ).toBe(1)
   })
 
+  it('does not query long-session hashes before long session starts', () => {
+    expect(getValidationHashQueryCapabilities('FlipLottery')).toEqual({
+      short: true,
+      long: false,
+    })
+    expect(getValidationHashQueryCapabilities('ShortSession')).toEqual({
+      short: true,
+      long: false,
+    })
+    expect(getValidationHashQueryCapabilities('LongSession')).toEqual({
+      short: false,
+      long: true,
+    })
+    expect(getValidationHashQueryCapabilities('None')).toEqual({
+      short: false,
+      long: false,
+    })
+  })
+
+  it('suppresses high-volume short and long hash rpc noise in the app log stream', () => {
+    expect(
+      shouldSuppressValidationDevnetLogLine(
+        '\u001b[32mINFO \u001b[0m[04-21|23:29:25.878] short hashes request'
+      )
+    ).toBe(true)
+    expect(
+      shouldSuppressValidationDevnetLogLine(
+        '\u001b[32mINFO \u001b[0m[04-21|23:29:25.879] long hashes response'
+      )
+    ).toBe(true)
+    expect(
+      shouldSuppressValidationDevnetLogLine(
+        '[node-2] INFO [04-21|23:29:30.000] published flip'
+      )
+    ).toBe(false)
+  })
+
   it('marks the rehearsal RPC connectable once the primary node is fully running', () => {
     expect(
       canConnectValidationDevnetStatus({
@@ -289,10 +347,72 @@ describe('validation devnet helpers', () => {
     expect(submitArgs.privateHex.length).toBeGreaterThan(10)
   })
 
+  it('builds rehearsal seed benchmark metadata by hash', () => {
+    expect(
+      buildValidationDevnetSeedFlipMetaByHash([
+        {
+          hash: '0xflip-1',
+          expectedAnswer: 'LEFT',
+          expectedStrength: 'Strong',
+        },
+        {
+          hash: '0xflip-2',
+          expectedAnswer: 'unknown',
+        },
+      ])
+    ).toEqual({
+      '0xflip-1': {
+        expectedAnswer: 'left',
+        expectedStrength: 'Strong',
+      },
+    })
+  })
+
   it('loads enough FLIP-Challenge seed flips to satisfy the planned rehearsal distribution', async () => {
     const seedSet = await loadValidationDevnetSeedFlips({seedFlipCount: 27})
 
     expect(seedSet.source).toBeTruthy()
     expect(seedSet.flips).toHaveLength(27)
+  })
+
+  it('skips rehearsal seed flips that were already annotated in prior review runs', async () => {
+    const tempDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'idena-devnet-seed-review-')
+    )
+    const validationResultsPath = path.join(tempDir, 'validationResults.json')
+    const reviewedFlipHash = sampleSeedPayload.flips[0].hash
+
+    try {
+      await fs.writeJson(validationResultsPath, {
+        'rehearsal-benchmark-annotations': {
+          version: 1,
+          annotationsByHash: {
+            [reviewedFlipHash]: {
+              status: 'match',
+              note: 'already reviewed',
+            },
+          },
+        },
+      })
+
+      const seedSet = await loadValidationDevnetSeedFlips({
+        seedFile: path.join(
+          __dirname,
+          '..',
+          'samples',
+          'flips',
+          'flip-challenge-test-5-decoded-labeled.json'
+        ),
+        seedFlipCount: 4,
+        validationResultsPath,
+      })
+
+      expect(seedSet.flips).toHaveLength(4)
+      expect(seedSet.flips.map(({hash}) => hash)).not.toContain(
+        reviewedFlipHash
+      )
+    } finally {
+      await fs.remove(tempDir)
+    }
   })
 })

@@ -19,7 +19,7 @@ import {
   availableExtraFlip,
   failedFlip,
   hasEnoughAnswers,
-  missingHashes,
+  pendingDecodeHashes,
   exponentialBackoff,
   shouldTranslate,
   shouldPollLongFlips,
@@ -29,6 +29,7 @@ import {
 import {forEachAsync, wait} from '../../shared/utils/fn'
 import {fetchConfirmedKeywordTranslations} from '../flips/utils'
 import {loadKeyword} from '../../shared/utils/utils'
+import {mergeRehearsalSeedMetaIntoFlips} from './rehearsal-benchmark'
 
 export const SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS = 45
 
@@ -98,6 +99,14 @@ export const createValidationMachine = ({
         SET_VALIDATION_SESSION_ID: {
           actions: assign({
             validationSessionId: (_, {sessionId}) => String(sessionId || ''),
+          }),
+        },
+        MERGE_REHEARSAL_BENCHMARK_META: {
+          actions: assign({
+            shortFlips: ({shortFlips}, {metaByHash}) =>
+              mergeRehearsalSeedMetaIntoFlips(shortFlips, metaByHash),
+            longFlips: ({longFlips}, {metaByHash}) =>
+              mergeRehearsalSeedMetaIntoFlips(longFlips, metaByHash),
           }),
         },
       },
@@ -498,12 +507,12 @@ export const createValidationMachine = ({
                                 validationSessionId
                               ),
                             onDone: {
-                              target: '#validation.longSession',
+                              target: 'submitted',
                               actions: [log()],
                             },
                             onError: [
                               {
-                                target: '#validation.longSession',
+                                target: 'submitted',
                                 cond: (_, {data}) =>
                                   data === 'tx with same hash already exists',
                               },
@@ -520,6 +529,14 @@ export const createValidationMachine = ({
                                 ],
                               },
                             ],
+                          },
+                        },
+                        submitted: {
+                          entry: log(
+                            'Short session submitted, waiting for long session'
+                          ),
+                          after: {
+                            WAIT_FOR_LONG_SESSION: '#validation.longSession',
                           },
                         },
                         fail: {
@@ -624,18 +641,23 @@ export const createValidationMachine = ({
                       states: {
                         polling: {
                           entry: log(
-                            ({longFlips}) => missingHashes(longFlips),
+                            ({longFlips}) => pendingDecodeHashes(longFlips),
                             'fetching missing hashes'
                           ),
                           invoke: {
                             src:
                               ({longFlips, epoch: epochNumber}) =>
                               (cb) =>
-                                fetchFlips(missingHashes(longFlips), cb, 0, {
-                                  epoch: epochNumber,
-                                  sessionType: SessionType.Long,
-                                  onDecodedFlip,
-                                }),
+                                fetchFlips(
+                                  pendingDecodeHashes(longFlips),
+                                  cb,
+                                  0,
+                                  {
+                                    epoch: epochNumber,
+                                    sessionType: SessionType.Long,
+                                    onDecodedFlip,
+                                  }
+                                ),
                             onDone: 'check',
                           },
                         },
@@ -1160,15 +1182,32 @@ export const createValidationMachine = ({
             ),
             5
           ) * 1000,
-        // eslint-disable-next-line no-shadow
-        SHORT_SESSION_AUTO_SUBMIT: ({validationStart, shortSessionDuration}) =>
-          adjustDurationInSeconds(validationStart, shortSessionDuration - 10) *
-          1000,
-        // eslint-disable-next-line no-shadow
-        LONG_SESSION_CHECK: ({validationStart, longSessionDuration}) =>
+        SHORT_SESSION_AUTO_SUBMIT: ({
+          validationStart: nextValidationStart,
+          shortSessionDuration: nextShortSessionDuration,
+        }) =>
           adjustDurationInSeconds(
-            validationStart,
-            shortSessionDuration - 10 + longSessionDuration
+            nextValidationStart,
+            nextShortSessionDuration - 10
+          ) * 1000,
+        WAIT_FOR_LONG_SESSION: ({
+          validationStart: nextValidationStart,
+          shortSessionDuration: nextShortSessionDuration,
+        }) =>
+          Math.max(
+            0,
+            adjustDurationInSeconds(
+              nextValidationStart,
+              nextShortSessionDuration
+            )
+          ) * 1000,
+        LONG_SESSION_CHECK: ({
+          validationStart: nextValidationStart,
+          longSessionDuration: nextLongSessionDuration,
+        }) =>
+          adjustDurationInSeconds(
+            nextValidationStart,
+            shortSessionDuration - 10 + nextLongSessionDuration
           ) * 1000,
         // eslint-disable-next-line no-shadow
         FINALIZE_LONG_FLIPS: ({validationStart, shortSessionDuration}) =>
@@ -1332,7 +1371,8 @@ export const createValidationMachine = ({
             )
           )
         },
-        hasMissingFlips: ({longFlips}) => missingHashes(longFlips).length > 0,
+        hasMissingFlips: ({longFlips}) =>
+          pendingDecodeHashes(longFlips).length > 0,
         shouldTranslate: ({translations, longFlips, currentIndex}) =>
           shouldTranslate(translations, longFlips[currentIndex]),
       },

@@ -1,6 +1,7 @@
 const {
   buildAiSolverSettings,
   buildEffectiveSettingsState,
+  isValidationRehearsalNodeSettings,
 } = require('./settings-context')
 
 describe('settings-context ai solver normalization', () => {
@@ -79,5 +80,15 @@ describe('settings-context ai solver normalization', () => {
       externalNodeMode: 'ephemeral',
       ephemeralExternalNodeConnected: true,
     })
+  })
+
+  it('detects rehearsal sessions from the ephemeral connection flag', () => {
+    expect(
+      isValidationRehearsalNodeSettings({
+        useExternalNode: true,
+        ephemeralExternalNodeConnected: true,
+        externalNodeLabel: '',
+      })
+    ).toBe(true)
   })
 })

@@ -34,6 +34,7 @@ import {
 import SettingsLayout from '../../screens/settings/layout'
 import {EyeIcon, EyeOffIcon} from '../../shared/components/icons'
 import {getNodeBridge} from '../../shared/utils/node-bridge'
+import {buildRehearsalNetworkPayload} from '../../shared/utils/rehearsal-devnet'
 import {
   canOpenRehearsalValidation,
   getRehearsalValidationEntryPath,
@@ -41,11 +42,7 @@ import {
   openValidationLottery,
 } from '../../screens/validation/hooks/use-start-validation'
 
-const REHEARSAL_NETWORK_NODE_COUNT = 9
-const REHEARSAL_NETWORK_LEAD_SECONDS = 8 * 60
-const REHEARSAL_NETWORK_FAST_FORWARD_START_LEAD_SECONDS = 8 * 60
-const REHEARSAL_NETWORK_FAST_FORWARD_CONNECT_SECONDS = 90
-const REHEARSAL_NETWORK_SEED_FLIP_COUNT = 27
+const REHEARSAL_CONNECTED_TOAST_ID = 'rehearsal-node-connected'
 
 function hasNodeBridge() {
   return !getNodeBridge().__idenaFallback
@@ -140,22 +137,21 @@ function normalizeDevnetStatus(value) {
   }
 }
 
-function buildRehearsalNetworkPayload({
-  connectApp = false,
-  fastForward = false,
-} = {}) {
-  return {
-    nodeCount: REHEARSAL_NETWORK_NODE_COUNT,
-    firstCeremonyLeadSeconds: fastForward
-      ? REHEARSAL_NETWORK_FAST_FORWARD_START_LEAD_SECONDS
-      : REHEARSAL_NETWORK_LEAD_SECONDS,
-    seedFlipCount: REHEARSAL_NETWORK_SEED_FLIP_COUNT,
-    connectApp,
-    connectCountdownSeconds:
-      connectApp && fastForward
-        ? REHEARSAL_NETWORK_FAST_FORWARD_CONNECT_SECONDS
-        : null,
+function hasMatchingRehearsalConnection(settings, payload) {
+  if (!settings.ephemeralExternalNodeConnected) {
+    return false
   }
+
+  const nextUrl = String(payload?.url || '').trim()
+  const nextApiKey = String(payload?.apiKey || '').trim()
+  const nextLabel = String(payload?.label || '').trim()
+
+  return (
+    settings.url === nextUrl &&
+    settings.externalApiKey === nextApiKey &&
+    (settings.externalNodeLabel || 'Validation rehearsal node') ===
+      (nextLabel || 'Validation rehearsal node')
+  )
 }
 
 function NodeSettings() {
@@ -286,22 +282,32 @@ function NodeSettings() {
             break
           }
 
-          connectEphemeralExternalNode({
+          const nextConnection = {
             url: data.url,
             apiKey: data.apiKey,
             label: data.label,
-          })
+          }
 
-          toast({
-            render: () => (
-              <Toast
-                title={t('Rehearsal node connected')}
-                description={t(
-                  'IdenaAI now uses the rehearsal node for this app session only. The secret is not saved to normal node settings.'
-                )}
-              />
-            ),
-          })
+          if (!hasMatchingRehearsalConnection(settings, nextConnection)) {
+            connectEphemeralExternalNode(nextConnection)
+          }
+
+          if (
+            typeof toast.isActive !== 'function' ||
+            !toast.isActive(REHEARSAL_CONNECTED_TOAST_ID)
+          ) {
+            toast({
+              id: REHEARSAL_CONNECTED_TOAST_ID,
+              render: () => (
+                <Toast
+                  title={t('Rehearsal node connected')}
+                  description={t(
+                    'IdenaAI now uses the rehearsal node for this app session only. The secret is not saved to normal node settings.'
+                  )}
+                />
+              ),
+            })
+          }
           break
         default:
       }

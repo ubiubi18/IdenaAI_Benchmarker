@@ -3,7 +3,10 @@ import React from 'react'
 import {useInterval} from '../../../shared/hooks/use-interval'
 import {useEpochState} from '../../../shared/providers/epoch-context'
 import {useIdentity} from '../../../shared/providers/identity-context'
-import {useSettingsState} from '../../../shared/providers/settings-context'
+import {
+  useSettingsState,
+  isValidationRehearsalNodeSettings,
+} from '../../../shared/providers/settings-context'
 import {useChainState} from '../../../shared/providers/chain-context'
 import {useNodeState} from '../../../shared/providers/node-context'
 import {prepareValidationSession} from '../../../shared/api/validation'
@@ -23,6 +26,7 @@ import {
   shouldPrepareValidationSession,
   shouldStartValidation,
 } from '../utils'
+import {normalizeRehearsalSeedFlipMetaByHash} from '../rehearsal-benchmark'
 
 const DISMISSED_VALIDATION_SCREEN_STORAGE_KEY = 'didCloseValidationScreen'
 const DISMISSED_LOTTERY_SCREEN_STORAGE_KEY = 'didCloseLotteryScreen'
@@ -41,6 +45,7 @@ export const REHEARSAL_DEVNET_STATUS_INITIAL = {
   primaryLongHashReadyCount: null,
   countdownSeconds: null,
   firstCeremonyAt: null,
+  seedFlipMetaByHash: {},
 }
 
 export function isValidationSessionAutoMode(settings = {}) {
@@ -213,6 +218,9 @@ export function normalizeRehearsalDevnetStatus(value) {
         ? value.countdownSeconds
         : null,
     firstCeremonyAt: value.firstCeremonyAt || null,
+    seedFlipMetaByHash: normalizeRehearsalSeedFlipMetaByHash(
+      value.seedFlipMetaByHash
+    ),
   }
 }
 
@@ -555,9 +563,7 @@ export function useAutoStartValidation() {
   const epoch = useEpochState()
   const [identity, {forceUpdate}] = useIdentity()
   const settings = useSettingsState()
-  const isRehearsalNodeSession =
-    settings.useExternalNode &&
-    settings.externalNodeLabel === 'Validation rehearsal node'
+  const isRehearsalNodeSession = isValidationRehearsalNodeSettings(settings)
   const isSessionAutoMode = React.useMemo(
     () => isValidationSessionAutoMode(settings),
     [settings]

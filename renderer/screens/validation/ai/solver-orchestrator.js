@@ -301,6 +301,17 @@ function normalizeTokenUsage(usage = {}) {
   }
 }
 
+function normalizeCostSummary(costs = {}) {
+  const estimatedUsd = Number(costs.estimatedUsd)
+  const actualUsd = Number(costs.actualUsd)
+
+  return {
+    estimatedUsd:
+      Number.isFinite(estimatedUsd) && estimatedUsd >= 0 ? estimatedUsd : null,
+    actualUsd: Number.isFinite(actualUsd) && actualUsd >= 0 ? actualUsd : null,
+  }
+}
+
 function summarizeFastMode(results = []) {
   const entries = results
     .map((item) => (item && item.fastMode ? item.fastMode : null))
@@ -481,6 +492,32 @@ function summarizeResults(results, startedAt) {
     }
   )
 
+  const costs = results.reduce(
+    (acc, item) => {
+      const nextCosts = normalizeCostSummary(item && item.costs)
+
+      return {
+        estimatedUsd:
+          acc.estimatedUsd +
+          (Number.isFinite(nextCosts.estimatedUsd) ? nextCosts.estimatedUsd : 0),
+        actualUsd:
+          acc.actualUsd +
+          (Number.isFinite(nextCosts.actualUsd) ? nextCosts.actualUsd : 0),
+        pricedResults:
+          acc.pricedResults +
+          (Number.isFinite(nextCosts.estimatedUsd) ||
+          Number.isFinite(nextCosts.actualUsd)
+            ? 1
+            : 0),
+      }
+    },
+    {
+      estimatedUsd: 0,
+      actualUsd: 0,
+      pricedResults: 0,
+    }
+  )
+
   return {
     totalFlips: results.length,
     elapsedMs: Date.now() - startedAt,
@@ -488,6 +525,11 @@ function summarizeResults(results, startedAt) {
     left: results.filter(({answer}) => answer === 'left').length,
     right: results.filter(({answer}) => answer === 'right').length,
     tokens,
+    costs: {
+      estimatedUsd: costs.pricedResults > 0 ? costs.estimatedUsd : null,
+      actualUsd: costs.pricedResults > 0 ? costs.actualUsd : null,
+      pricedResults: costs.pricedResults,
+    },
     diagnostics: {
       swapped: results.filter(({sideSwapped}) => sideSwapped === true).length,
       notSwapped: results.filter(({sideSwapped}) => sideSwapped !== true)
@@ -863,6 +905,7 @@ export async function solveValidationSessionWithAi({
       finalAnswerAfterRemap: solved.finalAnswerAfterRemap,
       sideSwapped: solved.sideSwapped,
       tokenUsage: normalizeTokenUsage(solved.tokenUsage),
+      costs: normalizeCostSummary(solved.costs),
     }
 
     if (onProgress) {
@@ -913,6 +956,7 @@ export async function solveValidationSessionWithAi({
       reasoning: item.reasoning,
       error: item.error,
       tokenUsage: normalizeTokenUsage(item.tokenUsage),
+      costs: normalizeCostSummary(item.costs),
     }))
     .filter(({option}) => option > 0)
 

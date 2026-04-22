@@ -417,6 +417,9 @@ export function FailedFlipAnnotation(props) {
       fontSize="md"
       fontWeight={500}
       textAlign="center"
+      lineHeight="tall"
+      whiteSpace="normal"
+      overflowWrap="anywhere"
       position="absolute"
       top="50%"
       left={14}

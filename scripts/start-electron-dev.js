@@ -2,6 +2,8 @@
 
 // eslint-disable-next-line import/no-extraneous-dependencies
 const http = require('http')
+const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const {spawn} = require('child_process')
 
@@ -22,6 +24,62 @@ const POLL_INTERVAL_MS = 1000
 let rendererProcess = null
 let electronProcess = null
 let shuttingDown = false
+let electronLogFd = null
+
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, {recursive: true})
+  return dirPath
+}
+
+function resolveUserDataDir() {
+  if (process.env.IDENA_DESKTOP_USER_DATA_DIR) {
+    return process.env.IDENA_DESKTOP_USER_DATA_DIR
+  }
+
+  const homeDir = os.homedir()
+
+  switch (process.platform) {
+    case 'darwin':
+      return path.join(homeDir, 'Library', 'Application Support', 'IdenaAI')
+    case 'win32':
+      return path.join(
+        process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming'),
+        'IdenaAI'
+      )
+    default:
+      return path.join(
+        process.env.XDG_CONFIG_HOME || path.join(homeDir, '.config'),
+        'IdenaAI'
+      )
+  }
+}
+
+function openElectronDevLogFd() {
+  const fallbackLogsDir = ensureDir(path.join(ROOT, '.tmp', 'logs'))
+
+  try {
+    const logsDir = ensureDir(path.join(resolveUserDataDir(), 'logs'))
+    const logPath = path.join(logsDir, 'electron-dev.log')
+    fs.appendFileSync(
+      logPath,
+      `\n[${new Date().toISOString()}] starting Electron dev runtime\n`
+    )
+    return {
+      fd: fs.openSync(logPath, 'a'),
+      path: logPath,
+    }
+  } catch {
+    const logPath = path.join(fallbackLogsDir, 'electron-dev.log')
+    fs.appendFileSync(
+      logPath,
+      `\n[${new Date().toISOString()}] starting Electron dev runtime\n`
+    )
+    return {
+      fd: fs.openSync(logPath, 'a'),
+      path: logPath,
+    }
+  }
+}
 
 function resolveRendererNodeLaunch(env) {
   const baseNodeOptions = env.NODE_OPTIONS || ''
@@ -56,6 +114,28 @@ function resolveRendererNodeLaunch(env) {
       ...(needsLegacyProvider ? ['--openssl-legacy-provider'] : []),
       ...(needsHeapIncrease ? [`--max-old-space-size=${requestedHeapMb}`] : []),
     ],
+    heapMb:
+      Number.isFinite(requestedHeapMb) && requestedHeapMb > 0
+        ? requestedHeapMb
+        : null,
+  }
+}
+
+function resolveElectronLaunch(env) {
+  const requestedHeapMb = Number.parseInt(
+    env.IDENA_DESKTOP_ELECTRON_HEAP_MB || env.IDENA_DESKTOP_DEV_HEAP_MB || '8192',
+    10
+  )
+
+  return {
+    env: {
+      ...env,
+      ...(Number.isFinite(requestedHeapMb) && requestedHeapMb > 0
+        ? {
+            IDENA_DESKTOP_ELECTRON_HEAP_MB: String(requestedHeapMb),
+          }
+        : {}),
+    },
     heapMb:
       Number.isFinite(requestedHeapMb) && requestedHeapMb > 0
         ? requestedHeapMb
@@ -138,15 +218,30 @@ function shutdown(code = 0) {
   shuttingDown = true
   terminateChild(electronProcess)
   terminateChild(rendererProcess)
+  if (Number.isInteger(electronLogFd)) {
+    try {
+      fs.closeSync(electronLogFd)
+    } catch {
+      // Ignore log-fd shutdown races.
+    }
+    electronLogFd = null
+  }
   process.exit(code)
 }
 
 async function main() {
   const rendererNodeLaunch = resolveRendererNodeLaunch(process.env)
+  const electronLaunch = resolveElectronLaunch(process.env)
 
   if (rendererNodeLaunch.heapMb) {
     console.log(
       `[IdenaAI] Starting renderer dev server with Node heap ${rendererNodeLaunch.heapMb} MB`
+    )
+  }
+
+  if (electronLaunch.heapMb) {
+    console.log(
+      `[IdenaAI] Starting Electron with V8 heap ${electronLaunch.heapMb} MB`
     )
   }
 
@@ -185,14 +280,18 @@ async function main() {
 
   await waitForRenderer()
 
+  const electronLog = openElectronDevLogFd()
+  electronLogFd = electronLog.fd
+  console.log(`[IdenaAI] Electron main-process log: ${electronLog.path}`)
+
   electronProcess = spawn(ELECTRON_BIN, ['.'], {
     cwd: ROOT,
     env: {
-      ...process.env,
+      ...electronLaunch.env,
       IDENA_DESKTOP_RENDERER_DEV_SERVER_URL: DEV_SERVER_URL,
       NODE_ENV: process.env.NODE_ENV || 'development',
     },
-    stdio: 'inherit',
+    stdio: ['ignore', electronLog.fd, electronLog.fd],
   })
 
   electronProcess.on('exit', (code) => {

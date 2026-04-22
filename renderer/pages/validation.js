@@ -84,12 +84,13 @@ import {
   PrimaryButton,
   SecondaryButton,
 } from '../shared/components/button'
-import {FloatDebug, Toast, Tooltip} from '../shared/components/components'
+import {Toast, Tooltip} from '../shared/components/components'
 import {useChainState} from '../shared/providers/chain-context'
 import {reorderList} from '../shared/utils/arr'
 import {
   useSettingsDispatch,
   useSettingsState,
+  isValidationRehearsalNodeSettings,
 } from '../shared/providers/settings-context'
 import {
   FullscreenIcon,
@@ -101,14 +102,24 @@ import {
   estimateValidationAiSolveBudget,
   solveValidationSessionWithAi,
 } from '../screens/validation/ai/solver-orchestrator'
+import {appendValidationAiCostLedgerEntry} from '../screens/validation/ai-cost-tracker'
+import {buildRehearsalNetworkPayload} from '../shared/utils/rehearsal-devnet'
 import {
   checkAiProviderReadiness,
   formatMissingAiProviders,
   isLocalAiProvider,
+  resolveLocalAiProviderState,
 } from '../shared/utils/ai-provider-readiness'
 import {prepareValidationSession} from '../shared/api/validation'
 import {getNodeBridge} from '../shared/utils/node-bridge'
 import {useInterval} from '../shared/hooks/use-interval'
+import {
+  shouldBlockSessionAutoInDev,
+  shouldAutoRunSessionForPeriod,
+  shouldShowValidationAiUi,
+  shouldShowValidationLocalAiUi,
+} from '../shared/utils/validation-ai-auto'
+import {hasMissingRehearsalSeedMeta} from '../screens/validation/rehearsal-benchmark'
 
 const previewAiSampleSet = require('../../samples/flips/flip-challenge-test-5-decoded-labeled.json')
 
@@ -175,6 +186,15 @@ function createAiProviderStatusState() {
     activeProvider: '',
     requiredProviders: [],
     missingProviders: [],
+    error: '',
+  }
+}
+
+function createLocalAiRuntimeStatusState() {
+  return {
+    checked: false,
+    checking: false,
+    available: false,
     error: '',
   }
 }
@@ -818,6 +838,9 @@ function ValidationSession({
   const [aiProviderStatus, setAiProviderStatus] = useState(() =>
     createAiProviderStatusState()
   )
+  const [localAiRuntimeStatus, setLocalAiRuntimeStatus] = useState(() =>
+    createLocalAiRuntimeStatusState()
+  )
   const [shortSessionFastModeNotice, setShortSessionFastModeNotice] =
     useState(null)
   const [
@@ -836,6 +859,7 @@ function ValidationSession({
   const [isCheckingLocalAiRecommendation, setIsCheckingLocalAiRecommendation] =
     useState(false)
   const autoSolveStartedRef = useRef({short: false, long: false})
+  const longSessionDecodeRecoveryAttemptedRef = useRef(false)
   const manualReportingStartedRef = useRef(false)
   const autoReportSubmitPendingRef = useRef(false)
   const localAiCaptureSyncRef = useRef({})
@@ -1092,9 +1116,7 @@ function ValidationSession({
     ? Math.min(currentIndex + 1, flips.length)
     : 0
   const hasRenderableCurrentFlip = Boolean(currentFlip && currentFlip.hash)
-  const isRehearsalNodeSession =
-    settings.useExternalNode &&
-    settings.externalNodeLabel === 'Validation rehearsal node'
+  const isRehearsalNodeSession = isValidationRehearsalNodeSettings(settings)
   const [rehearsalDevnetStatus, setRehearsalDevnetStatus] = useState(
     REHEARSAL_DEVNET_STATUS_INITIAL
   )
@@ -1164,8 +1186,13 @@ function ValidationSession({
     localAiValidationEnabled &&
     global.localAi &&
     typeof global.localAi.checkFlipSequence === 'function'
+  const localAiRuntimeAvailable =
+    localAiRuntimeStatus.checked && localAiRuntimeStatus.available
   const canCheckCurrentFlipWithLocalAi =
-    localAiCheckerAvailable &&
+    shouldShowValidationLocalAiUi({
+      runtimeReady: localAiRuntimeAvailable,
+      checkerAvailable: localAiCheckerAvailable,
+    }) &&
     (isShortSession(state) || isLongSessionFlips(state)) &&
     hasLocalAiValidationSequences(currentFlip)
   const captureSessionType = getLocalAiCaptureSessionType(state)
@@ -1176,7 +1203,11 @@ function ValidationSession({
     shortSessionDuration,
     longSessionDuration,
   }
-  const isRealSessionAutoBlockedInDev = global.isDev && !forceAiPreview
+  const isRealSessionAutoBlockedInDev = shouldBlockSessionAutoInDev({
+    isDev: global.isDev,
+    forceAiPreview,
+    isRehearsalNodeSession,
+  })
 
   const [bestRewardTipOpen, setBestRewardTipOpen] = useState(false)
   useEffect(() => {
@@ -1203,12 +1234,12 @@ function ValidationSession({
       reason: 'failed-rehearsal',
     })
 
-    getNodeBridge().restartValidationDevnet({
-      nodeCount: 9,
-      firstCeremonyLeadSeconds: 8 * 60,
-      seedFlipCount: 27,
-      connectApp: true,
-    })
+    getNodeBridge().restartValidationDevnet(
+      buildRehearsalNetworkPayload({
+        connectApp: true,
+        fastForward: true,
+      })
+    )
     router.push('/settings/node')
   }, [
     epoch,
@@ -1279,6 +1310,39 @@ function ValidationSession({
       ? 1000
       : null
   )
+
+  useEffect(() => {
+    if (!isRehearsalNodeSession) {
+      return
+    }
+
+    const seedFlipMetaByHash = rehearsalDevnetStatus.seedFlipMetaByHash || {}
+
+    if (
+      !Object.keys(seedFlipMetaByHash).length ||
+      (!hasMissingRehearsalSeedMeta(
+        state.context?.shortFlips,
+        seedFlipMetaByHash
+      ) &&
+        !hasMissingRehearsalSeedMeta(
+          state.context?.longFlips,
+          seedFlipMetaByHash
+        ))
+    ) {
+      return
+    }
+
+    send({
+      type: 'MERGE_REHEARSAL_BENCHMARK_META',
+      metaByHash: seedFlipMetaByHash,
+    })
+  }, [
+    isRehearsalNodeSession,
+    rehearsalDevnetStatus.seedFlipMetaByHash,
+    send,
+    state.context?.longFlips,
+    state.context?.shortFlips,
+  ])
 
   useEffect(() => {
     if (
@@ -1352,13 +1416,13 @@ function ValidationSession({
   )
 
   const enableAutomaticNextValidationSession = useCallback(() => {
-    if (global.isDev && !forceAiPreview) {
+    if (isRealSessionAutoBlockedInDev) {
       toast({
         render: () => (
           <Toast
             title={t('Automatic session solving is blocked in dev mode')}
             description={t(
-              'Use the off-chain preview flow while developing. Real ceremony auto-start and auto-solve stay disabled in the dev build.'
+              'Use the off-chain preview flow while developing. Real ceremony auto-start and auto-solve stay disabled in the dev build, but rehearsal sessions can still run automatically.'
             )}
             status="warning"
           />
@@ -1383,7 +1447,7 @@ function ValidationSession({
       ),
     })
     router.push('/settings/ai')
-  }, [forceAiPreview, router, t, toast, updateAiSolverSettings])
+  }, [isRealSessionAutoBlockedInDev, router, t, toast, updateAiSolverSettings])
 
   const canRunAiSolveInShort =
     state.matches('shortSession.solve.answer.normal') &&
@@ -1401,6 +1465,12 @@ function ValidationSession({
   } else if (canRunAiSolveInLong) {
     aiSessionType = 'long'
   }
+
+  const canAutoRunAiSolveForCurrentPeriod = shouldAutoRunSessionForPeriod({
+    aiSessionType,
+    currentPeriod,
+    forceAiPreview,
+  })
 
   const isSessionAutoMode =
     !isRealSessionAutoBlockedInDev &&
@@ -1518,9 +1588,51 @@ function ValidationSession({
     }
   }, [aiSolverSettings, settings.localAi])
 
+  const refreshLocalAiRuntimeStatus = useCallback(async () => {
+    if (!localAiCheckerAvailable) {
+      const nextState = createLocalAiRuntimeStatusState()
+      setLocalAiRuntimeStatus(nextState)
+      return nextState
+    }
+
+    setLocalAiRuntimeStatus((prev) => ({
+      ...prev,
+      checking: true,
+      error: '',
+    }))
+
+    try {
+      const nextState = await resolveLocalAiProviderState({
+        localBridge: global.localAi,
+        localAi: settings.localAi,
+      })
+      const normalizedState = {
+        checked: true,
+        checking: false,
+        available: Boolean(nextState?.hasKey),
+        error: String(nextState?.error || '').trim(),
+      }
+      setLocalAiRuntimeStatus(normalizedState)
+      return normalizedState
+    } catch (error) {
+      const fallbackState = {
+        checked: true,
+        checking: false,
+        available: false,
+        error: String((error && error.message) || error || '').trim(),
+      }
+      setLocalAiRuntimeStatus(fallbackState)
+      return fallbackState
+    }
+  }, [localAiCheckerAvailable, settings.localAi])
+
   useEffect(() => {
     refreshAiProviderStatus()
   }, [refreshAiProviderStatus])
+
+  useEffect(() => {
+    refreshLocalAiRuntimeStatus()
+  }, [refreshLocalAiRuntimeStatus])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1529,6 +1641,7 @@ function ValidationSession({
 
     const refreshOnFocus = () => {
       refreshAiProviderStatus()
+      refreshLocalAiRuntimeStatus()
     }
 
     window.addEventListener('focus', refreshOnFocus)
@@ -1538,23 +1651,15 @@ function ValidationSession({
       window.removeEventListener('focus', refreshOnFocus)
       document.removeEventListener('visibilitychange', refreshOnFocus)
     }
-  }, [refreshAiProviderStatus])
-
-  const aiProviderSetupError = useMemo(() => {
-    if (!aiSolverSettings.enabled || !aiProviderStatus.checked) {
-      return ''
-    }
-
-    if (aiProviderStatus.allReady) {
-      return ''
-    }
-
-    return formatAiProviderReadinessError(aiProviderStatus, t)
-  }, [aiProviderStatus, aiSolverSettings.enabled, t])
+  }, [refreshAiProviderStatus, refreshLocalAiRuntimeStatus])
 
   const aiProviderSetupReady =
     !aiSolverSettings.enabled ||
     (aiProviderStatus.checked && aiProviderStatus.allReady)
+  const showValidationAiUi = shouldShowValidationAiUi({
+    enabled: aiSolverSettings.enabled,
+    providerReady: aiProviderSetupReady,
+  })
   const renderableSessionFlipsAvailable = useMemo(
     () => hasRenderableValidationFlips(sessionFlips(state)),
     [state]
@@ -1843,6 +1948,25 @@ function ValidationSession({
         completedAt: new Date().toISOString(),
       })
 
+      if (!forceAiPreview && validationStateScope) {
+        appendValidationAiCostLedgerEntry(validationStateScope, {
+          action:
+            sessionType === 'short'
+              ? 'short-session solve'
+              : 'long-session solve',
+          provider: result.provider || solveAiSettings.provider,
+          model: result.model || solveBudget.model,
+          sessionType,
+          totalFlips: result.summary?.totalFlips,
+          appliedAnswers: Array.isArray(result.answers)
+            ? result.answers.length
+            : 0,
+          tokenUsage: result.summary?.tokens,
+          estimatedUsd: result.summary?.costs?.estimatedUsd,
+          actualUsd: result.summary?.costs?.actualUsd,
+        })
+      }
+
       if (
         sessionType === 'short' &&
         result.answers.length > 0 &&
@@ -1907,6 +2031,7 @@ function ValidationSession({
     state,
     t,
     validationStart,
+    validationStateScope,
     shortSessionOpenAiFastSuppressed,
   ])
 
@@ -2055,6 +2180,21 @@ function ValidationSession({
         })
       })
 
+      if (!forceAiPreview && validationStateScope) {
+        appendValidationAiCostLedgerEntry(validationStateScope, {
+          action: 'long-session report review',
+          provider: reviewResult?.provider || aiSolverSettings.provider,
+          model: reviewResult?.model || aiSolverSettings.model,
+          sessionType: 'long-report-review',
+          totalFlips:
+            reviewResult?.summary?.totalFlips || candidateFlips.length,
+          appliedAnswers: candidateSourceFlips.length,
+          tokenUsage: reviewResult?.summary?.tokens,
+          estimatedUsd: reviewResult?.summary?.costs?.estimatedUsd,
+          actualUsd: reviewResult?.summary?.costs?.actualUsd,
+        })
+      }
+
       autoReportSubmitPendingRef.current = true
 
       notifyAi(
@@ -2097,6 +2237,7 @@ function ValidationSession({
     autoReportRunning,
     canRunAutomaticReportReview,
     epoch,
+    forceAiPreview,
     longFlips,
     notifyAi,
     refreshAiProviderStatus,
@@ -2104,6 +2245,7 @@ function ValidationSession({
     state,
     submitLongSessionAutomatically,
     t,
+    validationStateScope,
   ])
 
   const handleSubmit = useCallback(() => {
@@ -2125,12 +2267,44 @@ function ValidationSession({
       isSessionAutoMode &&
       canRunAiSolve &&
       aiSessionType &&
+      canAutoRunAiSolveForCurrentPeriod &&
       !autoSolveStartedRef.current[aiSessionType]
     ) {
       autoSolveStartedRef.current[aiSessionType] = true
       runAiSolve()
     }
-  }, [isSessionAutoMode, aiSessionType, canRunAiSolve, runAiSolve])
+  }, [
+    aiSessionType,
+    canAutoRunAiSolveForCurrentPeriod,
+    canRunAiSolve,
+    isSessionAutoMode,
+    runAiSolve,
+  ])
+
+  useEffect(() => {
+    const shouldRecoverLongSessionDecodeState =
+      !forceAiPreview &&
+      currentPeriod === EpochPeriod.LongSession &&
+      state.matches('longSession.solve.answer.flips') &&
+      state.matches('longSession.fetch.flips.done') &&
+      state.context.longFlips.some(readyFlip) &&
+      !hasRenderableValidationFlips(state.context.longFlips)
+
+    if (!shouldRecoverLongSessionDecodeState) {
+      if (currentPeriod !== EpochPeriod.LongSession) {
+        longSessionDecodeRecoveryAttemptedRef.current = false
+      }
+      return
+    }
+
+    if (longSessionDecodeRecoveryAttemptedRef.current) {
+      return
+    }
+
+    longSessionDecodeRecoveryAttemptedRef.current = true
+    autoSolveStartedRef.current.long = false
+    send('REFETCH_FLIPS')
+  }, [currentPeriod, forceAiPreview, send, state])
 
   useEffect(() => {
     if (
@@ -2304,7 +2478,7 @@ function ValidationSession({
       right: null,
       error: '',
     })
-  }, [currentFlip?.hash, localAiCheckerAvailable])
+  }, [currentFlip?.hash, localAiRuntimeAvailable])
 
   const runLocalAiRecommendation = useCallback(async () => {
     if (!canCheckCurrentFlipWithLocalAi || !currentFlip) {
@@ -2399,13 +2573,13 @@ function ValidationSession({
       <Flex
         align="center"
         justify="center"
-        bg={aiSolverSettings.enabled ? 'orange.500' : 'blue.500'}
+        bg={showValidationAiUi ? 'orange.500' : 'blue.500'}
         color="white"
         py={1}
         fontSize="xs"
         fontWeight={600}
       >
-        {aiSolverSettings.enabled
+        {showValidationAiUi
           ? t('Optional AI solver mode is enabled.')
           : t('Classic validation flow active. Optional AI solver is off.')}
       </Flex>
@@ -2735,7 +2909,7 @@ function ValidationSession({
         />
       ) : null}
       {(isShortSession(state) || isLongSessionFlips(state)) &&
-        aiSolverSettings.enabled && (
+        showValidationAiUi && (
           <AiTelemetryPanel
             isShortSessionMode={isShortSession(state)}
             telemetry={aiLastRun}
@@ -2758,7 +2932,7 @@ function ValidationSession({
         </ActionBarItem>
         <ActionBarItem justify="flex-end">
           {(isShortSession(state) || isLongSessionFlips(state)) &&
-            aiSolverSettings.enabled && (
+            showValidationAiUi && (
               <Stack isInline spacing={2} align="center" mr={3}>
                 {aiProgress && (
                   <Text
@@ -2768,21 +2942,8 @@ function ValidationSession({
                     {aiProgress}
                   </Text>
                 )}
-                {!aiProgress && aiProviderSetupError && (
-                  <Text
-                    fontSize="xs"
-                    color={isShortSession(state) ? 'orange.200' : 'orange.500'}
-                    maxW="sm"
-                  >
-                    {aiProviderSetupError}
-                  </Text>
-                )}
                 <SecondaryButton
-                  isDisabled={
-                    !canRunAiSolve ||
-                    aiProviderStatus.checking ||
-                    Boolean(aiProviderSetupError)
-                  }
+                  isDisabled={!canRunAiSolve || aiProviderStatus.checking}
                   isLoading={aiSolving}
                   onClick={runAiSolve}
                 >
@@ -2938,8 +3099,6 @@ function ValidationSession({
         isOpen={isOpenEncourageReportDialog}
         onClose={onCloseEncourageReportDialog}
       />
-
-      {global.isDev && <FloatDebug>{state.value}</FloatDebug>}
     </ValidationScene>
   )
 }
