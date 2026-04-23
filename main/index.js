@@ -931,6 +931,32 @@ function assertLocalAiEnabled(action) {
   }
 }
 
+function isLocalAiEnabledForPayload(payload = {}) {
+  try {
+    return getMainLocalAiSettings(payload).enabled === true
+  } catch {
+    return false
+  }
+}
+
+function assertLocalAiEnabledForPayload(action, payload = {}) {
+  if (isLocalAiEnabledForPayload(payload)) {
+    return
+  }
+
+  if (isDev && logger && typeof logger.debug === 'function') {
+    logger.debug('Local AI IPC blocked because Local AI is disabled', {
+      action,
+      payloadEnabled:
+        payload && typeof payload === 'object'
+          ? payload.enabled === true
+          : false,
+    })
+  }
+
+  throw new Error('Local AI is disabled')
+}
+
 function assertLocalAiCaptureEnabled(action) {
   assertLocalAiActionEnabled(
     action,
@@ -957,14 +983,14 @@ function assertLocalAiFederatedEnabled(action) {
 
 function withLocalAiEnabled(action, handler) {
   return async (event, payload, ...rest) => {
-    assertLocalAiEnabled(action)
+    assertLocalAiEnabledForPayload(action, payload)
     return handler(event, payload, ...rest)
   }
 }
 
 function withLocalAiTrainingEnabled(action, handler) {
   return async (event, payload, ...rest) => {
-    assertLocalAiEnabled(action)
+    assertLocalAiEnabledForPayload(action, payload)
     assertLocalAiTrainingEnabled(action)
     return handler(event, payload, ...rest)
   }
@@ -972,7 +998,7 @@ function withLocalAiTrainingEnabled(action, handler) {
 
 function withLocalAiFederatedEnabled(action, handler) {
   return async (event, payload, ...rest) => {
-    assertLocalAiEnabled(action)
+    assertLocalAiEnabledForPayload(action, payload)
     assertLocalAiFederatedEnabled(action)
     return handler(event, payload, ...rest)
   }
@@ -2559,7 +2585,7 @@ handleTrusted(AI_TEST_UNIT_COMMAND, async (event, command, payload) => {
 })
 
 handleTrusted('localAi.status', async (_event, payload) => {
-  if (!isLocalAiEnabled()) {
+  if (!isLocalAiEnabledForPayload(payload)) {
     return buildDisabledLocalAiStatus(payload)
   }
 
@@ -2591,7 +2617,7 @@ handleTrusted(
 )
 
 handleTrusted('localAi.info', async (_event, payload) => {
-  if (!isLocalAiEnabled()) {
+  if (!isLocalAiEnabledForPayload(payload)) {
     return buildDisabledLocalAiInfoResponse(payload)
   }
 
@@ -2602,7 +2628,7 @@ handleTrusted('localAi.info', async (_event, payload) => {
 })
 
 handleTrusted('localAi.chat', async (_event, payload) => {
-  if (!isLocalAiEnabled()) {
+  if (!isLocalAiEnabledForPayload(payload)) {
     return buildDisabledLocalAiChatResponse(payload)
   }
 
@@ -2613,7 +2639,7 @@ handleTrusted('localAi.chat', async (_event, payload) => {
 })
 
 handleTrusted('localAi.flipJudge', async (_event, payload) => {
-  if (!isLocalAiEnabled()) {
+  if (!isLocalAiEnabledForPayload(payload)) {
     return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
 
@@ -2624,7 +2650,7 @@ handleTrusted('localAi.flipJudge', async (_event, payload) => {
 })
 
 handleTrusted('localAi.checkFlipSequence', async (_event, payload) => {
-  if (!isLocalAiEnabled()) {
+  if (!isLocalAiEnabledForPayload(payload)) {
     return buildDisabledLocalAiFlipJudgeResponse(payload)
   }
 
@@ -2637,7 +2663,7 @@ handleTrusted('localAi.checkFlipSequence', async (_event, payload) => {
 })
 
 handleTrusted('localAi.flipToText', async (_event, payload) => {
-  if (!isLocalAiEnabled()) {
+  if (!isLocalAiEnabledForPayload(payload)) {
     return buildDisabledLocalAiFlipToTextResponse(payload)
   }
 

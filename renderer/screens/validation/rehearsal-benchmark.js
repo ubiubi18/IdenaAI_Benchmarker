@@ -9,6 +9,12 @@ export const REHEARSAL_BENCHMARK_ANNOTATION_DATASET_VERSION = 1
 export const REHEARSAL_BENCHMARK_ANNOTATION_DATASET_STORAGE_KEY =
   'rehearsal-benchmark-annotations'
 
+function normalizeRehearsalBenchmarkHash(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^_flip_/u, '')
+}
+
 function normalizeExpectedAnswer(value) {
   const next = String(value || '')
     .trim()
@@ -185,7 +191,7 @@ export function normalizeRehearsalSeedFlipMetaByHash(value = {}) {
   }
 
   return Object.entries(value).reduce((result, [hash, meta]) => {
-    const normalizedHash = String(hash || '').trim()
+    const normalizedHash = normalizeRehearsalBenchmarkHash(hash)
     const normalizedMeta = normalizeRehearsalSeedFlipMeta(meta)
 
     if (normalizedHash && normalizedMeta) {
@@ -202,7 +208,8 @@ export function mergeRehearsalSeedMetaIntoFlips(flips, metaByHash = {}) {
   let hasChanges = false
 
   const mergedFlips = nextFlips.map((flip) => {
-    const meta = normalizedMetaByHash[String(flip?.hash || '').trim()]
+    const meta =
+      normalizedMetaByHash[normalizeRehearsalBenchmarkHash(flip?.hash || '')]
 
     if (!meta) {
       return flip
@@ -252,11 +259,16 @@ export function hasMissingRehearsalSeedMeta(flips, metaByHash = {}) {
   const normalizedMetaByHash = normalizeRehearsalSeedFlipMetaByHash(metaByHash)
 
   return nextFlips.some((flip) => {
-    const hash = String(flip?.hash || '').trim()
+    const hash = normalizeRehearsalBenchmarkHash(flip?.hash || '')
+    const meta = normalizedMetaByHash[hash]
+
     return (
       hash &&
-      normalizedMetaByHash[hash] &&
-      normalizeExpectedAnswer(flip?.expectedAnswer) === null
+      meta &&
+      (normalizeExpectedAnswer(flip?.expectedAnswer) === null ||
+        (Array.isArray(meta.words) &&
+          meta.words.length > 0 &&
+          (!Array.isArray(flip?.words) || flip.words.length < 2)))
     )
   })
 }
@@ -516,7 +528,7 @@ export function normalizeRehearsalBenchmarkReviewState(value = {}) {
     auditStatus: normalizeRehearsalBenchmarkAuditStatus(source.auditStatus),
     annotationsByHash: Object.entries(annotationsSource).reduce(
       (result, [hash, annotation]) => {
-        const normalizedHash = String(hash || '').trim()
+        const normalizedHash = normalizeRehearsalBenchmarkHash(hash)
         const nextAnnotation =
           annotation &&
           typeof annotation === 'object' &&
@@ -556,7 +568,7 @@ function normalizeRehearsalBenchmarkAnnotationDatasetEntry(value = {}) {
   }
 
   return {
-    hash: String(source.hash || '').trim() || null,
+    hash: normalizeRehearsalBenchmarkHash(source.hash),
     epoch: normalizeBenchmarkEpoch(source.epoch),
     validationStart: normalizeBenchmarkValidationStart(source.validationStart),
     sessionType: normalizeBenchmarkSessionType(source.sessionType),
@@ -590,7 +602,7 @@ export function normalizeRehearsalBenchmarkAnnotationDataset(value = {}) {
     updatedAt: String(source.updatedAt || '').trim() || null,
     annotationsByHash: Object.entries(annotationsSource).reduce(
       (result, [hash, annotation]) => {
-        const normalizedHash = String(hash || '').trim()
+        const normalizedHash = normalizeRehearsalBenchmarkHash(hash)
         const nextAnnotation =
           normalizeRehearsalBenchmarkAnnotationDatasetEntry({
             ...(annotation &&

@@ -56,7 +56,7 @@ describe('rehearsal benchmark helpers', () => {
   it('normalizes seed metadata by hash and removes invalid entries', () => {
     expect(
       normalizeRehearsalSeedFlipMetaByHash({
-        '0x1': {
+        _flip_bafyseed1: {
           expectedAnswer: 'LEFT',
           expectedStrength: 'Strong',
           consensusVotes: {Left: 7, Right: 2, Reported: 1},
@@ -67,7 +67,7 @@ describe('rehearsal benchmark helpers', () => {
         '': {expectedAnswer: 'right'},
       })
     ).toEqual({
-      '0x1': {
+      bafyseed1: {
         expectedAnswer: 'left',
         expectedStrength: 'Strong',
         consensusAnswer: 'left',
@@ -158,6 +158,49 @@ describe('rehearsal benchmark helpers', () => {
         '0x1': {expectedAnswer: 'left'},
       })
     ).toBe(true)
+  })
+
+  it('detects flips that still miss rehearsal keyword words after hash normalization', () => {
+    expect(
+      hasMissingRehearsalSeedMeta(
+        [{hash: 'bafyseed1', expectedAnswer: 'left', words: []}],
+        {
+          _flip_bafyseed1: {
+            expectedAnswer: 'left',
+            words: [
+              {name: 'apple', desc: 'fruit'},
+              {name: 'ghost', desc: 'spirit'},
+            ],
+          },
+        }
+      )
+    ).toBe(true)
+  })
+
+  it('merges rehearsal seed words when metadata uses FLIP-Challenge hash prefixes', () => {
+    expect(
+      mergeRehearsalSeedMetaIntoFlips(
+        [{hash: 'bafyseed1', expectedAnswer: 'left', words: []}],
+        {
+          _flip_bafyseed1: {
+            expectedAnswer: 'left',
+            words: [
+              {name: 'apple', desc: 'fruit'},
+              {name: 'ghost', desc: 'spirit'},
+            ],
+          },
+        }
+      )
+    ).toEqual([
+      expect.objectContaining({
+        hash: 'bafyseed1',
+        expectedAnswer: 'left',
+        words: [
+          {name: 'apple', desc: 'fruit'},
+          {name: 'ghost', desc: 'spirit'},
+        ],
+      }),
+    ])
   })
 
   it('computes benchmark summary and session split', () => {

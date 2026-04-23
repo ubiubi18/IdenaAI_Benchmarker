@@ -396,6 +396,29 @@ describe('validation devnet helpers', () => {
     ).toBeGreaterThan(0)
   })
 
+  it('normalizes FLIP-Challenge hash prefixes in seed metadata maps', () => {
+    expect(
+      buildValidationDevnetSeedFlipMetaByHash([
+        {
+          hash: '_flip_bafyseed1',
+          expectedAnswer: 'left',
+          words: [
+            {name: 'apple', desc: 'fruit'},
+            {name: 'ghost', desc: 'spirit'},
+          ],
+        },
+      ])
+    ).toEqual({
+      bafyseed1: expect.objectContaining({
+        expectedAnswer: 'left',
+        words: [
+          {name: 'apple', desc: 'fruit'},
+          {name: 'ghost', desc: 'spirit'},
+        ],
+      }),
+    })
+  })
+
   it('skips rehearsal seed flips that were already annotated in prior review runs', async () => {
     const tempDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'idena-devnet-seed-review-')

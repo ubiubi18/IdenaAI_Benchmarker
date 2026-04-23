@@ -158,7 +158,9 @@ function uniqStrings(values) {
 }
 
 function normalizeValidationDevnetSeedHash(value) {
-  return String(value || '').trim()
+  return String(value || '')
+    .trim()
+    .replace(/^_flip_/u, '')
 }
 
 function hasMeaningfulRehearsalBenchmarkAnnotation(value = {}) {
@@ -515,7 +517,7 @@ function normalizeValidationDevnetSeedSourceStats(value) {
 
 function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
   return (Array.isArray(flips) ? flips : []).reduce((result, flip) => {
-    const hash = String(flip?.hash || '').trim()
+    const hash = normalizeValidationDevnetSeedHash(flip?.hash || '')
     const expectedAnswer =
       normalizeValidationDevnetSeedAnswer(flip?.expectedAnswer) ||
       normalizeValidationDevnetSeedAnswer(flip?.consensusAnswer) ||

@@ -80,6 +80,7 @@ import {useHardFork} from '../../screens/hardfork/hooks'
 import {ChevronRightIcon, GithubIcon} from './icons'
 import {AiEnableDialog} from './ai-enable-dialog'
 import {buildMolmo2OResearchPreset} from '../utils/local-ai-settings'
+import {buildLocalAiRuntimePayload} from '../utils/ai-provider-readiness'
 import {
   useAutoStartLottery,
   useAutoStartValidation,
@@ -89,6 +90,7 @@ import {useIdentityState} from '../providers/identity-context'
 import {OfflineBanner} from './layout/offline'
 import {TroubleshootingScreen} from '../../screens/troubleshooting'
 import {getAppBridge} from '../utils/app-bridge'
+import {syncSharedGlobal} from '../utils/shared-global'
 
 global.getZoomLevel = global.getZoomLevel || (() => 0)
 global.setZoomLevel = global.setZoomLevel || (() => {})
@@ -283,6 +285,16 @@ function NormalApp({children}) {
   const {t} = useTranslation()
 
   const epoch = useEpochState()
+  const settings = useSettingsState()
+  const localAi = React.useMemo(() => settings?.localAi || {}, [settings])
+  const localAiRuntimePayload = React.useMemo(
+    () => buildLocalAiRuntimePayload(localAi),
+    [localAi]
+  )
+  const localAiRuntimePayloadKey = React.useMemo(
+    () => JSON.stringify(localAiRuntimePayload),
+    [localAiRuntimePayload]
+  )
 
   useAutoStartLottery()
   useAutoStartValidation()
@@ -314,6 +326,51 @@ function NormalApp({children}) {
     setValidationNotificationEpoch(newEpoch)
     persistItem('validationNotification', 'epoch', newEpoch)
   }, [epoch, validationNotificationEpoch, setValidationNotificationEpoch, t])
+
+  React.useEffect(() => {
+    if (!localAi.enabled) {
+      return
+    }
+
+    if (!global.localAi || typeof global.localAi.start !== 'function') {
+      return
+    }
+
+    const sharedState = syncSharedGlobal('__idenaLocalAiAutostartState', {
+      payloadKey: '',
+      inFlight: false,
+      lastRequestedAt: 0,
+    })
+
+    if (
+      sharedState.inFlight &&
+      sharedState.payloadKey === localAiRuntimePayloadKey
+    ) {
+      return
+    }
+
+    if (
+      sharedState.payloadKey === localAiRuntimePayloadKey &&
+      Date.now() - Number(sharedState.lastRequestedAt || 0) < 60 * 1000
+    ) {
+      return
+    }
+
+    sharedState.payloadKey = localAiRuntimePayloadKey
+    sharedState.inFlight = true
+    sharedState.lastRequestedAt = Date.now()
+
+    Promise.resolve(global.localAi.start(localAiRuntimePayload))
+      .catch(() => {})
+      .finally(() => {
+        if (
+          sharedState &&
+          sharedState.payloadKey === localAiRuntimePayloadKey
+        ) {
+          sharedState.inFlight = false
+        }
+      })
+  }, [localAi.enabled, localAiRuntimePayload, localAiRuntimePayloadKey])
 
   const failToast = useFailToast()
 

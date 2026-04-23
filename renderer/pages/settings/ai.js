@@ -1694,21 +1694,6 @@ export default function AiSettingsPage() {
     }
   }, [refreshSystemMemoryTelemetry])
 
-  const applyRecommendedLocalAiSetup = useCallback(() => {
-    updateLocalAiSettings({
-      enabled: true,
-      ...buildRecommendedLocalAiMacPreset(),
-    })
-
-    notify(
-      t('Embryo-stage local AI preset applied'),
-      t(
-        'IdenaAI now points local inference at Ollama on http://127.0.0.1:11434, but no approved local base model is configured. Local AI is back in embryo stage while base-layer research continues.'
-      ),
-      'success'
-    )
-  }, [notify, t, updateLocalAiSettings])
-
   const enableAutomaticNextValidationSession = useCallback(() => {
     updateAiSolverSettings({
       enabled: true,
@@ -1905,6 +1890,17 @@ export default function AiSettingsPage() {
       }
     },
     [localAi, notify, t, updateAiSolverSettings, updateLocalAiSettings]
+  )
+
+  const applyRecommendedLocalAiSetup = useCallback(
+    () =>
+      startLocalAiWithSettings({
+        localAiPatch: buildRecommendedLocalAiMacPreset(),
+        preparingMessage: t(
+          'Preparing the Ollama local runtime now. IdenaAI will try to start Ollama and connect to your configured local model endpoint.'
+        ),
+      }),
+    [startLocalAiWithSettings, t]
   )
 
   const openRuntimePathDialog = useCallback(() => {
@@ -5172,15 +5168,18 @@ export default function AiSettingsPage() {
                 </Box>
                 <Switch
                   isChecked={!!localAi.enabled}
+                  isDisabled={isStartingLocalAi}
                   onChange={() => {
                     if (localAi.enabled) {
                       updateLocalAiSettings({enabled: false})
                       return
                     }
 
-                    updateLocalAiSettings({
-                      enabled: true,
-                      ...buildMolmo2OResearchPreset(),
+                    startLocalAiWithSettings({
+                      localAiPatch: buildMolmo2OResearchPreset(),
+                      preparingMessage: t(
+                        'Preparing the managed on-device runtime now. Progress will appear below.'
+                      ),
                     })
                   }}
                 />

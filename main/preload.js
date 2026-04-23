@@ -850,13 +850,45 @@ function sanitizeLocalAiRuntimePayload(payload = {}) {
         }
 
   return {
+    enabled: sanitizeBoolean(source.enabled, false),
+    refresh: sanitizeBoolean(source.refresh, false),
+    mode: sanitizeOptionalBoundedString(source.mode, 64),
     model: sanitizeOptionalBoundedString(source.model, 256),
     visionModel: sanitizeOptionalBoundedString(source.visionModel, 256),
     allowRuntimeStart: sanitizeBoolean(source.allowRuntimeStart, true),
     runtimeBackend: sanitizeOptionalBoundedString(source.runtimeBackend, 64),
     runtimeType: sanitizeOptionalBoundedString(source.runtimeType, 64),
+    runtimeFamily: sanitizeOptionalBoundedString(source.runtimeFamily, 128),
     reasonerBackend: sanitizeOptionalBoundedString(source.reasonerBackend, 64),
     visionBackend: sanitizeOptionalBoundedString(source.visionBackend, 64),
+    publicModelId: sanitizeOptionalBoundedString(source.publicModelId, 256),
+    publicVisionId: sanitizeOptionalBoundedString(source.publicVisionId, 256),
+    contractVersion: sanitizeOptionalBoundedString(source.contractVersion, 64),
+    adapterStrategy: sanitizeOptionalBoundedString(source.adapterStrategy, 64),
+    trainingPolicy: sanitizeOptionalBoundedString(source.trainingPolicy, 64),
+    rankingPolicy: isPlainObject(source.rankingPolicy)
+      ? sanitizeBoundedCloneable(source.rankingPolicy, {
+          maxDepth: 4,
+          maxArrayLength: 32,
+          maxObjectKeys: 64,
+          maxStringLength: 256,
+          maxDataUrlLength: 0,
+        })
+      : null,
+    managedRuntimeTrustVersion: sanitizeInteger(
+      source.managedRuntimeTrustVersion,
+      0,
+      0,
+      999999
+    ),
+    managedRuntimePythonPath: sanitizeOptionalBoundedString(
+      source.managedRuntimePythonPath,
+      2048
+    ),
+    ollamaCommandPath: sanitizeOptionalBoundedString(
+      source.ollamaCommandPath,
+      2048
+    ),
     endpoint: sanitizeOptionalBoundedString(source.endpoint, 2048),
     baseUrl: sanitizeOptionalBoundedString(source.baseUrl, 2048),
     timeoutMs: sanitizeInteger(source.timeoutMs, 15000, 1000, 120000),

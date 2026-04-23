@@ -155,6 +155,8 @@ const PYTHON_COMMAND_CANDIDATES = [
   process.platform === 'win32' ? 'py -3' : 'python3',
   process.platform === 'win32' ? 'python' : 'python',
 ]
+const MANAGED_RUNTIME_SNAPSHOT_DOWNLOAD_MAX_RETRIES = 4
+const MANAGED_RUNTIME_SNAPSHOT_DOWNLOAD_RETRY_DELAY_MS = 2000
 
 function trimString(value) {
   return String(value || '').trim()
@@ -179,6 +181,39 @@ function formatApproxGiB(bytes) {
   return `~${(value / BYTES_PER_GIB).toFixed(
     value >= 10 * BYTES_PER_GIB ? 0 : 1
   )} GB`
+}
+
+async function calculateDirectorySizeBytes(targetPath) {
+  const normalizedPath = trimString(targetPath)
+
+  if (!normalizedPath) {
+    return 0
+  }
+
+  let stats
+
+  try {
+    stats = await fs.stat(normalizedPath)
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return 0
+    }
+
+    throw error
+  }
+
+  if (!stats.isDirectory()) {
+    return stats.size
+  }
+
+  const entries = await fs.readdir(normalizedPath)
+  let total = 0
+
+  for (const entry of entries) {
+    total += await calculateDirectorySizeBytes(path.join(normalizedPath, entry))
+  }
+
+  return total
 }
 
 function sumManagedRuntimeVerifyBytes(runtimeConfig = null) {
@@ -238,6 +273,33 @@ function createRuntimeControllerError(code, message) {
   const error = new Error(message)
   error.code = code
   return error
+}
+
+function isRetryableManagedSnapshotDownloadError(error) {
+  const message = String((error && error.message) || error || '').toLowerCase()
+
+  return Boolean(
+    message &&
+      (message.includes('remoteprotocolerror') ||
+        message.includes('peer closed connection') ||
+        message.includes('connection reset') ||
+        message.includes('incomplete message body') ||
+        message.includes('read timed out') ||
+        message.includes('timed out') ||
+        message.includes('temporarily unavailable') ||
+        message.includes('connection aborted') ||
+        message.includes('connection broken'))
+  )
+}
+
+function sleep(ms) {
+  const timeoutMs = Number.parseInt(ms, 10)
+  const effectiveTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 0
+
+  return new Promise((resolve) => {
+    setTimeout(resolve, effectiveTimeoutMs)
+  })
 }
 
 function normalizeBaseUrl(value, fallback = 'http://localhost:5000') {
@@ -1208,56 +1270,135 @@ async function downloadManagedMolmo2Snapshot(
     stageIndex: 5,
     stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
   })
+  const totalSnapshotBytes = sumManagedRuntimeVerifyBytes(config)
+  let snapshotProgressTimer = null
 
-  await runCommand({
-    command: pythonPath,
-    args: [
-      '-c',
-      [
-        'import json',
-        'import sys',
-        'from huggingface_hub import snapshot_download',
-        'repo_id = sys.argv[1]',
-        'revision = sys.argv[2]',
-        'local_dir = sys.argv[3]',
-        'allow_patterns = json.loads(sys.argv[4])',
-        'snapshot_download(',
-        '    repo_id=repo_id,',
-        '    revision=revision,',
-        '    local_dir=local_dir,',
-        '    allow_patterns=allow_patterns,',
-        '    local_dir_use_symlinks=False,',
-        ')',
-      ].join('\n'),
-      config.modelId,
-      config.revision,
-      snapshotDir,
-      JSON.stringify(config.allowPatterns),
-    ],
-    env,
-    label: 'Managed Local AI model snapshot download',
-    onOutput(chunk) {
-      const detail = String(chunk || '')
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .slice(-1)[0]
+  if (typeof onProgress === 'function') {
+    snapshotProgressTimer = setInterval(async () => {
+      try {
+        const downloadedBytes = await calculateDirectorySizeBytes(snapshotDir)
+        const hasExpectedTotal = totalSnapshotBytes > 0
+        const progressFraction = hasExpectedTotal
+          ? Math.max(0, Math.min(downloadedBytes / totalSnapshotBytes, 0.99))
+          : null
+        const progressPercent =
+          progressFraction !== null
+            ? Math.max(62, Math.min(72, 62 + Math.round(progressFraction * 10)))
+            : 62
+        const detail = hasExpectedTotal
+          ? `Downloaded about ${formatApproxGiB(
+              downloadedBytes
+            )} of ${formatApproxGiB(totalSnapshotBytes)} so far.`
+          : `Downloaded about ${formatApproxGiB(downloadedBytes)} so far.`
 
-      if (!detail) {
-        return
+        emitRuntimeProgress(onProgress, {
+          status: 'installing',
+          stage: 'download_model_snapshot',
+          message: `Downloading the pinned ${displayName} runtime snapshot and model weights. This can take a while on first use.`,
+          detail,
+          progressPercent,
+          stageIndex: 5,
+          stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
+        })
+      } catch {
+        // Best effort progress enrichment while the snapshot download runs.
       }
+    }, 2000)
+  }
 
-      emitRuntimeProgress(onProgress, {
-        status: 'installing',
-        stage: 'download_model_snapshot',
-        message: `Downloading the pinned ${displayName} runtime snapshot and model weights. This can take a while on first use.`,
-        detail,
-        progressPercent: 62,
-        stageIndex: 5,
-        stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
-      })
-    },
-  })
+  try {
+    let downloadAttempt = 0
+
+    while (downloadAttempt < MANAGED_RUNTIME_SNAPSHOT_DOWNLOAD_MAX_RETRIES) {
+      downloadAttempt += 1
+
+      try {
+        await runCommand({
+          command: pythonPath,
+          args: [
+            '-c',
+            [
+              'import json',
+              'import sys',
+              'from huggingface_hub import snapshot_download',
+              'repo_id = sys.argv[1]',
+              'revision = sys.argv[2]',
+              'local_dir = sys.argv[3]',
+              'allow_patterns = json.loads(sys.argv[4])',
+              'snapshot_download(',
+              '    repo_id=repo_id,',
+              '    revision=revision,',
+              '    local_dir=local_dir,',
+              '    allow_patterns=allow_patterns,',
+              ')',
+            ].join('\n'),
+            config.modelId,
+            config.revision,
+            snapshotDir,
+            JSON.stringify(config.allowPatterns),
+          ],
+          env,
+          label: 'Managed Local AI model snapshot download',
+          onOutput(chunk) {
+            const detail = String(chunk || '')
+              .split(/\r?\n/u)
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .slice(-1)[0]
+
+            if (!detail) {
+              return
+            }
+
+            emitRuntimeProgress(onProgress, {
+              status: 'installing',
+              stage: 'download_model_snapshot',
+              message: `Downloading the pinned ${displayName} runtime snapshot and model weights. This can take a while on first use.`,
+              detail,
+              progressPercent: 62,
+              stageIndex: 5,
+              stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
+            })
+          },
+        })
+        break
+      } catch (error) {
+        const retryableDownloadError =
+          isRetryableManagedSnapshotDownloadError(error)
+
+        if (
+          downloadAttempt >= MANAGED_RUNTIME_SNAPSHOT_DOWNLOAD_MAX_RETRIES ||
+          !retryableDownloadError
+        ) {
+          if (retryableDownloadError) {
+            throw createRuntimeControllerError(
+              'managed_runtime_snapshot_download_interrupted',
+              `The managed ${displayName} model download was interrupted repeatedly by the network. Retry Local AI startup once more. If this keeps happening, set an authenticated Hugging Face token for higher download reliability.`
+            )
+          }
+
+          throw error
+        }
+
+        emitRuntimeProgress(onProgress, {
+          status: 'installing',
+          stage: 'download_model_snapshot',
+          message: `The ${displayName} model download was interrupted. Retrying from the partially downloaded snapshot now.`,
+          detail: `Retry ${
+            downloadAttempt + 1
+          } of ${MANAGED_RUNTIME_SNAPSHOT_DOWNLOAD_MAX_RETRIES}…`,
+          progressPercent: 62,
+          stageIndex: 5,
+          stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
+        })
+        await sleep(MANAGED_RUNTIME_SNAPSHOT_DOWNLOAD_RETRY_DELAY_MS)
+      }
+    }
+  } finally {
+    if (snapshotProgressTimer) {
+      clearInterval(snapshotProgressTimer)
+    }
+  }
 
   const verifiedSnapshot = await verifyManagedMolmo2Snapshot(
     snapshotDir,
