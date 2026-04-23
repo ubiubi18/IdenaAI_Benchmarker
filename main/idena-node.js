@@ -487,18 +487,21 @@ function startPeerAssist({port, apiKey, onLog, bootstrapNodes = []}) {
 
     try {
       const syncStatus = await callNodeRpc(rpcClient, apiKey, 'bcn_syncing')
+      const peers = toArray(await callNodeRpc(rpcClient, apiKey, 'net_peers'))
 
-      if (syncStatus && syncStatus.syncing) {
+      if (syncStatus && syncStatus.syncing && peers.length > 0) {
         schedule(Math.min(peerAssistRetryIntervalMs, 5000))
         return
       }
-
-      const peers = toArray(await callNodeRpc(rpcClient, apiKey, 'net_peers'))
 
       if (peers.length > 0) {
         await rememberPeers(peers)
         schedule()
         return
+      }
+
+      if (syncStatus && syncStatus.syncing) {
+        emitLog('syncing without peers, retrying bootstrap hints')
       }
 
       const persistedPeerHints = await readPeerHints()
