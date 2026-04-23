@@ -387,12 +387,12 @@ describe('createAiProviderBridge', () => {
     const result = await bridge.solveFlipBatch({
       provider: 'openai',
       model: 'gpt-4o-mini',
-      flips: [{hash: 'flip-1', leftImage: 'left', rightImage: 'right'}],
+      flips: [{hash: 'flip-2', leftImage: 'left', rightImage: 'right'}],
     })
 
     expect(invokeProvider).toHaveBeenCalledTimes(1)
     expect(result.results[0]).toMatchObject({
-      hash: 'flip-1',
+      hash: 'flip-2',
       sideSwapped: true,
       rawAnswerBeforeRemap: 'right',
       finalAnswerAfterRemap: 'left',
@@ -400,9 +400,46 @@ describe('createAiProviderBridge', () => {
       confidence: 0.8,
     })
     expect(invokeProvider.mock.calls[0][0].flip).toMatchObject({
-      hash: 'flip-1',
+      hash: 'flip-2',
       leftImage: 'right',
       rightImage: 'left',
+    })
+  })
+
+  it('does not force every one-flip batch into the same swap direction', async () => {
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValue('{"answer":"left","confidence":0.8}')
+    const bridge = createAiProviderBridge(mockLogger(), {
+      invokeProvider,
+      writeBenchmarkLog: jest.fn().mockResolvedValue(undefined),
+    })
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const unswappedResult = await bridge.solveFlipBatch({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      flips: [{hash: 'flip-1', leftImage: 'left', rightImage: 'right'}],
+    })
+    const swappedResult = await bridge.solveFlipBatch({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      flips: [{hash: 'flip-2', leftImage: 'left', rightImage: 'right'}],
+    })
+
+    expect(unswappedResult.results[0]).toMatchObject({
+      hash: 'flip-1',
+      sideSwapped: false,
+      rawAnswerBeforeRemap: 'left',
+      finalAnswerAfterRemap: 'left',
+      answer: 'left',
+    })
+    expect(swappedResult.results[0]).toMatchObject({
+      hash: 'flip-2',
+      sideSwapped: true,
+      rawAnswerBeforeRemap: 'left',
+      finalAnswerAfterRemap: 'right',
+      answer: 'right',
     })
   })
 
@@ -1041,7 +1078,7 @@ describe('createAiProviderBridge', () => {
 
     expect(invokeProvider).toHaveBeenCalledTimes(3)
     expect(result.results[0]).toMatchObject({
-      answer: 'left',
+      answer: 'right',
       ensembleConsulted: 3,
       ensembleContributors: 3,
     })

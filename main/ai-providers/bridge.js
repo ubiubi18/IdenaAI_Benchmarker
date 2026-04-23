@@ -4769,28 +4769,11 @@ function buildSwapPlan(flips) {
     return []
   }
 
-  const swapTarget = Math.ceil(total / 2)
-  const scored = flips.map((flip, index) => ({
-    index,
-    score: hashScore(`${flip && flip.hash ? flip.hash : ''}:${index}`),
-  }))
-
-  scored.sort((a, b) => {
-    if (b.score !== a.score) {
-      return b.score - a.score
-    }
-    return a.index - b.index
+  return flips.map((flip, index) => {
+    const marker =
+      flip && flip.hash ? String(flip.hash) : `flip-index-${String(index)}`
+    return hashScore(marker) % 2 === 0
   })
-
-  const swapPlan = Array(total).fill(false)
-  for (let index = 0; index < swapTarget; index += 1) {
-    const target = scored[index]
-    if (target) {
-      swapPlan[target.index] = true
-    }
-  }
-
-  return swapPlan
 }
 
 function remapDecisionIfSwapped(decision, swapped) {
