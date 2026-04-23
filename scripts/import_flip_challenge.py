@@ -20,11 +20,12 @@ import argparse
 import base64
 import json
 import os
+import re
 import sys
 import tempfile
 import urllib.request
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 try:
     import pyarrow.parquet as pq
@@ -39,11 +40,34 @@ except ModuleNotFoundError:
 DATASET_ID = "aplesner-eth/FLIP-Challenge"
 TREE_URL = f"https://huggingface.co/api/datasets/{DATASET_ID}/tree/main?recursive=true"
 RESOLVE_BASE = f"https://huggingface.co/datasets/{DATASET_ID}/resolve/main"
+DEFAULT_PUBLIC_INDEXER_URL = "https://api.idena.io/api"
 
 
 def fetch_json(url: str):
     with urllib.request.urlopen(url, timeout=60) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def trim_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except Exception:
+        return default
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except Exception:
+        return default
 
 
 def list_parquet_paths(split: str) -> List[str]:
@@ -58,6 +82,122 @@ def list_parquet_paths(split: str) -> List[str]:
         elif f"/{split}-" in path:
             paths.append(path)
     return sorted(paths)
+
+
+def normalize_epoch_from_details(details: Any) -> Optional[int]:
+    if not isinstance(details, dict):
+        return None
+
+    raw_epoch = trim_text(details.get("Epoch:") or details.get("epoch"))
+    if not raw_epoch:
+        return None
+
+    match = re.search(r"(\d+)", raw_epoch)
+    if not match:
+        return None
+
+    return safe_int(match.group(1), 0) or None
+
+
+def normalize_details_record(details: Any) -> Dict[str, Any]:
+    source = details if isinstance(details, dict) else {}
+    block = trim_text(source.get("Block:") or source.get("block"))
+    return {
+        "author": trim_text(source.get("Author:") or source.get("author")) or None,
+        "epoch": normalize_epoch_from_details(source),
+        "size": trim_text(source.get("Size:") or source.get("size")) or None,
+        "createdAt": trim_text(source.get("Created:") or source.get("created")) or None,
+        "block": safe_int(block, 0) or block or None,
+        "tx": trim_text(source.get("Tx:") or source.get("tx")) or None,
+    }
+
+
+def normalize_public_words(value: Any) -> List[Dict[str, str]]:
+    words = value if isinstance(value, dict) else {}
+    items = []
+
+    for key in ("word1", "word2"):
+        entry = words.get(key) if isinstance(words.get(key), dict) else {}
+        name = trim_text(entry.get("name"))
+        desc = trim_text(entry.get("desc"))
+        if name or desc:
+            items.append({"name": name, "desc": desc})
+
+    return items[:2]
+
+
+def normalize_public_flip_entry(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+
+    cid = trim_text(value.get("cid"))
+    if not cid:
+        return None
+
+    return {
+        "cid": cid,
+        "author": trim_text(value.get("author")) or None,
+        "epoch": safe_int(value.get("epoch"), 0) or None,
+        "shortRespCount": safe_int(value.get("shortRespCount")),
+        "longRespCount": safe_int(value.get("longRespCount")),
+        "status": trim_text(value.get("status")) or None,
+        "answer": trim_text(value.get("answer")) or None,
+        "wrongWords": bool(value.get("wrongWords")),
+        "wrongWordsVotes": safe_int(value.get("wrongWordsVotes")),
+        "withPrivatePart": bool(value.get("withPrivatePart")),
+        "grade": safe_int(value.get("grade"), 0) if value.get("grade") is not None else None,
+        "gradeScore": safe_float(value.get("gradeScore"), 0.0)
+        if value.get("gradeScore") is not None
+        else None,
+        "timestamp": trim_text(value.get("timestamp")) or None,
+        "words": normalize_public_words(value.get("words")),
+    }
+
+
+class PublicIndexerCache:
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+        self.epoch_entries: Dict[int, Dict[str, Dict[str, Any]]] = {}
+
+    def get_epoch_entries(self, epoch: int) -> Dict[str, Dict[str, Any]]:
+        if epoch in self.epoch_entries:
+            return self.epoch_entries[epoch]
+
+        entries: Dict[str, Dict[str, Any]] = {}
+        continuation_token = None
+
+        while True:
+            query = f"limit=100{f'&continuationToken={continuation_token}' if continuation_token else ''}"
+            url = f"{self.base_url}/Epoch/{epoch}/Flips?{query}"
+            payload = fetch_json(url)
+            items = payload.get("result") or []
+
+            for item in items:
+                normalized = normalize_public_flip_entry(item)
+                if normalized:
+                    entries[normalized["cid"]] = normalized
+
+            continuation_token = trim_text(payload.get("continuationToken"))
+            if not continuation_token:
+                break
+
+        self.epoch_entries[epoch] = entries
+        print(f"Indexed public flip metadata for epoch {epoch}: {len(entries)} flips")
+        return entries
+
+    def get_flip(self, task_id: str, task_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        details = normalize_details_record(task_data.get("details"))
+        epoch = details.get("epoch")
+        if not epoch:
+            return None
+
+        cid = trim_text(task_id)
+        if cid.startswith("_flip_"):
+            cid = cid[len("_flip_") :]
+        if not cid:
+            return None
+
+        return self.get_epoch_entries(epoch).get(cid)
 
 
 def is_valid_cached_download(path: Path) -> bool:
@@ -131,7 +271,14 @@ def sorted_slot_keys(images_map: Dict[str, str]) -> List[str]:
     return [k for _, k in sorted((parse_key(k) for k in images_map.keys()))]
 
 
-def build_flip(task_id: str, task_data: dict, image_bytes: Dict[str, bytes]) -> dict:
+def build_flip(
+    task_id: str,
+    task_data: dict,
+    image_bytes: Dict[str, bytes],
+    *,
+    split: str,
+    public_entry: Optional[Dict[str, Any]] = None,
+) -> dict:
     images_map = task_data.get("images") or {}
     if not isinstance(images_map, dict):
         raise ValueError(f"Invalid images map for {task_id}")
@@ -201,6 +348,7 @@ def build_flip(task_id: str, task_data: dict, image_bytes: Dict[str, bytes]) -> 
         "images": ordered_images,
         "orders": [left_stack, right_stack],
         "sourceDataset": DATASET_ID,
+        "sourceSplit": split,
     }
     if expected_answer:
         result["expectedAnswer"] = expected_answer
@@ -210,11 +358,49 @@ def build_flip(task_id: str, task_data: dict, image_bytes: Dict[str, bytes]) -> 
         result["consensusStrength"] = expected_strength
     if consensus_votes:
         result["consensusVotes"] = consensus_votes
+
+    details = normalize_details_record(task_data.get("details"))
+    public_words = (
+        list(public_entry.get("words") or [])
+        if isinstance(public_entry, dict)
+        else []
+    )
+    if public_words:
+        result["words"] = public_words
+
+    source_stats = {
+        "epoch": (public_entry or {}).get("epoch") or details.get("epoch"),
+        "author": (public_entry or {}).get("author") or details.get("author"),
+        "status": (public_entry or {}).get("status"),
+        "shortRespCount": (public_entry or {}).get("shortRespCount"),
+        "longRespCount": (public_entry or {}).get("longRespCount"),
+        "wrongWords": (public_entry or {}).get("wrongWords"),
+        "wrongWordsVotes": (public_entry or {}).get("wrongWordsVotes"),
+        "withPrivatePart": (public_entry or {}).get("withPrivatePart"),
+        "grade": (public_entry or {}).get("grade"),
+        "gradeScore": (public_entry or {}).get("gradeScore"),
+        "createdAt": details.get("createdAt"),
+        "block": details.get("block"),
+        "tx": details.get("tx"),
+    }
+    normalized_source_stats = {
+        key: value
+        for key, value in source_stats.items()
+        if value not in (None, "", [])
+    }
+    if normalized_source_stats:
+        result["sourceStats"] = normalized_source_stats
+
     return result
 
 
 def process_parquet_files(
-    parquet_files: Iterable[Path], max_flips: int, skip_flips: int
+    parquet_files: Iterable[Path],
+    *,
+    split: str,
+    max_flips: int,
+    skip_flips: int,
+    public_indexer_cache: Optional[PublicIndexerCache],
 ) -> Tuple[List[dict], int]:
     tasks: Dict[str, dict] = {}
     completed: List[dict] = []
@@ -256,7 +442,17 @@ def process_parquet_files(
                 needed = set(images_map.values())
                 if needed and needed.issubset(record["image_bytes"].keys()):
                     try:
-                        flip = build_flip(task_id, record["task_data"], record["image_bytes"])
+                        flip = build_flip(
+                            task_id,
+                            record["task_data"],
+                            record["image_bytes"],
+                            split=split,
+                            public_entry=public_indexer_cache.get_flip(
+                                task_id, record["task_data"]
+                            )
+                            if public_indexer_cache
+                            else None,
+                        )
                         if produced >= skip_flips:
                             completed.append(flip)
                         produced += 1
@@ -268,6 +464,48 @@ def process_parquet_files(
                         return completed, malformed
 
     return completed, malformed
+
+
+def write_output_payload(output_path: Path, payload: Dict[str, Any], chunk_size: int) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    flips = list(payload.get("flips") or [])
+    if chunk_size > 0 and len(flips) > chunk_size:
+        part_entries = []
+        for index in range(0, len(flips), chunk_size):
+            part_number = (index // chunk_size) + 1
+            part_flips = flips[index : index + chunk_size]
+            part_path = output_path.with_name(
+                f"{output_path.stem}.part-{part_number}{output_path.suffix}"
+            )
+            with part_path.open("w", encoding="utf-8") as fp:
+                json.dump(
+                    {
+                        "source": payload.get("source"),
+                        "split": payload.get("split"),
+                        "count": len(part_flips),
+                        "skip": payload.get("skip"),
+                        "flips": part_flips,
+                        "malformedRows": payload.get("malformedRows"),
+                    },
+                    fp,
+                    ensure_ascii=False,
+                )
+            part_entries.append({"file": part_path.name, "count": len(part_flips)})
+
+        manifest = {
+            key: value
+            for key, value in payload.items()
+            if key != "flips"
+        }
+        manifest["parts"] = part_entries
+
+        with output_path.open("w", encoding="utf-8") as fp:
+            json.dump(manifest, fp, ensure_ascii=False)
+        return
+
+    with output_path.open("w", encoding="utf-8") as fp:
+        json.dump(payload, fp, ensure_ascii=False)
 
 
 def main() -> int:
@@ -304,6 +542,22 @@ def main() -> int:
         default=None,
         help="output json file path",
     )
+    parser.add_argument(
+        "--public-indexer-url",
+        default=DEFAULT_PUBLIC_INDEXER_URL,
+        help="public Idena indexer API base URL for keyword/stat enrichment",
+    )
+    parser.add_argument(
+        "--disable-public-indexer-enrichment",
+        action="store_true",
+        help="disable public Idena indexer enrichment for keywords and flip stats",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=0,
+        help="optional number of flips per output part file when writing large exports",
+    )
     args = parser.parse_args()
 
     if args.max_flips < 1:
@@ -311,6 +565,9 @@ def main() -> int:
         return 2
     if args.skip_flips < 0:
         print("--skip-flips must be >= 0", file=sys.stderr)
+        return 2
+    if args.chunk_size < 0:
+        print("--chunk-size must be >= 0", file=sys.stderr)
         return 2
 
     parquet_paths = list_parquet_paths(args.split)
@@ -327,8 +584,17 @@ def main() -> int:
         local_files.append(local)
 
     print("Converting rows...")
+    public_indexer_cache = (
+        None
+        if args.disable_public_indexer_enrichment
+        else PublicIndexerCache(args.public_indexer_url)
+    )
     flips, malformed = process_parquet_files(
-        local_files, args.max_flips, args.skip_flips
+        local_files,
+        split=args.split,
+        max_flips=args.max_flips,
+        skip_flips=args.skip_flips,
+        public_indexer_cache=public_indexer_cache,
     )
     if not flips:
         print("No flips were converted", file=sys.stderr)
@@ -340,8 +606,6 @@ def main() -> int:
         else Path("data")
         / f"flip-challenge-{args.split}-{len(flips)}-decoded.json"
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     payload = {
         "source": DATASET_ID,
         "split": args.split,
@@ -351,8 +615,7 @@ def main() -> int:
         "malformedRows": malformed,
     }
 
-    with output_path.open("w", encoding="utf-8") as fp:
-        json.dump(payload, fp, ensure_ascii=False)
+    write_output_payload(output_path, payload, args.chunk_size)
 
     print(f"Saved: {output_path}")
     print(f"Flips: {len(flips)}")

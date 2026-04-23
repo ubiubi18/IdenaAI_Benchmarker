@@ -983,6 +983,15 @@ export async function solveValidationSessionWithAi({
       rightImage,
       leftFrames,
       rightFrames,
+      words: Array.isArray(flip.words) ? flip.words : [],
+      expectedAnswer: flip.expectedAnswer || null,
+      expectedStrength: flip.expectedStrength || null,
+      consensusAnswer: flip.consensusAnswer || null,
+      consensusStrength: flip.consensusStrength || null,
+      consensusVotes: flip.consensusVotes || null,
+      sourceDataset: flip.sourceDataset || null,
+      sourceSplit: flip.sourceSplit || null,
+      sourceStats: flip.sourceStats || null,
     }
 
     if (onProgress) {
@@ -996,6 +1005,15 @@ export async function solveValidationSessionWithAi({
         rightImage,
         leftFrames,
         rightFrames,
+        words: payloadFlip.words,
+        expectedAnswer: payloadFlip.expectedAnswer,
+        expectedStrength: payloadFlip.expectedStrength,
+        consensusAnswer: payloadFlip.consensusAnswer,
+        consensusStrength: payloadFlip.consensusStrength,
+        consensusVotes: payloadFlip.consensusVotes,
+        sourceDataset: payloadFlip.sourceDataset,
+        sourceSplit: payloadFlip.sourceSplit,
+        sourceStats: payloadFlip.sourceStats,
       })
     }
 
@@ -1015,6 +1033,15 @@ export async function solveValidationSessionWithAi({
         rightImage: payloadFlip.rightImage,
         leftFrames: payloadFlip.leftFrames,
         rightFrames: payloadFlip.rightFrames,
+        words: payloadFlip.words,
+        expectedAnswer: payloadFlip.expectedAnswer,
+        expectedStrength: payloadFlip.expectedStrength,
+        consensusAnswer: payloadFlip.consensusAnswer,
+        consensusStrength: payloadFlip.consensusStrength,
+        consensusVotes: payloadFlip.consensusVotes,
+        sourceDataset: payloadFlip.sourceDataset,
+        sourceSplit: payloadFlip.sourceSplit,
+        sourceStats: payloadFlip.sourceStats,
       })
     }
 
@@ -1091,6 +1118,15 @@ export async function solveValidationSessionWithAi({
       rightImage: payloadFlip.rightImage,
       leftFrames: payloadFlip.leftFrames,
       rightFrames: payloadFlip.rightFrames,
+      words: payloadFlip.words,
+      expectedAnswer: payloadFlip.expectedAnswer,
+      expectedStrength: payloadFlip.expectedStrength,
+      consensusAnswer: payloadFlip.consensusAnswer,
+      consensusStrength: payloadFlip.consensusStrength,
+      consensusVotes: payloadFlip.consensusVotes,
+      sourceDataset: payloadFlip.sourceDataset,
+      sourceSplit: payloadFlip.sourceSplit,
+      sourceStats: payloadFlip.sourceStats,
       rawAnswerBeforeRemap: solved.rawAnswerBeforeRemap,
       finalAnswerAfterRemap: solved.finalAnswerAfterRemap,
       sideSwapped: solved.sideSwapped,

@@ -5500,14 +5500,103 @@ function buildValidationReportReviewPrompt({keywords = []} = {}) {
     '- the flip uses an obvious waking-up template',
     '- the flip ends with a thumbs up/down style answer cue',
     '- the keywords only appear inside a page, screen, painting, poster, or printed collage',
+    '- report text or symbols only when they actively reveal frame order, the final answer, or are required to solve the flip',
+    '- ignore incidental source watermarks, meme branding, platform logos, reaction-image stamps, or copyright marks when they are not needed to solve the flip',
+    '- do not report merely because an internet meme or recycled image contains a watermark or logo',
     'Do not report merely because the story is awkward, low quality, or hard.',
     'If you are uncertain, choose "approve".',
     'Return JSON only with this shape:',
-    '{"decision":"approve"|"report","confidence":0.0,"reason":"short reason","triggeredRules":["keyword_missing"]}',
+    '{"decision":"approve"|"report","confidence":0.0,"reason":"short reason","triggeredRules":["keyword_missing"|"text_dependency"|"order_labels"|"inappropriate_content"|"unrelated_stories"|"waking_template"|"answer_cue"|"keywords_only_inside_media"]}',
     '',
     'Keywords:',
     ...keywordLines,
   ].join('\n')
+}
+
+function normalizeValidationReportTriggeredRule(value) {
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase()
+
+  if (!raw) {
+    return null
+  }
+
+  if (/(keyword.*missing|missing.*keyword|keyword_missing)/u.test(raw)) {
+    return 'keyword_missing'
+  }
+
+  if (
+    /(order_labels|frame.*order|order.*text|arrows?|labels?|numbers?|sequence.*text)/u.test(
+      raw
+    )
+  ) {
+    return 'order_labels'
+  }
+
+  if (/(text.*depend|read.*text|text_dependency)/u.test(raw)) {
+    return 'text_dependency'
+  }
+
+  if (
+    /(adult|graphic|gore|nsfw|inappropriate|sexual|violence|inappropriate_content)/u.test(
+      raw
+    )
+  ) {
+    return 'inappropriate_content'
+  }
+
+  if (/(unrelated|multiple.*stor|multi.*stor|incoherent)/u.test(raw)) {
+    return 'unrelated_stories'
+  }
+
+  if (/(waking|wake.?up|waking_template)/u.test(raw)) {
+    return 'waking_template'
+  }
+
+  if (/(thumb|answer.?cue|up.?down|final.?answer)/u.test(raw)) {
+    return 'answer_cue'
+  }
+
+  if (/(poster|screen|painting|collage|page|inside_media)/u.test(raw)) {
+    return 'keywords_only_inside_media'
+  }
+
+  if (/(watermark|logo|branding|copyright|meme|stamp)/u.test(raw)) {
+    return 'incidental_watermark'
+  }
+
+  return raw
+}
+
+function shouldIgnoreIncidentalWatermarkReport({
+  decision,
+  reason = '',
+  triggeredRules = [],
+} = {}) {
+  if (decision !== 'report') {
+    return false
+  }
+
+  const seriousRules = triggeredRules.filter(
+    (rule) => rule && rule !== 'incidental_watermark'
+  )
+
+  if (seriousRules.length > 0) {
+    return false
+  }
+
+  const reasonText = String(reason || '')
+    .trim()
+    .toLowerCase()
+
+  if (!/(watermark|logo|branding|copyright|meme|stamp)/u.test(reasonText)) {
+    return triggeredRules.includes('incidental_watermark')
+  }
+
+  return !/(frame|order|sequence|answer|keyword|missing|adult|graphic|thumb|arrow|number|label|solve|read)/u.test(
+    reasonText
+  )
 }
 
 function normalizeValidationReportDecision(parsed) {
@@ -5536,10 +5625,29 @@ function normalizeValidationReportDecision(parsed) {
 
   const triggeredRules = Array.isArray(parsed && parsed.triggeredRules)
     ? parsed.triggeredRules
-        .map((item) => String(item || '').trim())
+        .map(normalizeValidationReportTriggeredRule)
         .filter(Boolean)
+        .filter((item, index, list) => list.indexOf(item) === index)
         .slice(0, 8)
     : []
+
+  if (
+    shouldIgnoreIncidentalWatermarkReport({
+      decision,
+      reason,
+      triggeredRules,
+    })
+  ) {
+    return {
+      decision: 'approve',
+      confidence: Math.min(
+        normalizeConfidence(parsed && parsed.confidence),
+        0.25
+      ),
+      reason: 'incidental watermark ignored',
+      triggeredRules: [],
+    }
+  }
 
   return {
     decision,

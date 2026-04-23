@@ -374,6 +374,58 @@ describe('createAiProviderBridge', () => {
     })
   })
 
+  it('ignores incidental watermark-only report suggestions during automated review', async () => {
+    const invokeProvider = jest.fn().mockResolvedValue({
+      rawText:
+        '{"decision":"report","confidence":0.88,"reason":"Meme watermark in the corner","triggeredRules":["watermark_overlay"]}',
+      usage: {
+        promptTokens: 120,
+        completionTokens: 24,
+        totalTokens: 144,
+      },
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {
+      invokeProvider,
+    })
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.reviewValidationReports({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      benchmarkProfile: 'custom',
+      requestTimeoutMs: 1000,
+      maxRetries: 0,
+      flips: [
+        {
+          hash: 'flip-watermark',
+          images: [
+            'data:image/png;base64,AAA',
+            'data:image/png;base64,BBB',
+            'data:image/png;base64,CCC',
+            'data:image/png;base64,DDD',
+          ],
+          keywords: [
+            {name: 'lamp', desc: 'light source'},
+            {name: 'cat', desc: 'animal'},
+          ],
+        },
+      ],
+    })
+
+    expect(result.summary).toMatchObject({
+      totalFlips: 1,
+      approved: 1,
+      reported: 0,
+    })
+    expect(result.results[0]).toMatchObject({
+      hash: 'flip-watermark',
+      decision: 'approve',
+      reason: 'incidental watermark ignored',
+      triggeredRules: [],
+    })
+  })
+
   it('remaps right-biased answers when side order is swapped', async () => {
     const invokeProvider = jest
       .fn()

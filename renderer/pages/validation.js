@@ -124,7 +124,10 @@ import {
   shouldShowValidationAiUi,
   shouldShowValidationLocalAiUi,
 } from '../shared/utils/validation-ai-auto'
-import {hasMissingRehearsalSeedMeta} from '../screens/validation/rehearsal-benchmark'
+import {
+  computeRehearsalBenchmarkSummary,
+  hasMissingRehearsalSeedMeta,
+} from '../screens/validation/rehearsal-benchmark'
 
 const previewAiSampleSet = require('../../samples/flips/flip-challenge-test-5-decoded-labeled.json')
 
@@ -1388,6 +1391,12 @@ function ValidationSession({
     state.context?.shortFlips,
   ])
 
+  const rehearsalBenchmarkSummary = useMemo(
+    () =>
+      isRehearsalNodeSession ? computeRehearsalBenchmarkSummary(state) : null,
+    [isRehearsalNodeSession, state]
+  )
+
   useEffect(() => {
     if (
       !localAiCaptureEnabled ||
@@ -1845,6 +1854,23 @@ function ValidationSession({
                 total: event.total,
               })
             )
+            setAiActiveFlip({
+              hash: event.hash,
+              leftImage: event.leftImage,
+              rightImage: event.rightImage,
+              words: event.words,
+              expectedAnswer: event.expectedAnswer,
+              expectedStrength: event.expectedStrength,
+              consensusAnswer: event.consensusAnswer,
+              consensusStrength: event.consensusStrength,
+              consensusVotes: event.consensusVotes,
+              sourceDataset: event.sourceDataset,
+              sourceSplit: event.sourceSplit,
+              sourceStats: event.sourceStats,
+              index: event.index,
+              total: event.total,
+              sessionType: event.sessionType,
+            })
             return
           }
 
@@ -1857,6 +1883,15 @@ function ValidationSession({
               hash: event.hash,
               leftImage: event.leftImage,
               rightImage: event.rightImage,
+              words: event.words,
+              expectedAnswer: event.expectedAnswer,
+              expectedStrength: event.expectedStrength,
+              consensusAnswer: event.consensusAnswer,
+              consensusStrength: event.consensusStrength,
+              consensusVotes: event.consensusVotes,
+              sourceDataset: event.sourceDataset,
+              sourceSplit: event.sourceSplit,
+              sourceStats: event.sourceStats,
               index: event.index,
               total: event.total,
               sessionType: event.sessionType,
@@ -1879,6 +1914,15 @@ function ValidationSession({
               hash: event.hash,
               leftImage: event.leftImage,
               rightImage: event.rightImage,
+              words: event.words,
+              expectedAnswer: event.expectedAnswer,
+              expectedStrength: event.expectedStrength,
+              consensusAnswer: event.consensusAnswer,
+              consensusStrength: event.consensusStrength,
+              consensusVotes: event.consensusVotes,
+              sourceDataset: event.sourceDataset,
+              sourceSplit: event.sourceSplit,
+              sourceStats: event.sourceStats,
               answer: event.answer,
               latencyMs: event.latencyMs,
               confidence: event.confidence,
@@ -1905,6 +1949,15 @@ function ValidationSession({
               error: event.error,
               index: event.index,
               total: event.total,
+              words: event.words,
+              expectedAnswer: event.expectedAnswer,
+              expectedStrength: event.expectedStrength,
+              consensusAnswer: event.consensusAnswer,
+              consensusStrength: event.consensusStrength,
+              consensusVotes: event.consensusVotes,
+              sourceDataset: event.sourceDataset,
+              sourceSplit: event.sourceSplit,
+              sourceStats: event.sourceStats,
               rawAnswerBeforeRemap: event.rawAnswerBeforeRemap,
               finalAnswerAfterRemap: event.finalAnswerAfterRemap,
               sideSwapped: event.sideSwapped,
@@ -3210,7 +3263,7 @@ function ValidationSession({
           onCheck={handleRunLocalAiRecommendation}
         />
       ) : null}
-      {(isShortSession(state) || isLongSessionFlips(state)) &&
+      {(isShortSession(state) || state.matches('longSession')) &&
         showValidationAiUi && (
           <AiTelemetryPanel
             isShortSessionMode={isShortSession(state)}
@@ -3218,6 +3271,7 @@ function ValidationSession({
             aiProgress={aiProgress}
             activeFlip={aiActiveFlip}
             liveTimeline={aiLiveTimeline}
+            rehearsalBenchmarkSummary={rehearsalBenchmarkSummary}
           />
         )}
       <ActionBar>
@@ -3597,17 +3651,84 @@ function formatAiSolveProgressSuffix(item = {}) {
   return ''
 }
 
+function formatFlipKeywordSummary(words = []) {
+  const normalized = Array.isArray(words)
+    ? words
+        .map((word) => String(word?.name || word?.desc || '').trim())
+        .filter(Boolean)
+        .slice(0, 2)
+    : []
+
+  return normalized.length ? normalized.join(' / ') : ''
+}
+
+function formatFlipConsensusSummary(consensusVotes) {
+  const total = Number(consensusVotes?.total) || 0
+  if (total < 1) {
+    return ''
+  }
+
+  return `votes ${Number(consensusVotes?.left) || 0}/${
+    Number(consensusVotes?.right) || 0
+  }/${Number(consensusVotes?.reported) || 0}`
+}
+
+function formatFlipSourceStatsSummary(sourceStats) {
+  if (!sourceStats) {
+    return ''
+  }
+
+  const parts = []
+
+  if (sourceStats.status) {
+    parts.push(String(sourceStats.status))
+  }
+  if (
+    Number.isFinite(Number(sourceStats.shortRespCount)) ||
+    Number.isFinite(Number(sourceStats.longRespCount))
+  ) {
+    parts.push(
+      `resp ${Number(sourceStats.shortRespCount) || 0}/${
+        Number(sourceStats.longRespCount) || 0
+      }`
+    )
+  }
+  if (Number.isFinite(Number(sourceStats.wrongWordsVotes))) {
+    parts.push(`wrongWords ${Number(sourceStats.wrongWordsVotes) || 0}`)
+  }
+  if (Number.isFinite(Number(sourceStats.grade))) {
+    const gradeScore = Number.isFinite(Number(sourceStats.gradeScore))
+      ? `:${Number(sourceStats.gradeScore).toFixed(2)}`
+      : ''
+    parts.push(`grade ${Number(sourceStats.grade)}${gradeScore}`)
+  }
+
+  return parts.join(' | ')
+}
+
 function AiTelemetryPanel({
   isShortSessionMode,
   telemetry,
   aiProgress,
   activeFlip,
   liveTimeline = [],
+  rehearsalBenchmarkSummary = null,
 }) {
   const cardBg = isShortSessionMode ? 'whiteAlpha.100' : 'gray.50'
   const cardBorder = isShortSessionMode ? 'whiteAlpha.300' : 'gray.100'
   const titleColor = isShortSessionMode ? 'whiteAlpha.900' : 'brandGray.500'
   const bodyColor = isShortSessionMode ? 'whiteAlpha.800' : 'muted'
+  const sessionType = String(
+    telemetry?.sessionType ||
+      activeFlip?.sessionType ||
+      (isShortSessionMode ? 'short' : 'long')
+  ).toLowerCase()
+  const sessionStats =
+    rehearsalBenchmarkSummary &&
+    rehearsalBenchmarkSummary.sessions &&
+    rehearsalBenchmarkSummary.sessions[sessionType]
+      ? rehearsalBenchmarkSummary.sessions[sessionType]
+      : null
 
   return (
     <Stack
@@ -3714,6 +3835,46 @@ function AiTelemetryPanel({
             </Stack>
           )}
 
+          {rehearsalBenchmarkSummary?.available && (
+            <Stack spacing={1} pt={1}>
+              <Text fontSize="xs" color={bodyColor}>
+                {`benchmark overall ${rehearsalBenchmarkSummary.correct}/${
+                  rehearsalBenchmarkSummary.total
+                } correct, answered ${rehearsalBenchmarkSummary.answered}/${
+                  rehearsalBenchmarkSummary.total
+                }, keywords ${
+                  rehearsalBenchmarkSummary.keywordReady?.total || 0
+                }/${rehearsalBenchmarkSummary.total}, source-stats ${
+                  rehearsalBenchmarkSummary.sourceStatsReady?.total || 0
+                }/${rehearsalBenchmarkSummary.total}`}
+              </Text>
+              {sessionStats && (
+                <Text fontSize="xs" color={bodyColor}>
+                  {`${sessionType} session ${sessionStats.correct}/${
+                    sessionStats.total
+                  } correct, answered ${sessionStats.answered}/${
+                    sessionStats.total
+                  }, keywords ${sessionStats.keywordReady || 0}/${
+                    sessionStats.total
+                  }, source-stats ${sessionStats.sourceStatsReady || 0}/${
+                    sessionStats.total
+                  }`}
+                </Text>
+              )}
+              {rehearsalBenchmarkSummary.rawConsensusAvailable && (
+                <Text fontSize="xs" color={bodyColor}>
+                  {`consensus subset ${
+                    rehearsalBenchmarkSummary.consensusBacked.correct
+                  }/${
+                    rehearsalBenchmarkSummary.consensusBacked.total
+                  } correct (${toPct(
+                    rehearsalBenchmarkSummary.consensusBacked.coverage
+                  )} coverage)`}
+                </Text>
+              )}
+            </Stack>
+          )}
+
           {activeFlip && (
             <Box
               borderWidth="1px"
@@ -3780,6 +3941,27 @@ function AiTelemetryPanel({
                   )}
                 </Stack>
               )}
+              {(formatFlipKeywordSummary(activeFlip.words) ||
+                formatFlipConsensusSummary(activeFlip.consensusVotes) ||
+                formatFlipSourceStatsSummary(activeFlip.sourceStats)) && (
+                <Stack spacing={1} mt={1}>
+                  {formatFlipKeywordSummary(activeFlip.words) && (
+                    <Text fontSize="xs" color={bodyColor}>
+                      {`keywords ${formatFlipKeywordSummary(activeFlip.words)}`}
+                    </Text>
+                  )}
+                  {formatFlipConsensusSummary(activeFlip.consensusVotes) && (
+                    <Text fontSize="xs" color={bodyColor}>
+                      {formatFlipConsensusSummary(activeFlip.consensusVotes)}
+                    </Text>
+                  )}
+                  {formatFlipSourceStatsSummary(activeFlip.sourceStats) && (
+                    <Text fontSize="xs" color={bodyColor}>
+                      {formatFlipSourceStatsSummary(activeFlip.sourceStats)}
+                    </Text>
+                  )}
+                </Stack>
+              )}
             </Box>
           )}
 
@@ -3814,6 +3996,21 @@ function AiTelemetryPanel({
                 {formatAiDecisionReasoning(event) && (
                   <Text fontSize="xs" color={bodyColor} noOfLines={2}>
                     {formatAiDecisionReasoning(event)}
+                  </Text>
+                )}
+                {(formatFlipKeywordSummary(event.words) ||
+                  formatFlipConsensusSummary(event.consensusVotes) ||
+                  formatFlipSourceStatsSummary(event.sourceStats)) && (
+                  <Text fontSize="xs" color={bodyColor} noOfLines={2}>
+                    {[
+                      formatFlipKeywordSummary(event.words)
+                        ? `kw ${formatFlipKeywordSummary(event.words)}`
+                        : '',
+                      formatFlipConsensusSummary(event.consensusVotes),
+                      formatFlipSourceStatsSummary(event.sourceStats),
+                    ]
+                      .filter(Boolean)
+                      .join(' | ')}
                   </Text>
                 )}
               </Stack>

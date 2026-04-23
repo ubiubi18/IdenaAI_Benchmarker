@@ -34,6 +34,7 @@ const VALIDATION_DEVNET_MIN_LEAD_SECONDS = 20
 const VALIDATION_DEVNET_DEFAULT_NETWORK_BASE = 33000
 const VALIDATION_DEVNET_DEFAULT_INITIAL_EPOCH = 1
 const VALIDATION_DEVNET_MAX_SEED_FLIP_COUNT = 96
+const VALIDATION_DEVNET_DEFAULT_SEED_POOL_TARGET = 500
 const VALIDATION_DEVNET_DNA_BASE = 10n ** 18n
 const VALIDATION_DEVNET_BALANCE = (
   1000n * VALIDATION_DEVNET_DNA_BASE
@@ -425,19 +426,91 @@ function hasValidationDevnetSeedConsensusVotes(flip) {
   )
 }
 
+function hasValidationDevnetSeedWords(flip) {
+  return (
+    normalizeValidationDevnetSeedWords(flip?.words || flip?.keywords, {
+      keywordA: flip?.keywordA || flip?.keyword_a,
+      keywordB: flip?.keywordB || flip?.keyword_b,
+      keyword1: flip?.keyword1 || flip?.keyword_1,
+      keyword2: flip?.keyword2 || flip?.keyword_2,
+    }).length >= 2
+  )
+}
+
+function shuffleValidationDevnetSeedFlips(flips = []) {
+  const nextFlips = Array.isArray(flips) ? flips.slice() : []
+
+  for (let index = nextFlips.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    const current = nextFlips[index]
+    nextFlips[index] = nextFlips[swapIndex]
+    nextFlips[swapIndex] = current
+  }
+
+  return nextFlips
+}
+
 function prioritizeValidationDevnetSeedFlips(flips = []) {
-  const consensusBacked = []
+  const keywordAndConsensus = []
+  const keywordOnly = []
+  const consensusOnly = []
   const benchmarkOnly = []
 
   ;(Array.isArray(flips) ? flips : []).forEach((flip) => {
-    if (hasValidationDevnetSeedConsensusVotes(flip)) {
-      consensusBacked.push(flip)
+    const hasConsensus = hasValidationDevnetSeedConsensusVotes(flip)
+    const hasWords = hasValidationDevnetSeedWords(flip)
+
+    if (hasWords && hasConsensus) {
+      keywordAndConsensus.push(flip)
+    } else if (hasWords) {
+      keywordOnly.push(flip)
+    } else if (hasConsensus) {
+      consensusOnly.push(flip)
     } else {
       benchmarkOnly.push(flip)
     }
   })
 
-  return consensusBacked.concat(benchmarkOnly)
+  return shuffleValidationDevnetSeedFlips(keywordAndConsensus)
+    .concat(shuffleValidationDevnetSeedFlips(keywordOnly))
+    .concat(shuffleValidationDevnetSeedFlips(consensusOnly))
+    .concat(shuffleValidationDevnetSeedFlips(benchmarkOnly))
+}
+
+function normalizeValidationDevnetSeedSourceStats(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const normalized = {
+    epoch: normalizePositiveInteger(value.epoch, null),
+    author: String(value.author || '').trim() || null,
+    status: String(value.status || '').trim() || null,
+    shortRespCount: Number.isFinite(Number(value.shortRespCount))
+      ? Number(value.shortRespCount)
+      : null,
+    longRespCount: Number.isFinite(Number(value.longRespCount))
+      ? Number(value.longRespCount)
+      : null,
+    wrongWords: value.wrongWords === true,
+    wrongWordsVotes: Number.isFinite(Number(value.wrongWordsVotes))
+      ? Number(value.wrongWordsVotes)
+      : null,
+    withPrivatePart: value.withPrivatePart === true,
+    grade: Number.isFinite(Number(value.grade)) ? Number(value.grade) : null,
+    gradeScore: Number.isFinite(Number(value.gradeScore))
+      ? Number(value.gradeScore)
+      : null,
+    createdAt: String(value.createdAt || '').trim() || null,
+    block: Number.isFinite(Number(value.block)) ? Number(value.block) : null,
+    tx: String(value.tx || '').trim() || null,
+  }
+
+  return Object.values(normalized).some(
+    (entry) => entry !== null && entry !== false
+  )
+    ? normalized
+    : null
 }
 
 function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
@@ -500,6 +573,9 @@ function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
         consensusStrength,
         consensusVotes,
         words,
+        sourceStats: normalizeValidationDevnetSeedSourceStats(
+          flip?.sourceStats || flip?.stats
+        ),
         sourceDataset: String(
           flip?.sourceDataset || flip?.source_dataset || ''
         ).trim(),
@@ -722,6 +798,7 @@ function collectSeedFlipCandidate(
             Array.isArray(existingFlip.words) && existingFlip.words.length > 0
               ? existingFlip.words
               : flip.words,
+          sourceStats: existingFlip.sourceStats || flip.sourceStats,
           sourceDataset: existingFlip.sourceDataset || flip.sourceDataset,
           sourceSplit: existingFlip.sourceSplit || flip.sourceSplit,
         }
@@ -827,6 +904,7 @@ async function collectValidationDevnetPreparedSeedFlips(
               record?.consensusVotes ||
               record?.votes,
             words,
+            sourceStats: record?.source_stats || record?.sourceStats || null,
             sourceDataset: String(
               record?.source_dataset || record?.sourceDataset || ''
             ).trim(),
@@ -863,6 +941,54 @@ async function collectValidationDevnetPreparedSeedFlips(
   }
 }
 
+async function loadValidationDevnetSeedPayload(candidatePath, visitedPaths) {
+  const resolvedPath = path.resolve(candidatePath)
+  const nextVisitedPaths = new Set(visitedPaths || [])
+
+  if (nextVisitedPaths.has(resolvedPath)) {
+    throw new Error(`Circular seed payload manifest detected: ${resolvedPath}`)
+  }
+
+  nextVisitedPaths.add(resolvedPath)
+
+  const payload = await fs.readJson(resolvedPath)
+
+  if (!payload || Array.isArray(payload) || !Array.isArray(payload.parts)) {
+    return payload
+  }
+
+  const flips = []
+
+  for (const part of payload.parts) {
+    const relativePartPath = String(
+      (part && typeof part === 'object' ? part.file || part.path : part) || ''
+    ).trim()
+
+    if (relativePartPath) {
+      // eslint-disable-next-line no-await-in-loop
+      const partPayload = await loadValidationDevnetSeedPayload(
+        path.resolve(path.dirname(resolvedPath), relativePartPath),
+        nextVisitedPaths
+      )
+      let partFlips = []
+
+      if (Array.isArray(partPayload)) {
+        partFlips = partPayload
+      } else if (Array.isArray(partPayload?.flips)) {
+        partFlips = partPayload.flips
+      }
+
+      flips.push(...partFlips)
+    }
+  }
+
+  return {
+    ...payload,
+    flips,
+    count: flips.length,
+  }
+}
+
 async function loadValidationDevnetSeedFlips({
   seedFile,
   seedFlipCount,
@@ -870,6 +996,10 @@ async function loadValidationDevnetSeedFlips({
   validationResultsPath,
 } = {}) {
   const desiredCount = normalizeSeedFlipCount(seedFlipCount)
+  const desiredPoolCount = Math.max(
+    desiredCount,
+    VALIDATION_DEVNET_DEFAULT_SEED_POOL_TARGET
+  )
   const candidates = uniqStrings([
     seedFile,
     ...VALIDATION_DEVNET_DEFAULT_SEED_FILES,
@@ -894,7 +1024,7 @@ async function loadValidationDevnetSeedFlips({
         // eslint-disable-next-line no-await-in-loop
         const result = await collectValidationDevnetPreparedSeedFlips(
           candidatePath,
-          desiredCount,
+          desiredPoolCount,
           collectedFlips,
           seenHashes,
           reviewedFlipHashes
@@ -906,7 +1036,7 @@ async function loadValidationDevnetSeedFlips({
         }
       } else {
         // eslint-disable-next-line no-await-in-loop
-        const payload = await fs.readJson(candidatePath)
+        const payload = await loadValidationDevnetSeedPayload(candidatePath)
         let flips = []
 
         if (Array.isArray(payload)) {
@@ -934,7 +1064,7 @@ async function loadValidationDevnetSeedFlips({
             )
 
             if (
-              collectedFlips.length >= desiredCount &&
+              collectedFlips.length >= desiredPoolCount &&
               prioritizeValidationDevnetSeedFlips(collectedFlips).filter(
                 hasValidationDevnetSeedConsensusVotes
               ).length >= minimumConsensusBackedCount
@@ -2642,6 +2772,7 @@ module.exports = {
   canConnectValidationDevnetStatus,
   shouldConnectValidationDevnetStatus,
   buildValidationDevnetSeedFlipMetaByHash,
+  loadValidationDevnetSeedPayload,
   createValidationDevnetController,
   createDefaultValidationDevnetController,
 }

@@ -163,6 +163,54 @@ async function decodePanelSource(panelSource, samplePath) {
   }
 }
 
+async function loadHumanTeacherSamplePayload(samplePath, visitedPaths) {
+  const resolvedPath = path.resolve(samplePath)
+  const nextVisitedPaths = new Set(visitedPaths || [])
+
+  if (nextVisitedPaths.has(resolvedPath)) {
+    throw new Error(`Circular human-teacher sample manifest: ${resolvedPath}`)
+  }
+
+  nextVisitedPaths.add(resolvedPath)
+
+  const raw = await fs.readJson(resolvedPath)
+
+  if (!raw || Array.isArray(raw) || !Array.isArray(raw.parts)) {
+    return raw
+  }
+
+  const flips = []
+
+  for (const part of raw.parts) {
+    const relativePartPath = trimText(
+      part && typeof part === 'object' ? part.file || part.path : part
+    )
+
+    if (relativePartPath) {
+      // eslint-disable-next-line no-await-in-loop
+      const partPayload = await loadHumanTeacherSamplePayload(
+        path.resolve(path.dirname(resolvedPath), relativePartPath),
+        nextVisitedPaths
+      )
+      let partFlips = []
+
+      if (Array.isArray(partPayload)) {
+        partFlips = partPayload
+      } else if (Array.isArray(partPayload?.flips)) {
+        partFlips = partPayload.flips
+      }
+
+      flips.push(...partFlips)
+    }
+  }
+
+  return {
+    ...raw,
+    flips,
+    count: flips.length,
+  }
+}
+
 function createAnnotationTemplate(taskId) {
   return {
     task_id: taskId,
@@ -194,7 +242,7 @@ async function loadHumanTeacherSample(
   )
   const definition = definitions[nextSampleName]
   const samplePath = path.resolve(__dirname, definition.relativePath)
-  const raw = await fs.readJson(samplePath)
+  const raw = await loadHumanTeacherSamplePayload(samplePath)
   const flips = Array.isArray(raw && raw.flips) ? raw.flips : []
 
   return {

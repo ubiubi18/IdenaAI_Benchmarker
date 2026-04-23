@@ -11,6 +11,7 @@ const {
   getValidationDevnetPrimaryPeerTarget,
   getValidationDevnetPublishedFlipCount,
   loadValidationDevnetSeedFlips,
+  loadValidationDevnetSeedPayload,
   serializeValidationDevnetConfig,
   summarizeValidationDevnetNode,
   shouldSuppressValidationDevnetLogLine,
@@ -332,6 +333,13 @@ describe('validation devnet helpers', () => {
             {name: 'apple', desc: 'fruit'},
             {name: 'ghost', desc: 'spirit'},
           ],
+          sourceStats: {
+            epoch: 27,
+            status: 'Qualified',
+            shortRespCount: 1,
+            longRespCount: 10,
+            wrongWordsVotes: 2,
+          },
           sourceDataset: 'aplesner-eth/FLIP-Challenge',
           sourceSplit: 'test',
         },
@@ -351,6 +359,21 @@ describe('validation devnet helpers', () => {
           {name: 'apple', desc: 'fruit'},
           {name: 'ghost', desc: 'spirit'},
         ],
+        sourceStats: {
+          epoch: 27,
+          author: null,
+          status: 'Qualified',
+          shortRespCount: 1,
+          longRespCount: 10,
+          wrongWords: false,
+          wrongWordsVotes: 2,
+          withPrivatePart: false,
+          grade: null,
+          gradeScore: null,
+          createdAt: null,
+          block: null,
+          tx: null,
+        },
         sourceDataset: 'aplesner-eth/FLIP-Challenge',
         sourceSplit: 'test',
       },
@@ -366,6 +389,11 @@ describe('validation devnet helpers', () => {
       seedSet.flips.filter((flip) => Number(flip?.consensusVotes?.total) > 0)
         .length
     ).toBeGreaterThanOrEqual(9)
+    expect(
+      seedSet.flips.filter(
+        (flip) => Array.isArray(flip?.words) && flip.words.length >= 2
+      ).length
+    ).toBeGreaterThan(0)
   })
 
   it('skips rehearsal seed flips that were already annotated in prior review runs', async () => {
@@ -403,6 +431,55 @@ describe('validation devnet helpers', () => {
       expect(seedSet.flips).toHaveLength(4)
       expect(seedSet.flips.map(({hash}) => hash)).not.toContain(
         reviewedFlipHash
+      )
+    } finally {
+      await fs.remove(tempDir)
+    }
+  })
+
+  it('loads chunked seed manifests and merges their flip parts', async () => {
+    const tempDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'idena-devnet-seed-manifest-')
+    )
+    const manifestPath = path.join(tempDir, 'seed-manifest.json')
+    const partOnePath = path.join(tempDir, 'seed-manifest.part-1.json')
+    const partTwoPath = path.join(tempDir, 'seed-manifest.part-2.json')
+
+    try {
+      const manifestFlips = sampleSeedPayload.flips
+        .slice(0, 4)
+        .map((flip, index) => ({
+          ...flip,
+          hash: `chunked-seed-${index + 1}`,
+        }))
+
+      await fs.writeJson(partOnePath, {
+        source: sampleSeedPayload.source,
+        split: sampleSeedPayload.split,
+        count: 2,
+        flips: manifestFlips.slice(0, 2),
+      })
+      await fs.writeJson(partTwoPath, {
+        source: sampleSeedPayload.source,
+        split: sampleSeedPayload.split,
+        count: 2,
+        flips: manifestFlips.slice(2, 4),
+      })
+      await fs.writeJson(manifestPath, {
+        source: sampleSeedPayload.source,
+        split: sampleSeedPayload.split,
+        count: 4,
+        parts: [
+          {file: path.basename(partOnePath), count: 2},
+          {file: path.basename(partTwoPath), count: 2},
+        ],
+      })
+
+      const payload = await loadValidationDevnetSeedPayload(manifestPath)
+
+      expect(payload.flips).toHaveLength(4)
+      expect(payload.flips.map(({hash}) => hash)).toEqual(
+        expect.arrayContaining(manifestFlips.map(({hash}) => hash))
       )
     } finally {
       await fs.remove(tempDir)

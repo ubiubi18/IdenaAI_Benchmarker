@@ -82,6 +82,45 @@ function normalizeSeedWords(value) {
   return value.map(normalizeSeedWordEntry).filter(Boolean).slice(0, 2)
 }
 
+function normalizeSeedSourceStats(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const normalized = {
+    epoch:
+      Number.isFinite(Number(value.epoch)) && Number(value.epoch) > 0
+        ? Number(value.epoch)
+        : null,
+    author: String(value.author || '').trim() || null,
+    status: String(value.status || '').trim() || null,
+    shortRespCount: Number.isFinite(Number(value.shortRespCount))
+      ? Number(value.shortRespCount)
+      : null,
+    longRespCount: Number.isFinite(Number(value.longRespCount))
+      ? Number(value.longRespCount)
+      : null,
+    wrongWords: value.wrongWords === true,
+    wrongWordsVotes: Number.isFinite(Number(value.wrongWordsVotes))
+      ? Number(value.wrongWordsVotes)
+      : null,
+    withPrivatePart: value.withPrivatePart === true,
+    grade: Number.isFinite(Number(value.grade)) ? Number(value.grade) : null,
+    gradeScore: Number.isFinite(Number(value.gradeScore))
+      ? Number(value.gradeScore)
+      : null,
+    createdAt: String(value.createdAt || '').trim() || null,
+    block: Number.isFinite(Number(value.block)) ? Number(value.block) : null,
+    tx: String(value.tx || '').trim() || null,
+  }
+
+  return Object.values(normalized).some(
+    (entry) => entry !== null && entry !== false
+  )
+    ? normalized
+    : null
+}
+
 export function normalizeRehearsalSeedFlipMeta(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
@@ -130,6 +169,7 @@ export function normalizeRehearsalSeedFlipMeta(value = {}) {
       value.consensusVotes || value.votes
     ),
     words: normalizeSeedWords(value.words),
+    sourceStats: normalizeSeedSourceStats(value.sourceStats || value.stats),
     sourceDataset: normalizeSeedSourceLabel(
       value.sourceDataset || value.source_dataset
     ),
@@ -177,6 +217,8 @@ export function mergeRehearsalSeedMetaIntoFlips(flips, metaByHash = {}) {
         JSON.stringify(meta.consensusVotes || null) &&
       JSON.stringify(Array.isArray(flip.words) ? flip.words : []) ===
         JSON.stringify(meta.words) &&
+      JSON.stringify(flip.sourceStats || null) ===
+        JSON.stringify(meta.sourceStats || null) &&
       (flip.sourceDataset || null) === meta.sourceDataset &&
       (flip.sourceSplit || null) === meta.sourceSplit
     ) {
@@ -196,6 +238,7 @@ export function mergeRehearsalSeedMetaIntoFlips(flips, metaByHash = {}) {
         Array.isArray(flip.words) && flip.words.length > 0
           ? flip.words
           : meta.words,
+      sourceStats: flip.sourceStats || meta.sourceStats,
       sourceDataset: flip.sourceDataset || meta.sourceDataset,
       sourceSplit: flip.sourceSplit || meta.sourceSplit,
     }
@@ -253,6 +296,8 @@ function buildBenchmarkItemsForSession(flips, sessionType) {
           normalizeExpectedStrength(flip?.consensusStrength) ||
           normalizeExpectedStrength(flip?.expectedStrength),
         consensusVotes: normalizeConsensusVotes(flip?.consensusVotes),
+        words: normalizeSeedWords(flip?.words),
+        sourceStats: normalizeSeedSourceStats(flip?.sourceStats),
         sourceDataset: normalizeSeedSourceLabel(flip?.sourceDataset),
         sourceSplit: normalizeSeedSourceLabel(flip?.sourceSplit),
         isCorrect: Boolean(
@@ -301,6 +346,14 @@ function hasConsensusVotes(item) {
   return Number(item?.consensusVotes?.total) > 0
 }
 
+function hasSeedWords(item) {
+  return Array.isArray(item?.words) && item.words.length >= 2
+}
+
+function hasSourceStats(item) {
+  return Boolean(item?.sourceStats)
+}
+
 function computeConsensusCoverage(total, consensusTotal) {
   return total > 0 ? consensusTotal / total : null
 }
@@ -326,13 +379,19 @@ export function computeRehearsalBenchmarkSummary(validationState) {
   const shortConsensusItems = shortItems.filter(hasConsensusVotes)
   const longConsensusItems = longItems.filter(hasConsensusVotes)
   const consensusItems = items.filter(hasConsensusVotes)
+  const keywordItems = items.filter(hasSeedWords)
+  const statsItems = items.filter(hasSourceStats)
   const short = {
     ...computeBenchmarkStats(shortItems),
     consensusBacked: computeBenchmarkStats(shortConsensusItems),
+    keywordReady: shortItems.filter(hasSeedWords).length,
+    sourceStatsReady: shortItems.filter(hasSourceStats).length,
   }
   const long = {
     ...computeBenchmarkStats(longItems),
     consensusBacked: computeBenchmarkStats(longConsensusItems),
+    keywordReady: longItems.filter(hasSeedWords).length,
+    sourceStatsReady: longItems.filter(hasSourceStats).length,
   }
   const overallStats = computeBenchmarkStats(items)
   const consensusBacked = computeBenchmarkStats(consensusItems)
@@ -358,6 +417,17 @@ export function computeRehearsalBenchmarkSummary(validationState) {
         overallStats.total,
         consensusBacked.total
       ),
+    },
+    keywordReady: {
+      total: keywordItems.length,
+      coverage: computeConsensusCoverage(
+        overallStats.total,
+        keywordItems.length
+      ),
+    },
+    sourceStatsReady: {
+      total: statsItems.length,
+      coverage: computeConsensusCoverage(overallStats.total, statsItems.length),
     },
     sessions: {
       short,
