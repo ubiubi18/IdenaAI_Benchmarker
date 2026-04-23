@@ -1,4 +1,8 @@
-import {loadPersistentStateValue, persistItem} from '../../shared/utils/persist'
+import {
+  loadPersistentState,
+  loadPersistentStateValue,
+  persistItem,
+} from '../../shared/utils/persist'
 import {buildValidationSessionScopeKey} from './utils'
 
 export const VALIDATION_AI_COST_LEDGER_VERSION = 1
@@ -79,16 +83,52 @@ export function buildValidationAiCostLedgerStorageKey(scope = {}) {
     : ''
 }
 
-export function loadValidationAiCostLedger(scope = {}) {
-  const key = buildValidationAiCostLedgerStorageKey(scope)
+function buildValidationAiCostLedgerStorageKeys(scope = {}) {
+  const fullScopeKey = buildValidationAiCostLedgerStorageKey(scope)
+  const legacyScopeKey = buildValidationAiCostLedgerStorageKey({
+    epoch: scope?.epoch,
+    address: scope?.address,
+    nodeScope: scope?.nodeScope,
+  })
 
+  return Array.from(new Set([fullScopeKey, legacyScopeKey].filter(Boolean)))
+}
+
+function loadValidationAiCostLedgerValue(key = '') {
   if (!key) {
-    return normalizeValidationAiCostLedger()
+    return null
   }
 
-  return normalizeValidationAiCostLedger(
-    loadPersistentStateValue('validationResults', key)
-  )
+  const directValue = loadPersistentStateValue('validationResults', key)
+
+  if (directValue) {
+    return directValue
+  }
+
+  const storeState = loadPersistentState('validationResults')
+
+  if (
+    storeState &&
+    typeof storeState === 'object' &&
+    !Array.isArray(storeState) &&
+    storeState[key]
+  ) {
+    return storeState[key]
+  }
+
+  return null
+}
+
+export function loadValidationAiCostLedger(scope = {}) {
+  for (const key of buildValidationAiCostLedgerStorageKeys(scope)) {
+    const loadedValue = loadValidationAiCostLedgerValue(key)
+
+    if (loadedValue) {
+      return normalizeValidationAiCostLedger(loadedValue)
+    }
+  }
+
+  return normalizeValidationAiCostLedger()
 }
 
 export function persistValidationAiCostLedger(scope = {}, ledger = {}) {

@@ -1,5 +1,5 @@
 /** @jest-environment jsdom */
-import {persistState} from '../../shared/utils/persist'
+import {persistItem, persistState} from '../../shared/utils/persist'
 import {
   appendValidationAiCostLedgerEntry,
   buildValidationAiCostLedgerStorageKey,
@@ -123,6 +123,55 @@ describe('validation ai cost tracker', () => {
       totalTokens: 344,
       estimatedUsd: 0.0000399,
       actualUsd: 0.0000399,
+    })
+  })
+
+  it('falls back to the legacy session scope key without validationStart', () => {
+    const scope = {
+      epoch: 42,
+      address: '0xabc',
+      nodeScope: 'external:http://127.0.0.1:22301',
+      validationStart: 1710000000000,
+    }
+
+    persistItem(
+      'validationResults',
+      buildValidationAiCostLedgerStorageKey({
+        epoch: scope.epoch,
+        address: scope.address,
+        nodeScope: scope.nodeScope,
+      }),
+      {
+        entries: [
+          {
+            action: 'long-session solve',
+            provider: 'openai',
+            model: 'gpt-5.4',
+            sessionType: 'long',
+            tokenUsage: {
+              promptTokens: 400,
+              completionTokens: 40,
+              totalTokens: 440,
+            },
+            estimatedUsd: 0.02,
+            actualUsd: 0.02,
+          },
+        ],
+      }
+    )
+
+    expect(loadValidationAiCostLedger(scope)).toMatchObject({
+      entries: [
+        expect.objectContaining({
+          action: 'long-session solve',
+          model: 'gpt-5.4',
+          tokenUsage: {
+            promptTokens: 400,
+            completionTokens: 40,
+            totalTokens: 440,
+          },
+        }),
+      ],
     })
   })
 

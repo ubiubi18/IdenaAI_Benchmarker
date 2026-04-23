@@ -12,6 +12,10 @@ const {
   PERSISTENCE_SYNC_COMMAND,
   STORAGE_COMMAND,
 } = require('./channels')
+const {
+  loadPersistenceValueFromDb,
+  persistPersistenceItemToDb,
+} = require('./persistence-store')
 
 const dbRegistry = new Map()
 const persistenceStoreNames = new Set([
@@ -175,13 +179,10 @@ function dispatchPersistence(action, payload = {}) {
   switch (action) {
     case 'loadState':
       return db.getState() || {}
-    case 'loadValue': {
-      const state = db.getState() || {}
-      return state[payload.key] || null
-    }
+    case 'loadValue':
+      return loadPersistenceValueFromDb(db, payload.key)
     case 'persistItem':
-      db.set(payload.key, payload.value).write()
-      return true
+      return persistPersistenceItemToDb(db, payload.key, payload.value)
     case 'persistState':
       db.setState(payload.state).write()
       return true

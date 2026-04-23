@@ -7,11 +7,13 @@ import React from 'react'
 import {useTranslation} from 'react-i18next'
 import {createMachine} from 'xstate'
 import {assign, choose} from 'xstate/lib/actions'
+import {Toast} from '../../../shared/components/components'
 import {useCloseToast} from '../../../shared/hooks/use-toast'
 import {useInterval} from '../../../shared/hooks/use-interval'
 import {useEpochState} from '../../../shared/providers/epoch-context'
 import {
   useSettingsState,
+  useSettingsDispatch,
   isValidationRehearsalNodeSettings,
 } from '../../../shared/providers/settings-context'
 import {EpochPeriod} from '../../../shared/types'
@@ -26,12 +28,32 @@ import {
   REHEARSAL_DEVNET_STATUS_INITIAL,
 } from './use-start-validation'
 
+const REHEARSAL_CONNECTED_TOAST_ID = 'rehearsal-node-connected'
+
+function hasMatchingRehearsalConnection(settings, payload) {
+  if (!settings.ephemeralExternalNodeConnected) {
+    return false
+  }
+
+  const nextUrl = String(payload?.url || '').trim()
+  const nextApiKey = String(payload?.apiKey || '').trim()
+  const nextLabel = String(payload?.label || '').trim()
+
+  return (
+    settings.url === nextUrl &&
+    settings.externalApiKey === nextApiKey &&
+    (settings.externalNodeLabel || 'Validation rehearsal node') ===
+      (nextLabel || 'Validation rehearsal node')
+  )
+}
+
 export function useValidationToast() {
   const {t} = useTranslation()
 
   const router = useRouter()
   const epoch = useEpochState()
   const settings = useSettingsState()
+  const {connectEphemeralExternalNode} = useSettingsDispatch()
 
   const toast = useToast()
 
@@ -40,6 +62,7 @@ export function useValidationToast() {
   const closeToast = useCloseToast()
   const currentPeriod = epoch?.currentPeriod
   const isRehearsalNodeSession = isValidationRehearsalNodeSettings(settings)
+  const lastHandledRehearsalConnectionRef = React.useRef('')
   const [rehearsalDevnetStatus, setRehearsalDevnetStatus] = React.useState(
     REHEARSAL_DEVNET_STATUS_INITIAL
   )
@@ -72,6 +95,66 @@ export function useValidationToast() {
 
     return 'Open validation'
   }, [rehearsalBlockedReason])
+
+  React.useEffect(() => {
+    if (!settings.ephemeralExternalNodeConnected) {
+      lastHandledRehearsalConnectionRef.current = ''
+    }
+  }, [settings.ephemeralExternalNodeConnected])
+
+  React.useEffect(() => {
+    if (getNodeBridge().__idenaFallback) {
+      return undefined
+    }
+
+    const bridge = getNodeBridge()
+
+    return bridge.onEvent((event, data) => {
+      if (event !== 'validation-devnet-connect-payload') {
+        return
+      }
+
+      if (!data || !data.url || !data.apiKey) {
+        return
+      }
+
+      const nextConnection = {
+        url: data.url,
+        apiKey: data.apiKey,
+        label: data.label,
+      }
+      const connectionKey = JSON.stringify(nextConnection)
+
+      if (lastHandledRehearsalConnectionRef.current === connectionKey) {
+        return
+      }
+
+      lastHandledRehearsalConnectionRef.current = connectionKey
+
+      if (!hasMatchingRehearsalConnection(settings, nextConnection)) {
+        connectEphemeralExternalNode(nextConnection)
+      }
+
+      if (
+        typeof toast.isActive !== 'function' ||
+        !toast.isActive(REHEARSAL_CONNECTED_TOAST_ID)
+      ) {
+        toast({
+          id: REHEARSAL_CONNECTED_TOAST_ID,
+          render: () => (
+            <Toast
+              title={t('Rehearsal node connected')}
+              description={t(
+                'IdenaAI switched to the rehearsal node for this app session and opened the countdown. The secret is not saved to normal node settings.'
+              )}
+            />
+          ),
+        })
+      }
+
+      openValidationLottery(router, {isRehearsalNodeSession: true})
+    })
+  }, [connectEphemeralExternalNode, router, settings, t, toast])
 
   React.useEffect(() => {
     if (!isRehearsalNodeSession || getNodeBridge().__idenaFallback) {

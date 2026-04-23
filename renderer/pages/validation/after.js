@@ -152,6 +152,24 @@ export default function AfterValidationPage() {
       ),
     [rehearsalBenchmarkReviewState, rehearsalBenchmarkSummary.items]
   )
+  const validationSessionFlipCount = React.useMemo(() => {
+    const shortCount = Array.isArray(validationState?.context?.shortFlips)
+      ? validationState.context.shortFlips.length
+      : 0
+    const longCount = Array.isArray(validationState?.context?.longFlips)
+      ? validationState.context.longFlips.length
+      : 0
+
+    return shortCount + longCount
+  }, [
+    validationState?.context?.longFlips,
+    validationState?.context?.shortFlips,
+  ])
+  const benchmarkAuditUnavailable = React.useMemo(
+    () =>
+      validationSessionFlipCount > 0 && !rehearsalBenchmarkSummary.available,
+    [rehearsalBenchmarkSummary.available, validationSessionFlipCount]
+  )
   const validationAiCostTotals = React.useMemo(
     () => computeValidationAiCostTotals(validationAiCostLedger),
     [validationAiCostLedger]
@@ -293,6 +311,10 @@ export default function AfterValidationPage() {
         return t(
           'Manual audit is optional and has been skipped for this rehearsal run. You can reopen it later whenever you want to inspect the results.'
         )
+      case 'unavailable':
+        return t(
+          'Benchmark audit is unavailable for this validation run because the session does not include benchmark labels.'
+        )
       default:
         return t(
           'Manual audit is optional for this rehearsal run. Use it to check benchmark labels and report choices, or skip it with one click and come back later.'
@@ -308,6 +330,8 @@ export default function AfterValidationPage() {
         return t('Continue audit')
       case 'skipped':
         return t('Audit later')
+      case 'unavailable':
+        return t('Audit unavailable')
       default:
         return t('Audit benchmark flips')
     }
@@ -407,7 +431,8 @@ export default function AfterValidationPage() {
               </ErrorAlert>
             )}
 
-            {rehearsalBenchmarkSummary.available && (
+            {(rehearsalBenchmarkSummary.available ||
+              benchmarkAuditUnavailable) && (
               <Box
                 borderWidth="1px"
                 borderColor="whiteAlpha.300"
@@ -421,167 +446,192 @@ export default function AfterValidationPage() {
                     <Heading fontSize="md" fontWeight={500}>
                       {t('Optional rehearsal audit')}
                     </Heading>
-                    <Text color="xwhite.050" fontSize="sm">
-                      {t(rehearsalBenchmarkSummary.note)}
-                    </Text>
+                    {rehearsalBenchmarkSummary.available ? (
+                      <Text color="xwhite.050" fontSize="sm">
+                        {t(rehearsalBenchmarkSummary.note)}
+                      </Text>
+                    ) : (
+                      <Text color="xwhite.050" fontSize="sm">
+                        {t(
+                          'This session has local validation results, but the flips do not include benchmark labels or consensus metadata for audit comparison.'
+                        )}
+                      </Text>
+                    )}
                     <Text color="xwhite.050" fontSize="sm" mt="2">
                       {benchmarkAuditSummary}
                     </Text>
                   </Box>
 
-                  <SimpleGrid columns={[2, 4]} spacing="3">
-                    <BenchmarkStat
-                      label={t('Correct')}
-                      value={`${rehearsalBenchmarkSummary.correct}/${rehearsalBenchmarkSummary.total}`}
-                    />
-                    <BenchmarkStat
-                      label={t('Accuracy')}
-                      value={
-                        rehearsalBenchmarkSummary.accuracy !== null
-                          ? `${(
-                              rehearsalBenchmarkSummary.accuracy * 100
-                            ).toFixed(1)}%`
-                          : '–'
-                      }
-                    />
-                    <BenchmarkStat
-                      label={t('Answered')}
-                      value={`${rehearsalBenchmarkSummary.answered}/${rehearsalBenchmarkSummary.total}`}
-                    />
-                    <BenchmarkStat
-                      label={t('Reports')}
-                      value={String(rehearsalBenchmarkSummary.reported)}
-                    />
-                  </SimpleGrid>
-
-                  <Text color="xwhite.050" fontSize="sm">
-                    {t(
-                      'Short: {{shortCorrect}}/{{shortTotal}} correct. Long: {{longCorrect}}/{{longTotal}} correct. Manual review: {{reviewed}}/{{total}} flips.',
-                      {
-                        shortCorrect:
-                          rehearsalBenchmarkSummary.sessions.short.correct,
-                        shortTotal:
-                          rehearsalBenchmarkSummary.sessions.short.total,
-                        longCorrect:
-                          rehearsalBenchmarkSummary.sessions.long.correct,
-                        longTotal:
-                          rehearsalBenchmarkSummary.sessions.long.total,
-                        reviewed: reviewedBenchmarkCount,
-                        total: rehearsalBenchmarkSummary.total,
-                      }
-                    )}
-                  </Text>
-                  <Text color="xwhite.050" fontSize="sm">
-                    {rehearsalBenchmarkSummary.rawConsensusAvailable
-                      ? t(
-                          'Consensus-backed subset: {{correct}}/{{total}} correct ({{coverage}} coverage of the rehearsal benchmark set).',
-                          {
-                            correct:
-                              rehearsalBenchmarkSummary.consensusBacked.correct,
-                            total:
-                              rehearsalBenchmarkSummary.consensusBacked.total,
-                            coverage:
-                              rehearsalBenchmarkSummary.consensusBacked
-                                .coverage !== null
-                                ? `${(
-                                    rehearsalBenchmarkSummary.consensusBacked
-                                      .coverage * 100
-                                  ).toFixed(1)}%`
-                                : '–',
+                  {rehearsalBenchmarkSummary.available ? (
+                    <>
+                      <SimpleGrid columns={[2, 4]} spacing="3">
+                        <BenchmarkStat
+                          label={t('Correct')}
+                          value={`${rehearsalBenchmarkSummary.correct}/${rehearsalBenchmarkSummary.total}`}
+                        />
+                        <BenchmarkStat
+                          label={t('Accuracy')}
+                          value={
+                            rehearsalBenchmarkSummary.accuracy !== null
+                              ? `${(
+                                  rehearsalBenchmarkSummary.accuracy * 100
+                                ).toFixed(1)}%`
+                              : '–'
                           }
-                        )
-                      : t(
-                          'Raw vote counts were not bundled for this local rehearsal slice, so the benchmark currently uses agreed-answer labels only.'
-                        )}
-                  </Text>
+                        />
+                        <BenchmarkStat
+                          label={t('Answered')}
+                          value={`${rehearsalBenchmarkSummary.answered}/${rehearsalBenchmarkSummary.total}`}
+                        />
+                        <BenchmarkStat
+                          label={t('Reports')}
+                          value={String(rehearsalBenchmarkSummary.reported)}
+                        />
+                      </SimpleGrid>
 
-                  <Stack direction={['column', 'row']} spacing="3">
-                    <Button
-                      alignSelf="flex-start"
-                      onClick={() => router.push(rehearsalBenchmarkReviewRoute)}
-                    >
-                      {benchmarkAuditActionLabel}
-                    </Button>
-                    {benchmarkAuditStatus !== 'completed' &&
-                    benchmarkAuditStatus !== 'skipped' ? (
-                      <Button
-                        variant="ghost"
-                        alignSelf="flex-start"
-                        onClick={skipRehearsalBenchmarkAudit}
-                      >
-                        {t('Skip audit for now')}
-                      </Button>
-                    ) : null}
-                  </Stack>
+                      <Text color="xwhite.050" fontSize="sm">
+                        {t(
+                          'Short: {{shortCorrect}}/{{shortTotal}} correct. Long: {{longCorrect}}/{{longTotal}} correct. Manual review: {{reviewed}}/{{total}} flips.',
+                          {
+                            shortCorrect:
+                              rehearsalBenchmarkSummary.sessions.short.correct,
+                            shortTotal:
+                              rehearsalBenchmarkSummary.sessions.short.total,
+                            longCorrect:
+                              rehearsalBenchmarkSummary.sessions.long.correct,
+                            longTotal:
+                              rehearsalBenchmarkSummary.sessions.long.total,
+                            reviewed: reviewedBenchmarkCount,
+                            total: rehearsalBenchmarkSummary.total,
+                          }
+                        )}
+                      </Text>
+                      <Text color="xwhite.050" fontSize="sm">
+                        {rehearsalBenchmarkSummary.rawConsensusAvailable
+                          ? t(
+                              'Consensus-backed subset: {{correct}}/{{total}} correct ({{coverage}} coverage of the rehearsal benchmark set).',
+                              {
+                                correct:
+                                  rehearsalBenchmarkSummary.consensusBacked
+                                    .correct,
+                                total:
+                                  rehearsalBenchmarkSummary.consensusBacked
+                                    .total,
+                                coverage:
+                                  rehearsalBenchmarkSummary.consensusBacked
+                                    .coverage !== null
+                                    ? `${(
+                                        rehearsalBenchmarkSummary
+                                          .consensusBacked.coverage * 100
+                                      ).toFixed(1)}%`
+                                    : '–',
+                              }
+                            )
+                          : t(
+                              'Raw vote counts were not bundled for this local rehearsal slice, so the benchmark currently uses agreed-answer labels only.'
+                            )}
+                      </Text>
+
+                      <Stack direction={['column', 'row']} spacing="3">
+                        <Button
+                          alignSelf="flex-start"
+                          onClick={() =>
+                            router.push(rehearsalBenchmarkReviewRoute)
+                          }
+                        >
+                          {benchmarkAuditActionLabel}
+                        </Button>
+                        {benchmarkAuditStatus !== 'completed' &&
+                        benchmarkAuditStatus !== 'skipped' &&
+                        benchmarkAuditStatus !== 'unavailable' ? (
+                          <Button
+                            variant="ghost"
+                            alignSelf="flex-start"
+                            onClick={skipRehearsalBenchmarkAudit}
+                          >
+                            {t('Skip audit for now')}
+                          </Button>
+                        ) : null}
+                      </Stack>
+                    </>
+                  ) : (
+                    <Text color="xwhite.050" fontSize="sm">
+                      {t(
+                        'The AI run can still be reviewed through local stats and cost tracking, but there is no benchmark-labeled subset to compare against for this session.'
+                      )}
+                    </Text>
+                  )}
                 </Stack>
               </Box>
             )}
 
-            {validationAiCostTotals.count > 0 && (
-              <Box
-                borderWidth="1px"
-                borderColor="whiteAlpha.300"
-                bg="whiteAlpha.100"
-                borderRadius="lg"
-                px="5"
-                py="4"
-              >
-                <Stack spacing="4">
-                  <Box>
-                    <Heading fontSize="md" fontWeight={500}>
-                      {t('Validation AI cost tracker')}
-                    </Heading>
-                    <Text color="xwhite.050" fontSize="sm">
-                      {t(
-                        'Tracks AI token usage for this validation run across solve and automatic report-review steps.'
-                      )}
-                    </Text>
-                  </Box>
+            <Box
+              borderWidth="1px"
+              borderColor="whiteAlpha.300"
+              bg="whiteAlpha.100"
+              borderRadius="lg"
+              px="5"
+              py="4"
+            >
+              <Stack spacing="4">
+                <Box>
+                  <Heading fontSize="md" fontWeight={500}>
+                    {t('Validation AI cost tracker')}
+                  </Heading>
+                  <Text color="xwhite.050" fontSize="sm">
+                    {validationAiCostTotals.count > 0
+                      ? t(
+                          'Tracks AI token usage for this validation run across solve and automatic report-review steps.'
+                        )
+                      : t(
+                          'No AI token usage has been recorded for this validation run yet.'
+                        )}
+                  </Text>
+                </Box>
 
-                  <SimpleGrid columns={[2, 4]} spacing="3">
-                    <BenchmarkStat
-                      label={t('Actions')}
-                      value={String(validationAiCostTotals.count)}
-                    />
-                    <BenchmarkStat
-                      label={t('Tokens')}
-                      value={formatTokenCount(
-                        validationAiCostTotals.totalTokens
-                      )}
-                    />
-                    <BenchmarkStat
-                      label={t('Estimated')}
-                      value={formatUsd(validationAiCostTotals.estimatedUsd)}
-                    />
-                    <BenchmarkStat
-                      label={t('Actual')}
-                      value={formatUsd(validationAiCostTotals.actualUsd)}
-                    />
-                  </SimpleGrid>
+                <SimpleGrid columns={[2, 4]} spacing="3">
+                  <BenchmarkStat
+                    label={t('Actions')}
+                    value={String(validationAiCostTotals.count)}
+                  />
+                  <BenchmarkStat
+                    label={t('Tokens')}
+                    value={formatTokenCount(validationAiCostTotals.totalTokens)}
+                  />
+                  <BenchmarkStat
+                    label={t('Estimated')}
+                    value={formatUsd(validationAiCostTotals.estimatedUsd)}
+                  />
+                  <BenchmarkStat
+                    label={t('Actual')}
+                    value={formatUsd(validationAiCostTotals.actualUsd)}
+                  />
+                </SimpleGrid>
 
-                  <SimpleGrid columns={[1, 2]} spacing="3">
-                    <ValidationAiCostBreakdownCard
-                      label={t('Short session')}
-                      totals={validationAiCostBreakdown.short}
-                    />
-                    <ValidationAiCostBreakdownCard
-                      label={t('Long session')}
-                      totals={validationAiCostBreakdown.long}
-                    />
-                    <ValidationAiCostBreakdownCard
-                      label={t('Reporting')}
-                      totals={validationAiCostBreakdown.reporting}
-                    />
-                    <ValidationAiCostBreakdownCard
-                      label={t('Short + long solve')}
-                      totals={validationAiCostBreakdown.solveCombined}
-                    />
-                    <ValidationAiCostBreakdownCard
-                      label={t('All AI steps')}
-                      totals={validationAiCostBreakdown.overall}
-                    />
-                  </SimpleGrid>
+                <SimpleGrid columns={[1, 2]} spacing="3">
+                  <ValidationAiCostBreakdownCard
+                    label={t('Short session')}
+                    totals={validationAiCostBreakdown.short}
+                  />
+                  <ValidationAiCostBreakdownCard
+                    label={t('Long session')}
+                    totals={validationAiCostBreakdown.long}
+                  />
+                  <ValidationAiCostBreakdownCard
+                    label={t('Reporting')}
+                    totals={validationAiCostBreakdown.reporting}
+                  />
+                  <ValidationAiCostBreakdownCard
+                    label={t('Short + long solve')}
+                    totals={validationAiCostBreakdown.solveCombined}
+                  />
+                  <ValidationAiCostBreakdownCard
+                    label={t('All AI steps')}
+                    totals={validationAiCostBreakdown.overall}
+                  />
+                </SimpleGrid>
 
+                {validationAiCostLedger.entries.length > 0 ? (
                   <Stack spacing="2" maxH="240px" overflowY="auto" pr="1">
                     {validationAiCostLedger.entries.map((entry) => (
                       <Box
@@ -610,9 +660,15 @@ export default function AfterValidationPage() {
                       </Box>
                     ))}
                   </Stack>
-                </Stack>
-              </Box>
-            )}
+                ) : (
+                  <Text color="xwhite.050" fontSize="sm">
+                    {t(
+                      'This run has no stored AI solve or auto-report review entries yet.'
+                    )}
+                  </Text>
+                )}
+              </Stack>
+            </Box>
           </Stack>
         </Stack>
       </Center>
