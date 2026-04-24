@@ -21,6 +21,7 @@ import {createValidationMachine} from '../screens/validation/machine'
 import {
   persistValidationState,
   loadValidationStateForPeriod,
+  clearValidationState,
   filterRegularFlips,
   rearrangeFlips,
   readyFlip,
@@ -40,6 +41,7 @@ import {
   getValidationAutoReportDelayMs,
   getShortSessionLongSessionTransitionDelayMs,
   SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+  SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS,
   hasEnoughAnswers,
 } from '../screens/validation/utils'
 import {
@@ -991,6 +993,8 @@ function ValidationSession({
   const autoSolveRetryAfterRef = useRef({short: 0, long: 0})
   const autoSolveRetryTimerRef = useRef({short: null, long: null})
   const missingOnchainAutoSubmitConsentNotifiedRef = useRef(false)
+  const reliableShortSubmitTriggeredRef = useRef(false)
+  const emptyLongReviewRecoveryNotifiedRef = useRef(false)
   const shortSessionDecodeRecoveryAttemptedRef = useRef(false)
   const longSessionDecodeRecoveryAttemptedRef = useRef(false)
   const manualReportingStartedRef = useRef(false)
@@ -1357,70 +1361,52 @@ function ValidationSession({
     }
   }, [currentFlip])
 
-  const handleRestartRehearsalNetwork = useCallback(() => {
-    const validationScopeKey = buildValidationSessionScopeKey({
-      epoch,
-      address: identity?.address,
-      nodeScope: buildValidationSessionNodeScope({
-        runInternalNode: settings.runInternalNode,
-        useExternalNode: settings.useExternalNode,
-        url: settings.url,
-        internalPort: settings.internalPort,
-      }),
-      validationStart,
-    })
+  const rememberCurrentRehearsalDismissal = useCallback(() => {
+    const validationScopeKey = buildValidationSessionScopeKey(
+      validationStateScope || {
+        epoch,
+        address: identity?.address,
+        nodeScope: buildValidationSessionNodeScope({
+          runInternalNode: settings.runInternalNode,
+          useExternalNode: settings.useExternalNode,
+          url: settings.url,
+          internalPort: settings.internalPort,
+        }),
+        validationStart,
+      }
+    )
 
     rememberDismissedValidationScreen({
       scopeKey: validationScopeKey,
       reason: 'failed-rehearsal',
     })
+  }, [
+    epoch,
+    identity?.address,
+    settings.internalPort,
+    settings.runInternalNode,
+    settings.url,
+    settings.useExternalNode,
+    validationStart,
+    validationStateScope,
+  ])
 
+  const handleRestartRehearsalNetwork = useCallback(() => {
+    rememberCurrentRehearsalDismissal()
+    clearValidationState(validationStateScope)
     getNodeBridge().restartValidationDevnet(
       buildRehearsalNetworkPayload({
         connectApp: true,
       })
     )
     router.push('/settings/node')
-  }, [
-    epoch,
-    identity?.address,
-    router,
-    settings.internalPort,
-    settings.runInternalNode,
-    settings.url,
-    settings.useExternalNode,
-    validationStart,
-  ])
+  }, [rememberCurrentRehearsalDismissal, router, validationStateScope])
 
-  const handleLeaveFailedRehearsal = useCallback(() => {
-    const validationScopeKey = buildValidationSessionScopeKey({
-      epoch,
-      address: identity?.address,
-      nodeScope: buildValidationSessionNodeScope({
-        runInternalNode: settings.runInternalNode,
-        useExternalNode: settings.useExternalNode,
-        url: settings.url,
-        internalPort: settings.internalPort,
-      }),
-      validationStart,
-    })
-
-    rememberDismissedValidationScreen({
-      scopeKey: validationScopeKey,
-      reason: 'failed-rehearsal',
-    })
-
+  const handleLeaveRehearsalSession = useCallback(() => {
+    rememberCurrentRehearsalDismissal()
+    clearValidationState(validationStateScope)
     router.push('/settings/node')
-  }, [
-    epoch,
-    identity?.address,
-    router,
-    settings.internalPort,
-    settings.runInternalNode,
-    settings.url,
-    settings.useExternalNode,
-    validationStart,
-  ])
+  }, [rememberCurrentRehearsalDismissal, router, validationStateScope])
 
   useEffect(() => {
     if (!isRehearsalNodeSession || getNodeBridge().__idenaFallback) {
@@ -1711,7 +1697,7 @@ function ValidationSession({
   const canAutoRunAiSolveForCurrentPeriod = shouldAutoRunSessionForPeriod({
     aiSessionType,
     currentPeriod,
-    forceAiPreview,
+    forceAiPreview: forceAiPreview || isRehearsalNodeSession,
   })
   const hasSessionAutoSubmitConsent = shouldAllowSessionAutoMode({
     aiSolver: aiSolverSettings,
@@ -1955,6 +1941,38 @@ function ValidationSession({
     Boolean(aiSessionType) &&
     aiProviderSetupReady &&
     renderableSessionFlipsAvailable
+  const longSessionAnswerStats = useMemo(
+    () => getLongSessionAnswerStats(state.context?.longFlips || []),
+    [state.context?.longFlips]
+  )
+  const hasLongSessionAnswers = longSessionAnswerStats.answered > 0
+  const longSessionLoadingGraceStartedAt =
+    Number(validationStart) + Number(shortSessionDuration) * 1000
+  const longSessionLoadingGraceElapsed =
+    Number.isFinite(longSessionLoadingGraceStartedAt) &&
+    Date.now() - longSessionLoadingGraceStartedAt >=
+      LONG_SESSION_LOADING_GRACE_MS
+  const canReviewLongSessionReports =
+    !isSessionAutoMode ||
+    (hasLongSessionAnswers &&
+      !aiSolving &&
+      longSessionAiSolveStatus.decodedUnansweredFlipCount === 0 &&
+      (!longSessionAiSolveStatus.hasLoadingFlips ||
+        longSessionLoadingGraceElapsed))
+  const canSubmitLongSessionNow = !isSessionAutoMode || hasLongSessionAnswers
+  const autoRunStatusText = getValidationAutoRunStatusText({
+    aiLastRun,
+    aiProgress,
+    aiProviderSetupReady,
+    aiSessionType,
+    aiSolving,
+    canRunAiSolve,
+    isAutoSolveRetryPending,
+    isSessionAutoMode,
+    renderableSessionFlipsAvailable,
+    t,
+    validationConnectionInterrupted,
+  })
 
   useInterval(
     () => {
@@ -2821,6 +2839,75 @@ function ValidationSession({
   }, [beginManualReporting, forceAiPreview, notifyAi, send, state, t])
 
   useEffect(() => {
+    if (!state.matches('shortSession.solve.answer.normal')) {
+      reliableShortSubmitTriggeredRef.current = false
+    }
+  }, [state])
+
+  useInterval(
+    () => {
+      if (
+        reliableShortSubmitTriggeredRef.current ||
+        forceAiPreview ||
+        !isSessionAutoMode ||
+        !state.matches('shortSession.solve.answer.normal') ||
+        isSubmitting(state)
+      ) {
+        return
+      }
+
+      const startedAt = Number(validationStart)
+      const durationSeconds = Number(shortSessionDuration)
+
+      if (!Number.isFinite(startedAt) || !Number.isFinite(durationSeconds)) {
+        return
+      }
+
+      const reliableSubmitAt =
+        startedAt +
+        Math.max(
+          0,
+          durationSeconds - SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS
+        ) *
+          1000
+
+      if (Date.now() < reliableSubmitAt) {
+        return
+      }
+
+      const shortFlips = state.context?.shortFlips || []
+      const answerStats = getDecodedRegularAnswerStats(shortFlips)
+      const hasEnoughShortAnswers = hasEnoughAnswers(shortFlips)
+
+      if (
+        !hasEnoughShortAnswers &&
+        !(isRehearsalNodeSession && answerStats.answered > 0)
+      ) {
+        return
+      }
+
+      reliableShortSubmitTriggeredRef.current = true
+      clearAutoSolveRetry('short')
+      notifyAi(
+        t('Short session submit sent early'),
+        isRehearsalNodeSession && !hasEnoughShortAnswers
+          ? t(
+              'Rehearsal short session is close to the chain cutoff, so partial answers are being submitted now to avoid a missing-answer run.'
+            )
+          : t(
+              'Short-session answers are being submitted before the final cutoff so the chain has time to include the transaction.'
+            )
+      )
+      send('SUBMIT')
+    },
+    isSessionAutoMode &&
+      !forceAiPreview &&
+      state.matches('shortSession.solve.answer.normal')
+      ? 500
+      : null
+  )
+
+  useEffect(() => {
     if (
       isSessionAutoMode &&
       canRunAiSolve &&
@@ -2844,7 +2931,7 @@ function ValidationSession({
 
   useEffect(() => {
     if (
-      currentPeriod !== EpochPeriod.LongSession ||
+      (currentPeriod !== EpochPeriod.LongSession && !isRehearsalNodeSession) ||
       !state.matches('longSession.solve.answer.flips')
     ) {
       autoSolveStartedRef.current.long = false
@@ -2879,6 +2966,7 @@ function ValidationSession({
     canRunAiSolve,
     currentPeriod,
     isAutoSolveRetryPending,
+    isRehearsalNodeSession,
     isSessionAutoMode,
     longSessionAutoSolveSignature,
     runAiSolve,
@@ -2943,8 +3031,10 @@ function ValidationSession({
   useEffect(() => {
     const shouldRecoverLongSessionDecodeState =
       !forceAiPreview &&
-      currentPeriod === EpochPeriod.LongSession &&
-      state.matches('longSession.solve.answer.flips') &&
+      (currentPeriod === EpochPeriod.LongSession || isRehearsalNodeSession) &&
+      (state.matches('longSession.solve.answer.flips') ||
+        state.matches('longSession.solve.answer.keywords') ||
+        state.matches('longSession.solve.answer.review')) &&
       state.matches('longSession.fetch.flips.done') &&
       state.context.longFlips.some(readyFlip) &&
       !hasRenderableValidationFlips(state.context.longFlips)
@@ -2965,7 +3055,14 @@ function ValidationSession({
     autoSolveLongSignatureRef.current = ''
     clearAutoSolveRetry('long')
     send('REFETCH_FLIPS')
-  }, [clearAutoSolveRetry, currentPeriod, forceAiPreview, send, state])
+  }, [
+    clearAutoSolveRetry,
+    currentPeriod,
+    forceAiPreview,
+    isRehearsalNodeSession,
+    send,
+    state,
+  ])
 
   useEffect(() => {
     if (
@@ -2978,7 +3075,53 @@ function ValidationSession({
   }, [aiProviderSetupReady, isSessionAutoMode, send, state])
 
   useEffect(() => {
+    if (
+      !isSessionAutoMode ||
+      !state.matches('longSession.solve.answer.keywords') ||
+      canReviewLongSessionReports ||
+      isSubmitting(state)
+    ) {
+      if (!state.matches('longSession.solve.answer.keywords')) {
+        emptyLongReviewRecoveryNotifiedRef.current = false
+      }
+      return
+    }
+
+    manualReportingStartedRef.current = false
+    autoReportSubmitPendingRef.current = false
+    setAutoReportDeadlineAt(null)
+    autoSolveStartedRef.current.long = false
+    autoSolveLongSignatureRef.current = ''
+    clearAutoSolveRetry('long')
+
+    if (!emptyLongReviewRecoveryNotifiedRef.current) {
+      emptyLongReviewRecoveryNotifiedRef.current = true
+      notifyAi(
+        t('Returning to long-session solving'),
+        t(
+          'No long-session answers are present yet. Auto-run is going back to the flip-solving step before report review or submission.'
+        ),
+        'warning'
+      )
+    }
+
+    send('RESUME_FLIPS')
+    if (!hasRenderableValidationFlips(state.context?.longFlips || [])) {
+      send('REFETCH_FLIPS')
+    }
+  }, [
+    clearAutoSolveRetry,
+    canReviewLongSessionReports,
+    isSessionAutoMode,
+    notifyAi,
+    send,
+    state,
+    t,
+  ])
+
+  useEffect(() => {
     if (state.matches('longSession.solve.answer.flips')) {
+      emptyLongReviewRecoveryNotifiedRef.current = false
       manualReportingStartedRef.current = false
       autoReportSubmitPendingRef.current = false
       setAutoReportDeadlineAt(null)
@@ -3462,8 +3605,8 @@ function ValidationSession({
                           {t('Restart fresh rehearsal')}
                         </PrimaryButton>
                       )}
-                      <SecondaryButton onClick={handleLeaveFailedRehearsal}>
-                        {t('Back to node settings')}
+                      <SecondaryButton onClick={handleLeaveRehearsalSession}>
+                        {t('Leave rehearsal')}
                       </SecondaryButton>
                     </Stack>
                   )}
@@ -3659,6 +3802,11 @@ function ValidationSession({
           />
         </ActionBarItem>
         <ActionBarItem justify="flex-end">
+          {isRehearsalNodeSession && !forceAiPreview && (
+            <SecondaryButton mr={3} onClick={handleLeaveRehearsalSession}>
+              {t('Leave rehearsal')}
+            </SecondaryButton>
+          )}
           {(isShortSession(state) || isLongSessionFlips(state)) &&
             showValidationAiUi && (
               <Stack isInline spacing={2} align="center" mr={3}>
@@ -3678,7 +3826,7 @@ function ValidationSession({
                     color={isShortSession(state) ? 'whiteAlpha.800' : 'muted'}
                     fontWeight={600}
                   >
-                    {t('AI auto-run active')}
+                    {autoRunStatusText}
                   </Text>
                 ) : (
                   <SecondaryButton
@@ -3725,7 +3873,7 @@ function ValidationSession({
           {isLongSessionFlips(state) && (
             <Stack isInline spacing={2}>
               <SecondaryButton
-                isDisabled={isSubmitting(state)}
+                isDisabled={isSubmitting(state) || !canReviewLongSessionReports}
                 onClick={() => {
                   beginManualReporting()
                   send('FINISH_FLIPS')
@@ -3734,7 +3882,11 @@ function ValidationSession({
                 {keywordActionLabel}
               </SecondaryButton>
               <PrimaryButton
-                isDisabled={!canSubmit(state) || isSubmitting(state)}
+                isDisabled={
+                  !canSubmit(state) ||
+                  isSubmitting(state) ||
+                  !canSubmitLongSessionNow
+                }
                 isLoading={isSubmitting(state)}
                 loadingText={t('Submitting answers...')}
                 onClick={handleSubmit}
@@ -4464,6 +4616,71 @@ function isSubmitting(state) {
   ].some(state.matches)
 }
 
+function getLongSessionAnswerStats(longFlips = []) {
+  const flips = Array.isArray(longFlips) ? longFlips : []
+  const answerableFlips = flips.filter((flip) => flip && flip.failed !== true)
+  const answered = answerableFlips.filter((flip) => Number(flip.option) > 0)
+
+  return {
+    total: answerableFlips.length,
+    answered: answered.length,
+  }
+}
+
+function getValidationAutoRunStatusText({
+  aiLastRun = null,
+  aiProviderSetupReady = false,
+  aiSessionType = null,
+  aiSolving = false,
+  canRunAiSolve = false,
+  isAutoSolveRetryPending,
+  isSessionAutoMode = false,
+  renderableSessionFlipsAvailable = false,
+  t,
+  validationConnectionInterrupted = false,
+} = {}) {
+  if (!isSessionAutoMode) {
+    return ''
+  }
+
+  if (validationConnectionInterrupted) {
+    return t('Waiting for node connection')
+  }
+
+  if (aiSolving) {
+    return t('AI solving...')
+  }
+
+  if (!aiProviderSetupReady) {
+    return t('Waiting for AI provider')
+  }
+
+  if (!aiSessionType) {
+    return t('Waiting for validation phase')
+  }
+
+  if (!renderableSessionFlipsAvailable) {
+    return t('Waiting for flip images')
+  }
+
+  if (
+    typeof isAutoSolveRetryPending === 'function' &&
+    isAutoSolveRetryPending(aiSessionType)
+  ) {
+    return t('AI retry scheduled')
+  }
+
+  if (aiLastRun?.status === 'completed') {
+    return t('AI auto-run monitoring')
+  }
+
+  if (canRunAiSolve) {
+    return t('AI auto-run armed')
+  }
+
+  return t('AI auto-run waiting')
+}
+
 function isSubmitFailed(state) {
   return [
     ['shortSession', 'submitShortSession'],
@@ -4514,10 +4731,10 @@ function hasAnyAnsweredFlip(state) {
     context: {shortFlips, longFlips},
   } = state
   const flips = isShortSession(state)
-    ? shortFlips.filter(({decoded, extra}) => decoded && !extra)
-    : longFlips.filter(({decoded}) => decoded)
+    ? shortFlips.filter(({extra}) => !extra)
+    : longFlips
 
-  return flips.some(({option}) => option > 0)
+  return flips.some(({hash, option}) => hash && Number(option) > 0)
 }
 
 function hasAllRelevanceMarks({context: {longFlips}}, reportFlips = longFlips) {

@@ -122,7 +122,9 @@ describe('solver-orchestrator planning', () => {
     })
 
     expect(shortBudget.effectiveProfile.flipVisionMode).toBe('composite')
+    expect(shortBudget.solveConcurrency).toBe(2)
     expect(longBudget.effectiveProfile.flipVisionMode).toBe('frames_two_pass')
+    expect(longBudget.solveConcurrency).toBe(1)
     expect(longBudget.effectiveProfile.requestTimeoutMs).toBeGreaterThan(
       shortBudget.effectiveProfile.requestTimeoutMs
     )
@@ -507,6 +509,7 @@ describe('solver-orchestrator planning', () => {
           uncertaintyRepromptEnabled: false,
           interFlipDelayMs: 0,
           maxRetries: 0,
+          shortSessionOpenAiParallelConcurrency: 1,
         },
         hardDeadlineAt: now + 2000,
         onDecision,
@@ -521,6 +524,103 @@ describe('solver-orchestrator planning', () => {
       expect(global.aiSolver.solveFlipBatch).toHaveBeenCalledTimes(1)
     } finally {
       dateNowSpy.mockRestore()
+      createElementSpy.mockRestore()
+      global.Image = originalImage
+      global.aiSolver = originalAiSolver
+    }
+  })
+
+  it('solves short-session OpenAI flips as independent parallel one-flip requests', async () => {
+    const originalImage = global.Image
+    const originalAiSolver = global.aiSolver
+    const originalCreateElement = document.createElement.bind(document)
+    const createElementSpy = jest.spyOn(document, 'createElement')
+    let inFlight = 0
+    let maxInFlight = 0
+
+    function ReadyImage() {
+      this.width = 100
+      this.height = 100
+      this.naturalWidth = 100
+      this.naturalHeight = 100
+    }
+
+    Object.defineProperty(ReadyImage.prototype, 'src', {
+      set() {
+        setTimeout(() => {
+          this.onload?.()
+        }, 0)
+      },
+    })
+
+    global.Image = ReadyImage
+    global.aiSolver = {
+      solveFlipBatch: jest.fn(async ({flips}) => {
+        expect(flips).toHaveLength(1)
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((resolve) => {
+          setTimeout(resolve, 5)
+        })
+        inFlight -= 1
+
+        return {
+          results: [
+            {
+              hash: flips[0].hash,
+              answer: 'left',
+              confidence: 0.8,
+              latencyMs: 5,
+              reasoning: 'left is more coherent',
+              rawAnswerBeforeRemap: 'left',
+              finalAnswerAfterRemap: 'left',
+              sideSwapped: false,
+            },
+          ],
+        }
+      }),
+    }
+    createElementSpy.mockImplementation((tagName, ...args) => {
+      if (tagName === 'canvas') {
+        return {
+          width: 0,
+          height: 0,
+          getContext: () => ({
+            fillStyle: '#000000',
+            fillRect: jest.fn(),
+            drawImage: jest.fn(),
+          }),
+          toDataURL: jest.fn(() => 'data:image/png;base64,MOCK'),
+        }
+      }
+
+      return originalCreateElement(tagName, ...args)
+    })
+
+    try {
+      const result = await solveValidationSessionWithAi({
+        sessionType: 'short',
+        shortFlips: [
+          createDecodedFlip('short-parallel-1'),
+          createDecodedFlip('short-parallel-2'),
+          createDecodedFlip('short-parallel-3'),
+        ],
+        aiSolver: {
+          provider: 'openai',
+          model: 'gpt-5.4',
+          benchmarkProfile: 'custom',
+          maxConcurrency: 2,
+          uncertaintyRepromptEnabled: false,
+          interFlipDelayMs: 0,
+          maxRetries: 0,
+        },
+        hardDeadlineAt: Date.now() + 60 * 1000,
+      })
+
+      expect(result.answers).toHaveLength(3)
+      expect(global.aiSolver.solveFlipBatch).toHaveBeenCalledTimes(3)
+      expect(maxInFlight).toBe(2)
+    } finally {
       createElementSpy.mockRestore()
       global.Image = originalImage
       global.aiSolver = originalAiSolver

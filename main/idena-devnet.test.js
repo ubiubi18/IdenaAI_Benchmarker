@@ -7,6 +7,7 @@ const {
   buildValidationDevnetNodeConfig,
   buildValidationDevnetSeedFlipSubmitArgs,
   buildValidationDevnetSeedFlipMetaByHash,
+  buildValidationDevnetSeedFlipReviewPayloadByHash,
   countReadyValidationHashItems,
   getValidationDevnetPrimaryPeerTarget,
   getValidationDevnetPublishedFlipCount,
@@ -488,6 +489,34 @@ describe('validation devnet helpers', () => {
         },
       ])
     ).toEqual({})
+  })
+
+  it('keeps rehearsal seed images behind an explicit review lookup map', () => {
+    const seedFlip = sampleSeedPayload.flips[0]
+    const normalizedSeedHash = seedFlip.hash.replace(/^_flip_/u, '')
+    const reviewPayloadByHash =
+      buildValidationDevnetSeedFlipReviewPayloadByHash([
+        {
+          ...seedFlip,
+          hash: '0xsubmitted',
+          sourceHash: seedFlip.hash,
+        },
+      ])
+
+    expect(reviewPayloadByHash['0xsubmitted']).toEqual(
+      expect.objectContaining({
+        hash: '0xsubmitted',
+        sourceHash: normalizedSeedHash,
+        images: expect.arrayContaining(seedFlip.images),
+        orders: seedFlip.orders,
+      })
+    )
+    expect(reviewPayloadByHash[normalizedSeedHash]).toEqual(
+      expect.objectContaining({
+        hash: normalizedSeedHash,
+        images: expect.arrayContaining(seedFlip.images),
+      })
+    )
   })
 
   it('skips rehearsal seed flips that were already annotated in prior review runs', async () => {

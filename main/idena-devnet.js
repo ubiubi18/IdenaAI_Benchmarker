@@ -781,6 +781,70 @@ function cloneValidationDevnetSeedFlip(flip, duplicateIndex = 0) {
   }
 }
 
+function normalizeValidationDevnetSeedImageSource(value) {
+  const source = String(value || '').trim()
+
+  return /^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/iu.test(
+    source
+  )
+    ? source
+    : ''
+}
+
+function buildValidationDevnetSeedFlipReviewPayload(flip) {
+  const hash = normalizeValidationDevnetSeedHash(flip?.hash || '')
+  const images = Array.isArray(flip?.images)
+    ? flip.images
+        .map(normalizeValidationDevnetSeedImageSource)
+        .filter(Boolean)
+        .slice(0, 4)
+    : []
+  const orders = Array.isArray(flip?.orders)
+    ? flip.orders
+        .slice(0, 2)
+        .map((order) => {
+          try {
+            return normalizeSeedFlipOrder(order)
+          } catch {
+            return null
+          }
+        })
+        .filter(Boolean)
+    : []
+
+  if (!hash || images.length !== 4 || orders.length !== 2) {
+    return null
+  }
+
+  return {
+    hash,
+    sourceHash: normalizeValidationDevnetSeedHash(flip?.sourceHash || ''),
+    images,
+    orders,
+  }
+}
+
+function buildValidationDevnetSeedFlipReviewPayloadByHash(flips = []) {
+  return (Array.isArray(flips) ? flips : []).reduce((result, flip) => {
+    const payload = buildValidationDevnetSeedFlipReviewPayload(flip)
+
+    if (!payload) {
+      return result
+    }
+
+    result[payload.hash] = payload
+
+    if (payload.sourceHash) {
+      result[payload.sourceHash] = {
+        ...payload,
+        hash: payload.sourceHash,
+      }
+    }
+
+    return result
+  }, {})
+}
+
 function collectSeedFlipCandidate(
   flip,
   candidatePath,
@@ -1475,6 +1539,7 @@ function createValidationDevnetController({
       message: 'Validation rehearsal network is stopped.',
     },
   }
+  let seedFlipReviewPayloadCache = null
 
   const emitters = {
     onStatus: null,
@@ -2424,6 +2489,9 @@ function createValidationDevnetController({
         ...seedSet.flips,
         ...submittedSeedFlips,
       ]),
+      flipReviewPayloadByHash: buildValidationDevnetSeedFlipReviewPayloadByHash(
+        [...seedSet.flips, ...submittedSeedFlips]
+      ),
       requested: requestedCount,
       submitted: submittedCount,
       confirmed: confirmedPrimaryFlipCount || initialPrimaryConfirmedCount || 0,
@@ -2548,6 +2616,34 @@ function createValidationDevnetController({
     return {
       seed: initialSeedState,
     }
+  }
+
+  async function getSeedFlip(hash) {
+    const normalizedHash = normalizeValidationDevnetSeedHash(hash)
+
+    if (!normalizedHash) {
+      return null
+    }
+
+    const activePayload =
+      state.run &&
+      state.run.seed &&
+      state.run.seed.flipReviewPayloadByHash &&
+      state.run.seed.flipReviewPayloadByHash[normalizedHash]
+
+    if (activePayload) {
+      return activePayload
+    }
+
+    if (!seedFlipReviewPayloadCache) {
+      const seedSet = await loadValidationDevnetSeedFlips({
+        seedFlipCount: VALIDATION_DEVNET_MAX_SEED_FLIP_COUNT,
+      })
+      seedFlipReviewPayloadCache =
+        buildValidationDevnetSeedFlipReviewPayloadByHash(seedSet.flips)
+    }
+
+    return seedFlipReviewPayloadCache[normalizedHash] || null
   }
 
   function getConnectionDetails() {
@@ -2786,6 +2882,7 @@ function createValidationDevnetController({
     stop,
     getStatus,
     getLogs,
+    getSeedFlip,
     getConnectionDetails,
   }
 }
@@ -2806,6 +2903,7 @@ module.exports = {
   canConnectValidationDevnetStatus,
   shouldConnectValidationDevnetStatus,
   buildValidationDevnetSeedFlipMetaByHash,
+  buildValidationDevnetSeedFlipReviewPayloadByHash,
   loadValidationDevnetSeedPayload,
   createValidationDevnetController,
   createDefaultValidationDevnetController,

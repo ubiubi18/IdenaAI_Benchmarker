@@ -2626,6 +2626,10 @@ function sendMainWindowMsg(channel, message, data) {
 
 handleTrusted('search-image', async (_, query) => searchImages(query))
 
+handleTrusted('validation-devnet.seed-flip', async (_event, hash) =>
+  validationDevnet.getSeedFlip(hash)
+)
+
 handleTrusted('rpc.call', async (_event, payload) => performNodeRpc(payload))
 
 handleTrusted(AI_SOLVER_COMMAND, async (_event, command, payload) => {

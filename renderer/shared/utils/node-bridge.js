@@ -17,6 +17,7 @@ function createFallbackNodeBridge() {
     stopValidationDevnet: () => {},
     getValidationDevnetStatus: () => {},
     getValidationDevnetLogs: () => {},
+    getValidationDevnetSeedFlip: () => Promise.resolve(null),
     connectValidationDevnet: () => {},
     clearExternalNodeOverride: () => {},
     stopLocalNode: () => {},

@@ -12,6 +12,7 @@ import {getIdentityPublishedFlipsCount} from '../../shared/utils/identity'
 export const readyFlip = ({ready}) => ready
 export const VALIDATION_NODE_STABILITY_GRACE_MS = 20 * 1000
 export const SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS = 5
+export const SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS = 15
 export const LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS = 15
 export const AUTO_REPORT_REVIEW_RUNTIME_BUFFER_MS = 20 * 1000
 export const SHORT_SESSION_RESULT_TELEMETRY_HOLD_MS = 6 * 1000

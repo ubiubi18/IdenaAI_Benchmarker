@@ -19,6 +19,7 @@ import NextLink from 'next/link'
 import {useRouter} from 'next/router'
 import {useTranslation} from 'react-i18next'
 import {reorderList} from '../../shared/utils/arr'
+import {getNodeBridge} from '../../shared/utils/node-bridge'
 import {Status} from '../../shared/components/sidebar'
 import {useIdentity} from '../../shared/providers/identity-context'
 import {useSettingsState} from '../../shared/providers/settings-context'
@@ -43,6 +44,20 @@ function createEmptyReviewState() {
     updatedAt: null,
     annotationsByHash: {},
   }
+}
+
+const UNSAFE_REVIEW_HASH_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+])
+
+function normalizeReviewHashKey(value) {
+  const hash = String(value || '')
+    .trim()
+    .replace(/^_flip_/u, '')
+
+  return UNSAFE_REVIEW_HASH_KEYS.has(hash) ? '' : hash
 }
 
 export default function ValidationBenchmarkReviewPage() {
@@ -104,6 +119,7 @@ export default function ValidationBenchmarkReviewPage() {
     loadRehearsalBenchmarkReview(reviewScope)
   )
   const [currentIndex, setCurrentIndex] = React.useState(0)
+  const [seedFlipsByHash, setSeedFlipsByHash] = React.useState({})
 
   React.useEffect(() => {
     setReviewState(loadRehearsalBenchmarkReview(reviewScope))
@@ -140,15 +156,88 @@ export default function ValidationBenchmarkReviewPage() {
   )
 
   const currentItem = benchmarkSummary.items[currentIndex]
-  const currentAnnotation =
-    reviewState.annotationsByHash?.[String(currentItem?.hash || '').trim()] ||
-    {}
+  const currentHash = normalizeReviewHashKey(currentItem?.hash)
+  const currentSourceHash = normalizeReviewHashKey(currentItem?.sourceHash)
+  const restoredSeedFlip =
+    seedFlipsByHash[currentHash] ||
+    (currentSourceHash ? seedFlipsByHash[currentSourceHash] : null)
+  const currentReviewItem = React.useMemo(
+    () => mergeReviewItemSeedImages(currentItem, restoredSeedFlip),
+    [currentItem, restoredSeedFlip]
+  )
+  const currentAnnotation = reviewState.annotationsByHash?.[currentHash] || {}
+
+  React.useEffect(() => {
+    const lookupHashes = [currentHash, currentSourceHash].filter(Boolean)
+
+    if (
+      lookupHashes.length === 0 ||
+      hasReviewItemImages(currentItem) ||
+      restoredSeedFlip
+    ) {
+      return undefined
+    }
+
+    let isCancelled = false
+
+    async function restoreSeedImages() {
+      const nodeBridge = getNodeBridge()
+
+      if (typeof nodeBridge.getValidationDevnetSeedFlip !== 'function') {
+        return
+      }
+
+      for (const hash of lookupHashes) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const payload = await nodeBridge.getValidationDevnetSeedFlip(hash)
+          const normalizedPayload = normalizeReviewSeedFlipPayload(payload)
+
+          if (normalizedPayload) {
+            if (!isCancelled) {
+              setSeedFlipsByHash((prev) => {
+                const next = {...prev}
+
+                lookupHashes.forEach((lookupHash) => {
+                  next[lookupHash] = normalizedPayload
+                })
+                next[normalizedPayload.hash] = normalizedPayload
+
+                if (normalizedPayload.sourceHash) {
+                  next[normalizedPayload.sourceHash] = normalizedPayload
+                }
+
+                return next
+              })
+            }
+
+            return
+          }
+        } catch {
+          // Try the next hash before marking this review item as unavailable.
+        }
+      }
+
+      if (!isCancelled) {
+        setSeedFlipsByHash((prev) => ({
+          ...prev,
+          [lookupHashes[0]]: {missing: true},
+        }))
+      }
+    }
+
+    restoreSeedImages()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [currentHash, currentItem, currentSourceHash, restoredSeedFlip])
 
   const updateCurrentAnnotation = React.useCallback(
     (patch) => {
-      const currentHash = String(currentItem?.hash || '').trim()
+      const annotationHash = normalizeReviewHashKey(currentItem?.hash)
 
-      if (!currentHash) {
+      if (!annotationHash) {
         return
       }
 
@@ -156,14 +245,15 @@ export default function ValidationBenchmarkReviewPage() {
         const next = normalizeRehearsalBenchmarkReviewState(
           prev || createEmptyReviewState()
         )
-        const previousAnnotation = next.annotationsByHash?.[currentHash] || {}
+        const previousAnnotation =
+          next.annotationsByHash?.[annotationHash] || {}
 
         return {
           ...next,
           auditStatus: next.auditStatus === 'skipped' ? '' : next.auditStatus,
           annotationsByHash: {
             ...(next.annotationsByHash || {}),
-            [currentHash]: {
+            [annotationHash]: {
               ...previousAnnotation,
               ...patch,
               updatedAt: new Date().toISOString(),
@@ -354,15 +444,15 @@ export default function ValidationBenchmarkReviewPage() {
         <SimpleGrid columns={[1, null, 2]} spacing="6">
           <StoryPreviewCard
             title={t('Left story')}
-            images={currentItem?.images}
-            order={currentItem?.orders?.[0]}
+            images={currentReviewItem?.images}
+            order={currentReviewItem?.orders?.[0]}
             isExpected={currentItem?.expectedAnswer === 'left'}
             isSelected={currentItem?.selectedAnswer === 'left'}
           />
           <StoryPreviewCard
             title={t('Right story')}
-            images={currentItem?.images}
-            order={currentItem?.orders?.[1]}
+            images={currentReviewItem?.images}
+            order={currentReviewItem?.orders?.[1]}
             isExpected={currentItem?.expectedAnswer === 'right'}
             isSelected={currentItem?.selectedAnswer === 'right'}
           />
@@ -562,6 +652,71 @@ function ReviewStat({label, value}) {
   )
 }
 
+function hasReviewItemImages(item) {
+  return Array.isArray(item?.images)
+    ? item.images.filter((src) => typeof src === 'string' && src.trim())
+        .length >= 4
+    : false
+}
+
+function normalizeReviewSeedFlipPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+
+  const images = Array.isArray(payload.images)
+    ? payload.images
+        .map((src) => String(src || '').trim())
+        .filter(Boolean)
+        .slice(0, 4)
+    : []
+  const orders = Array.isArray(payload.orders)
+    ? payload.orders
+        .slice(0, 2)
+        .map((order) =>
+          Array.isArray(order)
+            ? order
+                .map((index) => Number.parseInt(index, 10))
+                .filter((index) => Number.isInteger(index))
+                .slice(0, 4)
+            : []
+        )
+        .filter((order) => order.length === 4)
+    : []
+
+  const hash = normalizeReviewHashKey(payload.hash)
+
+  if (!hash || images.length !== 4 || orders.length !== 2) {
+    return null
+  }
+
+  return {
+    hash,
+    sourceHash: normalizeReviewHashKey(payload.sourceHash),
+    images,
+    orders,
+  }
+}
+
+function mergeReviewItemSeedImages(item, restoredSeedFlip) {
+  if (
+    !item ||
+    hasReviewItemImages(item) ||
+    !hasReviewItemImages(restoredSeedFlip)
+  ) {
+    return item
+  }
+
+  return {
+    ...item,
+    images: restoredSeedFlip.images,
+    orders:
+      Array.isArray(item.orders) && item.orders.length >= 2
+        ? item.orders
+        : restoredSeedFlip.orders,
+  }
+}
+
 function StoryPreviewCard({
   title,
   images = [],
@@ -569,9 +724,21 @@ function StoryPreviewCard({
   isExpected = false,
   isSelected = false,
 }) {
+  let normalizedOrder = []
+
+  if (Array.isArray(order) && order.length > 0) {
+    normalizedOrder = order
+  } else if (Array.isArray(images)) {
+    normalizedOrder = images.map((_, index) => index)
+  }
+
   const orderedImages = Array.isArray(images)
-    ? reorderList(images, Array.isArray(order) ? order : [])
+    ? reorderList(images, normalizedOrder)
     : []
+  const imageSlots =
+    orderedImages.length > 0
+      ? orderedImages.slice(0, 4)
+      : [null, null, null, null]
   let borderColor = 'whiteAlpha.300'
 
   if (isExpected) {
@@ -601,7 +768,7 @@ function StoryPreviewCard({
         </Flex>
 
         <SimpleGrid columns={2} spacing="3">
-          {orderedImages.slice(0, 4).map((src, index) => (
+          {imageSlots.map((src, index) => (
             <AspectRatio key={`${title}-${index}`} ratio={4 / 3}>
               <Box
                 borderRadius="md"

@@ -335,6 +335,12 @@ function createNodeBridge() {
     getValidationDevnetLogs() {
       ipcRenderer.send(NODE_COMMAND, 'get-validation-devnet-logs')
     },
+    getValidationDevnetSeedFlip(hash) {
+      return ipcRenderer.invoke(
+        'validation-devnet.seed-flip',
+        String(hash || '')
+      )
+    },
     connectValidationDevnet() {
       ipcRenderer.send(NODE_COMMAND, 'connect-validation-devnet')
     },

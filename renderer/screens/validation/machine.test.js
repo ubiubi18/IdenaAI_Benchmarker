@@ -374,4 +374,40 @@ describe('validation machine', () => {
       URL.revokeObjectURL = originalRevokeObjectUrl
     }
   })
+
+  it('can return from keyword review to long flip solving', () => {
+    const machine = createValidationMachine({
+      epoch: 1,
+      validationStart: Date.now() + 60 * 1000,
+      shortSessionDuration: 120,
+      longSessionDuration: 300,
+      validationSessionId: '',
+      locale: 'en',
+      initialValidationPeriod: 'long',
+      initialLongFlips: [
+        {
+          hash: '0xlong-resume',
+          ready: true,
+          decoded: true,
+          option: 0,
+        },
+      ],
+    })
+
+    const service = interpret(machine).start()
+
+    service.send('START_LONG_SESSION')
+    service.send('FINISH_FLIPS')
+    service.send('START_KEYWORDS_QUALIFICATION')
+
+    expect(service.state.matches('longSession.solve.answer.keywords')).toBe(
+      true
+    )
+
+    service.send('RESUME_FLIPS')
+
+    expect(service.state.matches('longSession.solve.answer.flips')).toBe(true)
+
+    service.stop()
+  })
 })

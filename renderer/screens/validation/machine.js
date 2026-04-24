@@ -968,6 +968,14 @@ export const createValidationMachine = ({
                     keywords: {
                       invoke: {src: () => (cb) => cb({type: 'PICK', index: 0})},
                       on: {
+                        RESUME_FLIPS: {
+                          target: 'flips',
+                          actions: log(),
+                        },
+                        CHECK_FLIPS: {
+                          target: 'flips',
+                          actions: log(),
+                        },
                         ANSWER: {
                           actions: [
                             assign({
