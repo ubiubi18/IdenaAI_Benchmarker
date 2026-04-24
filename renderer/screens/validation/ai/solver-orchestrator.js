@@ -792,6 +792,14 @@ function ensureRuntimeRemaining(deadlineAt, minimumMs = 0) {
   }
 }
 
+function hasRuntimeRemaining(deadlineAt, minimumMs = 0) {
+  if (!Number.isFinite(deadlineAt)) {
+    return true
+  }
+
+  return Date.now() + Math.max(0, minimumMs) <= deadlineAt
+}
+
 function getSessionSolveGuardMs(sessionType = 'short') {
   return sessionType === 'short'
     ? SHORT_SESSION_MIN_SOLVE_GUARD_MS
@@ -979,8 +987,13 @@ export async function solveValidationSessionWithAi({
   const totalFlips = candidateFlips.length
 
   for (let index = 0; index < candidateFlips.length; index += 1) {
-    ensureRuntimeRemaining(sessionDeadlineAt, sessionSolveGuardMs)
-    if (Date.now() >= buildDeadlineAt) break
+    if (
+      !hasRuntimeRemaining(sessionDeadlineAt, sessionSolveGuardMs) ||
+      Date.now() >= buildDeadlineAt
+    ) {
+      break
+    }
+
     const flip = candidateFlips[index]
     const leftImage =
       effectiveProfile.flipVisionMode === 'composite'
@@ -1058,10 +1071,14 @@ export async function solveValidationSessionWithAi({
       requestTimeoutMs: effectiveProfile.requestTimeoutMs,
     })
 
-    ensureRuntimeRemaining(
-      sessionDeadlineAt,
-      sessionSolveGuardMs + MIN_PROVIDER_REQUEST_TIMEOUT_MS
-    )
+    if (
+      !hasRuntimeRemaining(
+        sessionDeadlineAt,
+        sessionSolveGuardMs + MIN_PROVIDER_REQUEST_TIMEOUT_MS
+      )
+    ) {
+      break
+    }
 
     if (onProgress) {
       onProgress({

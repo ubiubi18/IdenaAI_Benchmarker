@@ -395,6 +395,101 @@ describe('solver-orchestrator planning', () => {
     }
   })
 
+  it('returns already-applied short answers when the safe deadline stops the next flip', async () => {
+    const originalImage = global.Image
+    const originalAiSolver = global.aiSolver
+    const originalCreateElement = document.createElement.bind(document)
+    const createElementSpy = jest.spyOn(document, 'createElement')
+    let now = 1000000
+    const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => now)
+    const onDecision = jest.fn()
+
+    function ReadyImage() {
+      this.width = 100
+      this.height = 100
+      this.naturalWidth = 100
+      this.naturalHeight = 100
+    }
+
+    Object.defineProperty(ReadyImage.prototype, 'src', {
+      set() {
+        setTimeout(() => {
+          this.onload?.()
+        }, 0)
+      },
+    })
+
+    global.Image = ReadyImage
+    global.aiSolver = {
+      solveFlipBatch: jest.fn(async ({flips}) => {
+        now += 1600
+        return {
+          results: [
+            {
+              hash: flips[0].hash,
+              answer: 'left',
+              confidence: 0.8,
+              latencyMs: 1600,
+              reasoning: 'left is more coherent',
+              rawAnswerBeforeRemap: 'left',
+              finalAnswerAfterRemap: 'left',
+              sideSwapped: false,
+            },
+          ],
+        }
+      }),
+    }
+    createElementSpy.mockImplementation((tagName, ...args) => {
+      if (tagName === 'canvas') {
+        return {
+          width: 0,
+          height: 0,
+          getContext: () => ({
+            fillStyle: '#000000',
+            fillRect: jest.fn(),
+            drawImage: jest.fn(),
+          }),
+          toDataURL: jest.fn(() => 'data:image/png;base64,MOCK'),
+        }
+      }
+
+      return originalCreateElement(tagName, ...args)
+    })
+
+    try {
+      const result = await solveValidationSessionWithAi({
+        sessionType: 'short',
+        shortFlips: [
+          createDecodedFlip('short-deadline-1'),
+          createDecodedFlip('short-deadline-2'),
+        ],
+        aiSolver: {
+          provider: 'openai',
+          model: 'gpt-5.4',
+          benchmarkProfile: 'custom',
+          uncertaintyRepromptEnabled: false,
+          interFlipDelayMs: 0,
+          maxRetries: 0,
+        },
+        hardDeadlineAt: now + 2000,
+        onDecision,
+      })
+
+      expect(result.answers).toHaveLength(1)
+      expect(result.answers[0]).toMatchObject({
+        hash: 'short-deadline-1',
+        option: AnswerType.Left,
+      })
+      expect(onDecision).toHaveBeenCalledTimes(1)
+      expect(global.aiSolver.solveFlipBatch).toHaveBeenCalledTimes(1)
+    } finally {
+      dateNowSpy.mockRestore()
+      createElementSpy.mockRestore()
+      global.Image = originalImage
+      global.aiSolver = originalAiSolver
+    }
+  })
+
   it('prepares and solves flips one by one instead of prebuilding the whole batch', async () => {
     const originalImage = global.Image
     const originalAiSolver = global.aiSolver
