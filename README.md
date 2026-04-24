@@ -317,6 +317,8 @@ Related notes:
 
 This repo intentionally carries large static libraries in `idena-wasm-binding/lib/` for reproducible local builds.
 
+It also carries the chunked `samples/flips/flip-challenge-human-teacher-500-balanced.part-*.json` rehearsal sample shards. Those shards keep the local validation rehearsal and benchmark loop reproducible without requiring a network fetch, while staying below GitHub's hard per-file limit.
+
 If public release packaging becomes more formal later:
 - keep those files under review before every tag
 - consider Git LFS or external release artifacts if the bundle grows further

@@ -24,6 +24,8 @@ upstream project. Review this file before preparing a public release.
   contributors own those modifications; it does not relicense LGPL components.
 - Large static libraries in `idena-wasm-binding/lib/` may be better handled via
   release artifacts or Git LFS for a polished public release.
+- Chunked FLIP-Challenge rehearsal samples in `samples/flips/` are bundled so
+  local rehearsal and benchmark runs can work without a network fetch.
 - A cleaner release can avoid bundling `idena-go/`, `idena-wasm/`, and
   `idena-wasm-binding/` snapshots and instead document how to fetch/build those
   upstream components separately.
