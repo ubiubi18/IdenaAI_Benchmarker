@@ -39,7 +39,12 @@ const IMAGE_PREP_PER_FLIP_MS = {
 }
 const FRAME_REVIEW_PREP_MIN_MS = 900
 const MIN_PER_FLIP_SOLVE_BUDGET_MS = 2500
-const SHORT_SESSION_OPENAI_FAST_MODELS = ['gpt-5.4-mini', 'gpt-5.4']
+const SHORT_SESSION_OPENAI_FAST_MODELS = [
+  'gpt-5.5-mini',
+  'gpt-5.5',
+  'gpt-5.4-mini',
+  'gpt-5.4',
+]
 const RETRY_BACKOFF_BASE_MS = 700
 const EXPECTED_PASS_RUNTIME_MS = {
   default: 4500,

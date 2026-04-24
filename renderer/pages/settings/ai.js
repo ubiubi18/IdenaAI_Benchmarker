@@ -97,6 +97,8 @@ const DEFAULT_MODELS = {
 const MODEL_PRESETS = {
   'local-ai': [],
   openai: [
+    'gpt-5.5',
+    'gpt-5.5-mini',
     'gpt-5.4',
     'gpt-5.4-mini',
     'gpt-5.3-chat-latest',
@@ -109,6 +111,8 @@ const MODEL_PRESETS = {
     'o4-mini',
   ],
   'openai-compatible': [
+    'gpt-5.5',
+    'gpt-5.5-mini',
     'gpt-5.4',
     'gpt-5.4-mini',
     'gpt-5.3-chat-latest',
@@ -141,7 +145,12 @@ const MODEL_PRESETS = {
   ],
 }
 
-const SHORT_SESSION_OPENAI_FAST_MODELS = ['gpt-5.4-mini', 'gpt-5.4']
+const SHORT_SESSION_OPENAI_FAST_MODELS = [
+  'gpt-5.5-mini',
+  'gpt-5.5',
+  'gpt-5.4-mini',
+  'gpt-5.4',
+]
 
 const MAIN_PROVIDER_OPTIONS = [
   {value: 'local-ai', label: 'Local AI runtime'},

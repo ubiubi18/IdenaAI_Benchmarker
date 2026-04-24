@@ -76,7 +76,12 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   customProviderChatPath: '/chat/completions',
 }
 
-const OPENAI_SHORT_SESSION_FAST_MODELS = ['gpt-5.4-mini', 'gpt-5.4']
+const OPENAI_SHORT_SESSION_FAST_MODELS = [
+  'gpt-5.5-mini',
+  'gpt-5.5',
+  'gpt-5.4-mini',
+  'gpt-5.4',
+]
 
 function normalizeEphemeralExternalNode(value) {
   if (!value || typeof value !== 'object') {

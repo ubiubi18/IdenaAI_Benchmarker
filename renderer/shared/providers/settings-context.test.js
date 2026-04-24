@@ -57,6 +57,18 @@ describe('settings-context ai solver normalization', () => {
     })
   })
 
+  it('accepts gpt-5.5 fast-mode selections without downgrading them', () => {
+    expect(
+      buildAiSolverSettings({
+        shortSessionOpenAiFastEnabled: true,
+        shortSessionOpenAiFastModel: 'gpt-5.5-mini',
+      })
+    ).toMatchObject({
+      shortSessionOpenAiFastEnabled: true,
+      shortSessionOpenAiFastModel: 'gpt-5.5-mini',
+    })
+  })
+
   it('keeps the internal node preference while routing through an ephemeral rehearsal node', () => {
     expect(
       buildEffectiveSettingsState(

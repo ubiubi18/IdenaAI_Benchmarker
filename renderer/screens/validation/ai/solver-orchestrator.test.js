@@ -73,7 +73,7 @@ describe('solver-orchestrator planning', () => {
         provider: 'openai',
         model: 'gpt-5.4',
         shortSessionOpenAiFastEnabled: true,
-        shortSessionOpenAiFastModel: 'gpt-5.4-mini',
+        shortSessionOpenAiFastModel: 'gpt-5.5-mini',
       },
     })
 
@@ -84,11 +84,11 @@ describe('solver-orchestrator planning', () => {
         provider: 'openai',
         model: 'gpt-5.4',
         shortSessionOpenAiFastEnabled: true,
-        shortSessionOpenAiFastModel: 'gpt-5.4-mini',
+        shortSessionOpenAiFastModel: 'gpt-5.5-mini',
       },
     })
 
-    expect(shortPlan.model).toBe('gpt-5.4-mini')
+    expect(shortPlan.model).toBe('gpt-5.5-mini')
     expect(shortPlan.promptOptions).toEqual({
       openAiServiceTier: 'priority',
       openAiReasoningEffort: 'none',

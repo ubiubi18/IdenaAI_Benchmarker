@@ -133,6 +133,8 @@ const CUSTOM_MODEL_OPTION = '__custom_model__'
 
 const REASONING_MODEL_PRESETS = {
   openai: [
+    'gpt-5.5',
+    'gpt-5.5-mini',
     'gpt-5.4',
     'gpt-5.3-chat-latest',
     'gpt-5.3-codex',
@@ -144,6 +146,8 @@ const REASONING_MODEL_PRESETS = {
     'o4-mini',
   ],
   'openai-compatible': [
+    'gpt-5.5',
+    'gpt-5.5-mini',
     'gpt-5.4',
     'gpt-5.3-chat-latest',
     'gpt-5.3-codex',
@@ -190,7 +194,11 @@ const IMAGE_MODEL_PRESETS = {
 // Pricing snapshot for common OpenAI text+vision models (USD per 1M tokens),
 // based on public OpenAI pricing/docs as of 2026-03-25.
 const OPENAI_MODEL_PRICING_USD_PER_MTOK = {
+  // Provisional aliases until distinct GPT-5.5 desktop pricing is configured.
+  'gpt-5.5': {input: 2.5, output: 15},
+  'gpt-5.5-mini': {input: 0.25, output: 2},
   'gpt-5.4': {input: 2.5, output: 15},
+  'gpt-5.4-mini': {input: 0.25, output: 2},
   'gpt-5.3-chat-latest': {input: 1.75, output: 14},
   'gpt-5.3-codex': {input: 1.75, output: 14},
   'gpt-5-mini': {input: 0.25, output: 2},
