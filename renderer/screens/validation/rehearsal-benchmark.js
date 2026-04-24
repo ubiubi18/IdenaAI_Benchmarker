@@ -9,10 +9,20 @@ export const REHEARSAL_BENCHMARK_ANNOTATION_DATASET_VERSION = 1
 export const REHEARSAL_BENCHMARK_ANNOTATION_DATASET_STORAGE_KEY =
   'rehearsal-benchmark-annotations'
 
+const UNSAFE_REHEARSAL_BENCHMARK_OBJECT_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+])
+
 function normalizeRehearsalBenchmarkHash(value) {
-  return String(value || '')
+  const normalized = String(value || '')
     .trim()
     .replace(/^_flip_/u, '')
+
+  return UNSAFE_REHEARSAL_BENCHMARK_OBJECT_KEYS.has(normalized)
+    ? ''
+    : normalized
 }
 
 function normalizeExpectedAnswer(value) {

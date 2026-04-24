@@ -95,6 +95,21 @@ describe('rehearsal benchmark helpers', () => {
     })
   })
 
+  it('rejects unsafe object keys in seed metadata maps', () => {
+    expect(
+      normalizeRehearsalSeedFlipMetaByHash({
+        __proto__: {
+          expectedAnswer: 'left',
+          words: [{name: 'apple', desc: 'fruit'}],
+        },
+        constructor: {
+          expectedAnswer: 'right',
+          words: [{name: 'ghost', desc: 'spirit'}],
+        },
+      })
+    ).toEqual({})
+  })
+
   it('merges rehearsal seed metadata into matching flips', () => {
     expect(
       mergeRehearsalSeedMetaIntoFlips(

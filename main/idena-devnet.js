@@ -157,10 +157,18 @@ function uniqStrings(values) {
   return [...new Set((values || []).filter(Boolean))]
 }
 
+const UNSAFE_VALIDATION_DEVNET_OBJECT_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+])
+
 function normalizeValidationDevnetSeedHash(value) {
-  return String(value || '')
+  const normalized = String(value || '')
     .trim()
     .replace(/^_flip_/u, '')
+
+  return UNSAFE_VALIDATION_DEVNET_OBJECT_KEYS.has(normalized) ? '' : normalized
 }
 
 function normalizeValidationDevnetSubmittedFlipHash(result) {

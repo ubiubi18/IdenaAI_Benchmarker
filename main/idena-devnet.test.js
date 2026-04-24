@@ -473,6 +473,23 @@ describe('validation devnet helpers', () => {
     })
   })
 
+  it('rejects unsafe object keys in rehearsal seed metadata maps', () => {
+    expect(
+      buildValidationDevnetSeedFlipMetaByHash([
+        {
+          hash: '__proto__',
+          expectedAnswer: 'left',
+          words: [{name: 'apple', desc: 'fruit'}],
+        },
+        {
+          hash: 'constructor',
+          expectedAnswer: 'right',
+          words: [{name: 'ghost', desc: 'spirit'}],
+        },
+      ])
+    ).toEqual({})
+  })
+
   it('skips rehearsal seed flips that were already annotated in prior review runs', async () => {
     const tempDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'idena-devnet-seed-review-')
