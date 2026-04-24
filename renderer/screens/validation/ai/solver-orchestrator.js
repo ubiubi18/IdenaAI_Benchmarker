@@ -493,6 +493,43 @@ function summarizeFastMode(results = []) {
   }
 }
 
+function summarizeModelFallbacks(results = []) {
+  const entries = results
+    .flatMap((item) => {
+      if (!item) {
+        return []
+      }
+      if (Array.isArray(item.modelFallbacks)) {
+        return item.modelFallbacks
+      }
+      return item.modelFallback ? [item.modelFallback] : []
+    })
+    .filter((item) => item && item.requestedModel && item.usedModel)
+
+  if (!entries.length) {
+    return null
+  }
+
+  const pairs = Array.from(
+    new Map(
+      entries.map((item) => [
+        `${item.requestedModel}->${item.usedModel}`,
+        {
+          requestedModel: item.requestedModel,
+          usedModel: item.usedModel,
+          reason: item.reason || 'model_unavailable',
+        },
+      ])
+    ).values()
+  )
+
+  return {
+    used: true,
+    affectedFlips: entries.length,
+    pairs,
+  }
+}
+
 function ensureBridge() {
   if (
     !global.aiSolver ||
@@ -1161,6 +1198,13 @@ export async function solveValidationSessionWithAi({
     results.push(solved)
 
     const option = toAnswerOption(solved.answer)
+    let modelFallbacks = []
+    if (Array.isArray(solved.modelFallbacks)) {
+      modelFallbacks = solved.modelFallbacks
+    } else if (solved.modelFallback) {
+      modelFallbacks = [solved.modelFallback]
+    }
+
     const decision = {
       sessionType,
       index: index + 1,
@@ -1172,6 +1216,8 @@ export async function solveValidationSessionWithAi({
       latencyMs: solved.latencyMs,
       error: solved.error,
       fastMode: solved.fastMode || null,
+      modelFallback: solved.modelFallback || null,
+      modelFallbacks,
       leftImage: payloadFlip.leftImage,
       rightImage: payloadFlip.rightImage,
       leftFrames: payloadFlip.leftFrames,
@@ -1264,6 +1310,7 @@ export async function solveValidationSessionWithAi({
 
   const summary = summarizeResults(results, startedAt)
   const fastMode = summarizeFastMode(results)
+  const modelFallback = summarizeModelFallbacks(results)
   if (onProgress) {
     onProgress({
       stage: 'completed',
@@ -1280,6 +1327,7 @@ export async function solveValidationSessionWithAi({
     profile: effectiveProfile,
     summary,
     fastMode,
+    modelFallback,
     results,
     answers,
   }

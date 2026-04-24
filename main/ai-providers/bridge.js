@@ -107,6 +107,11 @@ const OPENAI_IMAGE_PRICING_USD_PER_IMAGE = {
   },
 }
 
+const OPENAI_UNAVAILABLE_MODEL_FALLBACKS = {
+  'gpt-5.5': 'gpt-5.4',
+  'gpt-5.5-mini': 'gpt-5.4-mini',
+}
+
 const SUPPORTED_PROVIDER_IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536']
 
 const SEMANTIC_ROLE_VALUES = [
@@ -4624,6 +4629,50 @@ function getRemoteErrorPayload(data) {
   }
 }
 
+function isProviderModelUnavailableError(error) {
+  const status = error && error.response && error.response.status
+  if (status !== 404) {
+    return false
+  }
+
+  const remote = getRemoteErrorPayload(
+    error && error.response && error.response.data
+  )
+  const marker = [
+    remote.code,
+    remote.type,
+    remote.message,
+    error && error.message,
+  ]
+    .map((item) =>
+      String(item || '')
+        .trim()
+        .toLowerCase()
+    )
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    marker.includes('model_not_found') ||
+    marker.includes('does not exist') ||
+    marker.includes('do not have access')
+  )
+}
+
+function resolveUnavailableOpenAiModelFallback(provider, model) {
+  if (provider !== PROVIDERS.OpenAI) {
+    return null
+  }
+
+  return (
+    OPENAI_UNAVAILABLE_MODEL_FALLBACKS[
+      String(model || '')
+        .trim()
+        .toLowerCase()
+    ] || null
+  )
+}
+
 function createProviderErrorMessage({provider, model, operation, error}) {
   const status = error && error.response && error.response.status
   const statusText = error && error.response && error.response.statusText
@@ -6208,17 +6257,58 @@ Flip hash: ${hash}
     const systemPrompt = systemPromptTemplate()
 
     if (isOpenAiCompatibleProvider(provider)) {
-      return callOpenAi({
-        httpClient,
-        apiKey: resolvedApiKey,
-        model,
-        flip,
-        prompt,
-        systemPrompt,
-        profile,
-        providerConfig: resolvedProviderConfig,
-        promptOptions,
-      })
+      try {
+        return await callOpenAi({
+          httpClient,
+          apiKey: resolvedApiKey,
+          model,
+          flip,
+          prompt,
+          systemPrompt,
+          profile,
+          providerConfig: resolvedProviderConfig,
+          promptOptions,
+        })
+      } catch (error) {
+        const fallbackModel = resolveUnavailableOpenAiModelFallback(
+          provider,
+          model
+        )
+
+        if (!fallbackModel || !isProviderModelUnavailableError(error)) {
+          throw error
+        }
+
+        logger.info('AI provider model unavailable, retrying fallback model', {
+          provider,
+          model,
+          fallbackModel,
+        })
+
+        const fallbackResponse = await callOpenAi({
+          httpClient,
+          apiKey: resolvedApiKey,
+          model: fallbackModel,
+          flip,
+          prompt,
+          systemPrompt,
+          profile,
+          providerConfig: resolvedProviderConfig,
+          promptOptions,
+        })
+
+        return {
+          ...fallbackResponse,
+          providerMeta: {
+            ...(fallbackResponse.providerMeta || {}),
+            modelFallback: {
+              requestedModel: model,
+              usedModel: fallbackModel,
+              reason: 'model_not_found',
+            },
+          },
+        }
+      }
     }
 
     if (provider === PROVIDERS.Anthropic) {
@@ -6334,15 +6424,19 @@ Flip hash: ${hash}
       normalized,
       providerConfig
     )
+    let testedModel = finalModel
+    let modelFallback = null
 
-    try {
-      await withRetries(1, async (attempt) => {
+    async function testProviderModel(modelToTest) {
+      let attempt = 0
+
+      while (attempt <= 1) {
         try {
           if (isOpenAiCompatibleProvider(normalized)) {
             await testOpenAiProvider({
               httpClient,
               apiKey,
-              model: finalModel,
+              model: modelToTest,
               profile,
               providerConfig: resolvedProviderConfig,
             })
@@ -6350,7 +6444,7 @@ Flip hash: ${hash}
             await testAnthropicProvider({
               httpClient,
               apiKey,
-              model: finalModel,
+              model: modelToTest,
               profile,
               providerConfig: resolvedProviderConfig,
             })
@@ -6358,12 +6452,16 @@ Flip hash: ${hash}
             await testGeminiProvider({
               httpClient,
               apiKey,
-              model: finalModel,
+              model: modelToTest,
               profile,
               providerConfig: resolvedProviderConfig,
             })
           }
+          return
         } catch (error) {
+          if (isProviderModelUnavailableError(error)) {
+            throw error
+          }
           const status = getResponseStatus(error)
           const timeoutCode = String(error && error.code ? error.code : '')
             .trim()
@@ -6381,28 +6479,78 @@ Flip hash: ${hash}
             })
             await sleep(retryAfterMs)
           }
-          throw error
+          if (attempt >= 1) {
+            throw error
+          }
+          attempt += 1
         }
-      })
+      }
+
+      throw new Error('Provider test retry loop terminated unexpectedly')
+    }
+
+    try {
+      await testProviderModel(finalModel)
     } catch (error) {
-      const message = createProviderErrorMessage({
-        provider: normalized,
-        model: finalModel,
-        operation: 'test',
-        error,
-      })
-      logger.error('AI provider test failed', {
-        provider: normalized,
-        model: finalModel,
-        error: message,
-      })
-      throw new Error(message)
+      const fallbackModel = resolveUnavailableOpenAiModelFallback(
+        normalized,
+        finalModel
+      )
+
+      if (fallbackModel && isProviderModelUnavailableError(error)) {
+        logger.info(
+          'AI provider test model unavailable, retrying fallback model',
+          {
+            provider: normalized,
+            model: finalModel,
+            fallbackModel,
+          }
+        )
+
+        try {
+          await testProviderModel(fallbackModel)
+          testedModel = fallbackModel
+          modelFallback = {
+            requestedModel: finalModel,
+            usedModel: fallbackModel,
+            reason: 'model_not_found',
+          }
+        } catch (fallbackError) {
+          const message = createProviderErrorMessage({
+            provider: normalized,
+            model: fallbackModel,
+            operation: 'test',
+            error: fallbackError,
+          })
+          logger.error('AI provider test failed', {
+            provider: normalized,
+            model: fallbackModel,
+            fallbackModelFrom: finalModel,
+            error: message,
+          })
+          throw new Error(message)
+        }
+      } else {
+        const message = createProviderErrorMessage({
+          provider: normalized,
+          model: finalModel,
+          operation: 'test',
+          error,
+        })
+        logger.error('AI provider test failed', {
+          provider: normalized,
+          model: finalModel,
+          error: message,
+        })
+        throw new Error(message)
+      }
     }
 
     return {
       ok: true,
       provider: normalized,
-      model: finalModel,
+      model: testedModel,
+      modelFallback,
       latencyMs: now() - startedAt,
     }
   }
@@ -9777,6 +9925,12 @@ Flip hash: ${hash}
           ? normalizeAnswer(singleConsultantDecision.finalAnswerAfterRemap)
           : aggregate.answer
         const fastMode = summarizeConsultantFastMode(consultantDecisions)
+        const modelFallbacks = consultantDecisions
+          .map(
+            (item) =>
+              item && item.providerMeta && item.providerMeta.modelFallback
+          )
+          .filter(Boolean)
 
         return {
           hash: flip.hash,
@@ -9812,6 +9966,8 @@ Flip hash: ${hash}
           ensembleTieBreakApplied: aggregate.tieBreakApplied,
           ensembleTieBreakCandidates: aggregate.tieBreakCandidates,
           fastMode,
+          modelFallback: modelFallbacks[0] || null,
+          modelFallbacks,
         }
       }
 

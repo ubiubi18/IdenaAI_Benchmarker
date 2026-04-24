@@ -321,6 +321,45 @@ function buildShortSessionFastModeNotice({fastMode, t}) {
   return null
 }
 
+function formatModelFallbackPairs(modelFallback = null) {
+  let pairs = []
+
+  if (Array.isArray(modelFallback?.pairs)) {
+    pairs = modelFallback.pairs
+  } else if (modelFallback?.requestedModel && modelFallback?.usedModel) {
+    pairs = [modelFallback]
+  }
+
+  return pairs
+    .map((item) => {
+      const requestedModel = String(item?.requestedModel || '').trim()
+      const usedModel = String(item?.usedModel || '').trim()
+      return requestedModel && usedModel
+        ? `${requestedModel} -> ${usedModel}`
+        : ''
+    })
+    .filter(Boolean)
+    .join(', ')
+}
+
+function buildModelFallbackNotice({modelFallback, t}) {
+  const fallbackPairs = formatModelFallbackPairs(modelFallback)
+
+  if (!fallbackPairs) {
+    return null
+  }
+
+  return {
+    title: t('AI model fallback used'),
+    description: t(
+      '{{models}}. The selected model was not available for this key, so IdenaAI continued with the fallback model.',
+      {
+        models: fallbackPairs,
+      }
+    ),
+  }
+}
+
 function hasLocalAiValidationSequences(flip) {
   return Boolean(
     flip &&
@@ -2014,6 +2053,8 @@ function ValidationSession({
               forcedDecisionReason: event.forcedDecisionReason,
               secondPassStrategy: event.secondPassStrategy,
               firstPass: event.firstPass,
+              modelFallback: event.modelFallback,
+              modelFallbacks: event.modelFallbacks,
               index: event.index,
               total: event.total,
               sessionType: event.sessionType,
@@ -2048,6 +2089,8 @@ function ValidationSession({
               forcedDecisionReason: event.forcedDecisionReason,
               secondPassStrategy: event.secondPassStrategy,
               firstPass: event.firstPass,
+              modelFallback: event.modelFallback,
+              modelFallbacks: event.modelFallbacks,
             }
             liveEntries.push(entry)
             setAiLiveTimeline((prev) => prev.concat(entry).slice(-24))
@@ -2114,6 +2157,18 @@ function ValidationSession({
         )
       )
 
+      const modelFallbackNotice = buildModelFallbackNotice({
+        modelFallback: result.modelFallback,
+        t,
+      })
+      if (modelFallbackNotice) {
+        notifyAi(
+          modelFallbackNotice.title,
+          modelFallbackNotice.description,
+          'info'
+        )
+      }
+
       if (sessionType === 'short') {
         const fastModeNotice = buildShortSessionFastModeNotice({
           fastMode: result.fastMode,
@@ -2138,6 +2193,7 @@ function ValidationSession({
         profile: result.profile,
         summary: result.summary,
         fastMode: result.fastMode,
+        modelFallback: result.modelFallback,
         flips: result.results || [],
         appliedAnswers: result.answers.length,
         timeline: liveEntries.slice(-24),
@@ -3673,6 +3729,15 @@ function shortenHash(hash) {
 
 function formatAiDecisionTrace(item = {}) {
   const parts = []
+  const fallbackPairs = formatModelFallbackPairs(
+    item.modelFallbacks && item.modelFallbacks.length
+      ? {pairs: item.modelFallbacks}
+      : item.modelFallback
+  )
+
+  if (fallbackPairs) {
+    parts.push(`model fallback ${fallbackPairs}`)
+  }
 
   if (item.uncertaintyRepromptUsed) {
     parts.push(
@@ -3894,6 +3959,13 @@ function AiTelemetryPanel({
               }, timeout ${formatLatency(
                 telemetry.profile.requestTimeoutMs
               )}, gap ${formatLatency(telemetry.profile.interFlipDelayMs)}`}
+            </Text>
+          )}
+          {formatModelFallbackPairs(telemetry.modelFallback) && (
+            <Text fontSize="xs" color="orange.300">
+              {`model fallback ${formatModelFallbackPairs(
+                telemetry.modelFallback
+              )}`}
             </Text>
           )}
 

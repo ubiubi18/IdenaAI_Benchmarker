@@ -329,6 +329,18 @@ describe('solver-orchestrator planning', () => {
             forcedDecisionReason: 'uncertain_or_skip',
             secondPassStrategy: 'annotated_frame_review',
             frameReasoningUsed: true,
+            modelFallback: {
+              requestedModel: 'gpt-5.5',
+              usedModel: 'gpt-5.4',
+              reason: 'model_not_found',
+            },
+            modelFallbacks: [
+              {
+                requestedModel: 'gpt-5.5',
+                usedModel: 'gpt-5.4',
+                reason: 'model_not_found',
+              },
+            ],
             firstPass: {
               answer: 'skip',
               confidence: 0.12,
@@ -357,7 +369,7 @@ describe('solver-orchestrator planning', () => {
     })
 
     try {
-      await solveValidationSessionWithAi({
+      const result = await solveValidationSessionWithAi({
         sessionType: 'short',
         shortFlips: [createDecodedFlip('short-forward-1')],
         aiSolver: {
@@ -387,6 +399,22 @@ describe('solver-orchestrator planning', () => {
           answer: 'skip',
           strategy: 'initial_decision',
         }),
+        modelFallback: {
+          requestedModel: 'gpt-5.5',
+          usedModel: 'gpt-5.4',
+          reason: 'model_not_found',
+        },
+      })
+      expect(result.modelFallback).toEqual({
+        used: true,
+        affectedFlips: 1,
+        pairs: [
+          {
+            requestedModel: 'gpt-5.5',
+            usedModel: 'gpt-5.4',
+            reason: 'model_not_found',
+          },
+        ],
       })
     } finally {
       createElementSpy.mockRestore()

@@ -4026,20 +4026,44 @@ export default function AiSettingsPage() {
                                   model: activeModel,
                                   providerConfig,
                                 })
+                                if (
+                                  result &&
+                                  result.modelFallback &&
+                                  result.model
+                                ) {
+                                  updateAiSolverSettings({model: result.model})
+                                }
                                 notify(
                                   t('Provider is reachable'),
-                                  t(
-                                    '{{provider}} {{model}} in {{latency}} ms',
-                                    {
-                                      provider: formatAiProviderLabel(
-                                        result.provider
-                                      ),
-                                      model:
-                                        String(result.model || '').trim() ||
-                                        t('default model'),
-                                      latency: result.latencyMs,
-                                    }
-                                  )
+                                  result && result.modelFallback
+                                    ? t(
+                                        '{{provider}} {{model}} in {{latency}} ms. {{requestedModel}} is not available for this key, so IdenaAI switched to {{model}}.',
+                                        {
+                                          provider: formatAiProviderLabel(
+                                            result.provider
+                                          ),
+                                          model:
+                                            String(result.model || '').trim() ||
+                                            t('default model'),
+                                          requestedModel: String(
+                                            result.modelFallback
+                                              .requestedModel || ''
+                                          ).trim(),
+                                          latency: result.latencyMs,
+                                        }
+                                      )
+                                    : t(
+                                        '{{provider}} {{model}} in {{latency}} ms',
+                                        {
+                                          provider: formatAiProviderLabel(
+                                            result.provider
+                                          ),
+                                          model:
+                                            String(result.model || '').trim() ||
+                                            t('default model'),
+                                          latency: result.latencyMs,
+                                        }
+                                      )
                                 )
                                 await refreshProviderKeyStatus()
                               } catch (error) {
