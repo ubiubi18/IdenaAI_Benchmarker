@@ -1,6 +1,6 @@
 const low = require('lowdb')
 const FileSync = require('lowdb/adapters/FileSync')
-const nanoid = require('nanoid')
+const {nanoid} = require('nanoid')
 const {dbPath} = require('./setup')
 
 const adapter = new FileSync(dbPath('invites.json'))

@@ -284,6 +284,37 @@ describe('validation machine', () => {
     }
   })
 
+  it('does not navigate past ready long flips while later flips are still loading', () => {
+    const machine = createValidationMachine({
+      epoch: 1,
+      validationStart: Date.now() + 60 * 1000,
+      shortSessionDuration: 120,
+      longSessionDuration: 300,
+      validationSessionId: '',
+      locale: 'en',
+      initialValidationPeriod: 'long',
+      initialLongFlips: [
+        {hash: '0xready-1', ready: true, decoded: true},
+        {hash: '0xready-2', ready: true, decoded: true},
+        {hash: '0xloading-1', ready: false},
+        {hash: '0xloading-2', ready: false},
+      ],
+    })
+
+    const service = interpret(machine).start()
+
+    service.send('START_LONG_SESSION')
+    expect(service.state.context.currentIndex).toBe(0)
+
+    service.send('NEXT')
+    expect(service.state.context.currentIndex).toBe(1)
+
+    service.send('NEXT')
+    expect(service.state.context.currentIndex).toBe(1)
+
+    service.stop()
+  })
+
   it('submits long answers directly from keywords without opening review', async () => {
     const originalRevokeObjectUrl = URL.revokeObjectURL
     URL.revokeObjectURL = jest.fn()

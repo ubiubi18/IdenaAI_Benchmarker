@@ -220,7 +220,9 @@ export function ImageSearchDialog({
               ? t(
                   'AI image search mode: prompt text is sent to your configured AI provider.'
                 )
-              : t('Web image search mode: DuckDuckGo with fallback providers.')}
+              : t(
+                  'Web image search mode: DuckDuckGo with Openverse and Wikimedia fallbacks.'
+                )}
           </Text>
 
           {eitherState(current, 'idle') && (

@@ -5136,8 +5136,10 @@ function aggregateConsultantDecisions(decisions = [], tieBreakerKey = '') {
   }
 }
 
-function chooseRandomSide() {
-  return Math.random() < 0.5 ? 'left' : 'right'
+function chooseDeterministicRandomSide(seed) {
+  return hashScore(`${seed || 'validation-flip'}|force`) % 2 === 0
+    ? 'left'
+    : 'right'
 }
 
 function resolveSecondPassStrategy({useFrameReasoning, secondPass}) {
@@ -9651,14 +9653,14 @@ Flip hash: ${hash}
 
       if (flipStartedAt >= deadlineAt) {
         if (profile.forceDecision) {
-          const forcedAnswer = chooseRandomSide()
+          const forcedAnswer = chooseDeterministicRandomSide(flip.hash)
           return {
             hash: flip.hash,
             answer: forcedAnswer,
             rawAnswerBeforeRemap: 'skip',
             finalAnswerAfterRemap: forcedAnswer,
             confidence: 0,
-            reasoning: `deadline exceeded, random fallback ${forcedAnswer}`,
+            reasoning: `deadline exceeded, deterministic random fallback ${forcedAnswer}`,
             latencyMs: 0,
             error: 'deadline_exceeded',
             sideSwapped: swapped,
@@ -10020,7 +10022,7 @@ Flip hash: ${hash}
       }
 
       if (profile.forceDecision && finalResult.answer === 'skip') {
-        const forcedAnswer = chooseRandomSide()
+        const forcedAnswer = chooseDeterministicRandomSide(flip.hash)
         finalResult = {
           ...finalResult,
           answer: forcedAnswer,
@@ -10031,8 +10033,8 @@ Flip hash: ${hash}
             ? 'provider_error'
             : 'uncertain_or_skip',
           reasoning: finalResult.reasoning
-            ? `${finalResult.reasoning}; random fallback ${forcedAnswer}`
-            : `random fallback ${forcedAnswer}`,
+            ? `${finalResult.reasoning}; deterministic random fallback ${forcedAnswer}`
+            : `deterministic random fallback ${forcedAnswer}`,
         }
       }
 

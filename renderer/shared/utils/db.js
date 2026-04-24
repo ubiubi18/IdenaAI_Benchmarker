@@ -1,4 +1,4 @@
-import nanoid from 'nanoid'
+import {nanoid} from 'nanoid'
 
 const rootDbRegistry = new Map()
 const epochPrefixPattern = /^epoch(-?\d+)$/i

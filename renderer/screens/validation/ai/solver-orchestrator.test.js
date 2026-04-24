@@ -262,8 +262,8 @@ describe('solver-orchestrator planning', () => {
       solveFlipBatch: jest.fn(),
     }
 
-    await expect(
-      solveValidationSessionWithAi({
+    try {
+      const result = await solveValidationSessionWithAi({
         sessionType: 'short',
         shortFlips: [createDecodedFlip('short-broken-1')],
         aiSolver: {
@@ -272,10 +272,19 @@ describe('solver-orchestrator planning', () => {
         },
         hardDeadlineAt: Date.now() + 60 * 1000,
       })
-    ).rejects.toThrow('Unable to load validation flip image (panel-1)')
 
-    global.Image = originalImage
-    global.aiSolver = originalAiSolver
+      expect(global.aiSolver.solveFlipBatch).not.toHaveBeenCalled()
+      expect(result.answers).toHaveLength(0)
+      expect(result.results[0]).toMatchObject({
+        hash: 'short-broken-1',
+        answer: 'skip',
+        error:
+          'image_prepare_failed: Unable to load validation flip image (panel-1)',
+      })
+    } finally {
+      global.Image = originalImage
+      global.aiSolver = originalAiSolver
+    }
   })
 
   it('forwards second-pass trace fields into solved progress events', async () => {

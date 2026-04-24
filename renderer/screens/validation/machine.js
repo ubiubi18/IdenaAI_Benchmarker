@@ -885,7 +885,7 @@ export const createValidationMachine = ({
                       {
                         target: '.normal',
                         cond: ({longFlips, currentIndex}) =>
-                          currentIndex < longFlips.length - 2,
+                          currentIndex < longFlips.filter(readyFlip).length - 2,
                         actions: [
                           assign({
                             currentIndex: ({currentIndex}) => currentIndex + 1,

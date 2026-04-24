@@ -1,6 +1,6 @@
 import {Machine, assign, spawn, sendParent, createMachine} from 'xstate'
 import {log, send} from 'xstate/lib/actions'
-import nanoid from 'nanoid'
+import {nanoid} from 'nanoid'
 import {
   fetchKeywordTranslations,
   voteForKeywordTranslation,

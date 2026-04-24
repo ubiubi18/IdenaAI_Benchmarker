@@ -131,12 +131,15 @@ import {
 import {
   computeRehearsalBenchmarkSummary,
   hasMissingRehearsalSeedMeta,
+  mergeRehearsalSeedMetaIntoFlips,
 } from '../screens/validation/rehearsal-benchmark'
 
 const previewAiSampleSet = require('../../samples/flips/flip-challenge-test-5-decoded-labeled.json')
 
 const AUTO_REPORT_DEFAULT_DELAY_MINUTES = 10
 const SESSION_AUTO_PROVIDER_RETRY_MS = 5 * 1000
+const SESSION_AUTO_SOLVE_RETRY_MS = 4 * 1000
+const SESSION_AUTO_SOLVE_ERROR_RETRY_MS = 8 * 1000
 const MIN_AUTO_REPORT_DELAY_MS = 15 * 1000
 const AUTO_REPORT_KEYWORD_WAIT_MS = 20 * 1000
 const AUTO_REPORT_KEYWORD_RETRY_MS = 5 * 1000
@@ -982,8 +985,11 @@ function ValidationSession({
   })
   const [isCheckingLocalAiRecommendation, setIsCheckingLocalAiRecommendation] =
     useState(false)
+  const [autoSolveRetryTick, setAutoSolveRetryTick] = useState(0)
   const autoSolveStartedRef = useRef({short: false, long: false})
   const autoSolveLongSignatureRef = useRef('')
+  const autoSolveRetryAfterRef = useRef({short: 0, long: 0})
+  const autoSolveRetryTimerRef = useRef({short: null, long: null})
   const missingOnchainAutoSubmitConsentNotifiedRef = useRef(false)
   const shortSessionDecodeRecoveryAttemptedRef = useRef(false)
   const longSessionDecodeRecoveryAttemptedRef = useRef(false)
@@ -1483,6 +1489,49 @@ function ValidationSession({
       isRehearsalNodeSession ? computeRehearsalBenchmarkSummary(state) : null,
     [isRehearsalNodeSession, state]
   )
+  const longFlipsWithReportKeywords = useMemo(
+    () =>
+      isRehearsalNodeSession
+        ? mergeRehearsalSeedMetaIntoFlips(
+            longFlips,
+            rehearsalDevnetStatus.seedFlipMetaByHash || {}
+          )
+        : longFlips,
+    [
+      isRehearsalNodeSession,
+      longFlips,
+      rehearsalDevnetStatus.seedFlipMetaByHash,
+    ]
+  )
+  const currentReportFlip = useMemo(() => {
+    if (!currentFlip || !isLongSessionKeywords(state)) {
+      return currentFlip
+    }
+
+    const enrichedFlip = longFlipsWithReportKeywords.find(
+      (flip) => flip?.hash === currentFlip.hash
+    )
+
+    if (
+      !enrichedFlip ||
+      (Array.isArray(currentFlip.words) && currentFlip.words.length > 0)
+    ) {
+      return currentFlip
+    }
+
+    return {
+      ...currentFlip,
+      words: enrichedFlip.words,
+      expectedAnswer: enrichedFlip.expectedAnswer,
+      expectedStrength: enrichedFlip.expectedStrength,
+      consensusAnswer: enrichedFlip.consensusAnswer,
+      consensusStrength: enrichedFlip.consensusStrength,
+      consensusVotes: enrichedFlip.consensusVotes,
+      sourceStats: enrichedFlip.sourceStats,
+      sourceDataset: enrichedFlip.sourceDataset,
+      sourceSplit: enrichedFlip.sourceSplit,
+    }
+  }, [currentFlip, longFlipsWithReportKeywords, state])
 
   useEffect(() => {
     if (
@@ -1563,6 +1612,57 @@ function ValidationSession({
       })
     },
     [toast]
+  )
+
+  const isAutoSolveRetryPending = useCallback((sessionType) => {
+    const retryAfter = autoSolveRetryAfterRef.current?.[sessionType] || 0
+    return Number.isFinite(retryAfter) && retryAfter > Date.now()
+  }, [])
+
+  const clearAutoSolveRetry = useCallback((sessionType) => {
+    const timerId = autoSolveRetryTimerRef.current?.[sessionType]
+    if (timerId) {
+      clearTimeout(timerId)
+      autoSolveRetryTimerRef.current[sessionType] = null
+    }
+    autoSolveRetryAfterRef.current[sessionType] = 0
+  }, [])
+
+  const scheduleAutoSolveRetry = useCallback(
+    ({sessionType, delayMs = SESSION_AUTO_SOLVE_RETRY_MS} = {}) => {
+      const key = sessionType === 'long' ? 'long' : 'short'
+      const safeDelayMs = Math.max(0, Number(delayMs) || 0)
+
+      autoSolveStartedRef.current[key] = false
+      autoSolveRetryAfterRef.current[key] = Date.now() + safeDelayMs
+
+      if (key === 'long') {
+        autoSolveLongSignatureRef.current = ''
+      }
+
+      const previousTimer = autoSolveRetryTimerRef.current[key]
+      if (previousTimer) {
+        clearTimeout(previousTimer)
+      }
+
+      autoSolveRetryTimerRef.current[key] = setTimeout(() => {
+        autoSolveRetryTimerRef.current[key] = null
+        autoSolveRetryAfterRef.current[key] = 0
+        setAutoSolveRetryTick((tick) => tick + 1)
+      }, safeDelayMs)
+    },
+    []
+  )
+
+  useEffect(
+    () => () => {
+      Object.values(autoSolveRetryTimerRef.current || {}).forEach((timerId) => {
+        if (timerId) {
+          clearTimeout(timerId)
+        }
+      })
+    },
+    []
   )
 
   const enableAutomaticNextValidationSession = useCallback(() => {
@@ -1678,10 +1778,12 @@ function ValidationSession({
 
     if (currentPeriod === EpochPeriod.ShortSession) {
       autoSolveStartedRef.current.short = false
+      clearAutoSolveRetry('short')
     }
 
     if (currentPeriod === EpochPeriod.LongSession) {
       autoSolveStartedRef.current.long = false
+      clearAutoSolveRetry('long')
     }
 
     if (['shortSession', 'longSession'].some(state.matches)) {
@@ -1703,6 +1805,7 @@ function ValidationSession({
       )
     }
   }, [
+    clearAutoSolveRetry,
     currentPeriod,
     forceAiPreview,
     isSessionAutoMode,
@@ -2159,6 +2262,15 @@ function ValidationSession({
           }
         },
       })
+      const hasImagePrepareFailures = Array.isArray(result.results)
+        ? result.results.some((item) =>
+            String(item?.error || '').startsWith('image_prepare_failed:')
+          )
+        : false
+
+      if (hasImagePrepareFailures && isSessionAutoMode && !forceAiPreview) {
+        send('REFETCH_FLIPS')
+      }
 
       notifyAi(
         t('AI helper completed'),
@@ -2255,23 +2367,37 @@ function ValidationSession({
           (answerStats.allAnswered ||
             (reachedSubmitCutoff && hasEnoughAnswers(shortFlipsAfterAi)))
         ) {
+          clearAutoSolveRetry('short')
           send('SUBMIT')
         } else if (
-          result.answers.length > 0 &&
           isSessionAutoMode &&
-          !reachedSubmitCutoff
+          !reachedSubmitCutoff &&
+          !answerStats.allAnswered
         ) {
-          autoSolveStartedRef.current.short = false
+          scheduleAutoSolveRetry({
+            sessionType: 'short',
+            delayMs:
+              result.answers.length > 0
+                ? SESSION_AUTO_SOLVE_RETRY_MS
+                : SESSION_AUTO_SOLVE_ERROR_RETRY_MS,
+          })
           notifyAi(
             t('AI short-session retry armed'),
-            t(
-              'AI answered {{answered}}/{{total}} decoded short flips. It will retry remaining flips until the final {{seconds}} seconds.',
-              {
-                answered: answerStats.answered,
-                total: answerStats.total,
-                seconds: SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
-              }
-            )
+            result.answers.length > 0
+              ? t(
+                  'AI answered {{answered}}/{{total}} decoded short flips. It will retry remaining flips until the final {{seconds}} seconds.',
+                  {
+                    answered: answerStats.answered,
+                    total: answerStats.total,
+                    seconds: SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+                  }
+                )
+              : t(
+                  'AI did not apply a short-session answer yet. It will retry while time remains before the final {{seconds}} seconds.',
+                  {
+                    seconds: SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+                  }
+                )
           )
         }
       }
@@ -2314,6 +2440,7 @@ function ValidationSession({
             loadingGraceMs: LONG_SESSION_LOADING_GRACE_MS,
           })
         ) {
+          clearAutoSolveRetry('long')
           setAwaitingHumanReporting(true)
           send('FINISH_FLIPS')
         } else if (
@@ -2321,6 +2448,17 @@ function ValidationSession({
           nextLongAiSolveStatus.hasLoadingFlips
         ) {
           autoSolveLongSignatureRef.current = ''
+        } else if (
+          isSessionAutoMode &&
+          nextLongAiSolveStatus.hasDecodedUnansweredFlips
+        ) {
+          scheduleAutoSolveRetry({
+            sessionType: 'long',
+            delayMs:
+              result.answers.length > 0
+                ? SESSION_AUTO_SOLVE_RETRY_MS
+                : SESSION_AUTO_SOLVE_ERROR_RETRY_MS,
+          })
         }
       }
     } catch (error) {
@@ -2331,6 +2469,14 @@ function ValidationSession({
         if (sessionType === 'long') {
           autoSolveLongSignatureRef.current = ''
         }
+      } else if (
+        isSessionAutoMode &&
+        error?.code !== 'session_window_too_small'
+      ) {
+        scheduleAutoSolveRetry({
+          sessionType,
+          delayMs: SESSION_AUTO_SOLVE_ERROR_RETRY_MS,
+        })
       }
 
       notifyAi(t('AI helper failed'), errorMessage, 'error')
@@ -2351,6 +2497,7 @@ function ValidationSession({
     aiSolving,
     aiSessionType,
     canRunAiSolve,
+    clearAutoSolveRetry,
     epoch,
     isSessionAutoMode,
     longSessionDuration,
@@ -2358,6 +2505,7 @@ function ValidationSession({
     forceAiPreview,
     refreshAiProviderStatus,
     send,
+    scheduleAutoSolveRetry,
     shortSessionDuration,
     state,
     t,
@@ -2470,7 +2618,7 @@ function ValidationSession({
 
       const keywordStatus = getValidationReportKeywordStatus({
         state,
-        longFlips,
+        longFlips: longFlipsWithReportKeywords,
       })
       const candidateSourceFlips = keywordStatus.keywordReadyFlips
       const waitedForKeywordsMs = autoReportKeywordWaitStartedAtRef.current
@@ -2507,6 +2655,10 @@ function ValidationSession({
         return
       }
 
+      if (manualReportingStartedRef.current) {
+        return
+      }
+
       const candidateFlips = await Promise.all(
         candidateSourceFlips.map(async (flip) => ({
           hash: flip.hash,
@@ -2517,6 +2669,10 @@ function ValidationSession({
           keywords: normalizeAutoReportKeywords(flip.words),
         }))
       )
+
+      if (manualReportingStartedRef.current) {
+        return
+      }
 
       if (!candidateFlips.length) {
         submitLongSessionAutomatically({
@@ -2547,7 +2703,11 @@ function ValidationSession({
         },
       })
 
-      const reportQuota = availableReportsNumber(longFlips)
+      if (manualReportingStartedRef.current) {
+        return
+      }
+
+      const reportQuota = availableReportsNumber(longFlipsWithReportKeywords)
       const reportHashes = (
         Array.isArray(reviewResult?.results) ? reviewResult.results : []
       )
@@ -2630,7 +2790,7 @@ function ValidationSession({
     canRunAutomaticReportReview,
     epoch,
     forceAiPreview,
-    longFlips,
+    longFlipsWithReportKeywords,
     notifyAi,
     refreshAiProviderStatus,
     send,
@@ -2666,6 +2826,7 @@ function ValidationSession({
       canRunAiSolve &&
       aiSessionType === 'short' &&
       canAutoRunAiSolveForCurrentPeriod &&
+      !isAutoSolveRetryPending('short') &&
       !autoSolveStartedRef.current.short
     ) {
       autoSolveStartedRef.current.short = true
@@ -2673,8 +2834,10 @@ function ValidationSession({
     }
   }, [
     aiSessionType,
+    autoSolveRetryTick,
     canAutoRunAiSolveForCurrentPeriod,
     canRunAiSolve,
+    isAutoSolveRetryPending,
     isSessionAutoMode,
     runAiSolve,
   ])
@@ -2695,6 +2858,7 @@ function ValidationSession({
       aiSessionType !== 'long' ||
       !canAutoRunAiSolveForCurrentPeriod ||
       aiSolving ||
+      isAutoSolveRetryPending('long') ||
       !longSessionAutoSolveSignature
     ) {
       return
@@ -2710,9 +2874,11 @@ function ValidationSession({
   }, [
     aiSessionType,
     aiSolving,
+    autoSolveRetryTick,
     canAutoRunAiSolveForCurrentPeriod,
     canRunAiSolve,
     currentPeriod,
+    isAutoSolveRetryPending,
     isSessionAutoMode,
     longSessionAutoSolveSignature,
     runAiSolve,
@@ -2770,8 +2936,9 @@ function ValidationSession({
 
     shortSessionDecodeRecoveryAttemptedRef.current = true
     autoSolveStartedRef.current.short = false
+    clearAutoSolveRetry('short')
     send('REFETCH_FLIPS')
-  }, [currentPeriod, forceAiPreview, send, state])
+  }, [clearAutoSolveRetry, currentPeriod, forceAiPreview, send, state])
 
   useEffect(() => {
     const shouldRecoverLongSessionDecodeState =
@@ -2796,8 +2963,9 @@ function ValidationSession({
     longSessionDecodeRecoveryAttemptedRef.current = true
     autoSolveStartedRef.current.long = false
     autoSolveLongSignatureRef.current = ''
+    clearAutoSolveRetry('long')
     send('REFETCH_FLIPS')
-  }, [currentPeriod, forceAiPreview, send, state])
+  }, [clearAutoSolveRetry, currentPeriod, forceAiPreview, send, state])
 
   useEffect(() => {
     if (
@@ -3079,13 +3247,15 @@ function ValidationSession({
   useEffect(() => {
     if (aiSessionType !== 'short') {
       autoSolveStartedRef.current.short = false
+      clearAutoSolveRetry('short')
       shortSessionDecodeRecoveryAttemptedRef.current = false
     }
     if (aiSessionType !== 'long') {
       autoSolveStartedRef.current.long = false
+      clearAutoSolveRetry('long')
       longSessionDecodeRecoveryAttemptedRef.current = false
     }
-  }, [aiSessionType])
+  }, [aiSessionType, clearAutoSolveRetry])
 
   useEffect(() => {
     if (currentPeriod !== EpochPeriod.ShortSession) {
@@ -3305,13 +3475,14 @@ function ValidationSession({
           </Flex>
           {(isLongSessionKeywords(state) ||
             state.matches('validationSucceeded')) &&
-            currentFlip && (
+            currentReportFlip && (
               <FlipWords
-                key={currentFlip.hash}
-                currentFlip={currentFlip}
+                key={currentReportFlip.hash}
+                currentFlip={currentReportFlip}
                 translations={translations}
                 validationStart={validationStart}
                 onSkip={() => {
+                  beginManualReporting()
                   if (isLastFlip(state)) {
                     send({type: 'SUBMIT'})
                   } else {
@@ -3329,10 +3500,10 @@ function ValidationSession({
                   <QualificationActions>
                     <QualificationButton
                       isSelected={
-                        currentFlip.relevance === RelevanceType.Relevant
+                        currentReportFlip.relevance === RelevanceType.Relevant
                       }
-                      isDisabled={autoReportRunning}
-                      onClick={() => handleApproveWords(currentFlip.hash)}
+                      isDisabled={isSubmitting(state)}
+                      onClick={() => handleApproveWords(currentReportFlip.hash)}
                     >
                       {t('Approve')}
                     </QualificationButton>
@@ -3347,15 +3518,18 @@ function ValidationSession({
                     >
                       <QualificationButton
                         isSelected={
-                          currentFlip.relevance === RelevanceType.Irrelevant
+                          currentReportFlip.relevance ===
+                          RelevanceType.Irrelevant
                         }
                         bg={
-                          currentFlip.relevance === RelevanceType.Irrelevant
+                          currentReportFlip.relevance ===
+                          RelevanceType.Irrelevant
                             ? 'red.500'
                             : 'red.012'
                         }
                         color={
-                          currentFlip.relevance === RelevanceType.Irrelevant
+                          currentReportFlip.relevance ===
+                          RelevanceType.Irrelevant
                             ? 'white'
                             : 'red.500'
                         }
@@ -3365,13 +3539,17 @@ function ValidationSession({
                           boxShadow: '0 0 0 3px rgb(255 102 102 /0.50)',
                           outline: 'none',
                         }}
-                        isDisabled={autoReportRunning}
-                        onClick={() => handleReportWords(currentFlip.hash)}
+                        isDisabled={isSubmitting(state)}
+                        onClick={() =>
+                          handleReportWords(currentReportFlip.hash)
+                        }
                       >
                         {t('Report')}{' '}
                         {t('({{count}} left)', {
                           count:
-                            availableReportsNumber(longFlips) - reports.size,
+                            availableReportsNumber(
+                              longFlipsWithReportKeywords
+                            ) - reports.size,
                         })}
                       </QualificationButton>
                     </Tooltip>
@@ -3379,17 +3557,18 @@ function ValidationSession({
                   <SlideFade
                     style={{
                       zIndex:
-                        currentFlip.relevance === RelevanceType.Relevant &&
+                        currentReportFlip.relevance ===
+                          RelevanceType.Relevant &&
                         (Object.keys(bestFlipHashes).length < 1 ||
-                          bestFlipHashes[currentFlip.hash])
+                          bestFlipHashes[currentReportFlip.hash])
                           ? 'auto'
                           : -1,
                     }}
                     offsetY="-80px"
                     in={
-                      currentFlip.relevance === RelevanceType.Relevant &&
+                      currentReportFlip.relevance === RelevanceType.Relevant &&
                       (Object.keys(bestFlipHashes).length < 1 ||
-                        bestFlipHashes[currentFlip.hash])
+                        bestFlipHashes[currentReportFlip.hash])
                     }
                   >
                     <Divider mt={1} />
@@ -3402,7 +3581,7 @@ function ValidationSession({
                         mt={5}
                         variant="bordered"
                         w={['100%', 'auto']}
-                        isActive={!!bestFlipHashes[currentFlip.hash]}
+                        isActive={!!bestFlipHashes[currentReportFlip.hash]}
                         _hover={{
                           backgroundColor: 'transparent',
                           _disabled: {
@@ -3416,11 +3595,11 @@ function ValidationSession({
                         onClick={() =>
                           send({
                             type: 'FAVORITE',
-                            hash: currentFlip.hash,
+                            hash: currentReportFlip.hash,
                           })
                         }
                       >
-                        {bestFlipHashes[currentFlip.hash] ? (
+                        {bestFlipHashes[currentReportFlip.hash] ? (
                           <NewStarIcon
                             h="12.5px"
                             w="13px"
@@ -3521,15 +3700,12 @@ function ValidationSession({
             </SecondaryButton>
           )}
           {(isShortSession(state) || isLongSessionKeywords(state)) &&
-            (hasAllRelevanceMarks(state) || isLastFlip(state) ? (
+            (hasAllRelevanceMarks(state, longFlipsWithReportKeywords) ||
+            isLastFlip(state) ? (
               <PrimaryButton
-                isDisabled={!canSubmit(state) || autoReportRunning}
-                isLoading={isSubmitting(state) || autoReportRunning}
-                loadingText={
-                  autoReportRunning
-                    ? t('AI reviewing...')
-                    : t('Submitting answers...')
-                }
+                isDisabled={!canSubmit(state) || isSubmitting(state)}
+                isLoading={isSubmitting(state)}
+                loadingText={t('Submitting answers...')}
                 onClick={handleSubmit}
               >
                 {submitActionLabel}
@@ -3537,13 +3713,9 @@ function ValidationSession({
             ) : (
               <Tooltip label={t('Go to last flip')}>
                 <PrimaryButton
-                  isDisabled={!canSubmit(state) || autoReportRunning}
-                  isLoading={isSubmitting(state) || autoReportRunning}
-                  loadingText={
-                    autoReportRunning
-                      ? t('AI reviewing...')
-                      : t('Submitting answers...')
-                  }
+                  isDisabled={!canSubmit(state) || isSubmitting(state)}
+                  isLoading={isSubmitting(state)}
+                  loadingText={t('Submitting answers...')}
                   onClick={handleSubmit}
                 >
                   {submitActionLabel}
@@ -3553,7 +3725,7 @@ function ValidationSession({
           {isLongSessionFlips(state) && (
             <Stack isInline spacing={2}>
               <SecondaryButton
-                isDisabled={isSubmitting(state) || autoReportRunning}
+                isDisabled={isSubmitting(state)}
                 onClick={() => {
                   beginManualReporting()
                   send('FINISH_FLIPS')
@@ -3562,13 +3734,9 @@ function ValidationSession({
                 {keywordActionLabel}
               </SecondaryButton>
               <PrimaryButton
-                isDisabled={!canSubmit(state) || autoReportRunning}
-                isLoading={isSubmitting(state) || autoReportRunning}
-                loadingText={
-                  autoReportRunning
-                    ? t('AI reviewing...')
-                    : t('Submitting answers...')
-                }
+                isDisabled={!canSubmit(state) || isSubmitting(state)}
+                isLoading={isSubmitting(state)}
+                loadingText={t('Submitting answers...')}
                 onClick={handleSubmit}
               >
                 {submitActionLabel}
@@ -3647,7 +3815,9 @@ function ValidationSession({
       <ReviewValidationDialog
         flips={flips.filter(solvableFlips)}
         reportedFlipsCount={reports.size}
-        availableReportsCount={availableReportsNumber(longFlips)}
+        availableReportsCount={availableReportsNumber(
+          longFlipsWithReportKeywords
+        )}
         isOpen={state.matches('longSession.solve.answer.review')}
         isSubmitting={isSubmitting(state)}
         onSubmit={handleSubmit}
@@ -4350,7 +4520,7 @@ function hasAnyAnsweredFlip(state) {
   return flips.some(({option}) => option > 0)
 }
 
-function hasAllRelevanceMarks({context: {longFlips}}) {
-  const flips = longFlips.filter(decodedWithKeywords)
+function hasAllRelevanceMarks({context: {longFlips}}, reportFlips = longFlips) {
+  const flips = reportFlips.filter(decodedWithKeywords)
   return flips.every(({relevance}) => relevance)
 }

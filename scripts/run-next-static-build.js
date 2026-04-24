@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 const {spawnSync} = require('child_process')
+const fs = require('fs')
 const path = require('path')
+
+const projectRoot = path.join(__dirname, '..')
 
 const nextBin = path.join(
   __dirname,
@@ -28,7 +31,7 @@ const env = {
 
 function runNext(args) {
   const result = spawnSync(process.execPath, [nextBin, ...args], {
-    cwd: path.join(__dirname, '..'),
+    cwd: projectRoot,
     env,
     stdio: 'inherit',
   })
@@ -43,5 +46,15 @@ function runNext(args) {
   }
 }
 
+function cleanRendererBuildOutput() {
+  ;['renderer/.next', 'renderer/out'].forEach((relativePath) => {
+    fs.rmSync(path.join(projectRoot, relativePath), {
+      recursive: true,
+      force: true,
+    })
+  })
+}
+
+cleanRendererBuildOutput()
 runNext(['build', 'renderer'])
 runNext(['export', 'renderer'])

@@ -1,5 +1,6 @@
 const {join, resolve} = require('path')
 const os = require('os')
+const https = require('https')
 const {
   BrowserWindow,
   app,
@@ -14,7 +15,6 @@ const {
 const {autoUpdater} = require('electron-updater')
 const fs = require('fs-extra')
 const i18next = require('i18next')
-const {image_search: imageSearch} = require('duckduckgo-images-api')
 const macosVersion = require('macos-version')
 const semver = require('semver')
 const axios = require('axios')
@@ -165,6 +165,9 @@ const localAiFederated = createLocalAiFederated({
 })
 
 const IMAGE_SEARCH_SOURCE_TIMEOUT_MS = 8000
+const IMAGE_SEARCH_HTTP_TIMEOUT_MS = 6500
+const IMAGE_SEARCH_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+const IMAGE_SEARCH_MAX_QUERY_LENGTH = 160
 const BASE_INTERNAL_API_PORT = 9119
 const BASE_EXTERNAL_API_URL = 'http://localhost:9009'
 const RPC_MAX_METHOD_LENGTH = 128
@@ -1262,29 +1265,123 @@ function normalizeImageSearchResult(item) {
     return null
   }
 
-  const image =
+  const image = normalizeImageSearchUrl(
     item.image ||
-    item.url ||
-    item.imageUrl ||
-    item.image_url ||
-    item.full ||
-    item.raw ||
-    null
+      item.url ||
+      item.imageUrl ||
+      item.image_url ||
+      item.full ||
+      item.raw ||
+      null
+  )
 
-  const thumbnail =
+  const thumbnail = normalizeImageSearchUrl(
     item.thumbnail ||
-    item.thumb ||
-    item.thumbnailUrl ||
-    item.thumbnail_url ||
-    item.preview ||
-    item.small ||
-    image
+      item.thumb ||
+      item.thumbnailUrl ||
+      item.thumbnail_url ||
+      item.preview ||
+      item.small ||
+      image
+  )
 
   if (!image || !thumbnail) {
     return null
   }
 
   return {image, thumbnail}
+}
+
+function normalizeImageSearchUrl(value) {
+  const normalized = String(value || '').trim()
+  if (!normalized || normalized.length > 4096) return null
+
+  try {
+    const parsedUrl = new URL(normalized)
+    if (parsedUrl.protocol !== 'https:') return null
+    if (parsedUrl.username || parsedUrl.password) return null
+    return parsedUrl.href
+  } catch {
+    return null
+  }
+}
+
+function requestHttpsText(
+  url,
+  {
+    timeoutMs = IMAGE_SEARCH_HTTP_TIMEOUT_MS,
+    maxBytes = IMAGE_SEARCH_MAX_RESPONSE_BYTES,
+    headers = {},
+  } = {}
+) {
+  const parsedUrl = url instanceof URL ? url : new URL(url)
+  if (parsedUrl.protocol !== 'https:') {
+    return Promise.reject(new Error('Image search request must use HTTPS'))
+  }
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      parsedUrl,
+      {
+        method: 'GET',
+        timeout: timeoutMs,
+        headers: {
+          accept: 'text/html,application/json;q=0.9,*/*;q=0.8',
+          'accept-language': 'en-US,en;q=0.9',
+          'user-agent': 'Mozilla/5.0 (IdenaAI image search)',
+          ...headers,
+        },
+      },
+      (res) => {
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+          res.resume()
+          reject(new Error(`Image search HTTP ${res.statusCode || 0}`))
+          return
+        }
+
+        let bytes = 0
+        const chunks = []
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => {
+          bytes += Buffer.byteLength(chunk)
+          if (bytes > maxBytes) {
+            req.destroy(new Error('Image search response too large'))
+            return
+          }
+          chunks.push(chunk)
+        })
+        res.on('end', () => {
+          resolve(chunks.join(''))
+        })
+      }
+    )
+
+    req.on('timeout', () => {
+      req.destroy(new Error('Image search timed out'))
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+function extractDuckDuckGoVqd(html) {
+  const source = String(html || '')
+  const patterns = [
+    /vqd=["']([^"']+)["']/,
+    /vqd=([^&"'\\]+)&/,
+    /"vqd":"([^"]+)"/,
+    /vqd='([^']+)'/,
+  ]
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(source)
+    const token = match && String(match[1] || '').trim()
+    if (token && token.length <= 128 && /^[A-Za-z0-9-_.]+$/.test(token)) {
+      return token
+    }
+  }
+
+  return null
 }
 
 function withSearchSourceTimeout(
@@ -1308,12 +1405,44 @@ function withSearchSourceTimeout(
 
 async function searchDuckDuckGoImages(query) {
   try {
-    const results = await imageSearch({
-      query,
-      moderate: true,
+    const landingUrl = new URL('https://duckduckgo.com/')
+    landingUrl.searchParams.set('q', query)
+    landingUrl.searchParams.set('iax', 'images')
+    landingUrl.searchParams.set('ia', 'images')
+
+    const html = await requestHttpsText(landingUrl, {
+      timeoutMs: 5000,
+      maxBytes: 512 * 1024,
     })
-    if (!Array.isArray(results)) return []
-    return results.map(normalizeImageSearchResult).filter(Boolean)
+    const vqd = extractDuckDuckGoVqd(html)
+    if (!vqd) return []
+
+    const apiUrl = new URL('https://duckduckgo.com/i.js')
+    apiUrl.searchParams.set('l', 'us-en')
+    apiUrl.searchParams.set('o', 'json')
+    apiUrl.searchParams.set('q', query)
+    apiUrl.searchParams.set('vqd', vqd)
+    apiUrl.searchParams.set('f', ',,,')
+    apiUrl.searchParams.set('p', '1')
+
+    const json = await requestHttpsText(apiUrl, {
+      headers: {
+        accept: 'application/json,text/plain,*/*',
+        referer: landingUrl.href,
+      },
+    })
+    const data = JSON.parse(json)
+    const results = Array.isArray(data && data.results) ? data.results : []
+
+    return results
+      .slice(0, 30)
+      .map((item) =>
+        normalizeImageSearchResult({
+          image: item && item.image,
+          thumbnail: (item && (item.thumbnail || item.image)) || null,
+        })
+      )
+      .filter(Boolean)
   } catch (error) {
     logger.warn('duckduckgo image search failed', error.toString())
     return []
@@ -1404,8 +1533,20 @@ function dedupeSearchResults(items) {
   return result
 }
 
+function normalizeImageSearchQuery(query) {
+  return Array.from(String(query || ''))
+    .map((char) => {
+      const code = char.charCodeAt(0)
+      return code < 32 || code === 127 ? ' ' : char
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, IMAGE_SEARCH_MAX_QUERY_LENGTH)
+}
+
 async function searchImages(query) {
-  const normalizedQuery = String(query || '').trim()
+  const normalizedQuery = normalizeImageSearchQuery(query)
   if (!normalizedQuery) return []
 
   const [duckResults, openverseResults, wikimediaResults] = await Promise.all([

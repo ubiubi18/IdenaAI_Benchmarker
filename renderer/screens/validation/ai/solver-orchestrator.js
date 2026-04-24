@@ -454,6 +454,10 @@ function normalizeCostSummary(costs = {}) {
   }
 }
 
+function formatSolveError(error) {
+  return String((error && error.message) || error || 'unknown_error').trim()
+}
+
 function summarizeFastMode(results = []) {
   const entries = results
     .map((item) => (item && item.fastMode ? item.fastMode : null))
@@ -1032,51 +1036,136 @@ export async function solveValidationSessionWithAi({
     }
 
     const flip = candidateFlips[index]
-    const leftImage =
-      effectiveProfile.flipVisionMode === 'composite'
-        ? await composeFlipVariant({
+    if (
+      !hasRuntimeRemaining(
+        sessionDeadlineAt,
+        sessionSolveGuardMs + MIN_PROVIDER_REQUEST_TIMEOUT_MS
+      )
+    ) {
+      break
+    }
+
+    let payloadFlip
+
+    try {
+      const leftImage =
+        effectiveProfile.flipVisionMode === 'composite'
+          ? await composeFlipVariant({
+              flip,
+              variant: AnswerType.Left,
+              ...frameRenderSize,
+            })
+          : null
+      const rightImage =
+        effectiveProfile.flipVisionMode === 'composite'
+          ? await composeFlipVariant({
+              flip,
+              variant: AnswerType.Right,
+              ...frameRenderSize,
+            })
+          : null
+      const leftFrames = prepareFramePayloads
+        ? await composeFlipFrames({
             flip,
             variant: AnswerType.Left,
             ...frameRenderSize,
           })
-        : null
-    const rightImage =
-      effectiveProfile.flipVisionMode === 'composite'
-        ? await composeFlipVariant({
+        : []
+      const rightFrames = prepareFramePayloads
+        ? await composeFlipFrames({
             flip,
             variant: AnswerType.Right,
             ...frameRenderSize,
           })
-        : null
-    const leftFrames = prepareFramePayloads
-      ? await composeFlipFrames({
-          flip,
-          variant: AnswerType.Left,
-          ...frameRenderSize,
+        : []
+
+      payloadFlip = {
+        hash: flip.hash,
+        leftImage,
+        rightImage,
+        leftFrames,
+        rightFrames,
+        words: Array.isArray(flip.words) ? flip.words : [],
+        expectedAnswer: flip.expectedAnswer || null,
+        expectedStrength: flip.expectedStrength || null,
+        consensusAnswer: flip.consensusAnswer || null,
+        consensusStrength: flip.consensusStrength || null,
+        consensusVotes: flip.consensusVotes || null,
+        sourceDataset: flip.sourceDataset || null,
+        sourceSplit: flip.sourceSplit || null,
+        sourceStats: flip.sourceStats || null,
+      }
+    } catch (error) {
+      const skipped = {
+        hash: flip.hash,
+        answer: 'skip',
+        confidence: 0,
+        latencyMs: 0,
+        error: `image_prepare_failed: ${formatSolveError(error)}`,
+        reasoning: 'image payload preparation failed',
+        rawAnswerBeforeRemap: 'skip',
+        finalAnswerAfterRemap: 'skip',
+        sideSwapped: false,
+      }
+      const failedDecision = {
+        sessionType,
+        index: index + 1,
+        total: totalFlips,
+        hash: skipped.hash,
+        answer: skipped.answer,
+        option: AnswerType.None,
+        confidence: skipped.confidence,
+        latencyMs: skipped.latencyMs,
+        error: skipped.error,
+        fastMode: null,
+        modelFallback: null,
+        modelFallbacks: [],
+        leftImage: null,
+        rightImage: null,
+        leftFrames: [],
+        rightFrames: [],
+        words: Array.isArray(flip.words) ? flip.words : [],
+        expectedAnswer: flip.expectedAnswer || null,
+        expectedStrength: flip.expectedStrength || null,
+        consensusAnswer: flip.consensusAnswer || null,
+        consensusStrength: flip.consensusStrength || null,
+        consensusVotes: flip.consensusVotes || null,
+        sourceDataset: flip.sourceDataset || null,
+        sourceSplit: flip.sourceSplit || null,
+        sourceStats: flip.sourceStats || null,
+        rawAnswerBeforeRemap: skipped.rawAnswerBeforeRemap,
+        finalAnswerAfterRemap: skipped.finalAnswerAfterRemap,
+        sideSwapped: skipped.sideSwapped,
+        tokenUsage: normalizeTokenUsage(),
+        costs: normalizeCostSummary(),
+        reasoning: skipped.reasoning,
+        uncertaintyRepromptUsed: false,
+        forcedDecision: false,
+        forcedDecisionPolicy: null,
+        forcedDecisionReason: null,
+        ensembleTieBreakApplied: false,
+        ensembleTieBreakCandidates: null,
+        secondPassStrategy: null,
+        frameReasoningUsed: false,
+        firstPass: null,
+      }
+
+      results.push(skipped)
+
+      if (onProgress) {
+        onProgress({
+          stage: 'solved',
+          ...failedDecision,
         })
-      : []
-    const rightFrames = prepareFramePayloads
-      ? await composeFlipFrames({
-          flip,
-          variant: AnswerType.Right,
-          ...frameRenderSize,
-        })
-      : []
-    const payloadFlip = {
-      hash: flip.hash,
-      leftImage,
-      rightImage,
-      leftFrames,
-      rightFrames,
-      words: Array.isArray(flip.words) ? flip.words : [],
-      expectedAnswer: flip.expectedAnswer || null,
-      expectedStrength: flip.expectedStrength || null,
-      consensusAnswer: flip.consensusAnswer || null,
-      consensusStrength: flip.consensusStrength || null,
-      consensusVotes: flip.consensusVotes || null,
-      sourceDataset: flip.sourceDataset || null,
-      sourceSplit: flip.sourceSplit || null,
-      sourceStats: flip.sourceStats || null,
+      }
+
+      if (onDecision) {
+        await onDecision(failedDecision)
+      }
+
+      // Move on; one broken or expired blob URL must not kill the whole session.
+      // eslint-disable-next-line no-continue
+      continue
     }
 
     if (onProgress) {
@@ -1086,10 +1175,10 @@ export async function solveValidationSessionWithAi({
         index: index + 1,
         total: totalFlips,
         hash: flip.hash,
-        leftImage,
-        rightImage,
-        leftFrames,
-        rightFrames,
+        leftImage: payloadFlip.leftImage,
+        rightImage: payloadFlip.rightImage,
+        leftFrames: payloadFlip.leftFrames,
+        rightFrames: payloadFlip.rightFrames,
         words: payloadFlip.words,
         expectedAnswer: payloadFlip.expectedAnswer,
         expectedStrength: payloadFlip.expectedStrength,
