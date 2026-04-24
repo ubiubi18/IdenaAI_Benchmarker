@@ -998,6 +998,7 @@ function ValidationSession({
   const shortSessionDecodeRecoveryAttemptedRef = useRef(false)
   const longSessionDecodeRecoveryAttemptedRef = useRef(false)
   const manualReportingStartedRef = useRef(false)
+  const humanAnsweredFlipHashesRef = useRef(new Set())
   const autoReportSubmitPendingRef = useRef(false)
   const autoReportKeywordWaitStartedAtRef = useRef(null)
   const autoReportKeywordWaitNotifiedRef = useRef(false)
@@ -1007,6 +1008,11 @@ function ValidationSession({
     sessionId: null,
     prepareScopeKey: null,
   })
+
+  useEffect(() => {
+    humanAnsweredFlipHashesRef.current.clear()
+  }, [epoch, validationStart])
+
   const previewShortFlips = useMemo(
     () => (forceAiPreview ? createPreviewAiShortFlips() : []),
     [forceAiPreview]
@@ -1974,6 +1980,20 @@ function ValidationSession({
     validationConnectionInterrupted,
   })
 
+  const handleHumanAnswer = useCallback(
+    (hash, option) => {
+      if (hash) {
+        humanAnsweredFlipHashesRef.current.add(hash)
+      }
+      send({
+        type: 'ANSWER',
+        hash,
+        option,
+      })
+    },
+    [send]
+  )
+
   useInterval(
     () => {
       if (!aiProviderStatus.checking) {
@@ -2025,7 +2045,7 @@ function ValidationSession({
       )
       const firstRenderableFlip = displayFlips.find(isRenderableValidationFlip)
 
-      if (firstRenderableFlip) {
+      if (firstRenderableFlip && sessionType !== 'short') {
         const pickIndex = indexByHash.get(firstRenderableFlip.hash)
         if (Number.isFinite(pickIndex)) {
           send({type: 'PICK', index: pickIndex})
@@ -2129,9 +2149,11 @@ function ValidationSession({
           }
 
           if (event.stage === 'solving') {
-            const pickIndex = indexByHash.get(event.hash)
-            if (Number.isFinite(pickIndex)) {
-              send({type: 'PICK', index: pickIndex})
+            if (event.sessionType !== 'short') {
+              const pickIndex = indexByHash.get(event.hash)
+              if (Number.isFinite(pickIndex)) {
+                send({type: 'PICK', index: pickIndex})
+              }
             }
             setAiActiveFlip({
               hash: event.hash,
@@ -2160,9 +2182,11 @@ function ValidationSession({
           }
 
           if (event.stage === 'solved') {
-            const pickIndex = indexByHash.get(event.hash)
-            if (Number.isFinite(pickIndex)) {
-              send({type: 'PICK', index: pickIndex})
+            if (event.sessionType !== 'short') {
+              const pickIndex = indexByHash.get(event.hash)
+              if (Number.isFinite(pickIndex)) {
+                send({type: 'PICK', index: pickIndex})
+              }
             }
             setAiActiveFlip({
               hash: event.hash,
@@ -2272,6 +2296,9 @@ function ValidationSession({
         },
         onDecision: async ({hash, option}) => {
           if (option > 0) {
+            if (humanAnsweredFlipHashesRef.current.has(hash)) {
+              return
+            }
             send({
               type: 'ANSWER',
               hash,
@@ -3568,25 +3595,13 @@ function ValidationSession({
                   {...currentFlip}
                   variant={AnswerType.Left}
                   timerDetails={flipTimerDetails}
-                  onChoose={(hash) =>
-                    send({
-                      type: 'ANSWER',
-                      hash,
-                      option: AnswerType.Left,
-                    })
-                  }
+                  onChoose={(hash) => handleHumanAnswer(hash, AnswerType.Left)}
                 />
                 <Flip
                   {...currentFlip}
                   variant={AnswerType.Right}
                   timerDetails={flipTimerDetails}
-                  onChoose={(hash) =>
-                    send({
-                      type: 'ANSWER',
-                      hash,
-                      option: AnswerType.Right,
-                    })
-                  }
+                  onChoose={(hash) => handleHumanAnswer(hash, AnswerType.Right)}
                   onImageFail={() => send('REFETCH_FLIPS')}
                 />
               </>
@@ -4313,7 +4328,9 @@ function AiTelemetryPanel({
 
           {telemetry.status === 'running' && (
             <Text fontSize="xs" color={bodyColor}>
-              Solving flips in sequence with rate-limit pacing...
+              {sessionType === 'short'
+                ? 'Solving short flips in parallel; human clicks stay in control.'
+                : 'Solving flips in sequence with rate-limit pacing...'}
             </Text>
           )}
 

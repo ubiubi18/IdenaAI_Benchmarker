@@ -122,7 +122,7 @@ describe('solver-orchestrator planning', () => {
     })
 
     expect(shortBudget.effectiveProfile.flipVisionMode).toBe('composite')
-    expect(shortBudget.solveConcurrency).toBe(2)
+    expect(shortBudget.solveConcurrency).toBe(6)
     expect(longBudget.effectiveProfile.flipVisionMode).toBe('frames_two_pass')
     expect(longBudget.solveConcurrency).toBe(1)
     expect(longBudget.effectiveProfile.requestTimeoutMs).toBeGreaterThan(
@@ -530,7 +530,7 @@ describe('solver-orchestrator planning', () => {
     }
   })
 
-  it('solves short-session OpenAI flips as independent parallel one-flip requests', async () => {
+  it('keeps all six short-session OpenAI solves parallel even when the custom profile uses serial batch concurrency', async () => {
     const originalImage = global.Image
     const originalAiSolver = global.aiSolver
     const originalCreateElement = document.createElement.bind(document)
@@ -604,12 +604,15 @@ describe('solver-orchestrator planning', () => {
           createDecodedFlip('short-parallel-1'),
           createDecodedFlip('short-parallel-2'),
           createDecodedFlip('short-parallel-3'),
+          createDecodedFlip('short-parallel-4'),
+          createDecodedFlip('short-parallel-5'),
+          createDecodedFlip('short-parallel-6'),
         ],
         aiSolver: {
           provider: 'openai',
           model: 'gpt-5.4',
           benchmarkProfile: 'custom',
-          maxConcurrency: 2,
+          maxConcurrency: 1,
           uncertaintyRepromptEnabled: false,
           interFlipDelayMs: 0,
           maxRetries: 0,
@@ -617,9 +620,9 @@ describe('solver-orchestrator planning', () => {
         hardDeadlineAt: Date.now() + 60 * 1000,
       })
 
-      expect(result.answers).toHaveLength(3)
-      expect(global.aiSolver.solveFlipBatch).toHaveBeenCalledTimes(3)
-      expect(maxInFlight).toBe(2)
+      expect(result.answers).toHaveLength(6)
+      expect(global.aiSolver.solveFlipBatch).toHaveBeenCalledTimes(6)
+      expect(maxInFlight).toBe(6)
     } finally {
       createElementSpy.mockRestore()
       global.Image = originalImage

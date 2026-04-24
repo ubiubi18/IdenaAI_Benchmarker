@@ -47,8 +47,8 @@ const SHORT_SESSION_OPENAI_FAST_MODELS = [
   'gpt-5.4-mini',
   'gpt-5.4',
 ]
-const SHORT_SESSION_OPENAI_PARALLEL_CONCURRENCY = 2
-const SHORT_SESSION_OPENAI_MAX_PARALLEL_CONCURRENCY = 3
+const SHORT_SESSION_OPENAI_PARALLEL_CONCURRENCY = 6
+const SHORT_SESSION_OPENAI_MAX_PARALLEL_CONCURRENCY = 6
 const RETRY_BACKOFF_BASE_MS = 700
 const EXPECTED_PASS_RUNTIME_MS = {
   default: 4500,
@@ -838,16 +838,8 @@ function getSolveConcurrency({
     aiSolver.shortSessionOpenAiParallelConcurrency != null
       ? aiSolver.shortSessionOpenAiParallelConcurrency
       : aiSolver.shortSessionOpenAiConcurrency
-  let customConcurrency = explicitShortConcurrency
-  if (
-    customConcurrency == null &&
-    aiSolver.benchmarkProfile === 'custom' &&
-    aiSolver.maxConcurrency != null
-  ) {
-    customConcurrency = aiSolver.maxConcurrency
-  }
   const requested = toNumberOrFallback(
-    customConcurrency,
+    explicitShortConcurrency,
     SHORT_SESSION_OPENAI_PARALLEL_CONCURRENCY
   )
 
