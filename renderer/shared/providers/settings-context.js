@@ -41,6 +41,7 @@ const DEFAULT_AI_SOLVER_SETTINGS = {
   systemReserveGiB: 6,
   localAiMemoryReference: 'molmo2-o-7b',
   mode: 'manual',
+  onchainAutoSubmitConsentAt: '',
   autoReportEnabled: false,
   autoReportDelayMinutes: 10,
   benchmarkProfile: 'strict',
@@ -228,6 +229,10 @@ function buildAiSolverSettings(settings = {}) {
   ) {
     nextSettings.model = 'gpt-5.4'
   }
+
+  nextSettings.onchainAutoSubmitConsentAt = String(
+    nextSettings.onchainAutoSubmitConsentAt || ''
+  ).trim()
 
   return nextSettings
 }

@@ -189,6 +189,7 @@ const DEFAULT_AI_SETTINGS = {
   memoryBudgetGiB: 32,
   systemReserveGiB: 6,
   mode: 'manual',
+  onchainAutoSubmitConsentAt: '',
   autoReportEnabled: false,
   autoReportDelayMinutes: 10,
   benchmarkProfile: 'strict',
@@ -1707,12 +1708,14 @@ export default function AiSettingsPage() {
     updateAiSolverSettings({
       enabled: true,
       mode: 'session-auto',
+      onchainAutoSubmitConsentAt: new Date().toISOString(),
     })
     notify(
       t('Automatic AI solving enabled'),
       t(
-        'The next real validation session will auto-start AI solving when a solvable session begins.'
-      )
+        'The next real validation session will auto-start AI solving and may submit answers on-chain automatically.'
+      ),
+      'warning'
     )
   }, [notify, t, updateAiSolverSettings])
 
@@ -4771,9 +4774,27 @@ export default function AiSettingsPage() {
                       <SettingsFormLabel>{t('Run mode')}</SettingsFormLabel>
                       <Select
                         value={aiSolver.mode || 'manual'}
-                        onChange={(e) =>
-                          updateAiSolverSettings({mode: e.target.value})
-                        }
+                        onChange={(e) => {
+                          const nextMode = e.target.value
+                          if (nextMode === 'session-auto') {
+                            updateAiSolverSettings({
+                              mode: nextMode,
+                              onchainAutoSubmitConsentAt:
+                                aiSolver.onchainAutoSubmitConsentAt ||
+                                new Date().toISOString(),
+                            })
+                            notify(
+                              t('On-chain auto-submit confirmed'),
+                              t(
+                                'Session-auto may submit validation answers on-chain automatically during real ceremonies. You can still intervene manually any time.'
+                              ),
+                              'warning'
+                            )
+                            return
+                          }
+
+                          updateAiSolverSettings({mode: nextMode})
+                        }}
                         w="xs"
                       >
                         <option value="manual">{t('Manual one-click')}</option>
@@ -4784,50 +4805,73 @@ export default function AiSettingsPage() {
                     </SettingsFormControl>
 
                     {aiSolver.mode === 'session-auto' && (
-                      <SettingsFormControl>
-                        <SettingsFormLabel>
-                          {t('Optional delayed AI report review')}
-                        </SettingsFormLabel>
-                        <Stack spacing={3}>
-                          <Flex align="center" justify="space-between">
-                            <Text color="muted" fontSize="sm" maxW="lg" mr={4}>
-                              {t(
-                                'Session-auto always submits the long session on its own. Enable this only if you also want AI to spend part of long session reviewing report keywords before the final submit.'
-                              )}
-                            </Text>
-                            <Switch
-                              isChecked={Boolean(aiSolver.autoReportEnabled)}
-                              onChange={(e) =>
-                                updateAiSolverSettings({
-                                  autoReportEnabled: e.target.checked,
-                                })
-                              }
-                            />
-                          </Flex>
-
-                          {aiSolver.autoReportEnabled && (
-                            <SettingsFormControl>
-                              <SettingsFormLabel>
-                                {t('Manual reporting grace period (minutes)')}
-                              </SettingsFormLabel>
-                              <Input
-                                type="number"
-                                min="1"
-                                max="60"
-                                step="1"
-                                value={aiSolver.autoReportDelayMinutes ?? 10}
+                      <Stack spacing={3}>
+                        <Box
+                          borderWidth="1px"
+                          borderColor="orange.200"
+                          bg="orange.012"
+                          borderRadius="md"
+                          p={3}
+                        >
+                          <Text fontWeight={600}>
+                            {t('On-chain auto-submit is armed')}
+                          </Text>
+                          <Text color="muted" fontSize="sm">
+                            {t(
+                              'AI may submit short-session answers, long-session answers, and optional report decisions automatically during real validation. Manual intervention remains possible while the session is open.'
+                            )}
+                          </Text>
+                        </Box>
+                        <SettingsFormControl>
+                          <SettingsFormLabel>
+                            {t('Optional delayed AI report review')}
+                          </SettingsFormLabel>
+                          <Stack spacing={3}>
+                            <Flex align="center" justify="space-between">
+                              <Text
+                                color="muted"
+                                fontSize="sm"
+                                maxW="lg"
+                                mr={4}
+                              >
+                                {t(
+                                  'Session-auto always submits the long session on its own. Enable this only if you also want AI to spend part of long session reviewing report keywords before the final submit.'
+                                )}
+                              </Text>
+                              <Switch
+                                isChecked={Boolean(aiSolver.autoReportEnabled)}
                                 onChange={(e) =>
-                                  updateNumberField(
-                                    'autoReportDelayMinutes',
-                                    e.target.value
-                                  )
+                                  updateAiSolverSettings({
+                                    autoReportEnabled: e.target.checked,
+                                  })
                                 }
-                                w="xs"
                               />
-                            </SettingsFormControl>
-                          )}
-                        </Stack>
-                      </SettingsFormControl>
+                            </Flex>
+
+                            {aiSolver.autoReportEnabled && (
+                              <SettingsFormControl>
+                                <SettingsFormLabel>
+                                  {t('Manual reporting grace period (minutes)')}
+                                </SettingsFormLabel>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max="60"
+                                  step="1"
+                                  value={aiSolver.autoReportDelayMinutes ?? 10}
+                                  onChange={(e) =>
+                                    updateNumberField(
+                                      'autoReportDelayMinutes',
+                                      e.target.value
+                                    )
+                                  }
+                                  w="xs"
+                                />
+                              </SettingsFormControl>
+                            )}
+                          </Stack>
+                        </SettingsFormControl>
+                      </Stack>
                     )}
 
                     <SettingsFormControl>

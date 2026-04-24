@@ -40,6 +40,22 @@ export function shouldBlockSessionAutoInDev() {
   return false
 }
 
+export function hasOnchainAutoSubmitConsent(aiSolver = {}) {
+  return Boolean(String(aiSolver?.onchainAutoSubmitConsentAt || '').trim())
+}
+
+export function shouldAllowSessionAutoMode({
+  aiSolver = {},
+  forceAiPreview = false,
+  isRehearsalNodeSession = false,
+} = {}) {
+  return Boolean(
+    forceAiPreview ||
+      isRehearsalNodeSession ||
+      hasOnchainAutoSubmitConsent(aiSolver)
+  )
+}
+
 export function shouldAutoRunSessionForPeriod({
   aiSessionType = null,
   currentPeriod = EpochPeriod.None,

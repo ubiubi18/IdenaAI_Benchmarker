@@ -3,7 +3,9 @@ const {
   getValidationAiSessionType,
   getValidationLongAiSolveStatus,
   getValidationReportKeywordStatus,
+  hasOnchainAutoSubmitConsent,
   shouldFinishLongSessionAiSolve,
+  shouldAllowSessionAutoMode,
   shouldBlockSessionAutoInDev,
   shouldAutoRunSessionForPeriod,
   shouldShowValidationAiUi,
@@ -209,6 +211,39 @@ describe('validation ai auto gating', () => {
         isRehearsalNodeSession: false,
       })
     ).toBe(false)
+  })
+
+  it('requires explicit consent for real on-chain session auto mode', () => {
+    expect(
+      shouldAllowSessionAutoMode({
+        aiSolver: {},
+        forceAiPreview: false,
+        isRehearsalNodeSession: false,
+      })
+    ).toBe(false)
+    expect(
+      shouldAllowSessionAutoMode({
+        aiSolver: {onchainAutoSubmitConsentAt: '2026-04-24T10:00:00.000Z'},
+        forceAiPreview: false,
+        isRehearsalNodeSession: false,
+      })
+    ).toBe(true)
+    expect(
+      shouldAllowSessionAutoMode({
+        aiSolver: {},
+        forceAiPreview: false,
+        isRehearsalNodeSession: true,
+      })
+    ).toBe(true)
+  })
+
+  it('normalizes on-chain auto-submit consent presence', () => {
+    expect(hasOnchainAutoSubmitConsent({})).toBe(false)
+    expect(
+      hasOnchainAutoSubmitConsent({
+        onchainAutoSubmitConsentAt: '2026-04-24T10:00:00.000Z',
+      })
+    ).toBe(true)
   })
 
   it('only auto-runs short session during the short period', () => {

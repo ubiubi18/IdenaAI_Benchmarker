@@ -57,6 +57,19 @@ describe('settings-context ai solver normalization', () => {
     })
   })
 
+  it('normalizes on-chain auto-submit consent as a persisted string', () => {
+    expect(
+      buildAiSolverSettings({
+        onchainAutoSubmitConsentAt: ' 2026-04-24T10:00:00.000Z ',
+      })
+    ).toMatchObject({
+      onchainAutoSubmitConsentAt: '2026-04-24T10:00:00.000Z',
+    })
+    expect(buildAiSolverSettings()).toMatchObject({
+      onchainAutoSubmitConsentAt: '',
+    })
+  })
+
   it('accepts gpt-5.5 fast-mode selections without downgrading them', () => {
     expect(
       buildAiSolverSettings({

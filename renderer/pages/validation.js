@@ -121,6 +121,7 @@ import {
   getValidationLongAiSolveStatus,
   getValidationReportKeywordStatus,
   shouldFinishLongSessionAiSolve,
+  shouldAllowSessionAutoMode,
   shouldBlockSessionAutoInDev,
   shouldAutoRunSessionForPeriod,
   shouldShowValidationAiUi,
@@ -937,6 +938,7 @@ function ValidationSession({
     useState(false)
   const autoSolveStartedRef = useRef({short: false, long: false})
   const autoSolveLongSignatureRef = useRef('')
+  const missingOnchainAutoSubmitConsentNotifiedRef = useRef(false)
   const shortSessionDecodeRecoveryAttemptedRef = useRef(false)
   const longSessionDecodeRecoveryAttemptedRef = useRef(false)
   const manualReportingStartedRef = useRef(false)
@@ -1526,13 +1528,14 @@ function ValidationSession({
     updateAiSolverSettings({
       enabled: true,
       mode: 'session-auto',
+      onchainAutoSubmitConsentAt: new Date().toISOString(),
     })
     toast({
       render: () => (
         <Toast
           title={t('Automatic AI solving enabled')}
           description={t(
-            'The next real validation session will auto-start AI solving when possible.'
+            'The next real validation session will auto-start AI solving and may submit answers on-chain automatically.'
           )}
           status="success"
         />
@@ -1554,11 +1557,23 @@ function ValidationSession({
     currentPeriod,
     forceAiPreview,
   })
+  const hasSessionAutoSubmitConsent = shouldAllowSessionAutoMode({
+    aiSolver: aiSolverSettings,
+    forceAiPreview,
+    isRehearsalNodeSession,
+  })
+  const needsOnchainAutoSubmitConsent =
+    !forceAiPreview &&
+    !isRehearsalNodeSession &&
+    aiSolverSettings.enabled &&
+    aiSolverSettings.mode === 'session-auto' &&
+    !hasSessionAutoSubmitConsent
 
   const isSessionAutoMode =
     !isRealSessionAutoBlockedInDev &&
     aiSolverSettings.enabled &&
-    aiSolverSettings.mode === 'session-auto'
+    aiSolverSettings.mode === 'session-auto' &&
+    hasSessionAutoSubmitConsent
   const autoReportDelayMinutes = Math.max(
     1,
     Number(aiSolverSettings.autoReportDelayMinutes) ||
@@ -1568,6 +1583,26 @@ function ValidationSession({
     isSessionAutoMode &&
     aiSolverSettings.autoReportEnabled === true &&
     !forceAiPreview
+
+  useEffect(() => {
+    if (!needsOnchainAutoSubmitConsent) {
+      missingOnchainAutoSubmitConsentNotifiedRef.current = false
+      return
+    }
+
+    if (missingOnchainAutoSubmitConsentNotifiedRef.current) {
+      return
+    }
+
+    missingOnchainAutoSubmitConsentNotifiedRef.current = true
+    notifyAi(
+      t('On-chain autosolver needs confirmation'),
+      t(
+        'Open AI settings and choose auto-run again to confirm that AI may submit validation answers on-chain automatically.'
+      ),
+      'warning'
+    )
+  }, [needsOnchainAutoSubmitConsent, notifyAi, t])
 
   useEffect(() => {
     if (forceAiPreview) {
