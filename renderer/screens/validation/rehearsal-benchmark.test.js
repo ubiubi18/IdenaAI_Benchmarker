@@ -203,6 +203,53 @@ describe('rehearsal benchmark helpers', () => {
     ])
   })
 
+  it('merges rehearsal seed words even without benchmark answer labels', () => {
+    expect(
+      mergeRehearsalSeedMetaIntoFlips([{hash: '0x1', words: []}], {
+        '0x1': {
+          words: [
+            {name: 'apple', desc: 'fruit'},
+            {name: 'ghost', desc: 'spirit'},
+          ],
+        },
+      })
+    ).toEqual([
+      expect.objectContaining({
+        hash: '0x1',
+        expectedAnswer: null,
+        words: [
+          {name: 'apple', desc: 'fruit'},
+          {name: 'ghost', desc: 'spirit'},
+        ],
+      }),
+    ])
+  })
+
+  it('does not keep requesting answer labels for words-only rehearsal metadata', () => {
+    expect(
+      hasMissingRehearsalSeedMeta(
+        [
+          {
+            hash: '0x1',
+            expectedAnswer: null,
+            words: [
+              {name: 'apple', desc: 'fruit'},
+              {name: 'ghost', desc: 'spirit'},
+            ],
+          },
+        ],
+        {
+          '0x1': {
+            words: [
+              {name: 'apple', desc: 'fruit'},
+              {name: 'ghost', desc: 'spirit'},
+            ],
+          },
+        }
+      )
+    ).toBe(false)
+  })
+
   it('computes benchmark summary and session split', () => {
     const validationState = {
       context: {

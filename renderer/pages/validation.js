@@ -39,6 +39,8 @@ import {
   getValidationSessionPhaseRemainingMs,
   getValidationAutoReportDelayMs,
   getShortSessionLongSessionTransitionDelayMs,
+  SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+  hasEnoughAnswers,
 } from '../screens/validation/utils'
 import {
   rememberDismissedValidationScreen,
@@ -509,6 +511,43 @@ function normalizeAutoReportKeywords(words = []) {
         .filter(({name, desc}) => name || desc)
         .slice(0, 2)
     : []
+}
+
+function applyAiAnswerOptionsToFlips(flips = [], answers = []) {
+  const answerOptionsByHash = new Map(
+    (Array.isArray(answers) ? answers : [])
+      .filter((answer) => answer && answer.hash)
+      .map((answer) => [answer.hash, answer.option])
+  )
+
+  return (Array.isArray(flips) ? flips : []).map((flip) =>
+    answerOptionsByHash.has(flip.hash)
+      ? {
+          ...flip,
+          option: answerOptionsByHash.get(flip.hash),
+        }
+      : flip
+  )
+}
+
+function getDecodedRegularAnswerStats(flips = []) {
+  const regularFlips = filterRegularFlips(
+    Array.isArray(flips) ? flips : []
+  ).filter((flip) => flip && flip.failed !== true)
+  const decodedRegularFlips = regularFlips.filter(
+    (flip) => flip.decoded === true
+  )
+  const answered = decodedRegularFlips.filter((flip) => Number(flip.option) > 0)
+
+  return {
+    regularTotal: regularFlips.length,
+    total: decodedRegularFlips.length,
+    answered: answered.length,
+    allAnswered:
+      regularFlips.length > 0 &&
+      decodedRegularFlips.length === regularFlips.length &&
+      answered.length === decodedRegularFlips.length,
+  }
 }
 
 function normalizeLocalCaptureWords(words = []) {
@@ -1818,7 +1857,10 @@ function ValidationSession({
         throw new Error(t('No solvable flips are available for AI helper.'))
       }
 
-      if (solveBudget.estimatedMs > remainingSolveMs) {
+      if (
+        sessionType !== 'short' &&
+        solveBudget.estimatedMs > remainingSolveMs
+      ) {
         const timingError = new Error(
           t(
             sessionType === 'long'
@@ -2085,12 +2127,45 @@ function ValidationSession({
         })
       }
 
-      if (
-        sessionType === 'short' &&
-        result.answers.length > 0 &&
-        !forceAiPreview
-      ) {
-        send('SUBMIT')
+      if (sessionType === 'short' && !forceAiPreview) {
+        const shortFlipsAfterAi = applyAiAnswerOptionsToFlips(
+          state.context.shortFlips,
+          result.answers
+        )
+        const answerStats = getDecodedRegularAnswerStats(shortFlipsAfterAi)
+        const remainingShortSolveMs = getValidationSessionPhaseRemainingMs({
+          validationStart,
+          shortSessionDuration,
+          longSessionDuration,
+          sessionType: 'short',
+        })
+        const reachedSubmitCutoff =
+          !Number.isFinite(remainingShortSolveMs) || remainingShortSolveMs <= 0
+
+        if (
+          result.answers.length > 0 &&
+          (answerStats.allAnswered ||
+            (reachedSubmitCutoff && hasEnoughAnswers(shortFlipsAfterAi)))
+        ) {
+          send('SUBMIT')
+        } else if (
+          result.answers.length > 0 &&
+          isSessionAutoMode &&
+          !reachedSubmitCutoff
+        ) {
+          autoSolveStartedRef.current.short = false
+          notifyAi(
+            t('AI short-session retry armed'),
+            t(
+              'AI answered {{answered}}/{{total}} decoded short flips. It will retry remaining flips until the final {{seconds}} seconds.',
+              {
+                answered: answerStats.answered,
+                total: answerStats.total,
+                seconds: SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+              }
+            )
+          )
+        }
       }
 
       if (
@@ -2169,6 +2244,7 @@ function ValidationSession({
     aiSessionType,
     canRunAiSolve,
     epoch,
+    isSessionAutoMode,
     longSessionDuration,
     notifyAi,
     forceAiPreview,
@@ -3281,7 +3357,7 @@ function ValidationSession({
             validationStart={validationStart}
             duration={
               shortSessionDuration -
-              10 +
+              SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS +
               (isShortSession(state) ? 0 : longSessionDuration)
             }
           />

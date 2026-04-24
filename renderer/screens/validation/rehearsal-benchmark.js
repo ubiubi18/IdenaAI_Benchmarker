@@ -132,6 +132,7 @@ export function normalizeRehearsalSeedFlipMeta(value = {}) {
     return null
   }
 
+  const words = normalizeSeedWords(value.words)
   const expectedAnswer =
     normalizeExpectedAnswer(value.expectedAnswer) ||
     normalizeExpectedAnswer(value.consensusAnswer) ||
@@ -142,7 +143,7 @@ export function normalizeRehearsalSeedFlipMeta(value = {}) {
       Array.isArray(value.agreed_answer) && value.agreed_answer[0]
     )
 
-  if (!expectedAnswer) {
+  if (!expectedAnswer && words.length < 1) {
     return null
   }
 
@@ -174,7 +175,7 @@ export function normalizeRehearsalSeedFlipMeta(value = {}) {
     consensusVotes: normalizeConsensusVotes(
       value.consensusVotes || value.votes
     ),
-    words: normalizeSeedWords(value.words),
+    words,
     sourceStats: normalizeSeedSourceStats(value.sourceStats || value.stats),
     sourceDataset: normalizeSeedSourceLabel(
       value.sourceDataset || value.source_dataset
@@ -261,11 +262,15 @@ export function hasMissingRehearsalSeedMeta(flips, metaByHash = {}) {
   return nextFlips.some((flip) => {
     const hash = normalizeRehearsalBenchmarkHash(flip?.hash || '')
     const meta = normalizedMetaByHash[hash]
+    const metaHasExpectedAnswer = Boolean(
+      normalizeExpectedAnswer(meta?.expectedAnswer)
+    )
 
     return (
       hash &&
       meta &&
-      (normalizeExpectedAnswer(flip?.expectedAnswer) === null ||
+      ((metaHasExpectedAnswer &&
+        normalizeExpectedAnswer(flip?.expectedAnswer) === null) ||
         (Array.isArray(meta.words) &&
           meta.words.length > 0 &&
           (!Array.isArray(flip?.words) || flip.words.length < 2)))

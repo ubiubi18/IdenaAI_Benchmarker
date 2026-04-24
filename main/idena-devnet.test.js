@@ -419,6 +419,60 @@ describe('validation devnet helpers', () => {
     })
   })
 
+  it('keeps rehearsal metadata under source and submitted flip hashes', () => {
+    const sourceFlip = {
+      hash: '_flip_bafyseed1',
+      expectedAnswer: 'right',
+      consensusVotes: {Left: 1, Right: 9, Reported: 0},
+      words: [
+        {name: 'apple', desc: 'fruit'},
+        {name: 'ghost', desc: 'spirit'},
+      ],
+    }
+    const submittedFlip = {
+      ...sourceFlip,
+      hash: '0xsubmittedhash',
+      sourceHash: sourceFlip.hash,
+    }
+    const metaByHash = buildValidationDevnetSeedFlipMetaByHash([
+      sourceFlip,
+      submittedFlip,
+    ])
+
+    expect(metaByHash.bafyseed1).toEqual(
+      expect.objectContaining({
+        expectedAnswer: 'right',
+        words: [
+          {name: 'apple', desc: 'fruit'},
+          {name: 'ghost', desc: 'spirit'},
+        ],
+      })
+    )
+    expect(metaByHash['0xsubmittedhash']).toEqual(metaByHash.bafyseed1)
+  })
+
+  it('keeps rehearsal keyword metadata when consensus labels are unavailable', () => {
+    expect(
+      buildValidationDevnetSeedFlipMetaByHash([
+        {
+          hash: '0xkeywords-only',
+          words: [
+            {name: 'office', desc: 'workplace'},
+            {name: 'shoe', desc: 'footwear'},
+          ],
+        },
+      ])
+    ).toEqual({
+      '0xkeywords-only': expect.objectContaining({
+        expectedAnswer: null,
+        words: [
+          {name: 'office', desc: 'workplace'},
+          {name: 'shoe', desc: 'footwear'},
+        ],
+      }),
+    })
+  })
+
   it('skips rehearsal seed flips that were already annotated in prior review runs', async () => {
     const tempDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'idena-devnet-seed-review-')

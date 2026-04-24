@@ -36,12 +36,8 @@ export function getValidationAiSessionType({
   return null
 }
 
-export function shouldBlockSessionAutoInDev({
-  isDev = false,
-  forceAiPreview = false,
-  isRehearsalNodeSession = false,
-} = {}) {
-  return Boolean(isDev && !forceAiPreview && !isRehearsalNodeSession)
+export function shouldBlockSessionAutoInDev() {
+  return false
 }
 
 export function shouldAutoRunSessionForPeriod({

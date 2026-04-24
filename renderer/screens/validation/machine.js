@@ -26,6 +26,8 @@ import {
   readyFlip,
   availableReportsNumber,
   getShortSessionLongSessionTransitionDelayMs,
+  SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+  LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
 } from './utils'
 import {forEachAsync, wait} from '../../shared/utils/fn'
 import {fetchConfirmedKeywordTranslations} from '../flips/utils'
@@ -49,7 +51,9 @@ export function getShortSessionFinalizeDelaySeconds({
   }
 
   const latestSafeFinalizeSeconds =
-    durationSeconds - 10 - SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS
+    durationSeconds -
+    SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS -
+    SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS
 
   return Math.max(
     5,
@@ -1184,7 +1188,7 @@ export const createValidationMachine = ({
         }) =>
           adjustDurationInSeconds(
             nextValidationStart,
-            nextShortSessionDuration - 10
+            nextShortSessionDuration - SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS
           ) * 1000,
         WAIT_FOR_LONG_SESSION: ({
           validationStart: nextValidationStart,
@@ -1202,7 +1206,9 @@ export const createValidationMachine = ({
         }) =>
           adjustDurationInSeconds(
             nextValidationStart,
-            shortSessionDuration - 10 + nextLongSessionDuration
+            shortSessionDuration -
+              LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS +
+              nextLongSessionDuration
           ) * 1000,
         // eslint-disable-next-line no-shadow
         FINALIZE_LONG_FLIPS: ({

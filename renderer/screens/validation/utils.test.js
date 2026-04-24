@@ -374,7 +374,7 @@ describe('validation ceremony timing helpers', () => {
         sessionType: 'short',
         now: validationStart + 45 * 1000,
       })
-    ).toBe(65 * 1000)
+    ).toBe((120 - SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS - 45) * 1000)
   })
 
   it('caps auto-report delay against the remaining long-session window', () => {
@@ -414,7 +414,11 @@ describe('validation ceremony timing helpers', () => {
         shortSessionDuration: 120,
         configuredSeconds: 90,
       })
-    ).toBe(120 - 10 - SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS)
+    ).toBe(
+      120 -
+        SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS -
+        SHORT_SESSION_MIN_AI_SOLVE_WINDOW_SECONDS
+    )
   })
 
   it('keeps a lower explicit finalize override when it is already earlier', () => {

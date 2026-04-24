@@ -32,6 +32,8 @@ const LONG_SESSION_STRICT_PROFILE_OVERRIDES = {
   flipVisionMode: 'frames_two_pass',
 }
 const MIN_SOLVE_GUARD_MS = 1500
+const SHORT_SESSION_MIN_SOLVE_GUARD_MS = 500
+const MIN_PROVIDER_REQUEST_TIMEOUT_MS = 750
 const IMAGE_PREP_BASE_MS = 2000
 const IMAGE_PREP_PER_FLIP_MS = {
   default: 600,
@@ -790,6 +792,33 @@ function ensureRuntimeRemaining(deadlineAt, minimumMs = 0) {
   }
 }
 
+function getSessionSolveGuardMs(sessionType = 'short') {
+  return sessionType === 'short'
+    ? SHORT_SESSION_MIN_SOLVE_GUARD_MS
+    : MIN_SOLVE_GUARD_MS
+}
+
+function getClampedRequestTimeoutMs({
+  deadlineAt,
+  guardMs,
+  requestTimeoutMs,
+} = {}) {
+  const normalizedRequestTimeoutMs = Math.max(
+    MIN_PROVIDER_REQUEST_TIMEOUT_MS,
+    toNumberOrFallback(requestTimeoutMs, DEFAULT_PROFILE.requestTimeoutMs)
+  )
+  const remainingMs = getTimeRemainingMs(deadlineAt)
+
+  if (!Number.isFinite(remainingMs)) {
+    return normalizedRequestTimeoutMs
+  }
+
+  return Math.max(
+    MIN_PROVIDER_REQUEST_TIMEOUT_MS,
+    Math.min(normalizedRequestTimeoutMs, remainingMs - Math.max(0, guardMs))
+  )
+}
+
 export function planValidationAiSolve({
   sessionType = 'short',
   shortFlips = [],
@@ -929,7 +958,8 @@ export async function solveValidationSessionWithAi({
 
   const startedAt = Date.now()
   const sessionDeadlineAt = normalizeDeadlineAt(hardDeadlineAt)
-  ensureRuntimeRemaining(sessionDeadlineAt, MIN_SOLVE_GUARD_MS)
+  const sessionSolveGuardMs = getSessionSolveGuardMs(sessionType)
+  ensureRuntimeRemaining(sessionDeadlineAt, sessionSolveGuardMs)
   const buildDeadlineAt = Number.isFinite(sessionDeadlineAt)
     ? Math.min(
         sessionDeadlineAt,
@@ -949,7 +979,7 @@ export async function solveValidationSessionWithAi({
   const totalFlips = candidateFlips.length
 
   for (let index = 0; index < candidateFlips.length; index += 1) {
-    ensureRuntimeRemaining(sessionDeadlineAt, MIN_SOLVE_GUARD_MS)
+    ensureRuntimeRemaining(sessionDeadlineAt, sessionSolveGuardMs)
     if (Date.now() >= buildDeadlineAt) break
     const flip = candidateFlips[index]
     const leftImage =
@@ -1022,9 +1052,15 @@ export async function solveValidationSessionWithAi({
       })
     }
 
+    const requestTimeoutMs = getClampedRequestTimeoutMs({
+      deadlineAt: sessionDeadlineAt,
+      guardMs: sessionSolveGuardMs,
+      requestTimeoutMs: effectiveProfile.requestTimeoutMs,
+    })
+
     ensureRuntimeRemaining(
       sessionDeadlineAt,
-      Math.max(MIN_SOLVE_GUARD_MS, effectiveProfile.requestTimeoutMs)
+      sessionSolveGuardMs + MIN_PROVIDER_REQUEST_TIMEOUT_MS
     )
 
     if (onProgress) {
@@ -1068,7 +1104,7 @@ export async function solveValidationSessionWithAi({
             Math.min(effectiveProfile.deadlineMs, remainingSessionMs)
           )
         : effectiveProfile.deadlineMs,
-      requestTimeoutMs: effectiveProfile.requestTimeoutMs,
+      requestTimeoutMs,
       maxConcurrency: 1,
       maxRetries: effectiveProfile.maxRetries,
       maxOutputTokens: effectiveProfile.maxOutputTokens,
@@ -1173,7 +1209,7 @@ export async function solveValidationSessionWithAi({
       const waitMs = Number.isFinite(remainingBeforeDelayMs)
         ? Math.min(
             delayMs,
-            Math.max(0, remainingBeforeDelayMs - MIN_SOLVE_GUARD_MS)
+            Math.max(0, remainingBeforeDelayMs - sessionSolveGuardMs)
           )
         : delayMs
       if (onProgress) {

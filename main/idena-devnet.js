@@ -163,6 +163,20 @@ function normalizeValidationDevnetSeedHash(value) {
     .replace(/^_flip_/u, '')
 }
 
+function normalizeValidationDevnetSubmittedFlipHash(result) {
+  if (typeof result === 'string') {
+    return normalizeValidationDevnetSeedHash(result)
+  }
+
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return ''
+  }
+
+  return normalizeValidationDevnetSeedHash(
+    result.hash || result.flipHash || result.result || ''
+  )
+}
+
 function hasMeaningfulRehearsalBenchmarkAnnotation(value = {}) {
   const annotation =
     value && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -567,9 +581,9 @@ function buildValidationDevnetSeedFlipMetaByHash(flips = []) {
       }
     )
 
-    if (hash && expectedAnswer) {
+    if (hash && (expectedAnswer || words.length > 0 || consensusVotes)) {
       result[hash] = {
-        expectedAnswer,
+        expectedAnswer: expectedAnswer || null,
         expectedStrength,
         consensusAnswer,
         consensusStrength,
@@ -2181,6 +2195,7 @@ function createValidationDevnetController({
     })
 
     let submittedCount = 0
+    const submittedSeedFlips = []
 
     for (const [index, flip] of seedSet.flips.entries()) {
       const authorName = seedAuthorNames[index % seedAuthorNames.length]
@@ -2195,14 +2210,20 @@ function createValidationDevnetController({
 
       // eslint-disable-next-line no-await-in-loop
       const result = await callNodeRpc(authorNode, 'flip_submit', [submitArgs])
+      const submittedHash = normalizeValidationDevnetSubmittedFlipHash(result)
       flipSubmitCounts[authorNode.name] += 1
       submittedCount += 1
+      submittedSeedFlips.push({
+        ...flip,
+        hash: submittedHash || flip.hash,
+        sourceHash: flip.hash,
+      })
 
       appendLog(
         `[devnet] seeded FLIP-Challenge flip ${submittedCount}/${requestedCount} via ${
           authorNode.name
         }: ${flip.hash || `seed-${submittedCount}`} -> ${
-          (result && result.hash) || 'submitted'
+          submittedHash || 'submitted'
         }`
       )
       publishStatus({
@@ -2391,7 +2412,10 @@ function createValidationDevnetController({
     const initialSeedState = {
       source: seedSet.source,
       sourceFile: seedSet.sourceFile,
-      flipMetaByHash: buildValidationDevnetSeedFlipMetaByHash(seedSet.flips),
+      flipMetaByHash: buildValidationDevnetSeedFlipMetaByHash([
+        ...seedSet.flips,
+        ...submittedSeedFlips,
+      ]),
       requested: requestedCount,
       submitted: submittedCount,
       confirmed: confirmedPrimaryFlipCount || initialPrimaryConfirmedCount || 0,
