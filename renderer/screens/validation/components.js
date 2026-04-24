@@ -462,11 +462,20 @@ function FlipImage(props) {
 }
 
 export function ActionBar(props) {
-  return <Flex justify="space-between" mb={4} {...props} />
+  return (
+    <Flex
+      justify="space-between"
+      align="center"
+      gap={2}
+      flexWrap="wrap"
+      mb={4}
+      {...props}
+    />
+  )
 }
 
 export function ActionBarItem(props) {
-  return <Flex flex={1} minH={8} zIndex={1} {...props} />
+  return <Flex flex={1} minH={8} minW={0} zIndex={1} {...props} />
 }
 
 const thumbBorderWidth = 2

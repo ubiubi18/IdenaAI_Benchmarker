@@ -276,6 +276,9 @@ export default function AfterValidationPage() {
   const validationEnd = dayjs(epoch?.nextValidation)
     .add(timing?.shortSession, 'second')
     .add(timing?.longSession, 'second')
+  const validationCountdown = isAfterLongSession ? null : (
+    <ValidationCountdown duration={validationEnd.diff(dayjs())} />
+  )
 
   const rehearsalBenchmarkReviewRoute = React.useMemo(() => {
     const reviewScopeKey = buildValidationSessionScopeKey(
@@ -373,7 +376,11 @@ export default function AfterValidationPage() {
       </Flex>
 
       <Center color="white" minH="100vh">
-        <Stack spacing="12" w={['xs', '640px']}>
+        <Stack
+          spacing={canOpenLocalResultsDuringCeremony ? '6' : '12'}
+          w="full"
+          maxW={['calc(100vw - 2rem)', '640px']}
+        >
           <Stack spacing="6">
             <Stack spacing="2">
               <Heading fontSize="lg" fontWeight={500}>
@@ -415,9 +422,7 @@ export default function AfterValidationPage() {
                 </Button>
               </Stack>
             )}
-            {isAfterLongSession ? null : (
-              <ValidationCountdown duration={validationEnd.diff(dayjs())} />
-            )}
+            {!canOpenLocalResultsDuringCeremony ? validationCountdown : null}
 
             {showEligibilityError && (
               <ErrorAlert>
@@ -669,6 +674,8 @@ export default function AfterValidationPage() {
                 )}
               </Stack>
             </Box>
+
+            {canOpenLocalResultsDuringCeremony ? validationCountdown : null}
           </Stack>
         </Stack>
       </Center>

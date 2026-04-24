@@ -151,6 +151,7 @@ const SHORT_SESSION_OPENAI_FAST_MODELS = [
   'gpt-5.4-mini',
   'gpt-5.4',
 ]
+const AI_SETTINGS_TOAST_ID = 'ai-settings-status-toast'
 
 const MAIN_PROVIDER_OPTIONS = [
   {value: 'local-ai', label: 'Local AI runtime'},
@@ -1615,7 +1616,16 @@ export default function AiSettingsPage() {
 
   const notify = useCallback(
     (title, description, status = 'info') => {
+      if (
+        typeof toast.isActive === 'function' &&
+        typeof toast.close === 'function' &&
+        toast.isActive(AI_SETTINGS_TOAST_ID)
+      ) {
+        toast.close(AI_SETTINGS_TOAST_ID)
+      }
       toast({
+        id: AI_SETTINGS_TOAST_ID,
+        duration: 6000,
         render: () => (
           <Toast title={title} description={description} status={status} />
         ),
@@ -1718,6 +1728,23 @@ export default function AiSettingsPage() {
       'warning'
     )
   }, [notify, t, updateAiSolverSettings])
+
+  const openOnchainAutomaticFlow = useCallback(() => {
+    setShowAdvancedAiSettings(true)
+    updateAiSolverSettings({
+      enabled: true,
+      mode: 'session-auto',
+      onchainAutoSubmitConsentAt:
+        aiSolver.onchainAutoSubmitConsentAt || new Date().toISOString(),
+    })
+    notify(
+      t('On-chain auto-submit settings opened'),
+      t(
+        'Session-auto is armed. Review the optional reporting settings below; manual intervention remains possible while validation is open.'
+      ),
+      'warning'
+    )
+  }, [aiSolver.onchainAutoSubmitConsentAt, notify, t, updateAiSolverSettings])
 
   const ensureBridge = () => {
     if (!global.aiSolver) {
@@ -3932,6 +3959,11 @@ export default function AiSettingsPage() {
                             <InputRightElement w="6" h="6" m="1">
                               <IconButton
                                 size="xs"
+                                aria-label={
+                                  isApiKeyVisible
+                                    ? t('Hide provider API key')
+                                    : t('Show provider API key')
+                                }
                                 icon={
                                   isApiKeyVisible ? <EyeOffIcon /> : <EyeIcon />
                                 }
@@ -4307,8 +4339,9 @@ export default function AiSettingsPage() {
                       </SecondaryButton>
                       <SecondaryButton
                         isDisabled={!providerKeyStatus.primaryReady}
+                        onClick={openOnchainAutomaticFlow}
                       >
-                        {t('Open on-chain automatic flow')}
+                        {t('Open on-chain automatic settings')}
                       </SecondaryButton>
                     </Stack>
                   </Stack>

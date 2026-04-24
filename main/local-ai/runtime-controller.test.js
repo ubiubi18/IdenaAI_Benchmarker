@@ -227,6 +227,47 @@ describe('managed local runtime flavor selection', () => {
     })
   })
 
+  it('rejects unsafe Ollama executable path overrides', async () => {
+    const controller = createDefaultRuntimeController()
+
+    await expect(
+      controller.start({
+        runtimeBackend: 'ollama-direct',
+        baseUrl: 'http://127.0.0.1:11434',
+        ollamaCommandPath: '/bin/sh',
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_ollama_command_path',
+    })
+  })
+
+  it('rejects unsafe managed Python executable path overrides', async () => {
+    const baseDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'idena-managed-runtime-python-path-')
+    )
+    const controller = createDefaultRuntimeController({baseDir})
+    const statfsSpy = jest
+      .spyOn(fs.promises, 'statfs')
+      .mockResolvedValue({bavail: 1024 * 1024 * 1024, bsize: 4096})
+
+    await expect(
+      controller.start({
+        runtimeBackend: 'local-runtime-service',
+        runtimeFamily: 'molmo2-o',
+        baseUrl: 'http://127.0.0.1:8080',
+        model: 'allenai/Molmo2-O-7B',
+        managedRuntimeTrustVersion: 1,
+        managedRuntimePythonPath: '/bin/bash',
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_python_command_path',
+    })
+
+    expect(statfsSpy).toHaveBeenCalled()
+
+    await fs.remove(baseDir)
+  })
+
   it('fails early when the managed runtime does not have enough free disk space', async () => {
     const baseDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'idena-managed-runtime-disk-space-')

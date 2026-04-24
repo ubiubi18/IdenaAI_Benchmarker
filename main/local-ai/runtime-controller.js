@@ -149,12 +149,13 @@ const OLLAMA_COMMAND_CANDIDATES = [
   '/usr/local/bin/ollama',
   'ollama',
 ]
-const PYTHON_COMMAND_CANDIDATES = [
-  process.env.IDENAAI_PYTHON || '',
+const DEFAULT_PYTHON_COMMAND_CANDIDATES = [
   process.platform === 'win32' ? 'py -3.11' : 'python3.11',
   process.platform === 'win32' ? 'py -3' : 'python3',
   process.platform === 'win32' ? 'python' : 'python',
 ]
+const PYTHON_EXECUTABLE_PATTERN = /^(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?$/iu
+const OLLAMA_EXECUTABLE_PATTERN = /^ollama(?:\.exe)?$/iu
 const MANAGED_RUNTIME_SNAPSHOT_DOWNLOAD_MAX_RETRIES = 4
 const MANAGED_RUNTIME_SNAPSHOT_DOWNLOAD_RETRY_DELAY_MS = 2000
 
@@ -308,7 +309,14 @@ function normalizeBaseUrl(value, fallback = 'http://localhost:5000') {
 }
 
 function resolveOllamaCommand(explicitOverride = '') {
-  const explicit = trimString(explicitOverride || process.env.OLLAMA_PATH)
+  const explicit = normalizeExecutableOverride(
+    explicitOverride || process.env.OLLAMA_PATH,
+    {
+      executablePattern: OLLAMA_EXECUTABLE_PATTERN,
+      errorCode: 'invalid_ollama_command_path',
+      label: 'Ollama',
+    }
+  )
 
   if (explicit) {
     return explicit
@@ -319,6 +327,45 @@ function resolveOllamaCommand(explicitOverride = '') {
       (candidate) => candidate === 'ollama' || fs.existsSync(candidate)
     ) || 'ollama'
   )
+}
+
+function normalizeExecutableOverride(
+  value,
+  {executablePattern, errorCode, label}
+) {
+  const command = trimString(value)
+
+  if (!command) {
+    return ''
+  }
+
+  if (/[\0\r\n]/u.test(command)) {
+    throw createRuntimeControllerError(
+      errorCode,
+      `${label} executable path must be a single command path.`
+    )
+  }
+
+  const hasPathSeparator =
+    command.includes('/') ||
+    command.includes('\\') ||
+    command.includes(path.sep)
+
+  if (hasPathSeparator && !path.isAbsolute(command)) {
+    throw createRuntimeControllerError(
+      errorCode,
+      `${label} executable path must be absolute, or use the command name from PATH.`
+    )
+  }
+
+  if (!executablePattern.test(path.basename(command))) {
+    throw createRuntimeControllerError(
+      errorCode,
+      `${label} executable path must point to an allowed ${label} binary.`
+    )
+  }
+
+  return command
 }
 
 function resolveOllamaHostEnv(baseUrl) {
@@ -395,10 +442,15 @@ function resolveManagedMolmo2RuntimeFlavor(runtimeConfig = null) {
   return resolveManagedLocalRuntimeFlavor(runtimeConfig)
 }
 
-function buildPythonVariants(configured, preferArm64 = false) {
-  const parts = trimString(configured).split(/\s+/u).filter(Boolean)
+function buildPythonVariants(
+  configured,
+  preferArm64 = false,
+  {allowArgs = false} = {}
+) {
+  const text = trimString(configured)
+  const parts = allowArgs ? text.split(/\s+/u).filter(Boolean) : [text]
 
-  if (parts.length === 0) {
+  if (!text || parts.length === 0) {
     return []
   }
 
@@ -444,15 +496,31 @@ function resolvePythonCommandParts({
   preferArm64 = false,
   configured = '',
 } = {}) {
-  const candidates = [trimString(configured)]
-    .concat(PYTHON_COMMAND_CANDIDATES)
+  const explicit = normalizeExecutableOverride(configured, {
+    executablePattern: PYTHON_EXECUTABLE_PATTERN,
+    errorCode: 'invalid_python_command_path',
+    label: 'Python',
+  })
+  const envOverride = normalizeExecutableOverride(process.env.IDENAAI_PYTHON, {
+    executablePattern: PYTHON_EXECUTABLE_PATTERN,
+    errorCode: 'invalid_python_command_path',
+    label: 'Python',
+  })
+  const candidates = [explicit, envOverride]
     .filter(Boolean)
+    .map((candidate) => ({candidate, allowArgs: false}))
+    .concat(
+      DEFAULT_PYTHON_COMMAND_CANDIDATES.map((candidate) => ({
+        candidate,
+        allowArgs: true,
+      }))
+    )
   const seen = new Set()
 
-  for (const candidate of candidates) {
+  for (const {candidate, allowArgs} of candidates) {
     if (!seen.has(candidate)) {
       seen.add(candidate)
-      const variants = buildPythonVariants(candidate, preferArm64)
+      const variants = buildPythonVariants(candidate, preferArm64, {allowArgs})
 
       for (const variant of variants) {
         if (probePythonVariant(variant)) {

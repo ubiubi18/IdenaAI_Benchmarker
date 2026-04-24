@@ -42,6 +42,8 @@ import {
   openValidationLottery,
 } from '../../screens/validation/hooks/use-start-validation'
 
+const NODE_SETTINGS_TOAST_ID = 'node-settings-status-toast'
+
 function hasNodeBridge() {
   return !getNodeBridge().__idenaFallback
 }
@@ -302,8 +304,18 @@ function NodeSettings() {
     }
   }, [state.logs])
 
-  const notify = () =>
+  const notify = () => {
+    if (
+      typeof toast.isActive === 'function' &&
+      typeof toast.close === 'function' &&
+      toast.isActive(NODE_SETTINGS_TOAST_ID)
+    ) {
+      toast.close(NODE_SETTINGS_TOAST_ID)
+    }
+
     toast({
+      id: NODE_SETTINGS_TOAST_ID,
+      duration: 6000,
       // eslint-disable-next-line react/display-name
       render: () => (
         <Toast
@@ -312,6 +324,7 @@ function NodeSettings() {
         />
       ),
     })
+  }
 
   const [revealApiKey, setRevealApiKey] = useState(false)
   const emptyLogMessage = (() => {
@@ -574,6 +587,11 @@ function NodeSettings() {
                   <InputRightElement w="6" h="6" m="1">
                     <IconButton
                       size="xs"
+                      aria-label={
+                        revealApiKey
+                          ? t('Hide node API key')
+                          : t('Show node API key')
+                      }
                       icon={revealApiKey ? <EyeOffIcon /> : <EyeIcon />}
                       bg={revealApiKey ? 'gray.300' : 'white'}
                       fontSize={20}

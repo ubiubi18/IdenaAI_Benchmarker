@@ -141,6 +141,7 @@ const MIN_AUTO_REPORT_DELAY_MS = 15 * 1000
 const AUTO_REPORT_KEYWORD_WAIT_MS = 20 * 1000
 const AUTO_REPORT_KEYWORD_RETRY_MS = 5 * 1000
 const LONG_SESSION_LOADING_GRACE_MS = 15 * 60 * 1000
+const VALIDATION_AI_TOAST_ID = 'validation-ai-status-toast'
 const DEFAULT_AI_SOLVER_SETTINGS = {
   enabled: false,
   provider: 'openai',
@@ -770,14 +771,19 @@ function LocalAiValidationRecommendation({
       spacing={2}
       px={4}
       py={3}
-      mx={6}
+      mx={[2, 6]}
       mb={3}
       borderWidth="1px"
       borderColor={panelBorder}
       borderRadius="md"
       bg={panelBg}
     >
-      <Flex align="center" justify="space-between">
+      <Flex
+        align={['stretch', 'center']}
+        justify="space-between"
+        direction={['column', 'row']}
+        gap={2}
+      >
         <Box>
           <Text fontSize="xs" fontWeight={600} color={titleColor}>
             {t('Local AI recommendation')}
@@ -1540,7 +1546,17 @@ function ValidationSession({
 
   const notifyAi = useCallback(
     (title, description, status = 'info') => {
+      if (
+        typeof toast.isActive === 'function' &&
+        typeof toast.close === 'function' &&
+        toast.isActive(VALIDATION_AI_TOAST_ID)
+      ) {
+        toast.close(VALIDATION_AI_TOAST_ID)
+      }
+
       toast({
+        id: VALIDATION_AI_TOAST_ID,
+        duration: 6000,
         render: () => (
           <Toast title={title} description={description} status={status} />
         ),
@@ -3208,6 +3224,7 @@ function ValidationSession({
           </Title>
 
           <IconButton
+            aria-label={t('Toggle fullscreen')}
             icon={<FullscreenIcon />}
             bg={isShortSession(state) ? 'brandGray.060' : 'gray.300'}
             color={isShortSession(state) ? 'white' : 'brandGray.500'}
@@ -3920,8 +3937,11 @@ function AiTelemetryPanel({
       spacing={2}
       px={4}
       py={3}
-      mx={6}
+      mx={[2, 6]}
       mb={3}
+      maxH={isShortSessionMode ? '24vh' : '30vh'}
+      overflowX="hidden"
+      overflowY="auto"
       borderWidth="1px"
       borderColor={cardBorder}
       borderRadius="md"
