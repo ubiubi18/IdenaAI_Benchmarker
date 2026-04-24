@@ -1345,14 +1345,18 @@ export const createValidationMachine = ({
           },
         ]),
         cleanupShortFlips: ({shortFlips}) => {
-          filterSolvableFlips(shortFlips).forEach(({images}) =>
-            images.forEach(URL.revokeObjectURL)
-          )
+          filterSolvableFlips(shortFlips).forEach(({images}) => {
+            if (Array.isArray(images)) {
+              images.forEach(URL.revokeObjectURL)
+            }
+          })
         },
         cleanupLongFlips: ({longFlips}) => {
-          filterSolvableFlips(longFlips).forEach(({images}) =>
-            images.forEach(URL.revokeObjectURL)
-          )
+          filterSolvableFlips(longFlips).forEach(({images}) => {
+            if (Array.isArray(images)) {
+              images.forEach(URL.revokeObjectURL)
+            }
+          })
         },
         applyTranslations: assign({
           translations: ({translations, longFlips, currentIndex}, {data}) =>
@@ -1509,6 +1513,10 @@ const stepStates = {
   },
 }
 
+function hasKeywordWords(words) {
+  return Array.isArray(words) && words.length > 0
+}
+
 function mergeFlipsByHash(flips, anotherFlips) {
   const nextFlips = Array.isArray(flips) ? flips : []
   const nextAnotherFlips = Array.isArray(anotherFlips) ? anotherFlips : []
@@ -1520,11 +1528,21 @@ function mergeFlipsByHash(flips, anotherFlips) {
       const relevance =
         anotherFlip?.relevance ?? (flip?.relevance || RelevanceType.Abstained)
 
-      return {
+      const mergedFlip = {
         ...flip,
         ...anotherFlip,
         relevance,
       }
+
+      if (
+        Object.prototype.hasOwnProperty.call(anotherFlip, 'words') &&
+        !hasKeywordWords(anotherFlip.words) &&
+        hasKeywordWords(flip.words)
+      ) {
+        mergedFlip.words = flip.words
+      }
+
+      return mergedFlip
     }
 
     return flip

@@ -190,6 +190,48 @@ describe('validation machine', () => {
     service.stop()
   })
 
+  it('keeps rehearsal keywords when a later keyword fetch returns empty words', () => {
+    const machine = createValidationMachine({
+      epoch: 1,
+      validationStart: Date.now(),
+      shortSessionDuration: 120,
+      longSessionDuration: 300,
+      validationSessionId: '',
+      locale: 'en',
+      initialValidationPeriod: 'long',
+      initialLongFlips: [
+        {
+          hash: '0xlong',
+          ready: true,
+          decoded: true,
+          words: [
+            {name: 'office', desc: 'workplace'},
+            {name: 'shoe', desc: 'footwear'},
+          ],
+        },
+      ],
+    })
+
+    const service = interpret(machine).start()
+
+    service.send({
+      type: 'FLIP',
+      flip: {
+        hash: '0xlong',
+        ready: true,
+        decoded: true,
+        words: [],
+      },
+    })
+
+    expect(service.state.context.longFlips[0].words).toEqual([
+      {name: 'office', desc: 'workplace'},
+      {name: 'shoe', desc: 'footwear'},
+    ])
+
+    service.stop()
+  })
+
   it('submits long answers directly from the flip-answering stage', async () => {
     const originalRevokeObjectUrl = URL.revokeObjectURL
     URL.revokeObjectURL = jest.fn()
