@@ -121,6 +121,7 @@ import {
   getValidationLongAiSolveStatus,
   getValidationReportKeywordStatus,
   shouldFinishLongSessionAiSolve,
+  shouldWaitForValidationReportKeywords,
   shouldAllowSessionAutoMode,
   shouldBlockSessionAutoInDev,
   shouldAutoRunSessionForPeriod,
@@ -2400,30 +2401,38 @@ function ValidationSession({
         longFlips,
       })
       const candidateSourceFlips = keywordStatus.keywordReadyFlips
+      const waitedForKeywordsMs = autoReportKeywordWaitStartedAtRef.current
+        ? Date.now() - autoReportKeywordWaitStartedAtRef.current
+        : 0
 
-      if (!candidateSourceFlips.length) {
-        const waitedMs = autoReportKeywordWaitStartedAtRef.current
-          ? Date.now() - autoReportKeywordWaitStartedAtRef.current
-          : 0
+      if (
+        shouldWaitForValidationReportKeywords({
+          keywordStatus,
+          waitedMs: waitedForKeywordsMs,
+          maxWaitMs: AUTO_REPORT_KEYWORD_WAIT_MS,
+        })
+      ) {
+        setAutoReportDeadlineAt(Date.now() + AUTO_REPORT_KEYWORD_RETRY_MS)
 
-        if (
-          keywordStatus.keywordsPending &&
-          waitedMs < AUTO_REPORT_KEYWORD_WAIT_MS
-        ) {
-          setAutoReportDeadlineAt(Date.now() + AUTO_REPORT_KEYWORD_RETRY_MS)
-
-          if (!autoReportKeywordWaitNotifiedRef.current) {
-            autoReportKeywordWaitNotifiedRef.current = true
-            notifyAi(
-              t('Getting flip keywords'),
-              t(
-                'Automatic report review is waiting for long-session keywords to load before making report decisions.'
-              )
-            )
-          }
-
-          return
+        if (!autoReportKeywordWaitNotifiedRef.current) {
+          autoReportKeywordWaitNotifiedRef.current = true
+          notifyAi(
+            t('Getting flip keywords'),
+            candidateSourceFlips.length
+              ? t(
+                  'Automatic report review found {{ready}} keyword-ready flip(s), but is waiting briefly for {{missing}} more before making report decisions.',
+                  {
+                    ready: candidateSourceFlips.length,
+                    missing: keywordStatus.missingKeywordFlipCount,
+                  }
+                )
+              : t(
+                  'Automatic report review is waiting for long-session keywords to load before making report decisions.'
+                )
+          )
         }
+
+        return
       }
 
       const candidateFlips = await Promise.all(

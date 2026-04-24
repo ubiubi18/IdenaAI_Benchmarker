@@ -177,3 +177,18 @@ export function getValidationReportKeywordStatus({
     hasAnyKeywordReadyFlips: keywordReadyFlips.length > 0,
   }
 }
+
+export function shouldWaitForValidationReportKeywords({
+  keywordStatus = null,
+  waitedMs = 0,
+  maxWaitMs = 0,
+} = {}) {
+  const status =
+    keywordStatus && typeof keywordStatus === 'object' ? keywordStatus : {}
+
+  return Boolean(
+    status.keywordsFetching &&
+      Number(status.missingKeywordFlipCount) > 0 &&
+      Number(waitedMs) < Math.max(0, Number(maxWaitMs) || 0)
+  )
+}

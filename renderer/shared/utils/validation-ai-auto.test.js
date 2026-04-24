@@ -5,6 +5,7 @@ const {
   getValidationReportKeywordStatus,
   hasOnchainAutoSubmitConsent,
   shouldFinishLongSessionAiSolve,
+  shouldWaitForValidationReportKeywords,
   shouldAllowSessionAutoMode,
   shouldBlockSessionAutoInDev,
   shouldAutoRunSessionForPeriod,
@@ -181,6 +182,30 @@ describe('validation ai auto gating', () => {
     expect(result.keywordReadyFlipCount).toBe(1)
     expect(result.missingKeywordFlipCount).toBe(1)
     expect(result.keywordsPending).toBe(false)
+  })
+
+  it('waits for missing report keywords while keyword fetching is still active', () => {
+    expect(
+      shouldWaitForValidationReportKeywords({
+        keywordStatus: {
+          keywordsFetching: true,
+          missingKeywordFlipCount: 1,
+        },
+        waitedMs: 5000,
+        maxWaitMs: 20000,
+      })
+    ).toBe(true)
+
+    expect(
+      shouldWaitForValidationReportKeywords({
+        keywordStatus: {
+          keywordsFetching: true,
+          missingKeywordFlipCount: 1,
+        },
+        waitedMs: 20000,
+        maxWaitMs: 20000,
+      })
+    ).toBe(false)
   })
 
   it('allows real session auto mode in dev builds', () => {
