@@ -3,6 +3,7 @@
 // eslint-disable-next-line import/no-extraneous-dependencies
 const http = require('http')
 const fs = require('fs')
+const net = require('net')
 const os = require('os')
 const path = require('path')
 const {spawn} = require('child_process')
@@ -29,6 +30,50 @@ let electronLogFd = null
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, {recursive: true})
   return dirPath
+}
+
+function cleanRendererDevOutput() {
+  ;['renderer/.next', 'renderer/out'].forEach((relativePath) => {
+    fs.rmSync(path.join(ROOT, relativePath), {
+      recursive: true,
+      force: true,
+    })
+  })
+}
+
+function resolveDevUserDataDir(env) {
+  if (env.IDENA_DESKTOP_USER_DATA_DIR) {
+    return env.IDENA_DESKTOP_USER_DATA_DIR
+  }
+
+  return path.join(
+    os.homedir(),
+    'Library',
+    'Application Support',
+    `IdenaAI-dev-${path.basename(ROOT)}`
+  )
+}
+
+function assertRendererPortFree() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+
+    server.once('error', (error) => {
+      reject(
+        new Error(
+          error.code === 'EADDRINUSE'
+            ? `Renderer dev port ${DEV_PORT} is already in use. Stop the old IdenaAI/Benchmarker dev runtime before starting this one.`
+            : `Unable to check renderer dev port ${DEV_PORT}: ${error.message}`
+        )
+      )
+    })
+
+    server.once('listening', () => {
+      server.close(resolve)
+    })
+
+    server.listen(DEV_PORT, DEV_HOST)
+  })
 }
 
 function resolveUserDataDir() {
@@ -232,8 +277,17 @@ function shutdown(code = 0) {
 }
 
 async function main() {
-  const rendererNodeLaunch = resolveRendererNodeLaunch(process.env)
-  const electronLaunch = resolveElectronLaunch(process.env)
+  const baseEnv = {
+    ...process.env,
+    IDENA_DESKTOP_USER_DATA_DIR: resolveDevUserDataDir(process.env),
+  }
+  process.env.IDENA_DESKTOP_USER_DATA_DIR = baseEnv.IDENA_DESKTOP_USER_DATA_DIR
+
+  await assertRendererPortFree()
+  cleanRendererDevOutput()
+
+  const rendererNodeLaunch = resolveRendererNodeLaunch(baseEnv)
+  const electronLaunch = resolveElectronLaunch(baseEnv)
 
   if (rendererNodeLaunch.heapMb) {
     console.log(

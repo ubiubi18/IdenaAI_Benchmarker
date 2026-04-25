@@ -59,7 +59,9 @@ if (isWin && typeof app.setAppUserModelId === 'function') {
   app.setAppUserModelId(RUNTIME_APP_ID)
 }
 
-const runtimeUserDataPath = join(app.getPath('appData'), RUNTIME_STORAGE_NAME)
+const runtimeUserDataPath =
+  process.env.IDENA_DESKTOP_USER_DATA_DIR ||
+  join(app.getPath('appData'), RUNTIME_STORAGE_NAME)
 app.commandLine.appendSwitch(
   'disk-cache-dir',
   join(runtimeUserDataPath, 'Cache')
