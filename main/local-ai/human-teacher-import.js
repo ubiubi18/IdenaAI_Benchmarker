@@ -98,15 +98,7 @@ function normalizePanelReferenceIndex(value) {
     return null
   }
 
-  if (parsed <= 1) {
-    return Math.min(5, Math.max(1, Math.round(parsed * 4 + 1)))
-  }
-
-  if (parsed > 5) {
-    return null
-  }
-
-  return Math.round(parsed)
+  return parsed
 }
 
 function normalizePanelReferenceCoordinate(value) {

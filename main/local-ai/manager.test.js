@@ -1631,17 +1631,14 @@ describe('local-ai manager', () => {
       task: expect.objectContaining({
         taskId: firstTaskId,
         annotation: expect.objectContaining({
-          ai_annotation: expect.objectContaining({
-            final_answer: 'left',
-            text_required: false,
-            sequence_markers_present: false,
-            report_required: false,
-            rating: 'good',
-          }),
-          ai_annotation_feedback: expect.stringContaining('missed one clue'),
+          ai_annotation: null,
+          ai_annotation_feedback: '',
           text_required: false,
           sequence_markers_present: false,
           report_required: false,
+          final_answer: 'right',
+          why_answer: 'testing the offline annotator path',
+          confidence: 5,
         }),
         annotationStatus: 'complete',
       }),
