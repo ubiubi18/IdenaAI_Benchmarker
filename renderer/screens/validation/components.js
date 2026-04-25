@@ -24,7 +24,6 @@ import {
 import {Trans, useTranslation} from 'react-i18next'
 import dayjs from 'dayjs'
 import durationPlugin from 'dayjs/plugin/duration'
-import useHover from '@react-hook/hover'
 import mousetrap from 'mousetrap'
 import {reorderList} from '../../shared/utils/arr'
 import {rem} from '../../shared/theme'
@@ -130,10 +129,8 @@ export function Flip({
   const {colors} = useTheme()
 
   const refContainer = useRef(null)
-  const refFlipHover = useRef(null)
-  const refZoomIconHover = useRef(null)
-  const isFlipHovered = useHover(refFlipHover.current)
-  const isZoomIconHovered = useHover(refZoomIconHover.current)
+  const [isFlipHovered, setIsFlipHovered] = useState(false)
+  const [isZoomIconHovered, setIsZoomIconHovered] = useState(false)
   const initialRef = useRef(null)
 
   const {
@@ -166,7 +163,13 @@ export function Flip({
   if (!fetched) return <LoadingFlip />
 
   return (
-    <Box ref={refFlipHover}>
+    <Box
+      onMouseEnter={() => setIsFlipHovered(true)}
+      onMouseLeave={() => {
+        setIsFlipHovered(false)
+        setIsZoomIconHovered(false)
+      }}
+    >
       <FlipHolder
         isZoomHovered={isZoomIconHovered}
         // eslint-disable-next-line no-nested-ternary
@@ -202,7 +205,10 @@ export function Flip({
             }}
           >
             {idx === 0 && (
-              <div ref={refZoomIconHover}>
+              <div
+                onMouseEnter={() => setIsZoomIconHovered(true)}
+                onMouseLeave={() => setIsZoomIconHovered(false)}
+              >
                 <Flex
                   display={isFlipHovered ? 'flex' : 'none'}
                   align="center"

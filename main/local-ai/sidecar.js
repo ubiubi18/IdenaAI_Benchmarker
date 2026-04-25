@@ -1,5 +1,5 @@
-const axios = require('axios')
 const {LOCAL_AI_RUNTIME, LOCAL_AI_RUNTIME_BACKEND} = require('./constants')
+const httpClientDefault = require('../utils/fetch-client')
 const {extractRawImages, runAppleVisionOcr} = require('./apple-ocr')
 const {
   LOCAL_AI_OLLAMA_DEFAULT_BASE_URL,
@@ -1252,7 +1252,7 @@ async function requestWithFallback(candidates, request) {
 }
 
 function createLocalAiSidecar({
-  httpClient = axios,
+  httpClient = httpClientDefault,
   logger,
   isDev = false,
 } = {}) {

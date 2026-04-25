@@ -35,10 +35,10 @@ import {
 import {DragDropContext, Droppable, Draggable} from 'react-beautiful-dnd'
 import {useTranslation} from 'react-i18next'
 import {useActor} from '@xstate/react'
-import Jimp from 'jimp'
 import FlipEditor from './components/flip-editor'
 import {Step} from './types'
 import {formatKeywords, getAdversarialImage, protectFlipImage} from './utils'
+import {resizeImageToDataUrl} from '../../shared/utils/image-canvas'
 import {
   PrimaryButton,
   IconButton2,
@@ -770,12 +770,13 @@ export function FlipProtectStep({
 
     const regeneratedImageSrc = await protectFlipImage(imageSrc)
 
-    const compressedImage = await Jimp.read(regeneratedImageSrc).then((raw) =>
-      raw
-        .resize(240, 180)
-        .quality(60) // jpeg quality
-        .getBase64Async('image/jpeg')
-    )
+    const compressedImage = await resizeImageToDataUrl(regeneratedImageSrc, {
+      width: 240,
+      height: 180,
+      type: 'image/jpeg',
+      quality: 0.6,
+      exact: true,
+    })
     if (advImageScr) {
       onChangeAdversarial(advImageScr)
     }

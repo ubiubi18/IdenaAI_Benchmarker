@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react'
+import React from 'react'
 import dayjs from 'dayjs'
 import {useMutation, useQuery} from 'react-query'
 import {useIdentityState} from '../../shared/providers/identity-context'
@@ -8,48 +8,6 @@ import {useEpochState} from '../../shared/providers/epoch-context'
 import {useChainState} from '../../shared/providers/chain-context'
 import {apiUrl} from '../../shared/api/api-client'
 import {useRpcFetcher} from '../ads/hooks'
-
-export function useIdenaBot() {
-  const [connected, setConnected] = useState(true)
-
-  useEffect(() => {
-    const bridge =
-      typeof window !== 'undefined' && window.idena ? window.idena.home : null
-
-    Promise.resolve(
-      bridge && typeof bridge.getIdenaBotState === 'function'
-        ? bridge.getIdenaBotState()
-        : undefined
-    )
-      .then((data) => {
-        setConnected(
-          data || JSON.parse(localStorage.getItem('connectIdenaBot')) || false
-        )
-      })
-      .catch(() => {})
-  }, [])
-
-  return [
-    connected,
-    {
-      persist: () => {
-        localStorage.setItem('connectIdenaBot', true)
-        setConnected(true)
-      },
-      skip: () => {
-        const bridge =
-          typeof window !== 'undefined' && window.idena
-            ? window.idena.home
-            : null
-
-        if (bridge && typeof bridge.skipIdenaBot === 'function') {
-          bridge.skipIdenaBot()
-        }
-        setConnected(true)
-      },
-    },
-  ]
-}
 
 export function useReplenishStake({onSuccess, onError}) {
   const {address} = useIdentityState()

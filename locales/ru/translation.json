@@ -910,8 +910,6 @@
   "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address._0": "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address.",
   "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address._1": "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address.",
   "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address._2": "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address.",
-  "Subscribe to @MyIdenaBot to get personalized notifications based on\n        your status": "Subscribe to @MyIdenaBot to get personalized notifications based on\n        your status",
-  "MyIdenaBot reminds you about important actions based on your\n              identity status:": "MyIdenaBot reminds you about important actions based on your\n              identity status:",
   "Do not show again": "Do not show again",
   "{{totalShortFlipPoints}} out of {{totalQualifiedFlips}}": "{{totalShortFlipPoints}} out of {{totalQualifiedFlips}}",
   "Epoch #{{epoch}}": "Epoch #{{epoch}}",

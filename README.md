@@ -1,6 +1,7 @@
 # IdenaAI Benchmarker NOT PRODUCTION READY, DONT USE!
 
 `IdenaAI` is an experimental desktop fork of `idena-desktop` focused on:
+
 - local and hosted AI integration
 - FLIP solving, generation, and benchmarking research
 - human-teacher annotation flows
@@ -31,8 +32,9 @@ and accepting the possibility of incorrect results, do not use this build.
 ## Install and Run from Source
 
 Prerequisites:
+
 - `git`
-- `node` 20.x
+- `node` 20.20+ for development, or Node 22.12+ for clean Electron 41 packaging
 - `npm`
 - `python3`
 
@@ -40,8 +42,8 @@ On macOS:
 
 ```bash
 xcode-select --install
-brew install git node@20 python@3
-brew link --overwrite --force node@20
+brew install git node@22 python@3
+brew link --overwrite --force node@22
 ```
 
 Clone and start:
@@ -72,14 +74,48 @@ Useful checks:
 ```bash
 npm run audit:privacy
 npm run audit:electron
+npm run audit:deps
 npm test
 ```
+
+## Standalone Boundary and Dependency Footprint
+
+The project boundary is intentionally split:
+
+- `idena-go` is the standalone protocol layer: one node binary plus its data
+  directory, with no npm runtime requirement
+- IdenaAI desktop is an optional Electron UX shell for node control, social UI,
+  validation rehearsal, and AI research
+- local AI models are downloaded only on demand and should not be bundled into
+  repo history or release artifacts
+- vendored `idena.social-ui` output must not bring its own `node_modules` into
+  packaged builds
+
+Dependency policy:
+
+- prefer browser Canvas, built-in `fetch`, Node core modules, and small internal
+  helpers before adding runtime npm packages
+- keep the root dependency graph free of the old `idena-sdk-js` runtime package;
+  transaction decoding and devnet address derivation use narrow internal helpers
+- keep heavier migrations, such as storage or UI framework replacement, as
+  separate reviewed work
+- keep Electron upgrades as separate reviewed work. This dependency diet branch
+  pins Electron to `41.3.0`; development installs run on Node 20.20+, while the
+  current Electron build toolchain declares Node 22.12+ as its clean packaging
+  target
+- use `npm run audit:deps` to inspect root runtime deps, production transitive
+  package count, largest installed packages, production audit summary, and
+  packaged-file risk
+- new root runtime dependencies should update
+  `scripts/dependency-footprint-baseline.json` only when the extra surface is
+  intentional
 
 ## Training Workflow
 
 The local FLIP training stack remains in the repo for research.
 
 It currently supports:
+
 - FLIP-Challenge dataset prep from Hugging Face
 - human-teacher annotation import
 - local LoRA pilot training experiments
@@ -87,12 +123,15 @@ It currently supports:
 - side-by-side comparison of `best_single` vs `deepfunding`
 
 Important limitation:
+
 - no approved bundled local training base model is currently endorsed by the project
 
 Start here:
+
 - [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
 
 Related notes:
+
 - [docs/local-ai-mvp-architecture.md](docs/local-ai-mvp-architecture.md)
 - [docs/federated-model-distribution.md](docs/federated-model-distribution.md)
 - [docs/federated-human-teacher-protocol.md](docs/federated-human-teacher-protocol.md)
@@ -104,6 +143,7 @@ This repo intentionally carries large static libraries in `idena-wasm-binding/li
 It also carries the chunked `samples/flips/flip-challenge-human-teacher-500-balanced.part-*.json` rehearsal sample shards. Those shards keep the local validation rehearsal and benchmark loop reproducible without requiring a network fetch, while staying below GitHub's hard per-file limit.
 
 If public release packaging becomes more formal later:
+
 - keep those files under review before every tag
 - consider Git LFS or external release artifacts if the bundle grows further
 - make sure `THIRD_PARTY_NOTICES.md` ships with any redistributed binary bundle
@@ -166,6 +206,10 @@ This section should stay current and act as a short roadmap of what has already 
   `Molmo2-O`, `Molmo2-4B`, `InternVL3.5-1B`, and `InternVL3.5-8B`, with the
   lighter `InternVL3.5-1B` lane now validated as a realistic same-provider
   managed-runtime candidate.
+- Dependency footprint:
+  the desktop app now has a dependency-footprint audit, removes the direct
+  `jimp` image stack and several narrow helper packages, and treats new runtime
+  npm dependencies as allowlist changes that require explicit review.
 - Safety posture:
   none of the above changes make the project production-safe. The repo remains a
   research fork first.
@@ -173,6 +217,7 @@ This section should stay current and act as a short roadmap of what has already 
 ## Current Stage
 
 Current project posture:
+
 - the desktop app is usable for research and controlled local experiments
 - AI features remain explicitly experimental
 - local AI is still an embryo-stage base-layer effort, not a settled product lane
@@ -180,6 +225,7 @@ Current project posture:
 - validation rehearsal support exists to shorten iteration loops, not to guarantee correctness
 
 What works today:
+
 - AI settings and runtime controls inside the app
 - provider-based solving, benchmarking, and AI-assisted FLIP generation
 - optional short-session-only OpenAI fast mode with a visible fallback back to
@@ -197,6 +243,7 @@ What works today:
 - local FLIP research scripts in `scripts/`
 
 What is still not production-ready:
+
 - packaged end-user release quality
 - stable local-model defaults
 - unattended on-chain AI automation
@@ -220,6 +267,7 @@ On macOS, this typically resolves under:
 ```
 
 Treat these files as experimental diagnostics:
+
 - schemas may still change
 - entries may be incomplete during crashes or interrupted runs
 - do not build production assumptions on top of them yet
@@ -229,17 +277,20 @@ Treat these files as experimental diagnostics:
 The repo now includes an isolated validation rehearsal path inside the desktop app.
 
 What it is:
+
 - a private local multi-node Idena network for rehearsal runs
 - seeded with FLIP-Challenge flips for local short-session practice
 - separate from mainnet and intended for protocol-flow testing
 
 What you can do from `Settings -> Node`:
+
 - start and use the rehearsal network immediately
 - start it in the background without switching the app over yet
 - restart a fresh rehearsal network
 - stop the rehearsal network
 
 Behavior notes:
+
 - the app can connect to the rehearsal node for the current app session only
 - that rehearsal connection is transient and should not overwrite your normal saved node settings
 - the app exposes live status and rehearsal-network logs in the same settings panel
@@ -278,12 +329,14 @@ Local AI is deliberately conservative right now.
 - RAM estimation and reserve controls are now part of the local-runtime setup flow
 
 Prepared research lanes currently include:
+
 - `allenai/Molmo2-O-7B` as the main managed research runtime
 - `allenai/Molmo2-4B` as a more compact managed fallback
 - `OpenGVLab/InternVL3_5-1B-HF` as the light same-provider alternative
 - `OpenGVLab/InternVL3_5-8B-HF` as a heavier experimental alternative
 
 Advanced users can still point the app at their own local-only:
+
 - Ollama runtime
 - MLX / MLX-VLM setup
 - Transformers-based server
@@ -297,6 +350,7 @@ In short: local AI experiments are enabled, but the broader local-model directio
 still experimental and should not be blindly trusted.
 
 Current intended behavior:
+
 - auto-route into the validation flow when the real ceremony reaches the right phase
 - retry provider-readiness checks during the session instead of depending on a
   single lucky startup check
@@ -315,6 +369,7 @@ Current intended behavior:
   wait loop, no retries, and shorter provider timeouts
 
 Current limitation:
+
 - short session is still the hardest window to hit reliably because image fetch,
   node readiness, and model latency all compete with protocol timing
 - you should still assume short-session automation can miss under bad network,
@@ -325,6 +380,7 @@ Current limitation:
 Treat this repository as test software and assume mistakes are possible.
 
 Recommended precautions:
+
 - use a low-value or disposable Idena identity
 - do not attach valuable identities, valuable wallets, or long-lived production secrets
 - keep provider budgets small
@@ -341,6 +397,7 @@ right to share.
 ## Development History
 
 Very short overview:
+
 - `Phase 1`: desktop fork created to explore AI inside `idena-desktop`
 - `Phase 2`: human-teacher annotation and local training research were added
 - `Phase 3`: provider benchmarking, solving, and generation were separated from local-model-training semantics
@@ -350,6 +407,7 @@ Very short overview:
 ## Related Repo
 
 If you mainly want the off-chain benchmark and training fork, use:
+
 - [IdenaAI_Benchmarker](https://github.com/ubiubi18/IdenaAI_Benchmarker)
 
 ## License

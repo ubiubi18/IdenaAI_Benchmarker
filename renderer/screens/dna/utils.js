@@ -1,7 +1,7 @@
-import axios from 'axios'
 import apiClient from '../../shared/api/api-client'
 import {sendTransaction} from '../../shared/api/dna'
 import {bufferToHex} from '../../shared/utils/string'
+import {postJson} from '../../shared/utils/http-client'
 
 export const DNA_LINK_VERSION = `v1`
 export const DNA_NONCE_PREFIX = 'signin-'
@@ -41,7 +41,7 @@ export function extractQueryParams(url) {
 }
 
 export async function startSession(nonceEndpoint, {token, address}) {
-  const {data} = await axios.post(nonceEndpoint, {
+  const {data} = await postJson(nonceEndpoint, {
     token,
     address,
   })
@@ -72,7 +72,7 @@ export async function signNonce(nonce) {
 }
 
 export async function authenticate(authenticationEndpoint, {token, signature}) {
-  const {data} = await axios.post(authenticationEndpoint, {
+  const {data} = await postJson(authenticationEndpoint, {
     token,
     signature,
   })

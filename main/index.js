@@ -15,11 +15,10 @@ const {
 const {autoUpdater} = require('electron-updater')
 const fs = require('fs-extra')
 const i18next = require('i18next')
-const macosVersion = require('macos-version')
 const semver = require('semver')
-const axios = require('axios')
 const {zoomIn, zoomOut, resetZoom} = require('./utils')
 const loadRoute = require('./utils/routes')
+const httpClient = require('./utils/fetch-client')
 
 const {DEV_SERVER_ORIGIN} = loadRoute
 
@@ -33,6 +32,13 @@ const isDev = !app.isPackaged
 const RUNTIME_APP_NAME = 'IdenaAI'
 const RUNTIME_STORAGE_NAME = 'IdenaAI'
 const RUNTIME_APP_ID = 'io.idena.ai'
+
+function isUnsupportedMacOsVersion() {
+  if (!isMac) return false
+
+  const [darwinMajor] = os.release().split('.').map(Number)
+  return Number.isFinite(darwinMajor) && darwinMajor > 0 && darwinMajor < 19
+}
 
 function resolveElectronHeapMb(env = {}) {
   const requestedHeapMb = Number.parseInt(
@@ -53,7 +59,9 @@ if (isWin && typeof app.setAppUserModelId === 'function') {
   app.setAppUserModelId(RUNTIME_APP_ID)
 }
 
-const runtimeUserDataPath = join(app.getPath('appData'), RUNTIME_STORAGE_NAME)
+const runtimeUserDataPath =
+  process.env.IDENA_DESKTOP_USER_DATA_DIR ||
+  join(app.getPath('appData'), RUNTIME_STORAGE_NAME)
 app.commandLine.appendSwitch(
   'disk-cache-dir',
   join(runtimeUserDataPath, 'Cache')
@@ -598,7 +606,7 @@ async function performNodeRpc(payload = {}) {
   }
 
   try {
-    const response = await axios.post(url, requestBody, {
+    const response = await httpClient.post(url, requestBody, {
       headers: {'Content-Type': 'application/json'},
       timeout: 15000,
     })
@@ -1451,13 +1459,16 @@ async function searchDuckDuckGoImages(query) {
 
 async function searchOpenverseImages(query) {
   try {
-    const {data} = await axios.get('https://api.openverse.org/v1/images/', {
-      params: {
-        q: query,
-        page_size: 30,
-      },
-      timeout: 12000,
-    })
+    const {data} = await httpClient.get(
+      'https://api.openverse.org/v1/images/',
+      {
+        params: {
+          q: query,
+          page_size: 30,
+        },
+        timeout: 12000,
+      }
+    )
 
     const results = Array.isArray(data && data.results) ? data.results : []
 
@@ -1479,21 +1490,24 @@ async function searchOpenverseImages(query) {
 
 async function searchWikimediaImages(query) {
   try {
-    const {data} = await axios.get('https://commons.wikimedia.org/w/api.php', {
-      params: {
-        action: 'query',
-        format: 'json',
-        generator: 'search',
-        gsrsearch: query,
-        gsrnamespace: 6,
-        gsrlimit: 30,
-        prop: 'imageinfo',
-        iiprop: 'url',
-        iiurlwidth: 320,
-        origin: '*',
-      },
-      timeout: 12000,
-    })
+    const {data} = await httpClient.get(
+      'https://commons.wikimedia.org/w/api.php',
+      {
+        params: {
+          action: 'query',
+          format: 'json',
+          generator: 'search',
+          gsrsearch: query,
+          gsrnamespace: 6,
+          gsrlimit: 30,
+          prop: 'imageinfo',
+          iiprop: 'url',
+          iiurlwidth: 320,
+          origin: '*',
+        },
+        timeout: 12000,
+      }
+    )
 
     const pages = data && data.query && data.query.pages
     const list = pages && typeof pages === 'object' ? Object.values(pages) : []
@@ -2061,7 +2075,7 @@ onTrusted(NODE_COMMAND, async (_event, command, data) => {
   switch (command) {
     case 'init-local-node': {
       runtimeExternalNodeOverride = null
-      if (macosVersion.isMacOS && macosVersion.is('<10.15')) {
+      if (isUnsupportedMacOsVersion()) {
         return sendMainWindowMsg(NODE_EVENT, 'unsupported-macos-version')
       }
 
@@ -2534,7 +2548,7 @@ function checkForUpdates() {
   async function runCheck() {
     try {
       if (isMac) {
-        const {data} = await axios.get(RELEASE_URL)
+        const {data} = await httpClient.get(RELEASE_URL)
         const {tag_name: tag, prerelease} = data
 
         if (!prerelease && semver.gt(semver.clean(tag), appVersion)) {
@@ -3167,13 +3181,6 @@ handleTrusted('social.rpc', async (_event, payload) => {
   }
 
   return performNodeRpc(payload)
-})
-
-const KEY_VALUE = {}
-
-handleTrusted('home.idenaBot.get', async () => KEY_VALUE['idena-bot'])
-onTrusted('home.idenaBot.skip', () => {
-  KEY_VALUE['idena-bot'] = true
 })
 
 handleTrusted('shell.openExternal.safe', async (_event, payload) =>

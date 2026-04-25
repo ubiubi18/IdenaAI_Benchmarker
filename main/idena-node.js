@@ -4,14 +4,13 @@ const fs = require('fs-extra')
 const os = require('os')
 const {spawn, execFile} = require('child_process')
 const {promisify} = require('util')
-const axios = require('axios')
-const progress = require('progress-stream')
+const {promises: fsPromises} = require('fs')
 const semver = require('semver')
 const kill = require('tree-kill')
-const lineReader = require('reverse-line-reader')
 // eslint-disable-next-line import/no-extraneous-dependencies
 const appDataPath = require('./app-data-path')
 const logger = require('./logger')
+const httpClient = require('./utils/fetch-client')
 
 const idenaBin = 'idena-go'
 const pinnedNodeVersion = '1.1.2'
@@ -215,7 +214,7 @@ async function rememberPeers(peers) {
 }
 
 function createRpcClient(port) {
-  return axios.create({
+  return httpClient.create({
     baseURL: `http://127.0.0.1:${port}`,
     timeout: 10 * 1000,
     validateStatus: (status) => status >= 200 && status < 500,
@@ -356,7 +355,7 @@ async function findListeningProcessPid(port) {
 
 async function isManagedNodeRpcReady(port, apiKey) {
   try {
-    const rpcClient = axios.create({
+    const rpcClient = httpClient.create({
       baseURL: `http://127.0.0.1:${port}`,
       timeout: nodeRpcProbeTimeoutMs,
       validateStatus: (status) => status >= 200 && status < 500,
@@ -625,7 +624,7 @@ function isCompatibleAssetName(assetName) {
 }
 
 async function getPinnedRelease() {
-  const {data: release} = await axios.get(idenaNodePinnedReleaseUrl, {
+  const {data: release} = await httpClient.get(idenaNodePinnedReleaseUrl, {
     timeout: 15000,
   })
   return release
@@ -810,6 +809,68 @@ async function getCompatibleReleaseInfo() {
 
 const getRemoteVersion = async () => pinnedNodeVersion
 
+function emitDownloadProgress({
+  onProgress,
+  version,
+  transferred,
+  length,
+  startedAt,
+}) {
+  if (!onProgress) return
+
+  const runtime = Math.max((Date.now() - startedAt) / 1000, 0.001)
+  const speed = transferred / runtime
+  const remaining = Math.max(length - transferred, 0)
+
+  onProgress({
+    percentage: Math.max(0, Math.min(100, (transferred / length) * 100)),
+    transferred,
+    length,
+    runtime,
+    speed,
+    eta: speed > 0 ? remaining / speed : 0,
+    version,
+  })
+}
+
+function writeDownloadStream(
+  stream,
+  targetFile,
+  {length, version, onProgress}
+) {
+  return new Promise((resolve, reject) => {
+    const writer = fs.createWriteStream(targetFile)
+    const startedAt = Date.now()
+    let transferred = 0
+    let lastProgressAt = 0
+
+    function emitProgress(force = false) {
+      const now = Date.now()
+      if (!force && now - lastProgressAt < 1000) return
+      lastProgressAt = now
+      emitDownloadProgress({
+        onProgress,
+        version,
+        transferred,
+        length,
+        startedAt,
+      })
+    }
+
+    writer.on('error', reject)
+    stream.on('error', reject)
+    stream.on('data', (chunk) => {
+      transferred += Buffer.byteLength(chunk)
+      emitProgress()
+    })
+    writer.on('finish', () => {
+      emitProgress(true)
+      writer.close(resolve)
+    })
+    stream.pipe(writer)
+  })
+}
+
 async function downloadNode(onProgress) {
   const tempNodeFile = getTempNodeFile()
 
@@ -831,7 +892,7 @@ async function downloadNode(onProgress) {
         )
       }
 
-      const response = await axios.request({
+      const response = await httpClient.request({
         method: 'get',
         url,
         responseType: 'stream',
@@ -849,23 +910,10 @@ async function downloadNode(onProgress) {
           : release.assetSize
       const streamLength = expectedLength > 0 ? expectedLength : 1
 
-      await new Promise((resolve, reject) => {
-        const writer = fs.createWriteStream(tempNodeFile)
-        const str = progress({
-          time: 1000,
-          length: streamLength,
-        })
-
-        str.on('progress', (p) => {
-          if (onProgress) {
-            onProgress({...p, version})
-          }
-        })
-
-        writer.on('error', reject)
-        response.data.on('error', reject)
-        writer.on('finish', () => writer.close(resolve))
-        response.data.pipe(str).pipe(writer)
+      await writeDownloadStream(response.data, tempNodeFile, {
+        length: streamLength,
+        version,
+        onProgress,
       })
     }
 
@@ -1115,28 +1163,35 @@ function cleanNodeState() {
   }
 }
 
-function getLastLogs() {
-  const number = 100
-  return new Promise((resolve, reject) => {
-    try {
-      if (!fs.existsSync(getNodeLogsFile())) {
-        resolve([])
-        return
-      }
+async function readLastLines(filePath, number) {
+  if (!fs.existsSync(filePath)) return []
 
-      const logs = []
-      lineReader.eachLine(getNodeLogsFile(), (line, last) => {
-        logs.push(line)
-        if (logs.length === number || last) {
-          resolve(logs.reverse())
-          return false
-        }
-        return true
-      })
-    } catch (e) {
-      reject(e)
+  const chunkSize = 64 * 1024
+  const handle = await fsPromises.open(filePath, 'r')
+
+  try {
+    const stats = await handle.stat()
+    let position = stats.size
+    let buffer = ''
+    let lines = []
+
+    while (position > 0 && lines.length <= number) {
+      const readSize = Math.min(chunkSize, position)
+      position -= readSize
+      const chunk = Buffer.alloc(readSize)
+      await handle.read(chunk, 0, readSize, position)
+      buffer = `${chunk.toString('utf8')}${buffer}`
+      lines = buffer.split(/\r?\n/)
     }
-  })
+
+    return lines.filter(Boolean).slice(-number)
+  } finally {
+    await handle.close()
+  }
+}
+
+function getLastLogs() {
+  return readLastLines(getNodeLogsFile(), 100)
 }
 
 async function tryStopNode(node, {onSuccess, onFail}) {

@@ -6,9 +6,9 @@ const fs = require('fs-extra')
 const {spawn} = require('child_process')
 const {randomBytes} = require('crypto')
 const {encode: rlpEncode} = require('rlp')
-const axios = require('axios')
 const kill = require('tree-kill')
-const {privateKeyToAddress} = require('idena-sdk-js')
+const {privateKeyToAddress} = require('./utils/idena-crypto')
+const httpClient = require('./utils/fetch-client')
 const appDataPath = require('./app-data-path')
 const {
   getNodeFile,
@@ -1764,7 +1764,7 @@ function createValidationDevnetController({
   }
 
   function createRpcClient(node) {
-    return axios.create({
+    return httpClient.create({
       baseURL: `http://127.0.0.1:${node.rpcPort}`,
       timeout: 2500,
       validateStatus: (status) => status >= 200 && status < 500,

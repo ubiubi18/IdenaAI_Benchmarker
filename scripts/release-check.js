@@ -10,6 +10,7 @@ const syntaxCheckedFiles = [
   'scripts/check-release-privacy.js',
   'scripts/check-release-metadata.js',
   'scripts/check-release-artifacts.js',
+  'scripts/check-dependency-footprint.js',
   'scripts/check-electron-safety.js',
   'scripts/sync-idena-social-ui.js',
   'scripts/run-next-static-build.js',
@@ -21,7 +22,11 @@ const syntaxCheckedFiles = [
   'main/app-data-path.js',
   'main/stores/setup.js',
   'main/logger.js',
+  'main/utils/fetch-client.js',
+  'main/idena-node.js',
+  'main/idena-devnet.js',
   'main/ai-providers/bridge.js',
+  'main/local-ai/sidecar.js',
 ]
 
 function runStep(label, command, args) {
@@ -48,6 +53,7 @@ for (const filePath of syntaxCheckedFiles) {
 runStep('ESLint', npmCommand, ['run', 'lint', '--', '--format', 'unix'])
 runStep('Release metadata audit', npmCommand, ['run', 'audit:metadata'])
 runStep('Release artifact audit', npmCommand, ['run', 'audit:artifacts'])
+runStep('Dependency footprint audit', npmCommand, ['run', 'audit:deps'])
 runStep('Electron safety audit', npmCommand, ['run', 'audit:electron'])
 runStep('Privacy audit', npmCommand, ['run', 'audit:privacy'])
 runStep('AI bridge regression tests', npmCommand, [

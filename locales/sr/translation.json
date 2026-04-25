@@ -916,8 +916,6 @@
   "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address._0": "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address.",
   "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address._1": "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address.",
   "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address._2": "You have recently disabled delegation. You need to wait for {{count}} epochs to delegate to a new address.",
-  "Subscribe to @MyIdenaBot to get personalized notifications based on\n        your status": "Пријави се на @MyIdenaBot да добијш персонализована обавештења везана за\n        твој статус",
-  "MyIdenaBot reminds you about important actions based on your\n              identity status:": "MyIdenaBot те подсећа о важним акцијама везаним за твој\n              статус идентитета:",
   "Do not show again": "Не приказуј поново",
   "{{totalShortFlipPoints}} out of {{totalQualifiedFlips}}": "{{totalShortFlipPoints}} од {{totalQualifiedFlips}}",
   "Epoch #{{epoch}}": "Епоха #{{epoch}}",

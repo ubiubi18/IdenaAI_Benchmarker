@@ -10,7 +10,6 @@ import {
   Stack,
   Text,
 } from '@chakra-ui/react'
-import {Transaction, dnaToFloatString, toHexString} from 'idena-sdk-js'
 import {useIdentityState} from '../../shared/providers/identity-context'
 import {SecondaryButton, PrimaryButton} from '../../shared/components/button'
 import {
@@ -45,6 +44,7 @@ import {
 } from '../../shared/components/components'
 import {callRpc, toLocaleDna} from '../../shared/utils/utils'
 import {bufferToHex} from '../../shared/utils/string'
+import {decodeRawTransaction} from '../../shared/utils/idena-transaction'
 import {useFormatDna} from '../../shared/hooks/hooks'
 import {TxType} from '../../shared/types'
 import {
@@ -361,18 +361,18 @@ export function DnaRawDialog({
 
   const parsedTx = React.useMemo(() => {
     if (rawTx) {
-      const decodedTx = Transaction.fromHex(rawTx)
+      const decodedTx = decodeRawTransaction(rawTx)
 
       return {
         type: decodedTx.type,
         from: address,
         to: decodedTx.to,
-        amount: dnaToFloatString(decodedTx.amount),
-        maxFee: dnaToFloatString(decodedTx.maxFee),
-        tips: dnaToFloatString(decodedTx.tips),
+        amount: decodedTx.amount,
+        maxFee: decodedTx.maxFee,
+        tips: decodedTx.tips,
         nonce: decodedTx.nonce,
         epoch: decodedTx.epoch,
-        payload: toHexString(decodedTx.payload, true),
+        payload: decodedTx.payload,
       }
     }
     return {type: 0, amount: null, to: null, maxFee: null}

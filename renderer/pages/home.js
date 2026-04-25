@@ -30,7 +30,6 @@ import {
   ActivateMiningForm,
   KillIdentityDrawer,
   KillForm,
-  MyIdenaBotAlert,
   ProfileTagList,
   ReplenishStakeDrawer,
   AnnotatedUserStat,
@@ -80,7 +79,7 @@ import {createProfileDb} from '../screens/home/utils'
 import {ExportPrivateKeyDialog} from '../screens/settings/containers'
 import {useScroll} from '../shared/hooks/use-scroll'
 import {ValidationReportSummary} from '../screens/validation/report/components'
-import {useIdenaBot, useStakingApy} from '../screens/home/hooks'
+import {useStakingApy} from '../screens/home/hooks'
 import {useFailToast, useSuccessToast} from '../shared/hooks/use-toast'
 import {
   AddUserIcon,
@@ -261,9 +260,6 @@ export default function ProfilePage() {
     IdentityStatus.Newbie,
   ].includes(status)
 
-  const [didConnectIdenaBot, {persist: persistIdenaBot, skip: skipIdenaBot}] =
-    useIdenaBot()
-
   const showActivateMiningStatusIcon = canMine && !online && !delegatee
   const showValidateIdentityIcon = !canMine && Number(stake) > 0
 
@@ -294,13 +290,6 @@ export default function ProfilePage() {
     <>
       <InviteProvider>
         <Layout syncing={syncing} offline={offline}>
-          {!didConnectIdenaBot && (
-            <MyIdenaBotAlert
-              onConnect={persistIdenaBot}
-              onSkip={skipIdenaBot}
-            />
-          )}
-
           <Page>
             <Stack spacing={5}>
               <HomeFeaturedDestinations />

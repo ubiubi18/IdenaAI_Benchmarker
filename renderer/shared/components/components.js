@@ -580,29 +580,48 @@ export function SmallText(props) {
 
 // eslint-disable-next-line react/display-name
 export const IconLink = React.forwardRef(
-  ({href, icon, children, ...props}, ref) => (
-    <LinkBox
-      as={HStack}
-      spacing="2"
-      alignItems="center"
-      color="brandBlue.500"
-      borderRadius="md"
-      fontWeight={500}
-      display="inline-block"
-      h="8"
-      px="2"
-      py="1.5"
-      _hover={{
-        bg: 'blue.50',
-      }}
-      {...props}
-    >
-      {icon}
-      <NextLink ref={ref} href={href} passHref>
-        <LinkOverlay>{children}</LinkOverlay>
-      </NextLink>
-    </LinkBox>
-  )
+  ({href, icon, children, isDisabled, ...props}, ref) => {
+    const disabledProps = isDisabled
+      ? {
+          'aria-disabled': true,
+          color: 'muted',
+          cursor: 'not-allowed',
+          opacity: 0.55,
+          pointerEvents: 'none',
+          _hover: {},
+        }
+      : {
+          _hover: {
+            bg: 'blue.50',
+          },
+        }
+
+    return (
+      <LinkBox
+        as={HStack}
+        spacing="2"
+        alignItems="center"
+        color="brandBlue.500"
+        borderRadius="md"
+        fontWeight={500}
+        display="inline-block"
+        h="8"
+        px="2"
+        py="1.5"
+        {...disabledProps}
+        {...props}
+      >
+        {icon}
+        {isDisabled ? (
+          <Text as="span">{children}</Text>
+        ) : (
+          <NextLink ref={ref} href={href} passHref>
+            <LinkOverlay>{children}</LinkOverlay>
+          </NextLink>
+        )}
+      </LinkBox>
+    )
+  }
 )
 
 export function Snackbar(props) {
