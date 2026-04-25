@@ -49,13 +49,30 @@ const SUBMITTING_POST_INTERVAL = 2000;
 const MAX_POST_MEDIA_BYTES = 1024 * 1024;
 const MAX_POST_MEDIA_BYTES_WEBAPP = 1024 * 5;
 
+const readLocalStorage = (key: string) => {
+    try {
+        return window.localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+};
+
+const writeLocalStorage = (key: string, value: string) => {
+    try {
+        window.localStorage.setItem(key, value);
+    } catch {
+        // The desktop iframe intentionally stays sandboxed. Storage may be
+        // unavailable there; bootstrap state is enough for embedded mode.
+    }
+};
+
 const initSettings = {
-    nodeUrl: initialDesktopBootstrap.nodeUrl || localStorage.getItem('nodeUrl') || defaultNodeUrl,
-    nodeKey: localStorage.getItem('nodeKey') || defaultNodeApiKey,
-    sendingTxs: initialDesktopBootstrap.sendingTxs || localStorage.getItem('makePostsWith') || 'rpc',
-    postersAddress: localStorage.getItem('postersAddress') || zeroAddress,
-    findingPastPosts: initialDesktopBootstrap.findingPastPosts || localStorage.getItem('findPastPostsWith') || 'rpc',
-    indexerApiUrl: initialDesktopBootstrap.indexerApiUrl || localStorage.getItem('indexerApiUrl') || initIndexerApiUrl,
+    nodeUrl: initialDesktopBootstrap.nodeUrl || readLocalStorage('nodeUrl') || defaultNodeUrl,
+    nodeKey: readLocalStorage('nodeKey') || defaultNodeApiKey,
+    sendingTxs: initialDesktopBootstrap.sendingTxs || readLocalStorage('makePostsWith') || 'rpc',
+    postersAddress: readLocalStorage('postersAddress') || zeroAddress,
+    findingPastPosts: initialDesktopBootstrap.findingPastPosts || readLocalStorage('findPastPostsWith') || 'rpc',
+    indexerApiUrl: initialDesktopBootstrap.indexerApiUrl || readLocalStorage('indexerApiUrl') || initIndexerApiUrl,
 };
 
 const DEBUG = false;
@@ -255,8 +272,8 @@ function App() {
                 return;
             }
 
-            localStorage.setItem('nodeUrl', idenaNodeUrl);
-            localStorage.setItem('nodeKey', idenaNodeApiKey);
+            writeLocalStorage('nodeUrl', idenaNodeUrl);
+            writeLocalStorage('nodeKey', idenaNodeApiKey);
 
             if (!initialBlock) {
                 const { result: getLastBlockResult } = await rpcClientRef.current!('bcn_lastBlock', []);
@@ -303,7 +320,7 @@ function App() {
     useEffect(() => {
         if (inputPostersAddressApplied && inputSendingTxs === 'idena-app') {
             setPostersAddress(inputPostersAddress);
-            localStorage.setItem('postersAddress', inputPostersAddress);
+            writeLocalStorage('postersAddress', inputPostersAddress);
 
             if (inputPostersAddress === zeroAddress) {
                 setPostersAddressInvalid(true);
@@ -328,7 +345,7 @@ function App() {
     useEffect(() => {
         if (inputIdenaIndexerApiUrlApplied && inputFindingPastPosts === 'indexer-api') {
             setIdenaIndexerApiUrl(inputIdenaIndexerApiUrl);
-            localStorage.setItem('indexerApiUrl', inputIdenaIndexerApiUrl);
+            writeLocalStorage('indexerApiUrl', inputIdenaIndexerApiUrl);
 
             (async function() {
                 const { result, error } = await getPastTxsWithIdenaIndexerApi(inputIdenaIndexerApiUrl, contractAddressCurrent, 1);
@@ -458,7 +475,7 @@ function App() {
     const handleInputSendingTxsToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
         setInputSendingTxs(event.target.value);
 
-        localStorage.setItem('makePostsWith', event.target.value);
+        writeLocalStorage('makePostsWith', event.target.value);
 
         if (event.target.value === 'rpc') {
             setInputPostersAddress('');
@@ -470,7 +487,7 @@ function App() {
             if (postersAddress) {
                 setInputPostersAddress(postersAddress);
                 setPostersAddressInvalid(false);
-                localStorage.setItem('postersAddress', postersAddress);
+                writeLocalStorage('postersAddress', postersAddress);
             } else {
                 setInputPostersAddress(zeroAddress);
                 setPostersAddress(zeroAddress);
@@ -481,7 +498,7 @@ function App() {
 
     const handleInputFindingPastPostsToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
         setInputFindingPastPosts(event.target.value);
-        localStorage.setItem('findPastPostsWith', event.target.value);
+        writeLocalStorage('findPastPostsWith', event.target.value);
 
         if (event.target.value === 'rpc') {
             setIdenaIndexerApiUrl('');
@@ -492,7 +509,7 @@ function App() {
             if (indexerApiUrl) {
                 setIdenaIndexerApiUrl(indexerApiUrl);
                 setPostersAddressInvalid(false);
-                localStorage.setItem('indexerApiUrl', indexerApiUrl);
+                writeLocalStorage('indexerApiUrl', indexerApiUrl);
             } else {
                 setInputIdenaIndexerApiUrl(initIndexerApiUrl);
                 setIdenaIndexerApiUrl(initIndexerApiUrl);
