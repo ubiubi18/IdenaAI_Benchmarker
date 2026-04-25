@@ -33,6 +33,44 @@ const MANAGED_LOCAL_RUNTIME_FAMILIES = MANAGED_MOLMO2_RUNTIME_FAMILIES.concat(
   INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
   INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY
 )
+const MANAGED_LOCAL_RUNTIME_INSTALL_PROFILES = {
+  [MOLMO2_O_RESEARCH_RUNTIME_FAMILY]: {
+    runtimeFamily: MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
+    displayName: 'Molmo2-O research runtime',
+    modelId: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
+    revision: '784410650d12be9bc086118fdefa32d2c3bced86',
+    downloadSizeLabel: '~29 GiB',
+    minimumGiB: 16,
+    comfortableGiB: 32,
+  },
+  [MOLMO2_4B_RESEARCH_RUNTIME_FAMILY]: {
+    runtimeFamily: MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
+    displayName: 'Molmo2-4B compact runtime',
+    modelId: MOLMO2_4B_RESEARCH_RUNTIME_MODEL,
+    revision: '042abfa7a38879a376cec03d949eff0aefaa0600',
+    downloadSizeLabel: '~18 GiB',
+    minimumGiB: 12,
+    comfortableGiB: 18,
+  },
+  [INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY]: {
+    runtimeFamily: INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
+    displayName: 'InternVL3.5-1B light runtime',
+    modelId: INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL,
+    revision: '9191dbccf312b537016f041b25d61c72e7c5c9f3',
+    downloadSizeLabel: '~2 GiB',
+    minimumGiB: 8,
+    comfortableGiB: 12,
+  },
+  [INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY]: {
+    runtimeFamily: INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
+    displayName: 'InternVL3.5-8B experimental runtime',
+    modelId: INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL,
+    revision: '741a7d03020411e666c6109218ab71e08151ef86',
+    downloadSizeLabel: '~16 GiB',
+    minimumGiB: 24,
+    comfortableGiB: 32,
+  },
+}
 const MANAGED_LOCAL_RUNTIME_TRUST_VERSION = 2
 const DEFAULT_LOCAL_AI_OLLAMA_MODEL = ''
 const DEFAULT_LOCAL_AI_OLLAMA_VISION_MODEL = ''
@@ -733,6 +771,14 @@ function resolveManagedLocalRuntimeMemoryReference(runtimeFamily = '') {
   }
 }
 
+function getManagedLocalRuntimeInstallProfile(runtimeFamily = '') {
+  const normalizedFamily = trimString(runtimeFamily).toLowerCase()
+  return (
+    MANAGED_LOCAL_RUNTIME_INSTALL_PROFILES[normalizedFamily] ||
+    MANAGED_LOCAL_RUNTIME_INSTALL_PROFILES[MOLMO2_O_RESEARCH_RUNTIME_FAMILY]
+  )
+}
+
 function buildManagedMolmo2RuntimePreset(runtimeFamily = '') {
   return buildManagedLocalRuntimePreset(runtimeFamily)
 }
@@ -1000,6 +1046,7 @@ module.exports = {
   INTERNVL3_5_8B_RESEARCH_RUNTIME_VISION_MODEL,
   MANAGED_MOLMO2_RUNTIME_FAMILIES,
   MANAGED_LOCAL_RUNTIME_FAMILIES,
+  MANAGED_LOCAL_RUNTIME_INSTALL_PROFILES,
   getLocalAiEndpointSafety,
   resolveLocalAiWireRuntimeType,
   buildLocalAiRuntimePreset,
@@ -1011,6 +1058,7 @@ module.exports = {
   buildManagedLocalRuntimePreset,
   buildManagedMolmo2RuntimePreset,
   resolveManagedLocalRuntimeMemoryReference,
+  getManagedLocalRuntimeInstallProfile,
   buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   hasManagedLocalAiTrustApproval,

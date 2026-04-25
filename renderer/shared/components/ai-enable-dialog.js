@@ -21,9 +21,13 @@ import {Input, Select, Toast} from './components'
 import {PrimaryButton, SecondaryButton} from './button'
 import {EyeIcon, EyeOffIcon} from './icons'
 import {isLocalAiProvider} from '../utils/ai-provider-readiness'
+import {
+  MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
+  getManagedLocalRuntimeInstallProfile,
+} from '../utils/local-ai-settings'
 import {getSharedGlobal} from '../utils/shared-global'
 
-const LOCAL_AI_COMFORT_MEMORY_GIB = 32
+const LOCAL_AI_DEFAULT_RESERVE_GIB = 6
 
 function ensureBridge() {
   if (!global.aiSolver) {
@@ -54,6 +58,16 @@ export function AiEnableDialog({
     Number.isFinite(totalSystemMemoryBytes) && totalSystemMemoryBytes > 0
       ? Math.max(1, Math.round(totalSystemMemoryBytes / 1024 ** 3))
       : 0
+  const managedInstallProfile = getManagedLocalRuntimeInstallProfile(
+    MOLMO2_O_RESEARCH_RUNTIME_FAMILY
+  )
+  const managedMinimumTotalGiB =
+    managedInstallProfile.minimumGiB + LOCAL_AI_DEFAULT_RESERVE_GIB
+  const managedComfortableTotalGiB =
+    managedInstallProfile.comfortableGiB + LOCAL_AI_DEFAULT_RESERVE_GIB
+  const localAiMemoryWarning =
+    totalSystemMemoryGiB > 0 &&
+    totalSystemMemoryGiB < managedComfortableTotalGiB
   const externalProviderSectionRef = React.useRef(null)
   const apiKeyInputRef = React.useRef(null)
   const hasLocalProviderOption = useMemo(
@@ -216,9 +230,42 @@ export function AiEnableDialog({
                     </Text>
                     <Text color="muted" fontSize="sm" mt={1}>
                       {t(
-                        'IdenaAI will prepare the managed local runtime for you. The model stays on this machine. First startup can take several minutes and uses local disk space.'
+                        'IdenaAI will prepare {{runtime}} for you. The model stays on this machine. First startup can take several minutes and uses local disk space.',
+                        {
+                          runtime: managedInstallProfile.displayName,
+                        }
                       )}
                     </Text>
+                  </Box>
+                  <Box
+                    borderWidth="1px"
+                    borderColor={
+                      localAiMemoryWarning ? 'orange.200' : 'green.100'
+                    }
+                    borderRadius="md"
+                    bg={localAiMemoryWarning ? 'orange.012' : 'green.010'}
+                    p={3}
+                  >
+                    <Stack spacing={1}>
+                      <Text fontSize="sm" fontWeight={600}>
+                        {managedInstallProfile.modelId}
+                      </Text>
+                      <Text color="muted" fontSize="xs">
+                        {t('{{download}} download from Hugging Face Hub.', {
+                          download: managedInstallProfile.downloadSizeLabel,
+                        })}
+                      </Text>
+                      <Text color="muted" fontSize="xs">
+                        {t(
+                          'RAM guide: at least {{minimum}} GB total, safer around {{comfortable}} GB total with {{reserve}} GB reserved for node/app.',
+                          {
+                            minimum: managedMinimumTotalGiB,
+                            comfortable: managedComfortableTotalGiB,
+                            reserve: LOCAL_AI_DEFAULT_RESERVE_GIB,
+                          }
+                        )}
+                      </Text>
+                    </Stack>
                   </Box>
                   <Text color="muted" fontSize="xs">
                     {t(
@@ -226,20 +273,15 @@ export function AiEnableDialog({
                     )}
                   </Text>
                   <Text
-                    color={
-                      totalSystemMemoryGiB > 0 &&
-                      totalSystemMemoryGiB < LOCAL_AI_COMFORT_MEMORY_GIB
-                        ? 'orange.500'
-                        : 'muted'
-                    }
+                    color={localAiMemoryWarning ? 'orange.500' : 'muted'}
                     fontSize="xs"
                   >
                     {totalSystemMemoryGiB > 0
                       ? t(
-                          'This desktop has {{count}} GB RAM installed. Managed local AI is much safer around {{recommended}} GB and above. Smaller machines can still try it, but startup or live-session failures are more likely.',
+                          'This desktop has {{count}} GB RAM installed. The default managed model is safer around {{recommended}} GB and above. Smaller machines can still try it, but startup or live-session failures are more likely.',
                           {
                             count: totalSystemMemoryGiB,
-                            recommended: LOCAL_AI_COMFORT_MEMORY_GIB,
+                            recommended: managedComfortableTotalGiB,
                           }
                         )
                       : t(

@@ -62,14 +62,17 @@ import {
   INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY,
   INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
   MANAGED_LOCAL_RUNTIME_FAMILIES,
+  MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
   MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
   buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   buildMolmo2OResearchPreset,
   buildLocalAiSettings,
+  getManagedLocalRuntimeInstallProfile,
   hasManagedLocalAiTrustApproval,
   resolveManagedLocalRuntimeMemoryReference,
 } from '../shared/utils/local-ai-settings'
+import {getSharedGlobal} from '../shared/utils/shared-global'
 import {
   ChatIcon,
   DeleteIcon,
@@ -88,6 +91,7 @@ const CHAT_PREFERENCES_STORAGE_KEY = 'idenaLocalAiChatPreferencesV1'
 const CHAT_HISTORY_LIMIT = 40
 const CHAT_ATTACHMENT_LIMIT = 8
 const CHAT_COMPOSER_COLLAPSED_HEIGHT = 58
+const MANAGED_RUNTIME_DEFAULT_RESERVE_GIB = 6
 const CHAT_COMPOSER_EXPANDED_MIN_HEIGHT = 96
 const CHAT_COMPOSER_EXPANDED_MAX_HEIGHT = 240
 const SYSTEM_CHAT_MESSAGE = {
@@ -477,6 +481,61 @@ function getManagedLocalRuntimeName(t, runtimeFamily = '') {
     default:
       return t('Molmo2-O research runtime')
   }
+}
+
+function formatManagedRuntimeInstallTarget(profile, t) {
+  return t('{{runtime}} · {{model}} · {{download}} download', {
+    runtime: profile.displayName,
+    model: profile.modelId,
+    download: profile.downloadSizeLabel,
+  })
+}
+
+function describeManagedRuntimeSystemRequirement(profile, t) {
+  return t(
+    'RAM guide: at least {{minimum}} GB total; safer around {{comfortable}} GB total with {{reserve}} GB reserved for node/app.',
+    {
+      minimum: profile.minimumGiB + MANAGED_RUNTIME_DEFAULT_RESERVE_GIB,
+      comfortable: profile.comfortableGiB + MANAGED_RUNTIME_DEFAULT_RESERVE_GIB,
+      reserve: MANAGED_RUNTIME_DEFAULT_RESERVE_GIB,
+    }
+  )
+}
+
+function describeManagedRuntimeSystemWarning(profile, totalSystemMemoryGiB, t) {
+  const minimumTotalGiB =
+    profile.minimumGiB + MANAGED_RUNTIME_DEFAULT_RESERVE_GIB
+  const comfortableTotalGiB =
+    profile.comfortableGiB + MANAGED_RUNTIME_DEFAULT_RESERVE_GIB
+
+  if (!Number.isFinite(totalSystemMemoryGiB) || totalSystemMemoryGiB <= 0) {
+    return t(
+      'Installed RAM could not be detected. Check system memory before downloading this model.'
+    )
+  }
+
+  if (totalSystemMemoryGiB < minimumTotalGiB) {
+    return t(
+      'This desktop has {{installed}} GB RAM, below the estimated {{minimum}} GB minimum for {{model}}. Use a lighter runtime before downloading.',
+      {
+        installed: totalSystemMemoryGiB,
+        minimum: minimumTotalGiB,
+        model: profile.modelId,
+      }
+    )
+  }
+
+  if (totalSystemMemoryGiB < comfortableTotalGiB) {
+    return t(
+      'This desktop has {{installed}} GB RAM. {{model}} can be tight here; close heavy apps or use the compact 4B runtime if startup or validation fails.',
+      {
+        installed: totalSystemMemoryGiB,
+        model: profile.modelId,
+      }
+    )
+  }
+
+  return ''
 }
 
 function getManagedLocalRuntimeBackendLabel(t, runtimeFamily = '') {
@@ -1321,6 +1380,14 @@ export default function AiChatPage() {
     () => buildLocalAiSettings(settings.localAi),
     [settings.localAi]
   )
+  const totalSystemMemoryGiB = React.useMemo(() => {
+    const totalSystemMemoryBytes = Number(
+      getSharedGlobal('totalSystemMemoryBytes', 0)
+    )
+    return Number.isFinite(totalSystemMemoryBytes) && totalSystemMemoryBytes > 0
+      ? Math.max(1, Math.round(totalSystemMemoryBytes / 1024 ** 3))
+      : 0
+  }, [])
   const currentMode = String(router.query?.mode || '')
     .trim()
     .toLowerCase()
@@ -1363,6 +1430,44 @@ export default function AiChatPage() {
   const managedRuntimeTrustFamily = React.useMemo(
     () => getManagedLocalRuntimeFamily(managedRuntimeTrustLocalAi),
     [managedRuntimeTrustLocalAi]
+  )
+  const activeManagedRuntimeFamily =
+    getManagedLocalRuntimeFamily(localAi) || MOLMO2_O_RESEARCH_RUNTIME_FAMILY
+  const activeManagedRuntimeProfile = React.useMemo(
+    () => getManagedLocalRuntimeInstallProfile(activeManagedRuntimeFamily),
+    [activeManagedRuntimeFamily]
+  )
+  const managedRuntimeTrustProfile = React.useMemo(
+    () => getManagedLocalRuntimeInstallProfile(managedRuntimeTrustFamily),
+    [managedRuntimeTrustFamily]
+  )
+  const activeManagedRuntimeRequirement = React.useMemo(
+    () =>
+      describeManagedRuntimeSystemRequirement(activeManagedRuntimeProfile, t),
+    [activeManagedRuntimeProfile, t]
+  )
+  const activeManagedRuntimeWarning = React.useMemo(
+    () =>
+      describeManagedRuntimeSystemWarning(
+        activeManagedRuntimeProfile,
+        totalSystemMemoryGiB,
+        t
+      ),
+    [activeManagedRuntimeProfile, t, totalSystemMemoryGiB]
+  )
+  const managedRuntimeTrustRequirement = React.useMemo(
+    () =>
+      describeManagedRuntimeSystemRequirement(managedRuntimeTrustProfile, t),
+    [managedRuntimeTrustProfile, t]
+  )
+  const managedRuntimeTrustWarning = React.useMemo(
+    () =>
+      describeManagedRuntimeSystemWarning(
+        managedRuntimeTrustProfile,
+        totalSystemMemoryGiB,
+        t
+      ),
+    [managedRuntimeTrustProfile, t, totalSystemMemoryGiB]
   )
   const applyBackgroundStatusResult = React.useCallback(
     (nextResult, payload) => {
@@ -2311,17 +2416,45 @@ export default function AiChatPage() {
               px={4}
               py={3}
             >
-              <HStack spacing={2} wrap="wrap" align="center">
-                <Badge colorScheme={runtimeStatusTone}>
-                  {runtimeStatusLabel}
-                </Badge>
-                <Badge variant="subtle">
-                  {formatAiProviderLabel('local-ai')}
-                </Badge>
-                <Text color="muted" fontSize="sm" noOfLines={1}>
-                  {backendLabel}
-                </Text>
-              </HStack>
+              <Stack spacing={2}>
+                <HStack spacing={2} wrap="wrap" align="center">
+                  <Badge colorScheme={runtimeStatusTone}>
+                    {runtimeStatusLabel}
+                  </Badge>
+                  <Badge variant="subtle">
+                    {formatAiProviderLabel('local-ai')}
+                  </Badge>
+                  <Text color="muted" fontSize="sm" noOfLines={1}>
+                    {backendLabel}
+                  </Text>
+                </HStack>
+                <Box
+                  borderWidth="1px"
+                  borderColor={
+                    activeManagedRuntimeWarning ? 'orange.200' : 'green.100'
+                  }
+                  borderRadius="md"
+                  bg={activeManagedRuntimeWarning ? 'orange.012' : 'green.010'}
+                  p={3}
+                >
+                  <Stack spacing={1}>
+                    <Text fontSize="sm" fontWeight={600}>
+                      {formatManagedRuntimeInstallTarget(
+                        activeManagedRuntimeProfile,
+                        t
+                      )}
+                    </Text>
+                    <Text color="muted" fontSize="xs">
+                      {activeManagedRuntimeRequirement}
+                    </Text>
+                    {activeManagedRuntimeWarning ? (
+                      <Text color="orange.600" fontSize="xs">
+                        {activeManagedRuntimeWarning}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                </Box>
+              </Stack>
             </Box>
 
             <SimpleGrid columns={[1, 1, 2]} spacing={4}>
@@ -2842,6 +2975,11 @@ export default function AiChatPage() {
         title={t('Trust Hugging Face model download')}
         confirmLabel={t('Trust and start')}
         runtimeName={getManagedLocalRuntimeName(t, managedRuntimeTrustFamily)}
+        modelId={managedRuntimeTrustProfile.modelId}
+        modelRevision={managedRuntimeTrustProfile.revision}
+        downloadSizeLabel={managedRuntimeTrustProfile.downloadSizeLabel}
+        systemRequirement={managedRuntimeTrustRequirement}
+        systemWarning={managedRuntimeTrustWarning}
         extraNote={getManagedLocalRuntimeTrustNote(
           t,
           managedRuntimeTrustFamily

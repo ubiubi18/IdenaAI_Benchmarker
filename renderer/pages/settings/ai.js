@@ -60,6 +60,7 @@ import {
   INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL,
   INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY,
   INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL,
+  MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
   MOLMO2_O_RESEARCH_RUNTIME_MODEL,
   MOLMO2_4B_RESEARCH_RUNTIME_FAMILY,
   MOLMO2_4B_RESEARCH_RUNTIME_MODEL,
@@ -74,6 +75,7 @@ import {
   buildMolmo24BCompactPreset,
   buildLocalAiRuntimePreset,
   buildLocalAiSettings,
+  getManagedLocalRuntimeInstallProfile,
   getLocalAiEndpointSafety,
   hasManagedLocalAiTrustApproval,
   resolveManagedLocalRuntimeMemoryReference,
@@ -784,21 +786,79 @@ function buildManagedLocalRuntimeInstallPreset(runtimeFamily = '') {
 }
 
 function getManagedLocalRuntimeModel(runtimeFamily = '') {
-  switch (
-    String(runtimeFamily || '')
-      .trim()
-      .toLowerCase()
-  ) {
-    case INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY:
-      return INTERNVL3_5_1B_RESEARCH_RUNTIME_MODEL
-    case MOLMO2_4B_RESEARCH_RUNTIME_FAMILY:
-      return MOLMO2_4B_RESEARCH_RUNTIME_MODEL
-    case INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY:
-      return INTERNVL3_5_8B_RESEARCH_RUNTIME_MODEL
-    case 'molmo2-o':
-    default:
-      return MOLMO2_O_RESEARCH_RUNTIME_MODEL
+  return getManagedLocalRuntimeInstallProfile(runtimeFamily).modelId
+}
+
+function formatManagedRuntimeInstallTarget(profile, t) {
+  return t('{{runtime}} · {{model}} · {{download}} download', {
+    runtime: profile.displayName,
+    model: profile.modelId,
+    download: profile.downloadSizeLabel,
+  })
+}
+
+function describeManagedRuntimeSystemRequirement(profile, reserveGiB, t) {
+  const reserve = normalizeSystemReserveGiB(reserveGiB)
+  return t(
+    'Needs about {{minimum}} GB total RAM; safer around {{comfortable}} GB total with {{reserve}} GB reserved for node/app.',
+    {
+      minimum: profile.minimumGiB + reserve,
+      comfortable: profile.comfortableGiB + reserve,
+      reserve,
+    }
+  )
+}
+
+function describeManagedRuntimeSystemWarning({
+  profile,
+  totalSystemMemoryGiB,
+  liveSessionAvailableNowGiB,
+  reserveGiB,
+  t,
+}) {
+  const reserve = normalizeSystemReserveGiB(reserveGiB)
+  const minimumTotalGiB = profile.minimumGiB + reserve
+  const comfortableTotalGiB = profile.comfortableGiB + reserve
+
+  if (!Number.isFinite(totalSystemMemoryGiB) || totalSystemMemoryGiB <= 0) {
+    return t(
+      'IdenaAI could not detect installed RAM. Check system memory before downloading this model.'
+    )
   }
+
+  if (totalSystemMemoryGiB < minimumTotalGiB) {
+    return t(
+      'This desktop has {{installed}} GB RAM, below the estimated {{minimum}} GB minimum for {{model}} with the current reserve. Use a lighter runtime before downloading.',
+      {
+        installed: totalSystemMemoryGiB,
+        minimum: minimumTotalGiB,
+        model: profile.modelId,
+      }
+    )
+  }
+
+  if (totalSystemMemoryGiB < comfortableTotalGiB) {
+    return t(
+      'This desktop has {{installed}} GB RAM. {{model}} can be tight here; close heavy apps or use Molmo2-4B compact if startup or validation fails.',
+      {
+        installed: totalSystemMemoryGiB,
+        model: profile.modelId,
+      }
+    )
+  }
+
+  if (
+    Number.isFinite(liveSessionAvailableNowGiB) &&
+    liveSessionAvailableNowGiB + 0.25 < minimumTotalGiB
+  ) {
+    const available = formatGiBMetric(liveSessionAvailableNowGiB) || '0 GB'
+    return t(
+      'Only {{available}} looks available to this desktop session right now. Close heavy apps before starting the managed model download and runtime.',
+      {available}
+    )
+  }
+
+  return ''
 }
 
 function getManagedLocalRuntimeName(t, runtimeFamily = '') {
@@ -3279,6 +3339,99 @@ export default function AiSettingsPage() {
       otherProcessesMemoryGiB,
     ]
   )
+  const defaultManagedInstallProfile = useMemo(
+    () =>
+      getManagedLocalRuntimeInstallProfile(MOLMO2_O_RESEARCH_RUNTIME_FAMILY),
+    []
+  )
+  const activeManagedRuntimeFamily =
+    getManagedLocalRuntimeFamily(localAi) || MOLMO2_O_RESEARCH_RUNTIME_FAMILY
+  const activeManagedInstallProfile = useMemo(
+    () => getManagedLocalRuntimeInstallProfile(activeManagedRuntimeFamily),
+    [activeManagedRuntimeFamily]
+  )
+  const managedRuntimeTrustProfile = useMemo(
+    () => getManagedLocalRuntimeInstallProfile(managedRuntimeTrustFamily),
+    [managedRuntimeTrustFamily]
+  )
+  const defaultManagedInstallRequirement = useMemo(
+    () =>
+      describeManagedRuntimeSystemRequirement(
+        defaultManagedInstallProfile,
+        normalizedSystemReserveGiB,
+        t
+      ),
+    [defaultManagedInstallProfile, normalizedSystemReserveGiB, t]
+  )
+  const activeManagedInstallRequirement = useMemo(
+    () =>
+      describeManagedRuntimeSystemRequirement(
+        activeManagedInstallProfile,
+        normalizedSystemReserveGiB,
+        t
+      ),
+    [activeManagedInstallProfile, normalizedSystemReserveGiB, t]
+  )
+  const managedRuntimeTrustRequirement = useMemo(
+    () =>
+      describeManagedRuntimeSystemRequirement(
+        managedRuntimeTrustProfile,
+        normalizedSystemReserveGiB,
+        t
+      ),
+    [managedRuntimeTrustProfile, normalizedSystemReserveGiB, t]
+  )
+  const defaultManagedInstallWarning = useMemo(
+    () =>
+      describeManagedRuntimeSystemWarning({
+        profile: defaultManagedInstallProfile,
+        totalSystemMemoryGiB: effectiveMemoryTotalGiB,
+        liveSessionAvailableNowGiB,
+        reserveGiB: normalizedSystemReserveGiB,
+        t,
+      }),
+    [
+      defaultManagedInstallProfile,
+      effectiveMemoryTotalGiB,
+      liveSessionAvailableNowGiB,
+      normalizedSystemReserveGiB,
+      t,
+    ]
+  )
+  const activeManagedInstallWarning = useMemo(
+    () =>
+      describeManagedRuntimeSystemWarning({
+        profile: activeManagedInstallProfile,
+        totalSystemMemoryGiB: effectiveMemoryTotalGiB,
+        liveSessionAvailableNowGiB,
+        reserveGiB: normalizedSystemReserveGiB,
+        t,
+      }),
+    [
+      activeManagedInstallProfile,
+      effectiveMemoryTotalGiB,
+      liveSessionAvailableNowGiB,
+      normalizedSystemReserveGiB,
+      t,
+    ]
+  )
+  const managedRuntimeTrustWarning = useMemo(
+    () =>
+      describeManagedRuntimeSystemWarning({
+        profile: managedRuntimeTrustProfile,
+        totalSystemMemoryGiB: effectiveMemoryTotalGiB,
+        liveSessionAvailableNowGiB,
+        reserveGiB: normalizedSystemReserveGiB,
+        t,
+      }),
+    [
+      effectiveMemoryTotalGiB,
+      liveSessionAvailableNowGiB,
+      managedRuntimeTrustProfile,
+      normalizedSystemReserveGiB,
+      t,
+    ]
+  )
   useEffect(() => {
     if (
       Number.parseInt(aiSolver.memoryBudgetGiB, 10) !==
@@ -3509,6 +3662,41 @@ export default function AiSettingsPage() {
                       <Text color="muted" fontSize="xs">
                         {t('Current runtime')}: {localAiTopSummaryTitle}
                       </Text>
+                      <Box
+                        borderWidth="1px"
+                        borderColor={
+                          defaultManagedInstallWarning
+                            ? 'orange.200'
+                            : 'green.100'
+                        }
+                        borderRadius="md"
+                        bg={
+                          defaultManagedInstallWarning
+                            ? 'orange.012'
+                            : 'green.010'
+                        }
+                        p={3}
+                      >
+                        <Stack spacing={1}>
+                          <Text fontSize="sm" fontWeight={600}>
+                            {t('Default install target')}
+                          </Text>
+                          <Text color="muted" fontSize="xs">
+                            {formatManagedRuntimeInstallTarget(
+                              defaultManagedInstallProfile,
+                              t
+                            )}
+                          </Text>
+                          <Text color="muted" fontSize="xs">
+                            {defaultManagedInstallRequirement}
+                          </Text>
+                          {defaultManagedInstallWarning ? (
+                            <Text color="orange.600" fontSize="xs">
+                              {defaultManagedInstallWarning}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                      </Box>
                       <Stack isInline spacing={2} flexWrap="wrap">
                         <PrimaryButton
                           onClick={enableLocalAiSetup}
@@ -5306,6 +5494,36 @@ export default function AiSettingsPage() {
                   <Text color="muted" fontSize="sm">
                     {localAiSelection.description}
                   </Text>
+                  {isManagedLocalRuntime(localAi) ? (
+                    <Box
+                      borderWidth="1px"
+                      borderColor={
+                        activeManagedInstallWarning ? 'orange.200' : 'green.100'
+                      }
+                      borderRadius="md"
+                      bg={
+                        activeManagedInstallWarning ? 'orange.012' : 'green.010'
+                      }
+                      p={3}
+                    >
+                      <Stack spacing={1}>
+                        <Text color="muted" fontSize="xs">
+                          {formatManagedRuntimeInstallTarget(
+                            activeManagedInstallProfile,
+                            t
+                          )}
+                        </Text>
+                        <Text color="muted" fontSize="xs">
+                          {activeManagedInstallRequirement}
+                        </Text>
+                        {activeManagedInstallWarning ? (
+                          <Text color="orange.600" fontSize="xs">
+                            {activeManagedInstallWarning}
+                          </Text>
+                        ) : null}
+                      </Stack>
+                    </Box>
+                  ) : null}
                 </Stack>
               </Box>
 
@@ -6964,6 +7182,11 @@ export default function AiSettingsPage() {
         title={t('Trust Hugging Face model download')}
         confirmLabel={t('Trust and install')}
         runtimeName={getManagedLocalRuntimeName(t, managedRuntimeTrustFamily)}
+        modelId={managedRuntimeTrustProfile.modelId}
+        modelRevision={managedRuntimeTrustProfile.revision}
+        downloadSizeLabel={managedRuntimeTrustProfile.downloadSizeLabel}
+        systemRequirement={managedRuntimeTrustRequirement}
+        systemWarning={managedRuntimeTrustWarning}
         extraNote={getManagedLocalRuntimeTrustNote(
           t,
           managedRuntimeTrustFamily

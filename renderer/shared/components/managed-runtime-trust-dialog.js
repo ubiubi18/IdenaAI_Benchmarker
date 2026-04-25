@@ -12,6 +12,11 @@ export function ManagedRuntimeTrustDialog({
   title = 'Trust managed on-device AI',
   confirmLabel = 'Trust and continue',
   runtimeName = 'managed on-device runtime',
+  modelId = '',
+  modelRevision = '',
+  downloadSizeLabel = '',
+  systemRequirement = '',
+  systemWarning = '',
   extraNote = '',
 }) {
   const nextRuntimeName = String(runtimeName || 'managed on-device runtime')
@@ -36,6 +41,51 @@ export function ManagedRuntimeTrustDialog({
             model snapshot from Hugging Face, and runs pinned model code
             locally.
           </Text>
+
+          {modelId || downloadSizeLabel || systemRequirement ? (
+            <Box
+              bg="blue.012"
+              borderWidth="1px"
+              borderColor="blue.100"
+              p={4}
+              rounded="md"
+            >
+              <Stack spacing={1}>
+                {modelId ? (
+                  <Text fontSize="sm">
+                    <Text as="span" fontWeight={600}>
+                      Model:
+                    </Text>{' '}
+                    {modelId}
+                  </Text>
+                ) : null}
+                {modelRevision ? (
+                  <Text color="muted" fontSize="sm">
+                    <Text as="span" fontWeight={600}>
+                      Pinned revision:
+                    </Text>{' '}
+                    {String(modelRevision).slice(0, 12)}
+                  </Text>
+                ) : null}
+                {downloadSizeLabel ? (
+                  <Text color="muted" fontSize="sm">
+                    <Text as="span" fontWeight={600}>
+                      Download:
+                    </Text>{' '}
+                    {downloadSizeLabel} from Hugging Face Hub
+                  </Text>
+                ) : null}
+                {systemRequirement ? (
+                  <Text color="muted" fontSize="sm">
+                    <Text as="span" fontWeight={600}>
+                      Local fit:
+                    </Text>{' '}
+                    {systemRequirement}
+                  </Text>
+                ) : null}
+              </Stack>
+            </Box>
+          ) : null}
 
           <Box
             bg="gray.50"
@@ -71,6 +121,12 @@ export function ManagedRuntimeTrustDialog({
           {extraNote ? (
             <Text color="orange.600" fontSize="sm">
               {extraNote}
+            </Text>
+          ) : null}
+
+          {systemWarning ? (
+            <Text color="orange.600" fontSize="sm" fontWeight={600}>
+              {systemWarning}
             </Text>
           ) : null}
 
