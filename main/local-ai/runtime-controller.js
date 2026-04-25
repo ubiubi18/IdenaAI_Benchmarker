@@ -1679,7 +1679,7 @@ function createDefaultRuntimeController({
     if (!hasManagedRuntimeTrustApproval(payload)) {
       throw createRuntimeControllerError(
         'managed_runtime_trust_required',
-        'Approve the managed Local AI runtime before IdenaAI installs pinned packages and runs a verified pinned on-device model snapshot on this device.'
+        'Approve the Hugging Face model download before IdenaAI installs pinned packages, downloads a pinned model snapshot, and runs the verified on-device runtime on this device.'
       )
     }
 

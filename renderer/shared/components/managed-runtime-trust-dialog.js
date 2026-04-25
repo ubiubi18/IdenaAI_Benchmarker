@@ -32,8 +32,9 @@ export function ManagedRuntimeTrustDialog({
         <Stack spacing={4}>
           <Text>
             IdenaAI can prepare the {nextRuntimeName} on this device, but that
-            setup still installs pinned Python packages and runs pinned model
-            code locally.
+            setup still installs pinned Python packages, downloads a pinned
+            model snapshot from Hugging Face, and runs pinned model code
+            locally.
           </Text>
 
           <Box
@@ -47,6 +48,11 @@ export function ManagedRuntimeTrustDialog({
               <ListItem>
                 downloads pinned runtime packages and the pinned{' '}
                 {nextRuntimeName} snapshot into a private local cache
+              </ListItem>
+              <ListItem>
+                uses Hugging Face Hub for the model download, so you are
+                responsible for your own network usage and for accepting any
+                model or dataset terms that apply to your download
               </ListItem>
               <ListItem>
                 verifies the trusted runtime files before startup

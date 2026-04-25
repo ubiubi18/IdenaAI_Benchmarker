@@ -405,7 +405,7 @@ function formatRuntimeStatusError(result, t) {
 
   if (/managed_runtime_trust_required/i.test(message)) {
     return t(
-      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified pinned local model snapshot locally.'
+      'Approve the Hugging Face model download once before IdenaAI installs pinned packages, downloads the pinned model snapshot, and runs it locally.'
     )
   }
 
@@ -433,7 +433,7 @@ function formatChatError(error, t) {
   }
   if (/managed_runtime_trust_required/i.test(message)) {
     return t(
-      'Approve the managed on-device runtime once before IdenaAI installs pinned packages and runs the verified pinned local model snapshot locally.'
+      'Approve the Hugging Face model download once before IdenaAI installs pinned packages, downloads the pinned model snapshot, and runs it locally.'
     )
   }
   if (/unsupported_managed_model/i.test(message)) {
@@ -2839,7 +2839,7 @@ export default function AiChatPage() {
         onClose={closeManagedRuntimeTrustDialog}
         onConfirm={approveManagedRuntimeTrust}
         isLoading={isStartingRuntime}
-        title={t('Trust managed on-device AI')}
+        title={t('Trust Hugging Face model download')}
         confirmLabel={t('Trust and start')}
         runtimeName={getManagedLocalRuntimeName(t, managedRuntimeTrustFamily)}
         extraNote={getManagedLocalRuntimeTrustNote(

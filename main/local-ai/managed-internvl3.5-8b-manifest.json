@@ -1,7 +1,7 @@
 {
   "modelId": "OpenGVLab/InternVL3_5-8B-HF",
   "revision": "741a7d03020411e666c6109218ab71e08151ef86",
-  "trustVersion": 1,
+  "trustVersion": 2,
   "allowPatterns": [
     ".gitattributes",
     "added_tokens.json",

@@ -256,7 +256,7 @@ describe('managed local runtime flavor selection', () => {
         runtimeFamily: 'molmo2-o',
         baseUrl: 'http://127.0.0.1:8080',
         model: 'allenai/Molmo2-O-7B',
-        managedRuntimeTrustVersion: 1,
+        managedRuntimeTrustVersion: 2,
         managedRuntimePythonPath: '/bin/bash',
       })
     ).rejects.toMatchObject({
@@ -283,7 +283,7 @@ describe('managed local runtime flavor selection', () => {
         runtimeFamily: 'internvl3.5-8b',
         baseUrl: 'http://127.0.0.1:8080',
         model: 'OpenGVLab/InternVL3_5-8B-HF',
-        managedRuntimeTrustVersion: 1,
+        managedRuntimeTrustVersion: 2,
       })
     ).rejects.toMatchObject({
       code: 'managed_runtime_disk_space_low',

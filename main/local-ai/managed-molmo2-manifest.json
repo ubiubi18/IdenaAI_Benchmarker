@@ -1,7 +1,7 @@
 {
   "modelId": "allenai/Molmo2-O-7B",
   "revision": "784410650d12be9bc086118fdefa32d2c3bced86",
-  "trustVersion": 1,
+  "trustVersion": 2,
   "allowPatterns": [
     ".gitattributes",
     "added_tokens.json",
