@@ -250,35 +250,83 @@ export const getPastTxsWithIdenaIndexerApi = async (inputIdenaIndexerApiUrl: str
     }
 };
 
-const getIndexerApiPath = (inputIdenaIndexerApiUrl: string, path: string, params?: Record<string, string>) => {
-    const normalizedBaseUrl = inputIdenaIndexerApiUrl.replace(/\/+$/, '');
-    const normalizedPath = path.replace(/^\/+/, '');
-    const queryString = params ? new URLSearchParams(params).toString() : '';
-    return `${normalizedBaseUrl}/${normalizedPath}${queryString ? `?${queryString}` : ''}`;
-};
-
-const getIndexerJson = async (inputIdenaIndexerApiUrl: string, path: string, params?: Record<string, string>) => {
+export const getBlockAtWithIdenaIndexerApi = async (inputIdenaIndexerApiUrl: string, blockHeight: number) => {
     try {
-        const response = await fetch(getIndexerApiPath(inputIdenaIndexerApiUrl, path, params));
+        const path = `api/Block/${blockHeight}`;
+
+        const response = await fetch(`${inputIdenaIndexerApiUrl}/${path}`);
 
         if (!response.ok) {
             throw new Error(`Response status: ${response.status}`);
         }
 
-        return await response.json();
+        const responseBody = await response.json();
+
+        return responseBody;
     } catch (error: unknown) {
         console.error(error);
         return { error };
     }
 };
 
-export const getIndexerTransaction = async (inputIdenaIndexerApiUrl: string, txHash: string) =>
-    getIndexerJson(inputIdenaIndexerApiUrl, `api/Transaction/${txHash}`);
+export const getblockTxsWithIdenaIndexerApi = async (inputIdenaIndexerApiUrl: string, blockHeight: number) => {
+    try {
+        const limit = 100;
+        let continuationToken = '';
 
-export const getIndexerTransactionEvents = async (inputIdenaIndexerApiUrl: string, txHash: string, limit: number) =>
-    getIndexerJson(inputIdenaIndexerApiUrl, `api/Transaction/${txHash}/Events`, {
-        limit: limit.toString(),
-    });
+        let transactions: any[] = [];
+
+        do {
+            const params = new URLSearchParams({
+                limit: limit.toString(),
+                ...(continuationToken && { continuationToken }),
+            });
+
+            const path = `api/Block/${blockHeight}/Txs`;
+
+            const response = await fetch(`${inputIdenaIndexerApiUrl}/${path}?${params}`);
+
+            if (!response.ok) {
+                throw new Error(`Response status: ${response.status}`);
+            }
+
+            const responseBody = await response.json();
+
+            transactions = responseBody.result ? [ ...transactions, ...responseBody.result ] : transactions;
+
+            continuationToken = responseBody.continuationToken ?? '';
+
+        } while (continuationToken);
+
+        return { result: transactions };
+    } catch (error: unknown) {
+        console.error(error);
+        return { error };
+    }
+};
+
+export const getTxEventsWithIdenaIndexerApi = async (inputIdenaIndexerApiUrl: string, txHash: string, limit: number) => {
+    try {
+        const params = new URLSearchParams({
+            limit: limit.toString(),
+        });
+
+        const path = `api/Transaction/${txHash}/Events`;
+
+        const response = await fetch(`${inputIdenaIndexerApiUrl}/${path}?${params}`);
+
+        if (!response.ok) {
+            throw new Error(`Response status: ${response.status}`);
+        }
+
+        const responseBody = await response.json();
+
+        return responseBody;
+    } catch (error: unknown) {
+        console.error(error);
+        return { error };
+    }
+};
 
 export const getChildPostIds = (parentId: string, postsTreeRef: Record<string, string>) => {
     const childPostIds = [];
@@ -294,66 +342,45 @@ export const getChildPostIds = (parentId: string, postsTreeRef: Record<string, s
     return childPostIds;
 };
 
-type GetTransactionDetailsInput = { txHash: string, timestamp: number, blockHeight?: number };
-export const getTransactionDetails = async (
-    transactions: GetTransactionDetailsInput[],
+type GetTransactionDetailsRpcInput = { txHash: string, timestamp: number, blockHeight?: number };
+export const getTransactionDetailsRpc = async (
+    transactions: GetTransactionDetailsRpcInput[],
     contractAddress: string,
     methods: string[],
     rpcClient: RpcClient,
-    inputIdenaIndexerApiUrl?: string,
 ) => {
-    const transactionDetails = await Promise.all(transactions.map(async (transaction) => {
-        const receipt = await rpcClient('bcn_txReceipt', [transaction.txHash]);
+    const transactionReceipts = await Promise.all(transactions.map((transaction) => rpcClient('bcn_txReceipt', [transaction.txHash])));
 
-        if (receipt.result &&
-            receipt.result.success === true &&
-            receipt.result.contract === contractAddress.toLowerCase() &&
-            methods.includes(receipt.result.method)
-        ) {
-            return {
-                eventArgs: receipt.result.events?.[0]?.args,
-                eventArgs2nd: receipt.result.events?.[1]?.args,
-                method: receipt.result.method,
-                ...transaction,
-            };
-        }
+    const filteredReceipts = transactionReceipts.filter((receipt) =>
+        (receipt.error && (() => { throw 'rpc unavailable' })()) ||
+        receipt.result &&
+        receipt.result.success === true &&
+        receipt.result.contract === contractAddress.toLowerCase() &&
+        methods.includes(receipt.result.method)
+    );
 
-        if (!inputIdenaIndexerApiUrl) {
-            if (receipt.error) {
-                throw 'rpc unavailable';
-            }
-            return null;
-        }
+    const reducedTxs = transactions.reduce((acc, curr) => ({ ...acc, [curr.txHash]: curr }), {}) as Record<string, GetTransactionDetailsRpcInput>;
+    const transactionDetails = filteredReceipts.map(receipt => ({ eventArgs: receipt.result.events?.[0]?.args, eventArgs2nd: receipt.result.events?.[1]?.args, method: receipt.result.method, ...reducedTxs[receipt.result.txHash] }));
 
-        const [indexerTransactionResponse, indexerEventsResponse] = await Promise.all([
-            getIndexerTransaction(inputIdenaIndexerApiUrl, transaction.txHash),
-            getIndexerTransactionEvents(inputIdenaIndexerApiUrl, transaction.txHash, 10),
-        ]);
+    return transactionDetails;
+}
 
-        if (indexerTransactionResponse.error || indexerEventsResponse.error) {
-            return null;
-        }
+type GetTransactionDetailsIndexerApiInput = { txHash: string, timestamp: number, blockHeight?: number };
+export const getTransactionDetailsIndexerApi = async (
+    transactions: GetTransactionDetailsIndexerApiInput[],
+    inputIdenaIndexerApiUrl: string,
+) => {
+    const transactionReceipts = await Promise.all(transactions.map((transaction) => getTxEventsWithIdenaIndexerApi(inputIdenaIndexerApiUrl, transaction.txHash, 10)));
 
-        const txReceipt = indexerTransactionResponse.result?.txReceipt;
+    const filteredReceipts = transactionReceipts.map((tx, index) => ({ ...tx, txHash: transactions[index].txHash })).filter((receipt) =>
+        (receipt.error && (() => { throw 'indexer api unavailable' })()) ||
+        receipt.result
+    );
 
-        if (!txReceipt ||
-            txReceipt.success !== true ||
-            txReceipt.contractAddress?.toLowerCase() !== contractAddress.toLowerCase() ||
-            !methods.includes(txReceipt.method)
-        ) {
-            return null;
-        }
+    const reducedTxs = transactions.reduce((acc, curr) => ({ ...acc, [curr.txHash]: curr }), {}) as Record<string, GetTransactionDetailsIndexerApiInput>;
+    const transactionDetails = filteredReceipts.map(receipt => ({ eventArgs: receipt.result?.[0]?.data, eventArgs2nd: receipt.result?.[1]?.data, method: receipt.result?.[0]?.eventName, ...reducedTxs[receipt.txHash] }));
 
-        return {
-            eventArgs: indexerEventsResponse.result?.[0]?.data,
-            eventArgs2nd: indexerEventsResponse.result?.[1]?.data,
-            method: txReceipt.method,
-            ...transaction,
-            blockHeight: transaction.blockHeight ?? indexerTransactionResponse.result?.blockHeight,
-        };
-    }));
-
-    return transactionDetails.filter((transactionDetail) => !!transactionDetail);
+    return transactionDetails;
 }
 
 export const getNewPosterAndPost = async (
@@ -469,7 +496,7 @@ const getMessage = async (postId: string, message: string, rpcClient: RpcClient)
         const { result: getCidResult } = await rpcClient('ipfs_get', [cid], true);
 
         if (!getCidResult) {
-            message = 'Issue getting message from IPFS';
+            message = 'Issue loading message from IPFS';
             return { postId, message };
         }
 
@@ -565,6 +592,7 @@ export const processTip = async (
     rpcClient: RpcClient,
     tipsRef: React.RefObject<Record<string, { totalAmount: number, tips: Tip[] }>>,
     postersRef: React.RefObject<Record<string, Poster>>,
+    isRecurseForward: boolean,
 ) => {
     const { txHash, eventArgs, eventArgs2nd, timestamp } = transaction;
 
@@ -601,7 +629,7 @@ export const processTip = async (
 
     const updatedPostTips = {
         totalAmount: (tipsRef.current[postId]?.totalAmount ?? 0) + amount,
-        tips: [ ...(tipsRef.current[postId]?.tips ?? []), newTip ],
+        tips: isRecurseForward ? [ newTip, ...(tipsRef.current[postId]?.tips ?? []) ] : [ ...(tipsRef.current[postId]?.tips ?? []), newTip ],
     }
 
     let posterPromise: Promise<Poster> | undefined;
@@ -610,7 +638,7 @@ export const processTip = async (
         posterPromise = getPoster(rpcClient, tipper);
     }
 
-    return { postId, updatedPostTips, posterPromise };
+    return { postId, newTip, updatedPostTips, posterPromise };
 }
 
 export const getPoster = async (rpcClient: RpcClient, posterAddress: string) => {
@@ -738,7 +766,7 @@ export const submitPost = async (
     mediaType: string[],
     replyToPostId: string | null,
     channelId: string | null,
-    inputSendingTxs: string,
+    makePostsWith: string,
     rpcClient: RpcClient,
     lastUsedNonceSavedRef: React.RefObject<number>,
     callbackUrl: string,
@@ -750,7 +778,7 @@ export const submitPost = async (
         postersAddress,
         contractAddress,
         makePostMethod,
-        inputSendingTxs,
+        makePostsWith,
         rpcClient,
         lastUsedNonceSavedRef,
         callbackUrl,
@@ -767,7 +795,7 @@ export const submitSendTip = async (
     sendTipMethod: string,
     postId: string,
     amount: string,
-    inputSendingTxs: string,
+    makePostsWith: string,
     rpcClient: RpcClient,
     lastUsedNonceSavedRef: React.RefObject<number>,
     callbackUrl: string,
@@ -788,7 +816,7 @@ export const submitSendTip = async (
         postersAddress,
         contractAddress,
         sendTipMethod,
-        inputSendingTxs,
+        makePostsWith,
         rpcClient,
         lastUsedNonceSavedRef,
         callbackUrl,
@@ -807,7 +835,7 @@ export const makeCallTransaction = async (
     from: string,
     to: string,
     method: string,
-    inputSendingTxs: string,
+    makePostsWith: string,
     rpcClient: RpcClient,
     lastUsedNonceSavedRef: React.RefObject<number>,
     callbackUrl: string,
@@ -826,7 +854,7 @@ export const makeCallTransaction = async (
 
     const { maxFeeDecimal, maxFeeDna } = calculateMaxFee(maxFeeResult, inputPostLength);
 
-    if (inputSendingTxs === 'rpc') {
+    if (makePostsWith === 'rpc') {
         await rpcClient('contract_call', [
             {
                 from,
@@ -839,7 +867,7 @@ export const makeCallTransaction = async (
         ]);
     }
 
-    if (inputSendingTxs === 'idena-app') {
+    if (makePostsWith === 'idena-app') {
         const { nonce, epoch } = await getNonceAndEpoch(rpcClient, lastUsedNonceSavedRef, from, true);
 
         const txHex = getCallTransaction(to, txAmount, nonce, epoch, maxFeeDna, payload);
@@ -850,7 +878,7 @@ export const makeCallTransaction = async (
 };
 
 export const getNonceAndEpoch = async (rpcClient: RpcClient, lastUsedNonceSavedRef: React.RefObject<number>, address: string, save?: boolean) => {
-    const responses = await Promise.all([rpcClient('dna_getBalance', [address]), await rpcClient('dna_epoch', [])]);
+    const responses = await Promise.all([rpcClient('dna_getBalance', [address]), rpcClient('dna_epoch', [])]);
 
     const { result: getBalanceResult } = responses[0];
     const { result: epochResult } = responses[1];
@@ -880,3 +908,62 @@ export const storeFileToIpfs = async (rpcClient: RpcClient, lastUsedNonceSavedRe
 
     return `ipfs://${cid}`;
 };
+
+export const getPostIdFromChannelId = (timestamp: number, channelId: string, discussPrefix: string) => {
+    const preV9 = timestamp < breakingChanges.v9.timestamp;
+    const preV10 = timestamp < breakingChanges.v10.timestamp;
+    const discussionPostIdRaw = channelId.split(discussPrefix)[1];
+    const discussionPostId = preV9 ? breakingChanges.v9.postIdPrefix + discussionPostIdRaw : preV10 ? breakingChanges.v10.postIdPrefix + discussionPostIdRaw: discussionPostIdRaw;
+
+    return discussionPostId;
+}
+
+export const getNewPostLatestActivity = (
+    isRecurseForward: boolean,
+    newPost: Post,
+    postsRef: React.RefObject<Record<string, Post>>,
+    postLatestActivityRef: React.RefObject<Record<string, number>>,
+    postChannelRegex: RegExp,
+    discussPrefix: string,
+) => {
+    const newPostLatestActivity: Record<string, number> = {};
+
+    if (isRecurseForward) {
+        let loopPost: Post | undefined = newPost;
+
+        while (loopPost) {
+            newPostLatestActivity[loopPost!.postId] = newPost!.timestamp;
+
+            const replyToPostId: string = loopPost!.replyToPostId;
+            const channelId = loopPost!.channelId;
+            const timestamp = loopPost!.timestamp;
+
+            if (replyToPostId) {
+                loopPost = postsRef.current[replyToPostId];
+            } else if (postChannelRegex.test(channelId)) {
+                const discussionPostId = getPostIdFromChannelId(timestamp, channelId, discussPrefix);
+                loopPost = postsRef.current[discussionPostId];
+            } else {
+                loopPost = undefined;
+            }
+        }
+    } else {
+        let newTimestamp = postLatestActivityRef.current[newPost!.postId] ?? newPost!.timestamp;
+        postLatestActivityRef.current[newPost!.postId] = newTimestamp;
+
+        const replyToPostId = newPost!.replyToPostId;
+        const channelId = newPost!.channelId;
+        const timestamp = newPost!.timestamp;
+
+        if (replyToPostId) {
+            newTimestamp = (postLatestActivityRef.current[replyToPostId] ?? 0) > newTimestamp ? postLatestActivityRef.current[replyToPostId] : newTimestamp;
+            newPostLatestActivity[replyToPostId] = newTimestamp;
+        } else if (postChannelRegex.test(channelId)) {
+            const discussionPostId = getPostIdFromChannelId(timestamp, channelId, discussPrefix);
+            newTimestamp = (postLatestActivityRef.current[discussionPostId] ?? 0) > newTimestamp ? postLatestActivityRef.current[discussionPostId] : newTimestamp;
+            newPostLatestActivity[discussionPostId] = newTimestamp;
+        }
+    }
+
+    return newPostLatestActivity;
+}

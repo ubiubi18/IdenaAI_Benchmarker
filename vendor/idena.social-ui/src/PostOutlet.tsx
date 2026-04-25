@@ -1,10 +1,11 @@
 import { useNavigate, useOutletContext, useParams } from "react-router";
 import type { Post, Tip } from "./logic/asyncUtils";
 import PostComponent from "./components/PostComponent";
-import { type MouseEventLocal, type PostDomSettingsCollection } from "./App.exports";
+import { type BrowserStateHistorySettings, type MouseEventLocal } from "./App.exports";
 
 type PostOutletProps = {
-    orderedPostIds: string[],
+    latestPosts: string[],
+    latestActivity: string[],
     postsRef: React.RefObject<Record<string, Post>>,
     replyPostsTreeRef: React.RefObject<Record<string, string>>,
     deOrphanedReplyPostsTreeRef: React.RefObject<Record<string, string>>,
@@ -17,7 +18,8 @@ type PostOutletProps = {
     submittingPost: string,
     submittingLike: string,
     submittingTip: string,
-    browserStateHistoryRef: React.RefObject<Record<string, PostDomSettingsCollection>>,
+    browserStateHistoryRef: React.RefObject<Record<string, BrowserStateHistorySettings>>,
+    setBrowserStateHistorySettings: (pageDomSetting: Partial<BrowserStateHistorySettings>, rerender?: boolean) => void,
     handleOpenLikesModal: (e: MouseEventLocal, likePosts: Post[]) => void,
     handleOpenTipsModal: (e: MouseEventLocal, likePosts: Tip[]) => void,
     handleOpenSendTipModal: (e: MouseEventLocal, tipToPost: Post) => void,
@@ -44,6 +46,7 @@ function PostOutlet() {
         submitPostHandler,
         submitLikeHandler,
         browserStateHistoryRef,
+        setBrowserStateHistorySettings,
         handleOpenLikesModal,
         handleOpenTipsModal,
         handleOpenSendTipModal,
@@ -57,7 +60,7 @@ function PostOutlet() {
     };
 
     return (<>
-        <button className="mb-3 text-[13px] hover:cursor-pointer" onClick={handleGoBack}>&lt; Back</button>
+        <button className="mb-3 text-[13px] hover:cursor-pointer hover:underline" onClick={handleGoBack}>&lt; Back</button>
         <PostComponent
             postId={postId!}
             postsRef={postsRef}
@@ -73,6 +76,7 @@ function PostOutlet() {
             submittingLike={submittingLike}
             submittingTip={submittingTip}
             browserStateHistoryRef={browserStateHistoryRef}
+            setBrowserStateHistorySettings={setBrowserStateHistorySettings}
             handleOpenLikesModal={handleOpenLikesModal}
             handleOpenTipsModal={handleOpenTipsModal}
             handleOpenSendTipModal={handleOpenSendTipModal}

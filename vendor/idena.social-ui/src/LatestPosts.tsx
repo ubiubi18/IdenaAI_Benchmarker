@@ -1,14 +1,16 @@
 import { MAX_POST_MEDIA_BYTES_RPC, supportedImageTypes, type Post, type Tip, type RpcPostCostEstimate } from './logic/asyncUtils';
-import { useOutletContext } from 'react-router';
+import { useLocation, useOutletContext } from 'react-router';
 import PostComponent from './components/PostComponent';
-import { type MouseEventLocal, type PostDomSettingsCollection } from './App.exports';
+import { type BrowserStateHistorySettings, type MouseEventLocal } from './App.exports';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import type { DesktopBootstrap } from './logic/desktopBootstrap';
+import SortPostsByComponent from './components/SortPostsByComponent';
 
 type LatestPostsProps = {
     currentBlockCaptured: number,
     nodeAvailable: boolean,
-    orderedPostIds: string[],
+    latestPosts: string[],
+    latestActivity: string[],
     postsRef: React.RefObject<Record<string, Post>>,
     replyPostsTreeRef: React.RefObject<Record<string, string>>,
     deOrphanedReplyPostsTreeRef: React.RefObject<Record<string, string>>,
@@ -25,7 +27,8 @@ type LatestPostsProps = {
     submittingPost: string,
     submittingLike: string,
     submittingTip: string,
-    browserStateHistoryRef: React.RefObject<Record<string, PostDomSettingsCollection>>,
+    browserStateHistoryRef: React.RefObject<Record<string, BrowserStateHistorySettings>>,
+    setBrowserStateHistorySettings: (pageDomSetting: Partial<BrowserStateHistorySettings>, rerender?: boolean) => void,
     handleOpenLikesModal: (e: MouseEventLocal, likePosts: Post[]) => void,
     handleOpenTipsModal: (e: MouseEventLocal, likePosts: Tip[]) => void,
     handleOpenSendTipModal: (e: MouseEventLocal, tipToPost: Post) => void,
@@ -65,10 +68,15 @@ function HoverInfo({ label, widthClass = 'w-72' }: { label: string, widthClass?:
 }
 
 function LatestPosts() {
+    const location = useLocation();
+
+    const { key: locationKey } = location;
+
     const {
         currentBlockCaptured,
         nodeAvailable,
-        orderedPostIds,
+        latestPosts,
+        latestActivity,
         postsRef,
         replyPostsTreeRef,
         deOrphanedReplyPostsTreeRef,
@@ -86,6 +94,7 @@ function LatestPosts() {
         submittingLike,
         submittingTip,
         browserStateHistoryRef,
+        setBrowserStateHistorySettings,
         handleOpenLikesModal,
         handleOpenTipsModal,
         handleOpenSendTipModal,
@@ -120,16 +129,22 @@ function LatestPosts() {
     const proposalPrefillText = desktopBootstrap?.composerPrefillText || '';
     const mainComposerDisabled = inputPostDisabled || (proposalMode && !proposalPublishingEnabled);
 
+    if (!browserStateHistoryRef.current[locationKey]?.sortPostsBy) {
+        setBrowserStateHistorySettings({ sortPostsBy: 'latest-posts' });
+    }
+
+    const sortPostsBy = browserStateHistoryRef.current[locationKey].sortPostsBy;
+    const sortedPostIds = sortPostsBy === 'latest-posts' ? latestPosts : latestActivity;
     const mainPostMediaAttachment = postMediaAttachmentsRef.current['main'];
     const mainFeeTooltipText = mainComposerCostEstimate
         ? `Current conservative max-fee cap from your own node RPC: about ${mainComposerCostEstimate.totalMaxFeeDna} iDNA. Breakdown: contract call ${mainComposerCostEstimate.contractCallMaxFeeDna} iDNA${mainComposerCostEstimate.imageStoredToIpfs ? `, image storage ${mainComposerCostEstimate.imageStoreMaxFeeDna} iDNA` : ''}${mainComposerCostEstimate.textStoredToIpfs ? `, long-text storage ${mainComposerCostEstimate.textStoreMaxFeeDna} iDNA` : ''}. The actual charged fee can be lower.`
         : 'Start typing or attach an image to request a conservative max-fee estimate from your own node RPC.';
     const visiblePostIds = proposalMode
-        ? orderedPostIds.filter((postId) => {
+        ? sortedPostIds.filter((postId) => {
             const post = postsRef.current[postId];
             return !post?.replyToPostId && !!post?.message?.toLowerCase().includes(normalizedProposalTag);
         })
-        : orderedPostIds;
+        : sortedPostIds;
 
     useEffect(() => {
         if (!proposalMode) {
@@ -323,6 +338,7 @@ function LatestPosts() {
             <p>Current Block: #{currentBlockCaptured ? currentBlockCaptured : (nodeAvailable ? 'Loading...' : '')}</p>
             {!nodeAvailable && <p className="text-[11px] text-red-400">Blocks are not being captured. Please update your node.</p>}
         </div>
+        <SortPostsByComponent sortPostsBy={sortPostsBy} setBrowserStateHistorySettings={setBrowserStateHistorySettings} />
         <ul className="w-full">
             {visiblePostIds.map((postId) => (
                 <li key={postId} className="w-full">
@@ -341,6 +357,7 @@ function LatestPosts() {
                         submittingLike={submittingLike}
                         submittingTip={submittingTip}
                         browserStateHistoryRef={browserStateHistoryRef}
+                        setBrowserStateHistorySettings={setBrowserStateHistorySettings}
                         handleOpenLikesModal={handleOpenLikesModal}
                         handleOpenTipsModal={handleOpenTipsModal}
                         handleOpenSendTipModal={handleOpenSendTipModal}

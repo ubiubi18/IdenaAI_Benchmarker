@@ -2,12 +2,14 @@ import { useLocation, useNavigate, useOutletContext, useParams } from "react-rou
 import type { Post, Poster, Tip } from "./logic/asyncUtils";
 import { getDisplayAddress, getIdentityStatus } from "./logic/utils";
 import PostComponent from "./components/PostComponent";
-import { type PostDomSettingsCollection } from "./App.exports";
+import { type BrowserStateHistorySettings } from "./App.exports";
+import SortPostsByComponent from "./components/SortPostsByComponent";
 
 type MouseEventLocal = React.MouseEvent<HTMLElement, MouseEvent>;
 
 type AddressProps = {
-    orderedPostIds: string[],
+    latestPosts: string[],
+    latestActivity: string[],
     postsRef: React.RefObject<Record<string, Post>>,
     postersRef: React.RefObject<Record<string, Poster>>,
     replyPostsTreeRef: React.RefObject<Record<string, string>>,
@@ -21,7 +23,8 @@ type AddressProps = {
     submittingPost: string,
     submittingLike: string,
     submittingTip: string,
-    browserStateHistoryRef: React.RefObject<Record<string, PostDomSettingsCollection>>,
+    browserStateHistoryRef: React.RefObject<Record<string, BrowserStateHistorySettings>>,
+    setBrowserStateHistorySettings: (pageDomSetting: Partial<BrowserStateHistorySettings>, rerender?: boolean) => void,
     handleOpenLikesModal: (e: MouseEventLocal, likePosts: Post[]) => void,
     handleOpenTipsModal: (e: MouseEventLocal, likePosts: Tip[]) => void,
     handleOpenSendTipModal: (e: MouseEventLocal, tipToPost: Post) => void,
@@ -35,8 +38,11 @@ function Address() {
     const navigate = useNavigate();
     const location = useLocation();
 
+    const { key: locationKey } = location;
+
     const {
-        orderedPostIds,
+        latestPosts,
+        latestActivity,
         postsRef,
         postersRef,
         replyPostsTreeRef,
@@ -51,6 +57,7 @@ function Address() {
         submitPostHandler,
         submitLikeHandler,
         browserStateHistoryRef,
+        setBrowserStateHistorySettings,
         handleOpenLikesModal,
         handleOpenTipsModal,
         handleOpenSendTipModal,
@@ -59,10 +66,16 @@ function Address() {
         postMediaAttachmentsRef,
     } = useOutletContext() as AddressProps;
 
+    if (!browserStateHistoryRef.current[locationKey]?.sortPostsBy) {
+        setBrowserStateHistorySettings({ sortPostsBy: 'latest-posts' });
+    }
+
+    const sortPostsBy = browserStateHistoryRef.current[locationKey].sortPostsBy;
+
     const poster = postersRef.current[address!];
     const posterDisplayAddress = getDisplayAddress(poster.address);
 
-    const filteredOrderedPosts = orderedPostIds.filter(postId => {
+    const filteredOrderedPosts = (sortPostsBy === 'latest-posts' ? latestPosts : latestActivity).filter(postId => {
         const post = postsRef.current[postId];
         return post.poster === address;
     });
@@ -79,14 +92,14 @@ function Address() {
     };
 
     return (<>
-        <button className="text-[13px] hover:cursor-pointer" onClick={handleGoBack}>&lt; Back</button>
+        <button className="text-[13px] hover:cursor-pointer hover:underline" onClick={handleGoBack}>&lt; Back</button>
         <div className="flex flex-row p-3">
             <div className="w-35 flex justify-end">
                 <div className="-mt-1"><img className="w-27" src={`https://robohash.org/${poster.address}?set=set1`} /></div>
             </div>
             <div className="flex-1 overflow-hidden">
                 <div className="flex flex-col">
-                    <div><a className="text-[24px] font-[600]" href={`https://scan.idena.io/address/${poster.address}`} target="_blank" rel="noreferrer">{posterDisplayAddress}</a></div>
+                    <div><a className="text-[24px] font-[600] hover:underline" href={`https://scan.idena.io/address/${poster.address}`} target="_blank" rel="noreferrer">{posterDisplayAddress}</a></div>
                     <div><p className="text-[16px]">{`Age: ${poster.age}`}</p></div>
                     <div><p className="text-[16px]">{`Status: ${getIdentityStatus(poster.state)}`}</p></div>
                     <div><p className="text-[16px]">{`Stake: ${parseInt(poster.stake)}`}</p></div>
@@ -96,6 +109,7 @@ function Address() {
         <div className="h-8 mb-5 flex border-b-1 border-gray-500 gap-3">
             <p className={location.pathname === `/address/${poster.address}` ? "px-3 border-b-3" : "px-3 hover:border-b-3 hover:cursor-pointer"} onClick={(e) => handleClickAddress(e, `/address/${poster.address}`)}>Posts</p>
         </div>
+        <SortPostsByComponent sortPostsBy={sortPostsBy} setBrowserStateHistorySettings={setBrowserStateHistorySettings} />
         <ul>
             {filteredOrderedPosts.map((postId) => (
                 <li key={postId}>
@@ -114,6 +128,7 @@ function Address() {
                         submittingLike={submittingLike}
                         submittingTip={submittingTip}
                         browserStateHistoryRef={browserStateHistoryRef}
+                        setBrowserStateHistorySettings={setBrowserStateHistorySettings}
                         handleOpenLikesModal={handleOpenLikesModal}
                         handleOpenTipsModal={handleOpenTipsModal}
                         handleOpenSendTipModal={handleOpenSendTipModal}

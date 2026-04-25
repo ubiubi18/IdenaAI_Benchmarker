@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import Modal from 'react-modal';
 import { IdenaApprovedAds, type ApprovedAd } from 'idena-approved-ads';
-import { type Post, type Poster, type Tip, type RpcPostCostEstimate, breakingChanges, estimateRpcPostCost, getNewPosterAndPost, getReplyPosts, deOrphanReplyPosts, getTransactionDetails, getBlockHeightFromTxHash, submitPost, processTip, submitSendTip, supportedImageTypes, storeFileToIpfs, getPastTxsWithIdenaIndexerApi, getRpcClient, type RpcClient, copyPostTx } from './logic/asyncUtils';
+import { type Post, type Poster, type Tip, type RpcPostCostEstimate, breakingChanges, estimateRpcPostCost, getNewPosterAndPost, getReplyPosts, deOrphanReplyPosts, getBlockHeightFromTxHash, submitPost, processTip, submitSendTip, supportedImageTypes, storeFileToIpfs, getPastTxsWithIdenaIndexerApi, getRpcClient, type RpcClient, copyPostTx, getPostIdFromChannelId, getNewPostLatestActivity, getblockTxsWithIdenaIndexerApi, getBlockAtWithIdenaIndexerApi, getTransactionDetailsRpc, getTransactionDetailsIndexerApi } from './logic/asyncUtils';
 import { getDisplayAddress, getTextAndMediaForPost, isObjectEmpty, str2bytes } from './logic/utils';
 import { createDesktopRpcClient, installDesktopBootstrapListener, isEmbeddedDesktopFrame, readDesktopBootstrap, type DesktopBootstrap } from './logic/desktopBootstrap';
 import WhatIsIdenaPng from './assets/whatisidena.png';
-import { Link, Outlet } from 'react-router';
-import type { MouseEventLocal, PostDomSettingsCollection, PostMediaAttachment } from './App.exports';
+import { Link, Outlet, useLocation } from 'react-router';
+import type { BrowserStateHistorySettings, MouseEventLocal, PostMediaAttachment } from './App.exports';
 import ModalLikesTipsComponent from './components/ModalLikesTipsComponent';
 import ModalSendTipComponent from './components/ModalSendTipComponent';
 const socialBaseUrl = new URL('./', window.location.href);
@@ -42,13 +42,21 @@ const defaultAd = {
 const POLLING_INTERVAL = 10000;
 const SCANNING_INTERVAL = 10;
 const ADS_INTERVAL = 10000;
-const SCAN_POSTS_TTL = 1 * 60;
+const SCAN_PAST_POSTS_TTL = 1 * 60;
 const INDEXER_API_ITEMS_LIMIT = 20;
 const SET_NEW_POSTS_ADDED_DELAY = 20;
 const SUBMITTING_POST_INTERVAL = 2000;
 const MAX_POST_MEDIA_BYTES = 1024 * 1024;
 const MAX_POST_MEDIA_BYTES_WEBAPP = 1024 * 5;
 
+const initSettings = {
+    nodeUrl: initialDesktopBootstrap.nodeUrl || localStorage.getItem('nodeUrl') || defaultNodeUrl,
+    nodeKey: localStorage.getItem('nodeKey') || defaultNodeApiKey,
+    sendingTxs: initialDesktopBootstrap.sendingTxs || localStorage.getItem('makePostsWith') || 'rpc',
+    postersAddress: localStorage.getItem('postersAddress') || zeroAddress,
+    findingPastPosts: initialDesktopBootstrap.findingPastPosts || localStorage.getItem('findPastPostsWith') || 'rpc',
+    indexerApiUrl: initialDesktopBootstrap.indexerApiUrl || localStorage.getItem('indexerApiUrl') || initIndexerApiUrl,
+};
 
 const DEBUG = false;
 
@@ -90,24 +98,31 @@ function App() {
         !isEmbeddedDesktopFrame() || Object.keys(initialDesktopBootstrap).length > 0,
     );
     const isDesktopOnchainMode = desktopBootstrap.embeddedMode === 'desktop-onchain';
+
+    const location = useLocation();
+
+    const { key: locationKey } = location;
+
     const [nodeAvailable, setNodeAvailable] = useState<boolean>(true);
     const nodeAvailableRef = useRef(nodeAvailable);
     const rpcClientRef = useRef(undefined as undefined | RpcClient);
     const [viewOnlyNode, setViewOnlyNode] = useState<boolean>(false);
     const [inputNodeApplied, setInputNodeApplied] = useState<boolean>(desktopBootstrapReady);
-    const [inputPostersAddress, setInputPostersAddress] = useState<string>(zeroAddress);
+    const [inputPostersAddress, setInputPostersAddress] = useState<string>(initSettings.postersAddress);
     const [inputPostersAddressApplied, setInputPostersAddressApplied] = useState<boolean>(true);
-    const [inputNodeUrl, setInputNodeUrl] = useState<string>(desktopBootstrap.nodeUrl || defaultNodeUrl);
-    const [inputNodeKey, setInputNodeKey] = useState<string>(defaultNodeApiKey);
-    const [postersAddress, setPostersAddress] = useState<string>(zeroAddress);
+    const [inputNodeUrl, setInputNodeUrl] = useState<string>(initSettings.nodeUrl);
+    const [inputNodeKey, setInputNodeKey] = useState<string>(initSettings.nodeKey);
+    const [postersAddress, setPostersAddress] = useState<string>(initSettings.postersAddress);
     const postersAddressRef = useRef<string>(postersAddress);
     const [postersAddressInvalid, setPostersAddressInvalid] = useState<boolean>(false);
     const postersAddressInvalidRef = useRef<boolean>(postersAddressInvalid);
-    const [inputSendingTxs, setInputSendingTxs] = useState<string>(desktopBootstrap.sendingTxs || 'rpc');
-    const [orderedPostIds, setOrderedPostIds] = useState<string[]>([]);
+    const [inputSendingTxs, setInputSendingTxs] = useState<string>(initSettings.sendingTxs);
+    const [latestPosts, setLatestPosts] = useState<string[]>([]);
+    const [latestActivity, setLatestActivity] = useState<string[]>([]);
     const postsRef = useRef({} as Record<string, Post>);
     const postersRef = useRef({} as Record<string, Poster>);
     const [initialBlock, setInitialBlock] = useState<number>(0);
+    const [initialBlockTimestamp, setInitialBlockTimestamp] = useState<number>(0);
     const [pastBlockCaptured, setPastBlockCaptured] = useState<number>(0);
     const pastBlockCapturedRef = useRef(pastBlockCaptured);
     const partialPastBlockCapturedRef = useRef(0);
@@ -118,14 +133,14 @@ function App() {
     const [ads, setAds] = useState<ApprovedAd[]>([]);
     const [currentAd, setCurrentAd] = useState<ApprovedAd | null>(null);
     const currentAdRef = useRef(currentAd);
-    const [inputFindingPastPosts, setInputFindingPastPosts] = useState<string>(desktopBootstrap.findingPastPosts || 'rpc');
+    const [inputFindingPastPosts, setInputFindingPastPosts] = useState<string>(initSettings.findingPastPosts);
     const inputFindingPastPostsRef = useRef(inputFindingPastPosts);
     const [noMorePastBlocks, setNoMorePastBlocks] = useState<boolean>(false);
-    const [indexerApiUrl, setIdenaIndexerApiUrl] = useState<string>(desktopBootstrap.indexerApiUrl || initIndexerApiUrl);
+    const [indexerApiUrl, setIdenaIndexerApiUrl] = useState<string>(initSettings.indexerApiUrl);
     const indexerApiUrlRef = useRef(indexerApiUrl);
     const [indexerApiUrlInvalid, setIdenaIndexerApiUrlInvalid] = useState<boolean>(false);
     const indexerApiUrlInvalidRef = useRef(indexerApiUrlInvalid);
-    const [inputIdenaIndexerApiUrl, setInputIdenaIndexerApiUrl] = useState<string>(desktopBootstrap.indexerApiUrl || initIndexerApiUrl);
+    const [inputIdenaIndexerApiUrl, setInputIdenaIndexerApiUrl] = useState<string>(initSettings.indexerApiUrl);
     const [inputIdenaIndexerApiUrlApplied, setInputIdenaIndexerApiUrlApplied] = useState<boolean>(true);
     const replyPostsTreeRef = useRef({} as Record<string, string>);
     const deOrphanedReplyPostsTreeRef = useRef({} as Record<string, string>);
@@ -137,19 +152,23 @@ function App() {
     const [submittingLike, setSubmittingLike] = useState<string>('');
     const [submittingTip, setSubmittingTip] = useState<string>('');
     const [inputPostDisabled, setInputPostDisabled] = useState<boolean>(false);
-    const browserStateHistoryRef = useRef<Record<string, PostDomSettingsCollection>>({});
+    const browserStateHistoryRef = useRef<Record<string, BrowserStateHistorySettings>>({});
+    const postMediaAttachmentsRef = useRef<Record<string, PostMediaAttachment | undefined>>({});
+    const copyTxHandlerEnabledRef = useRef<boolean>(true);
+    const lastUsedNonceSavedRef = useRef<number>(0);
+    const tipsRef = useRef<Record<string, { totalAmount: number, tips: Tip[] }>>({});
+    const [idenaWalletBalance, setIdenaWalletBalance] = useState<string>('0');
+    const postLatestActivityRef = useRef({} as Record<string, number>);
+
+
+    // modals
     const [modalOpen, setModalOpen] = useState<string>('');
     const modalLikePostsRef = useRef<Post[]>([]);
     const modalTipsRef = useRef<Tip[]>([]);
     const modalSendTipRef = useRef<Post>(undefined);
-    const tipsRef = useRef<Record<string, { totalAmount: number, tips: Tip[] }>>({});
-    const [idenaWalletBalance, setIdenaWalletBalance] = useState<string>('0');
-    const postMediaAttachmentsRef = useRef<Record<string, PostMediaAttachment | undefined>>({});
     const [mainComposerCostEstimate, setMainComposerCostEstimate] = useState<RpcPostCostEstimate | null>(null);
     const [mainComposerCostEstimateError, setMainComposerCostEstimateError] = useState<string>('');
     const [mainComposerCostEstimateLoading, setMainComposerCostEstimateLoading] = useState<boolean>(false);
-    const copyTxHandlerEnabledRef = useRef<boolean>(true);
-    const lastUsedNonceSavedRef = useRef<number>(0);
     const [flashNotice, setFlashNotice] = useState<FlashNotice | null>(null);
     const flashNoticeTimeoutRef = useRef<number | undefined>(undefined);
 
@@ -203,6 +222,22 @@ function App() {
     }, [desktopBootstrap, desktopBootstrapReady, isDesktopOnchainMode]);
 
 
+    // miscellaneous
+    const [, forceUpdate] = useReducer(x => x + 1, 0);
+
+
+    const setBrowserStateHistorySettings = (pageDomSetting: Partial<BrowserStateHistorySettings>, rerender?: boolean) => {
+        browserStateHistoryRef.current = {
+            ...browserStateHistoryRef.current,
+            [locationKey]: {
+                ...browserStateHistoryRef.current[locationKey] ?? {},
+                ...pageDomSetting,
+            }
+        };
+
+        rerender && forceUpdate();
+    }
+
     const setRpcClient = (idenaNodeUrl: string, idenaNodeApiKey: string, setNodeAvailable: React.Dispatch<React.SetStateAction<boolean>>) => {
         rpcClientRef.current = isDesktopOnchainMode
             ? createDesktopRpcClient(setNodeAvailable)
@@ -220,23 +255,29 @@ function App() {
                 return;
             }
 
+            localStorage.setItem('nodeUrl', idenaNodeUrl);
+            localStorage.setItem('nodeKey', idenaNodeApiKey);
+
             if (!initialBlock) {
                 const { result: getLastBlockResult } = await rpcClientRef.current!('bcn_lastBlock', []);
                 setInitialBlock(getLastBlockResult?.height ?? 0);
+                setInitialBlockTimestamp(getLastBlockResult?.timestamp ?? 0);
                 setScanningPastBlocks(true);
             }
 
             const { result: getCoinbaseAddrResult } = await rpcClientRef.current!('dna_getCoinbaseAddr', [], true);
 
             if (getCoinbaseAddrResult) {
-                setPostersAddress(getCoinbaseAddrResult);
                 setViewOnlyNode(false);
             } else {
-                setPostersAddress('');
                 setViewOnlyNode(true);
             }
 
-            const adsClient = new IdenaApprovedAds({ idenaNodeUrl: inputNodeUrl, idenaNodeApiKey: inputNodeKey });
+            if (inputSendingTxs === 'rpc') {
+                setPostersAddress(getCoinbaseAddrResult || '');
+            }
+
+            const adsClient = new IdenaApprovedAds({ idenaNodeUrl, idenaNodeApiKey });
 
             try {
                 if (isDesktopOnchainMode) {
@@ -262,6 +303,7 @@ function App() {
     useEffect(() => {
         if (inputPostersAddressApplied && inputSendingTxs === 'idena-app') {
             setPostersAddress(inputPostersAddress);
+            localStorage.setItem('postersAddress', inputPostersAddress);
 
             if (inputPostersAddress === zeroAddress) {
                 setPostersAddressInvalid(true);
@@ -286,6 +328,7 @@ function App() {
     useEffect(() => {
         if (inputIdenaIndexerApiUrlApplied && inputFindingPastPosts === 'indexer-api') {
             setIdenaIndexerApiUrl(inputIdenaIndexerApiUrl);
+            localStorage.setItem('indexerApiUrl', inputIdenaIndexerApiUrl);
 
             (async function() {
                 const { result, error } = await getPastTxsWithIdenaIndexerApi(inputIdenaIndexerApiUrl, contractAddressCurrent, 1);
@@ -376,9 +419,11 @@ function App() {
 
             (async function recurseForward() {
                 if (nodeAvailableRef.current) {
+                    const recurseDirection = 'forward';
+                    const contentSource = inputFindingPastPostsRef.current === 'rpc' ? 'rpc' : 'indexer-api';
                     const pendingBlock = currentBlockCapturedRef.current ? currentBlockCapturedRef.current + 1 : initialBlock;
                     const contractAddress = contractAddressCurrent;
-                    recurseForwardIntervalId = setTimeout(postScannerFactory('recurseForward', recurseForward, setCurrentBlockCaptured, currentBlockCapturedRef, contractAddress, pendingBlock), POLLING_INTERVAL);
+                    recurseForwardIntervalId = setTimeout(postScannerFactory(recurseDirection, contentSource, recurseForward, setCurrentBlockCaptured, currentBlockCapturedRef, contractAddress, pendingBlock), POLLING_INTERVAL);
                 }
             } as RecurseForward)();
 
@@ -392,15 +437,15 @@ function App() {
             let recurseBackwardIntervalId: NodeJS.Timeout;
 
             const timeNow = Math.floor(Date.now() / 1000);
-            const ttl = timeNow + SCAN_POSTS_TTL;
+            const ttl = timeNow + SCAN_PAST_POSTS_TTL;
 
             (async function recurseBackward(time: number) {
                 if (scanningPastBlocksRef.current && nodeAvailableRef.current && time < ttl) {
-                    const recurseMethod = inputFindingPastPostsRef.current === 'rpc' ? 'recurseBackwardWithRpcOnly' : 'recurseBackwardWithIndexerApi';
+                    const recurseDirection = 'backward';
+                    const contentSource = inputFindingPastPostsRef.current === 'rpc' ? 'rpc' : 'indexer-api';
                     const contractAddress = pastContractAddressRef!.current;
-                    // pendingBlock only relevant if recurseBackwardWithRpcOnly
                     const pendingBlock = pastBlockCapturedRef.current ? (partialPastBlockCapturedRef.current ? partialPastBlockCapturedRef.current : pastBlockCapturedRef.current - 1) : initialBlock - 1;
-                    recurseBackwardIntervalId = setTimeout(postScannerFactory(recurseMethod, recurseBackward, setPastBlockCaptured, pastBlockCapturedRef, contractAddress, pendingBlock), SCANNING_INTERVAL);
+                    recurseBackwardIntervalId = setTimeout(postScannerFactory(recurseDirection, contentSource, recurseBackward, setPastBlockCaptured, pastBlockCapturedRef, contractAddress, pendingBlock), SCANNING_INTERVAL);
                 } else {
                     setScanningPastBlocks(false);
                 }
@@ -413,16 +458,19 @@ function App() {
     const handleInputSendingTxsToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
         setInputSendingTxs(event.target.value);
 
+        localStorage.setItem('makePostsWith', event.target.value);
+
         if (event.target.value === 'rpc') {
             setInputPostersAddress('');
             setPostersAddressInvalid(false);
             setRpcClient(inputNodeUrl, inputNodeKey, setNodeAvailable);
         }
-        
+
         if (event.target.value === 'idena-app') {
             if (postersAddress) {
                 setInputPostersAddress(postersAddress);
                 setPostersAddressInvalid(false);
+                localStorage.setItem('postersAddress', postersAddress);
             } else {
                 setInputPostersAddress(zeroAddress);
                 setPostersAddress(zeroAddress);
@@ -433,6 +481,7 @@ function App() {
 
     const handleInputFindingPastPostsToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
         setInputFindingPastPosts(event.target.value);
+        localStorage.setItem('findPastPostsWith', event.target.value);
 
         if (event.target.value === 'rpc') {
             setIdenaIndexerApiUrl('');
@@ -443,6 +492,7 @@ function App() {
             if (indexerApiUrl) {
                 setIdenaIndexerApiUrl(indexerApiUrl);
                 setPostersAddressInvalid(false);
+                localStorage.setItem('indexerApiUrl', indexerApiUrl);
             } else {
                 setInputIdenaIndexerApiUrl(initIndexerApiUrl);
                 setIdenaIndexerApiUrl(initIndexerApiUrl);
@@ -451,7 +501,8 @@ function App() {
     };
 
     const postScannerFactory = (
-        recurseMethod: string,
+        recurseDirection: string,
+        contentSource: string,
         recurse: RecurseForward | RecurseBackward,
         setBlockCaptured: React.Dispatch<React.SetStateAction<number>>,
         blockCapturedRef: React.RefObject<number>,
@@ -459,9 +510,13 @@ function App() {
         pendingBlock?: number,
     ) => {
         return async function postFinder() {
-            const isRecurseForward = recurseMethod === 'recurseForward';
-            const isRecurseBackwardWithRpcOnly = recurseMethod === 'recurseBackwardWithRpcOnly';
-            const isRecurseBackwardWithIndexerApi = recurseMethod === 'recurseBackwardWithIndexerApi';
+            const isRecurseForward = recurseDirection === 'forward';
+            const isContentSourceRpc = contentSource === 'rpc';
+
+            const isRecurseForwardWithRpcOnly = isRecurseForward && isContentSourceRpc;
+            const isRecurseForwardWithIndexerApi = isRecurseForward && !isContentSourceRpc;
+            const isRecurseBackwardWithRpcOnly = !isRecurseForward && isContentSourceRpc;
+            const isRecurseBackwardWithIndexerApi = !isRecurseForward && !isContentSourceRpc;
 
             // The ref is updated for immediate effect, the state is updated for the rerender.
             const setBlockCapturedRefState = (block: number) => {
@@ -472,7 +527,7 @@ function App() {
             try {
                 let transactions = [];
 
-                if (isRecurseForward || isRecurseBackwardWithRpcOnly) {
+                if (isRecurseForwardWithRpcOnly || isRecurseBackwardWithRpcOnly) {
                     const { result: getBlockByHeightResult, error } = await rpcClientRef.current!('bcn_blockAt', [pendingBlock!]);
 
                     if (error) {
@@ -499,6 +554,32 @@ function App() {
                     }
 
                     transactions = getBlockByHeightResult.transactions.map((txHash: string) => ({ txHash, timestamp: getBlockByHeightResult.timestamp, blockHeight: getBlockByHeightResult.height }));
+                } else if (isRecurseForwardWithIndexerApi) {
+                    const { result: getBlockByHeightResult, error: getBlockByHeightError } = await getBlockAtWithIdenaIndexerApi(inputIdenaIndexerApiUrl, pendingBlock!);
+
+                    if (getBlockByHeightError && getBlockByHeightError?.message !== 'no data found') {
+                        throw 'indexer api unavailable';
+                    }
+
+                    if (getBlockByHeightError?.message === 'no data found') {
+                        throw 'no block';
+                    }
+
+                    if (getBlockByHeightResult.txCount === 0) {
+                        setBlockCapturedRefState(pendingBlock!);
+                        throw 'no transactions';
+                    }
+
+                    const { result: getblockTxsResult, error: getblockTxsError } = await getblockTxsWithIdenaIndexerApi(inputIdenaIndexerApiUrl, pendingBlock!);
+
+                    if (getblockTxsError) {
+                        throw 'indexer api unavailable';
+                    }
+
+                    transactions = getblockTxsResult
+                        ?.filter((transaction: any) => transaction.type === 'CallContract' && allMethods.includes(transaction.txReceipt?.method) && transaction.txReceipt?.success === true)
+                        .map((transaction: any) => ({ txHash: transaction.hash, timestamp: Math.floor((new Date(transaction.timestamp)).getTime() / 1000 ), blockHeight: pendingBlock }))
+                    ?? [];
                 } else if (isRecurseBackwardWithIndexerApi) {
                     if (continuationTokenRef!.current === 'finished processing') {
                         throw 'no more transactions';
@@ -514,16 +595,33 @@ function App() {
                         .map((balanceUpdate: any) => ({ txHash: balanceUpdate.hash, timestamp: Math.floor((new Date(balanceUpdate.timestamp)).getTime() / 1000 ) }))
                     ?? [];
 
+                    if (!continuationTokenRef!.current) {
+                        transactions = transactions.filter((balanceUpdate: any) => balanceUpdate.timestamp < initialBlockTimestamp);
+                    }
+
+                    const isCurrentContract = pastContractAddressRef!.current === contractAddressCurrent;
+                    const isContractAddress3 = pastContractAddressRef!.current === contractAddress3;
+                    const isContractAddress2 = pastContractAddressRef!.current === contractAddress2;
+                    const isContractAddress1 = pastContractAddressRef!.current === contractAddress1;
+
+                    if (isContractAddress3) {
+                        transactions = transactions.filter((balanceUpdate: any) => balanceUpdate.timestamp < breakingChanges.v10.timestamp);
+                    } else if (isContractAddress2) {
+                        transactions = transactions.filter((balanceUpdate: any) => balanceUpdate.timestamp < breakingChanges.v9.timestamp);
+                    } else if (isContractAddress1) {
+                        transactions = transactions.filter((balanceUpdate: any) => balanceUpdate.timestamp < breakingChanges.v5.timestamp);
+                    }
+
                     if (continuationToken) {
                         continuationTokenRef!.current = continuationToken;
                     } else {
-                        if (pastContractAddressRef!.current === contractAddressCurrent) {
+                        if (isCurrentContract) {
                             pastContractAddressRef!.current = contractAddress3;
                             continuationTokenRef!.current = undefined;
-                        } else if (pastContractAddressRef!.current === contractAddress3) {
+                        } else if (isContractAddress3) {
                             pastContractAddressRef!.current = contractAddress2;
                             continuationTokenRef!.current = undefined;
-                        } else if (pastContractAddressRef!.current === contractAddress2) {
+                        } else if (isContractAddress2) {
                             pastContractAddressRef!.current = contractAddress1;
                             continuationTokenRef!.current = undefined;
                         } else {
@@ -535,17 +633,14 @@ function App() {
                     throw 'this should not happen';
                 }
 
-                const transactionsWithDetails = await getTransactionDetails(
-                    transactions,
-                    contractAddress,
-                    allMethods,
-                    rpcClientRef.current!,
-                    isRecurseBackwardWithIndexerApi ? indexerApiUrlRef.current : undefined,
-                );
+                const transactionsWithDetails = isContentSourceRpc ?
+                    await getTransactionDetailsRpc(transactions, contractAddress, allMethods, rpcClientRef.current!)
+                    :
+                    await getTransactionDetailsIndexerApi(transactions, inputIdenaIndexerApiUrl);
 
                 let lastValidTransaction;
 
-                const newOrderedPostIds: string[] = [];
+                const newLatestPosts: string[] = [];
 
                 let newReplyPostsCollection = {};
 
@@ -557,12 +652,30 @@ function App() {
                     const transaction = transactionsWithDetails[index];
 
                     if ([sendTipMethod].includes(transaction.method)) {
-                        const { postId, updatedPostTips, posterPromise } = await processTip(transaction, rpcClientRef.current!, tipsRef, postersRef);
+                        const { postId, newTip, updatedPostTips, posterPromise } = await processTip(transaction, rpcClientRef.current!, tipsRef, postersRef, isRecurseForward);
                         tipsRef.current = { ...tipsRef.current, [postId]: updatedPostTips };
 
                         posterPromise && posterPromises.push(posterPromise);
 
                         lastValidTransaction = transaction;
+
+                        // transient Post representation of a Tip
+                        const newPost = {
+                            postId: newTip.txHash,
+                            replyToPostId: postId,
+                            timestamp: newTip.timestamp,
+                        } as Post;
+
+                        const newPostLatestActivity = getNewPostLatestActivity(
+                            isRecurseForward,
+                            newPost!,
+                            postsRef,
+                            postLatestActivityRef,
+                            postChannelRegex,
+                            discussPrefix,
+                        );
+
+                        postLatestActivityRef.current = { ...postLatestActivityRef.current, ...newPostLatestActivity };
 
                         continue;
                     }
@@ -592,9 +705,22 @@ function App() {
                     messagePromise && messagePromises.push(messagePromise);
                     mediaPromise && mediaPromises.push(mediaPromise);
 
-                    if (!newPost!.replyToPostId && newPost!.channelId === thisChannelId) {
-                        newOrderedPostIds.push(newPost!.postId);
+                    const isTopLevelPost = !newPost!.replyToPostId && newPost!.channelId === thisChannelId;
+
+                    if (isTopLevelPost) {
+                        newLatestPosts.push(newPost!.postId);
                     }
+
+                    const newPostLatestActivity = getNewPostLatestActivity(
+                        isRecurseForward,
+                        newPost!,
+                        postsRef,
+                        postLatestActivityRef,
+                        postChannelRegex,
+                        discussPrefix,
+                    );
+
+                    postLatestActivityRef.current = { ...postLatestActivityRef.current, ...newPostLatestActivity };
 
                     const newPosts = { [newPost!.postId]: newPost as Post };
 
@@ -606,10 +732,7 @@ function App() {
                     const updatedPosts: Record<string, Post> = {};
 
                     if (postChannelRegex.test(newPost!.channelId)) {
-                        const preV9 = newPost!.timestamp < breakingChanges.v9.timestamp;
-                        const preV10 = newPost!.timestamp < breakingChanges.v10.timestamp;
-                        const discussionPostIdRaw = newPost!.channelId.split(discussPrefix)[1];
-                        const discussionPostId = preV9 ? breakingChanges.v9.postIdPrefix + discussionPostIdRaw : preV10 ? breakingChanges.v10.postIdPrefix + discussionPostIdRaw: discussionPostIdRaw;
+                        const discussionPostId = getPostIdFromChannelId(newPost!.timestamp, newPost!.channelId, discussPrefix);
                         const discussionPost = postsRef.current[discussionPostId];
                         const orphaned = !discussionPost || discussionPost.orphaned;
 
@@ -708,7 +831,20 @@ function App() {
                     postsRef.current = { ...postsRef.current, [mediaProps!.postId]: updatedPost };
                 }
 
-                setOrderedPostIds((currentOrderedPostIds) => isRecurseForward ? [...newOrderedPostIds!, ...currentOrderedPostIds] : [...currentOrderedPostIds, ...newOrderedPostIds!]);
+                setLatestPosts((currentLatestPosts) => {
+                    const latestPostsUpdated = isRecurseForward ? [...newLatestPosts!, ...currentLatestPosts] : [...currentLatestPosts, ...newLatestPosts!];
+
+                    setLatestActivity(() => {
+                        const latestActivityUpdated = latestPostsUpdated
+                            .map((postId) => ({ postId, timestamp: postLatestActivityRef.current[postId] }))
+                            .sort((a, b) => b.timestamp - a.timestamp)
+                            .map((post) => post.postId);
+
+                        return latestActivityUpdated;
+                    });
+
+                    return latestPostsUpdated;
+                });
 
                 let lastBlockHeight;
 
@@ -740,7 +876,9 @@ function App() {
                     setScanningPastBlocks(false);
                 } else if (error === 'rpc unavailable') {
                     setScanningPastBlocks(false);
+                    setNodeAvailable(false);
                 } else if (error === 'indexer api unavailable') {
+                    setScanningPastBlocks(false);
                     setIdenaIndexerApiUrlInvalid(true);
                 } else {
                     if (isRecurseForward) {
@@ -1015,10 +1153,10 @@ function App() {
                     </div>
                     <hr className="mb-3 text-gray-500" />
                     <div className="flex flex-col mb-6">
-                        <p>For sending transactions:</p>
+                        <p>Make posts with:</p>
                         <div className="flex flex-row gap-2">
                             <input id="useRpc" type="radio" name="useRpc" value="rpc" checked={inputSendingTxs === 'rpc'} onChange={handleInputSendingTxsToggle} />
-                            <label htmlFor="useRpc" className="flex-none text-right">Use RPC</label>
+                            <label htmlFor="useRpc" className="flex-none text-right">RPC</label>
                         </div>
                         {inputSendingTxs === 'rpc' && viewOnlyNode && <p className="ml-4.5 text-[11px] text-red-400">Your RPC is View-Only. Posting, liking, and tipping are disabled until the node exposes a writable account.</p>}
                         {!isDesktopOnchainMode && (
@@ -1041,10 +1179,10 @@ function App() {
                     </div>
                     <hr className="mb-3 text-gray-500" />
                     <div className="flex flex-col mb-6">
-                        <p>For finding past posts:</p>
+                        <p>Find posts with:</p>
                         <div className="flex flex-row gap-2">
-                            <input id="inputFindingPastPosts" type="radio" name="inputFindingPastPosts" value="rpc" checked={inputFindingPastPosts === 'rpc'} onChange={handleInputFindingPastPostsToggle} />
-                            <label htmlFor="inputFindingPastPosts" className="flex-none text-right">Use RPC</label>
+                            <input id="findPastPostsWith" type="radio" name="inputFindingPastPosts" value="rpc" checked={inputFindingPastPosts === 'rpc'} onChange={handleInputFindingPastPostsToggle} />
+                            <label htmlFor="findPastPostsWith" className="flex-none text-right">RPC</label>
                         </div>
                         <div className="flex flex-row gap-2">
                             <input id="notUseFindPastBlocksWithTxsApi" type="radio" name="inputFindingPastPosts" value="indexer-api" checked={inputFindingPastPosts === 'indexer-api'} onChange={handleInputFindingPastPostsToggle} />
@@ -1127,7 +1265,8 @@ function App() {
                     context={{
                         currentBlockCaptured,
                         nodeAvailable,
-                        orderedPostIds,
+                        latestPosts,
+                        latestActivity,
                         postsRef,
                         postersRef,
                         replyPostsTreeRef,
@@ -1146,6 +1285,7 @@ function App() {
                         submittingLike,
                         submittingTip,
                         browserStateHistoryRef,
+                        setBrowserStateHistorySettings,
                         handleOpenLikesModal,
                         handleOpenTipsModal,
                         handleOpenSendTipModal,
