@@ -28,6 +28,86 @@ Read this part first.
 If you are not comfortable reviewing diffs, debugging broken flows, reading logs,
 and accepting the possibility of incorrect results, do not use this build.
 
+## Install and Run from Source
+
+Prerequisites:
+- `git`
+- `node` 20.x
+- `npm`
+- `python3`
+
+On macOS:
+
+```bash
+xcode-select --install
+brew install git node@20 python@3
+brew link --overwrite --force node@20
+```
+
+Clone and start:
+
+```bash
+git clone https://github.com/ubiubi18/IdenaAI.git
+cd IdenaAI
+npm install
+npm start
+```
+
+Optional build:
+
+```bash
+npm run build
+npm run dist
+```
+
+For explicit macOS targets on Apple Silicon:
+
+```bash
+npm run pack:mac:arm64
+npm run pack:mac:universal
+```
+
+Useful checks:
+
+```bash
+npm run audit:privacy
+npm run audit:electron
+npm test
+```
+
+## Training Workflow
+
+The local FLIP training stack remains in the repo for research.
+
+It currently supports:
+- FLIP-Challenge dataset prep from Hugging Face
+- human-teacher annotation import
+- local LoRA pilot training experiments
+- matrix comparison of baseline vs human-assisted modes
+- side-by-side comparison of `best_single` vs `deepfunding`
+
+Important limitation:
+- no approved bundled local training base model is currently endorsed by the project
+
+Start here:
+- [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
+
+Related notes:
+- [docs/local-ai-mvp-architecture.md](docs/local-ai-mvp-architecture.md)
+- [docs/federated-model-distribution.md](docs/federated-model-distribution.md)
+- [docs/federated-human-teacher-protocol.md](docs/federated-human-teacher-protocol.md)
+
+## Large bundled artifacts
+
+This repo intentionally carries large static libraries in `idena-wasm-binding/lib/` for reproducible local builds.
+
+It also carries the chunked `samples/flips/flip-challenge-human-teacher-500-balanced.part-*.json` rehearsal sample shards. Those shards keep the local validation rehearsal and benchmark loop reproducible without requiring a network fetch, while staying below GitHub's hard per-file limit.
+
+If public release packaging becomes more formal later:
+- keep those files under review before every tag
+- consider Git LFS or external release artifacts if the bundle grows further
+- make sure `THIRD_PARTY_NOTICES.md` ships with any redistributed binary bundle
+
 ## Latest Changes
 
 This section should stay current and act as a short roadmap of what has already landed.
@@ -257,86 +337,6 @@ Recommended precautions:
 If human annotations are later used for shared training, those contributions may
 become part of propagated model artifacts. Only contribute material you have the
 right to share.
-
-## Install and Run from Source
-
-Prerequisites:
-- `git`
-- `node` 20.x
-- `npm`
-- `python3`
-
-On macOS:
-
-```bash
-xcode-select --install
-brew install git node@20 python@3
-brew link --overwrite --force node@20
-```
-
-Clone and start:
-
-```bash
-git clone https://github.com/ubiubi18/IdenaAI.git
-cd IdenaAI
-npm install
-npm start
-```
-
-Optional build:
-
-```bash
-npm run build
-npm run dist
-```
-
-For explicit macOS targets on Apple Silicon:
-
-```bash
-npm run pack:mac:arm64
-npm run pack:mac:universal
-```
-
-Useful checks:
-
-```bash
-npm run audit:privacy
-npm run audit:electron
-npm test
-```
-
-## Training Workflow
-
-The local FLIP training stack remains in the repo for research.
-
-It currently supports:
-- FLIP-Challenge dataset prep from Hugging Face
-- human-teacher annotation import
-- local LoRA pilot training experiments
-- matrix comparison of baseline vs human-assisted modes
-- side-by-side comparison of `best_single` vs `deepfunding`
-
-Important limitation:
-- no approved bundled local training base model is currently endorsed by the project
-
-Start here:
-- [docs/flip-challenge-local-training.md](docs/flip-challenge-local-training.md)
-
-Related notes:
-- [docs/local-ai-mvp-architecture.md](docs/local-ai-mvp-architecture.md)
-- [docs/federated-model-distribution.md](docs/federated-model-distribution.md)
-- [docs/federated-human-teacher-protocol.md](docs/federated-human-teacher-protocol.md)
-
-## Large bundled artifacts
-
-This repo intentionally carries large static libraries in `idena-wasm-binding/lib/` for reproducible local builds.
-
-It also carries the chunked `samples/flips/flip-challenge-human-teacher-500-balanced.part-*.json` rehearsal sample shards. Those shards keep the local validation rehearsal and benchmark loop reproducible without requiring a network fetch, while staying below GitHub's hard per-file limit.
-
-If public release packaging becomes more formal later:
-- keep those files under review before every tag
-- consider Git LFS or external release artifacts if the bundle grows further
-- make sure `THIRD_PARTY_NOTICES.md` ships with any redistributed binary bundle
 
 ## Development History
 
