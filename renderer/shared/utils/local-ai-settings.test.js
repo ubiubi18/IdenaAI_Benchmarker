@@ -51,6 +51,7 @@ const {
   buildLocalAiRepairPreset,
   buildRecommendedLocalAiMacPreset,
   buildLocalAiRuntimePreset,
+  getManagedLocalRuntimeFamilyForMemoryReference,
   getManagedLocalRuntimeInstallProfile,
   getLocalAiEndpointSafety,
   mergeLocalAiSettings,
@@ -277,6 +278,13 @@ describe('local-ai settings schema', () => {
       runtimeFamily: MOLMO2_O_RESEARCH_RUNTIME_FAMILY,
       modelId: MOLMO2_O_RESEARCH_RUNTIME_MODEL,
     })
+
+    expect(getManagedLocalRuntimeFamilyForMemoryReference('molmo2-4b')).toBe(
+      MOLMO2_4B_RESEARCH_RUNTIME_FAMILY
+    )
+    expect(getManagedLocalRuntimeFamilyForMemoryReference('compact-3b')).toBe(
+      ''
+    )
   })
 
   it('builds an embryo-stage Mac Ollama preset without a bundled base model', () => {

@@ -779,6 +779,21 @@ function getManagedLocalRuntimeInstallProfile(runtimeFamily = '') {
   )
 }
 
+function getManagedLocalRuntimeFamilyForMemoryReference(memoryReference = '') {
+  switch (trimString(memoryReference).toLowerCase()) {
+    case 'molmo2-o-7b':
+      return MOLMO2_O_RESEARCH_RUNTIME_FAMILY
+    case 'molmo2-4b':
+      return MOLMO2_4B_RESEARCH_RUNTIME_FAMILY
+    case 'internvl3.5-1b':
+      return INTERNVL3_5_1B_RESEARCH_RUNTIME_FAMILY
+    case 'internvl3.5-8b':
+      return INTERNVL3_5_8B_RESEARCH_RUNTIME_FAMILY
+    default:
+      return ''
+  }
+}
+
 function buildManagedMolmo2RuntimePreset(runtimeFamily = '') {
   return buildManagedLocalRuntimePreset(runtimeFamily)
 }
@@ -1059,6 +1074,7 @@ module.exports = {
   buildManagedMolmo2RuntimePreset,
   resolveManagedLocalRuntimeMemoryReference,
   getManagedLocalRuntimeInstallProfile,
+  getManagedLocalRuntimeFamilyForMemoryReference,
   buildManagedLocalAiTrustApprovalPatch,
   buildLocalAiRepairPreset,
   hasManagedLocalAiTrustApproval,
