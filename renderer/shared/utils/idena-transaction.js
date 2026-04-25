@@ -1,7 +1,7 @@
 /* global BigInt */
 import {ProtoTransaction} from '../models/proto/models_pb'
 
-const DNA_BASE = 10n ** 18n
+const DNA_BASE = BigInt('1000000000000000000')
 
 function stripHexPrefix(value) {
   return typeof value === 'string' && value.startsWith('0x')
