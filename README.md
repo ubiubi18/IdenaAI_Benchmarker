@@ -52,6 +52,15 @@ This section should stay current and act as a short roadmap of what has already 
   automatic route entry, provider-readiness retries during validation, ceremony-
   aware AI timing checks, and long-session auto-submit fallback when delayed AI
   report review is unavailable or misses its window.
+- Fast report deadline mode:
+  automatic report review now reserves the final 3 minutes of long session for a
+  fast path. If the countdown is already below that threshold, the app skips
+  extra keyword waiting, runs report-review requests in parallel, uses short
+  provider timeouts, and still falls back to answer submission if review fails.
+- Short/long autosolver timing:
+  short session can solve all six flips in parallel, while long session keeps a
+  staggered queue so completed answers are applied immediately and slow provider
+  calls do not block the rest of the run.
 - Validation AI fallback and telemetry:
   uncertain flips now escalate into an annotated frame-review second pass before
   the solver gives up, and unresolved flips are forced into an explicit random
@@ -103,6 +112,8 @@ What works today:
 - session-auto validation is now intended to manage ceremony route entry and
   long-session completion without manual babysitting once provider setup is
   genuinely ready
+- urgent auto-report is expected to switch into the fast parallel review path
+  whenever less than 3 minutes remain in long session
 - local FLIP research scripts in `scripts/`
 
 What is still not production-ready:
@@ -219,6 +230,9 @@ Current intended behavior:
   fallback vote and record that fact in telemetry rather than hiding the outcome
 - submit long-session answers automatically even when delayed AI report review is
   disabled, unsupported, or fails
+- start automatic report review early enough to keep a 3-minute safety window;
+  inside that window, use the fast report path with parallel calls, no keyword
+  wait loop, no retries, and shorter provider timeouts
 
 Current limitation:
 - short session is still the hardest window to hit reliably because image fetch,

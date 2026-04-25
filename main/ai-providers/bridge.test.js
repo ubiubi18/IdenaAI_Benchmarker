@@ -483,6 +483,80 @@ describe('createAiProviderBridge', () => {
     })
   })
 
+  it('reviews validation reports with bounded parallelism for urgent mode', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const invokeProvider = jest.fn(async () => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => {
+        setTimeout(resolve, 5)
+      })
+      inFlight -= 1
+
+      return {
+        rawText:
+          '{"decision":"approve","confidence":0.7,"reason":"No report rule is clearly violated","triggeredRules":[]}',
+        usage: {
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+        },
+      }
+    })
+
+    const bridge = createAiProviderBridge(mockLogger(), {
+      invokeProvider,
+      now: sequenceClock([1000, 1000, 1010, 1010, 1010, 1030, 1030, 1030]),
+    })
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const makeFlip = (hash) => ({
+      hash,
+      images: [
+        'data:image/png;base64,AAA',
+        'data:image/png;base64,BBB',
+        'data:image/png;base64,CCC',
+        'data:image/png;base64,DDD',
+      ],
+      keywords: [
+        {name: 'lamp', desc: 'light source'},
+        {name: 'cat', desc: 'animal'},
+      ],
+    })
+
+    const result = await bridge.reviewValidationReports({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      benchmarkProfile: 'custom',
+      deadlineMs: 60000,
+      requestTimeoutMs: 5000,
+      maxConcurrency: 2,
+      maxRetries: 0,
+      interFlipDelayMs: 0,
+      promptOptions: {
+        openAiServiceTier: 'priority',
+        openAiReasoningEffort: 'none',
+      },
+      flips: [makeFlip('flip-1'), makeFlip('flip-2'), makeFlip('flip-3')],
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(3)
+    expect(maxInFlight).toBe(2)
+    expect(invokeProvider.mock.calls[0][0].promptOptions).toMatchObject({
+      promptPhase: 'report_review',
+      openAiServiceTier: 'priority',
+      openAiReasoningEffort: 'none',
+    })
+    expect(invokeProvider.mock.calls[0][0].profile.requestTimeoutMs).toBe(5000)
+    expect(result.summary).toMatchObject({
+      totalFlips: 3,
+      approved: 3,
+      reported: 0,
+    })
+    expect(result.summary.diagnostics.maxConcurrency).toBe(2)
+  })
+
   it('ignores incidental watermark-only report suggestions during automated review', async () => {
     const invokeProvider = jest.fn().mockResolvedValue({
       rawText:

@@ -377,7 +377,7 @@ describe('validation ceremony timing helpers', () => {
     ).toBe((120 - SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS - 45) * 1000)
   })
 
-  it('caps auto-report delay against the remaining long-session window', () => {
+  it('forces immediate auto-report when the remaining window is inside the review buffer', () => {
     expect(
       getValidationAutoReportDelayMs({
         validationStart,
@@ -386,7 +386,7 @@ describe('validation ceremony timing helpers', () => {
         requestedDelayMinutes: 10,
         now: validationStart + (120 + 300 - 40) * 1000,
       })
-    ).toBe(5 * 1000)
+    ).toBe(0)
   })
 
   it('forces immediate auto-report when the remaining window is exhausted', () => {
