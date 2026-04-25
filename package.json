@@ -151,7 +151,7 @@
     "fs-extra": "^8.1.0",
     "google-protobuf": "^3.14.0",
     "i18next": "^19.0.1",
-    "idena-sdk-js": "^0.1.0",
+    "js-sha3": "^0.8.0",
     "leveldown": "^5.6.0",
     "levelup": "^4.4.0",
     "lowdb": "^1.0.0",
@@ -182,15 +182,7 @@
     "fabric": {
       "jsdom": "16.7.0"
     },
-    "idena-sdk-js": {
-      "axios": "^1.15.0",
-      "protobufjs": "7.5.5",
-      "secp256k1": "5.0.1"
-    },
-    "minimatch": "^3.1.5",
-    "secp256k1": {
-      "elliptic": "^6.6.1"
-    }
+    "minimatch": "^3.1.5"
   },
   "prettier": {
     "trailingComma": "es5",

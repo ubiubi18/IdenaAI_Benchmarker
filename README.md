@@ -95,6 +95,8 @@ Dependency policy:
 
 - prefer browser Canvas, built-in `fetch`, Node core modules, and small internal
   helpers before adding runtime npm packages
+- keep the root dependency graph free of the old `idena-sdk-js` runtime package;
+  transaction decoding and devnet address derivation use narrow internal helpers
 - keep heavier migrations, such as storage or UI framework replacement, as
   separate reviewed work
 - keep Electron upgrades as a separate modernization branch. This dependency

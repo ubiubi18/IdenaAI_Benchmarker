@@ -10,6 +10,14 @@ const pkg = require('../package.json')
 const ROOT = path.join(__dirname, '..')
 const RUNTIME_NATIVE_MODULES = ['leveldown', 'secp256k1']
 
+function isInstalledModule(moduleName) {
+  return fs.existsSync(path.join(ROOT, 'node_modules', moduleName))
+}
+
+function getInstalledRuntimeNativeModules() {
+  return RUNTIME_NATIVE_MODULES.filter(isInstalledModule)
+}
+
 function readCommandOutput(command, args) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
@@ -42,6 +50,10 @@ function ensureNativeModuleBuild(moduleName, artifactRelativePath) {
   const moduleRoot = path.join(ROOT, 'node_modules', moduleName)
   const artifactPath = path.join(moduleRoot, artifactRelativePath)
 
+  if (!fs.existsSync(moduleRoot)) {
+    return
+  }
+
   if (fs.existsSync(artifactPath)) {
     return
   }
@@ -72,13 +84,19 @@ function ensureNativeModuleBuild(moduleName, artifactRelativePath) {
 }
 
 async function main() {
+  const installedRuntimeNativeModules = getInstalledRuntimeNativeModules()
+
+  if (installedRuntimeNativeModules.length === 0) {
+    return
+  }
+
   await rebuild({
     buildPath: ROOT,
     electronVersion: pkg.devDependencies.electron,
     arch: detectRebuildArch(),
     force: true,
     mode: 'sequential',
-    onlyModules: RUNTIME_NATIVE_MODULES,
+    onlyModules: installedRuntimeNativeModules,
   })
 
   // Some old native addons still need an explicit node-gyp fallback on Apple Silicon.
@@ -94,7 +112,7 @@ async function main() {
 
 main().catch((error) => {
   console.error(
-    `Failed to rebuild Electron runtime native modules (${RUNTIME_NATIVE_MODULES.join(
+    `Failed to rebuild Electron runtime native modules (${getInstalledRuntimeNativeModules().join(
       ', '
     )}): ${error.message}`
   )

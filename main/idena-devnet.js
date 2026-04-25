@@ -7,7 +7,7 @@ const {spawn} = require('child_process')
 const {randomBytes} = require('crypto')
 const {encode: rlpEncode} = require('rlp')
 const kill = require('tree-kill')
-const {privateKeyToAddress} = require('idena-sdk-js')
+const {privateKeyToAddress} = require('./utils/idena-crypto')
 const httpClient = require('./utils/fetch-client')
 const appDataPath = require('./app-data-path')
 const {

@@ -16,7 +16,7 @@
     "fs-extra",
     "google-protobuf",
     "i18next",
-    "idena-sdk-js",
+    "js-sha3",
     "leveldown",
     "levelup",
     "lowdb",
@@ -39,6 +39,6 @@
     "url-regex-safe",
     "xstate"
   ],
-  "maxProductionNodeModules": 520,
+  "maxProductionNodeModules": 400,
   "maxRootRuntimeDependencies": 38
 }
