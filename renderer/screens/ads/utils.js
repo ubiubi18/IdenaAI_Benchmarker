@@ -1,5 +1,4 @@
 /* eslint-disable no-use-before-define */
-import Jimp from 'jimp'
 import i18n from '../../i18n'
 import {fetchNetworkSize} from '../../shared/api/dna'
 import {Profile} from '../../shared/models/profile'
@@ -14,6 +13,7 @@ import {
 } from '../../shared/utils/utils'
 import {isValidUrl} from '../dna/utils'
 import {AdVotingOption, AdVotingOptionId} from './types'
+import {resizeImageToArrayBuffer} from '../../shared/utils/image-canvas'
 
 export const OS = {
   Windows: 'windows',
@@ -229,22 +229,13 @@ export async function compressAdImage(
   bytes,
   {width = 80, height = 80, type} = {width: 80, height: 80, type: 'image/jpeg'}
 ) {
-  const image = await Jimp.read(bytes)
-
-  const imageWidth = image.getWidth()
-  const imageHeight = image.getHeight()
-
-  const resizedImage =
-    imageWidth > imageHeight
-      ? image.resize(width, Jimp.AUTO)
-      : image.resize(Jimp.AUTO, height)
-
-  const compressedImage =
-    type === 'image/png'
-      ? resizedImage.deflateLevel(1)
-      : resizedImage.quality(60)
-
-  return compressedImage.getBufferAsync(type)
+  return resizeImageToArrayBuffer(bytes, {
+    width,
+    height,
+    type,
+    quality: type === 'image/png' ? 0.92 : 0.6,
+    exact: false,
+  })
 }
 
 export function validateAd(ad) {

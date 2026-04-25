@@ -1,5 +1,4 @@
-import {useReducer, useCallback} from 'react'
-import useDeepCompareEffect from 'use-deep-compare-effect'
+import {useReducer, useCallback, useEffect} from 'react'
 import api from '../api/api-client'
 
 /**
@@ -70,7 +69,7 @@ export default function useRpc(initialMethod, ...initialParams) {
     }
   )
 
-  useDeepCompareEffect(() => {
+  useEffect(() => {
     let ignore = false
 
     async function fetchData() {

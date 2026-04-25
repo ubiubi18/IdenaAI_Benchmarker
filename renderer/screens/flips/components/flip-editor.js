@@ -1,6 +1,5 @@
 /* eslint-disable react/prop-types */
 import React, {createRef, useRef, useCallback, useState} from 'react'
-import Jimp from 'jimp'
 import {useTranslation} from 'react-i18next'
 import mousetrap from 'mousetrap'
 import {
@@ -42,6 +41,7 @@ import {
 import {ImageSearchDialog} from './image-search'
 import {colorPickerColor} from '../utils'
 import {useSuccessToast} from '../../../shared/hooks/use-toast'
+import {resizeImageToDataUrl} from '../../../shared/utils/image-canvas'
 import {
   AddImageIcon,
   BasketIcon,
@@ -258,8 +258,13 @@ export default function FlipEditor({
           editors[idx].execute('removeObject', data.replaceObjectId)
         }
 
-        Jimp.read(url).then((image) => {
-          image.getBase64Async('image/png').then((nextUrl) => {
+        resizeImageToDataUrl(url, {
+          width: IMAGE_WIDTH,
+          height: IMAGE_HEIGHT,
+          type: 'image/png',
+          exact: false,
+        })
+          .then((nextUrl) => {
             const resizedNextUrl = resizeImageDataUrl(
               nextUrl,
               IMAGE_WIDTH,
@@ -284,7 +289,9 @@ export default function FlipEditor({
               }
             })
           })
-        })
+          .catch((error) => {
+            logEditorError('flipEditor insert image failed', error)
+          })
       }
 
       if (nextInsertMode === INSERT_BACKGROUND_IMAGE) {

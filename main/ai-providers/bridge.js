@@ -1,8 +1,8 @@
-const axios = require('axios')
 const {execFile} = require('child_process')
 const fs = require('fs-extra')
 const path = require('path')
 const {promisify} = require('util')
+const httpClientDefault = require('../utils/fetch-client')
 
 const {
   PROVIDERS,
@@ -5784,7 +5784,7 @@ function createAiProviderBridge(logger, dependencies = {}) {
 
   const now =
     typeof dependencies.now === 'function' ? dependencies.now : () => Date.now()
-  const httpClient = dependencies.httpClient || axios
+  const httpClient = dependencies.httpClient || httpClientDefault
 
   const getUserDataPath =
     typeof dependencies.getUserDataPath === 'function'

@@ -1,5 +1,5 @@
-import axios from 'axios'
 import {loadPersistentState} from '../utils/persist'
+import {postJson} from '../utils/http-client'
 
 export const BASE_INTERNAL_API_PORT = 9129
 export const BASE_API_URL = 'http://localhost:9009'
@@ -66,12 +66,12 @@ export default function createApiClient() {
   }
 
   const params = getRpcFallbackParams()
-  const instance = axios.create({
-    baseURL: params.url,
-  })
-  instance.interceptors.request.use((config) => {
-    config.data.key = params.key
-    return config
-  })
-  return instance
+  return {
+    async post(path, body = {}) {
+      return postJson(new URL(path, params.url).toString(), {
+        ...body,
+        key: params.key,
+      })
+    },
+  }
 }
