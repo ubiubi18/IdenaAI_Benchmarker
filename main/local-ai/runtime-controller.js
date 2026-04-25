@@ -176,12 +176,12 @@ function formatApproxGiB(bytes) {
   const value = Number(bytes)
 
   if (!Number.isFinite(value) || value <= 0) {
-    return '0 GB'
+    return '0 GiB'
   }
 
   return `~${(value / BYTES_PER_GIB).toFixed(
     value >= 10 * BYTES_PER_GIB ? 0 : 1
-  )} GB`
+  )} GiB`
 }
 
 async function calculateDirectorySizeBytes(targetPath) {
@@ -1328,12 +1328,15 @@ async function downloadManagedMolmo2Snapshot(
     return snapshotDir
   }
 
-  await fs.remove(snapshotDir)
   await ensurePrivateDirectory(snapshotDir)
   emitRuntimeProgress(onProgress, {
     status: 'installing',
     stage: 'download_model_snapshot',
     message: `Downloading the pinned ${displayName} runtime snapshot and model weights. This can take a while on first use.`,
+    detail:
+      verification.error === 'missing_model_snapshot'
+        ? 'Starting a new model snapshot download.'
+        : 'Resuming from any partial model files already on this device.',
     progressPercent: 62,
     stageIndex: 5,
     stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
@@ -1474,11 +1477,10 @@ async function downloadManagedMolmo2Snapshot(
   )
 
   if (!verifiedSnapshot.ok) {
-    await fs.remove(snapshotDir)
     throw createRuntimeControllerError(
       verifiedSnapshot.error || 'snapshot_verification_failed',
       verifiedSnapshot.lastError ||
-        `The pinned ${displayName} runtime snapshot could not be verified.`
+        `The pinned ${displayName} runtime snapshot could not be verified. Partial files were kept so the next retry can resume instead of starting from zero.`
     )
   }
 
@@ -1658,6 +1660,8 @@ function createDefaultRuntimeController({
 } = {}) {
   let managedProcess = null
   let managedSpec = null
+  let managedStartPromise = null
+  let managedStartSpecKey = ''
 
   function rememberManagedProcess(child, spec) {
     managedProcess = child
@@ -1743,106 +1747,145 @@ function createDefaultRuntimeController({
       }
     }
 
-    if (
-      managedProcess &&
-      managedProcess.exitCode == null &&
-      !managedProcess.killed
-    ) {
+    const startSpecKey = JSON.stringify(spec)
+
+    if (managedStartPromise) {
       emitRuntimeProgress(onProgress, {
-        status: 'starting',
-        stage: 'restart_runtime_service',
-        message: 'Restarting the managed local runtime service.',
-        progressPercent: 68,
+        status: 'installing',
+        stage: 'runtime_setup_already_running',
+        message:
+          managedStartSpecKey === startSpecKey
+            ? 'Managed local runtime setup is already running. Reusing the active install/download.'
+            : 'Another managed local runtime setup is already running. Wait for it to finish before starting a different model.',
+        progressPercent: 62,
         stageIndex: 5,
         stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
       })
-      stopManagedProcess(managedProcess)
-      managedProcess = null
-      managedSpec = null
-    }
 
-    const diskSpace = await ensureManagedRuntimeDiskSpace(
-      runtimeRoot,
-      flavor,
-      runtimeConfig
-    )
-    const install = await ensureManagedMolmo2RuntimeInstalled(
-      runtimeRoot,
-      flavor,
-      {onProgress, pythonPath, runtimeConfig}
-    )
-    const snapshotPath = await downloadManagedMolmo2Snapshot(
-      install.pythonPath,
-      runtimeRoot,
-      runtimeConfig,
-      {
-        onProgress,
-        existingVerification: diskSpace.snapshotVerification,
+      if (managedStartSpecKey === startSpecKey) {
+        return managedStartPromise
       }
-    )
-    emitRuntimeProgress(onProgress, {
-      status: 'starting',
-      stage: 'start_runtime_service',
-      message: 'Starting the managed local runtime service.',
-      progressPercent: 84,
-      stageIndex: 6,
-      stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
-    })
-    const child = await spawnManagedProcess(
-      install.pythonPath,
-      buildManagedLocalAiServerArgs({
-        backend: flavor,
-        host: endpoint.host,
-        port: endpoint.port,
-        modelPath: snapshotPath,
-        displayModelId: model,
-        modelRevision: runtimeConfig.revision,
-      }),
-      {env}
-    )
 
-    rememberManagedProcess(child, spec)
-    emitRuntimeProgress(onProgress, {
-      status: 'starting',
-      stage: 'wait_for_runtime_process',
-      message: 'Waiting for the local runtime process to come online.',
-      progressPercent: 92,
-      stageIndex: 7,
-      stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
-    })
-    await ensureProcessSurvivesStartup(child)
-
-    if (isDev && logger && typeof logger.debug === 'function') {
-      logger.debug('Managed Local AI HTTP runtime spawned', {
-        flavor,
-        pid: child.pid,
-        baseUrl: endpoint.baseUrl,
-        model,
-      })
+      throw createRuntimeControllerError(
+        'managed_runtime_setup_busy',
+        'Another managed local runtime setup is already running. Wait for it to finish before starting a different managed model.'
+      )
     }
 
-    emitRuntimeProgress(onProgress, {
-      active: false,
-      status: 'starting',
-      stage: 'wait_for_runtime_model_load',
-      message:
-        'The local runtime process is up. On first use it may still be downloading and loading the model before the health check succeeds.',
-      detail:
-        'Keep this window open. The first on-device model load can take several more minutes after package installation finishes.',
-      progressPercent: 97,
-      stageIndex: 7,
-      stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
-    })
+    const startPromise = (async () => {
+      if (
+        managedProcess &&
+        managedProcess.exitCode == null &&
+        !managedProcess.killed
+      ) {
+        emitRuntimeProgress(onProgress, {
+          status: 'starting',
+          stage: 'restart_runtime_service',
+          message: 'Restarting the managed local runtime service.',
+          progressPercent: 68,
+          stageIndex: 5,
+          stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
+        })
+        stopManagedProcess(managedProcess)
+        managedProcess = null
+        managedSpec = null
+      }
 
-    return {
-      started: true,
-      managed: true,
-      pid: child.pid,
-      flavor,
-      model,
-      baseUrl: endpoint.baseUrl,
-      authToken,
-      revision: runtimeConfig.revision,
+      const diskSpace = await ensureManagedRuntimeDiskSpace(
+        runtimeRoot,
+        flavor,
+        runtimeConfig
+      )
+      const install = await ensureManagedMolmo2RuntimeInstalled(
+        runtimeRoot,
+        flavor,
+        {onProgress, pythonPath, runtimeConfig}
+      )
+      const snapshotPath = await downloadManagedMolmo2Snapshot(
+        install.pythonPath,
+        runtimeRoot,
+        runtimeConfig,
+        {
+          onProgress,
+          existingVerification: diskSpace.snapshotVerification,
+        }
+      )
+      emitRuntimeProgress(onProgress, {
+        status: 'starting',
+        stage: 'start_runtime_service',
+        message: 'Starting the managed local runtime service.',
+        progressPercent: 84,
+        stageIndex: 6,
+        stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
+      })
+      const child = await spawnManagedProcess(
+        install.pythonPath,
+        buildManagedLocalAiServerArgs({
+          backend: flavor,
+          host: endpoint.host,
+          port: endpoint.port,
+          modelPath: snapshotPath,
+          displayModelId: model,
+          modelRevision: runtimeConfig.revision,
+        }),
+        {env}
+      )
+
+      rememberManagedProcess(child, spec)
+      emitRuntimeProgress(onProgress, {
+        status: 'starting',
+        stage: 'wait_for_runtime_process',
+        message: 'Waiting for the local runtime process to come online.',
+        progressPercent: 92,
+        stageIndex: 7,
+        stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
+      })
+      await ensureProcessSurvivesStartup(child)
+
+      if (isDev && logger && typeof logger.debug === 'function') {
+        logger.debug('Managed Local AI HTTP runtime spawned', {
+          flavor,
+          pid: child.pid,
+          baseUrl: endpoint.baseUrl,
+          model,
+        })
+      }
+
+      emitRuntimeProgress(onProgress, {
+        active: false,
+        status: 'starting',
+        stage: 'wait_for_runtime_model_load',
+        message:
+          'The local runtime process is up. On first use it may still be downloading and loading the model before the health check succeeds.',
+        detail:
+          'Keep this window open. The first on-device model load can take several more minutes after package installation finishes.',
+        progressPercent: 97,
+        stageIndex: 7,
+        stageCount: MANAGED_MOLMO2_PROGRESS_STAGE_COUNT,
+      })
+
+      return {
+        started: true,
+        managed: true,
+        pid: child.pid,
+        flavor,
+        model,
+        baseUrl: endpoint.baseUrl,
+        authToken,
+        revision: runtimeConfig.revision,
+      }
+    })()
+
+    managedStartPromise = startPromise
+    managedStartSpecKey = startSpecKey
+
+    try {
+      return await startPromise
+    } finally {
+      if (managedStartPromise === startPromise) {
+        managedStartPromise = null
+        managedStartSpecKey = ''
+      }
     }
   }
 
