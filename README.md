@@ -34,7 +34,7 @@ and accepting the possibility of incorrect results, do not use this build.
 Prerequisites:
 
 - `git`
-- `node` 20.x
+- `node` 20.20+ for development, or Node 22.12+ for clean Electron 41 packaging
 - `npm`
 - `python3`
 
@@ -42,8 +42,8 @@ On macOS:
 
 ```bash
 xcode-select --install
-brew install git node@20 python@3
-brew link --overwrite --force node@20
+brew install git node@22 python@3
+brew link --overwrite --force node@22
 ```
 
 Clone and start:
@@ -99,9 +99,10 @@ Dependency policy:
   transaction decoding and devnet address derivation use narrow internal helpers
 - keep heavier migrations, such as storage or UI framework replacement, as
   separate reviewed work
-- keep Electron upgrades as a separate modernization branch. This dependency
-  diet keeps the current Electron runtime pinned; the current Electron build
-  toolchain already warns that newer rebuild tooling expects Node 22.12+
+- keep Electron upgrades as separate reviewed work. This dependency diet branch
+  pins Electron to `41.3.0`; development installs run on Node 20.20+, while the
+  current Electron build toolchain declares Node 22.12+ as its clean packaging
+  target
 - use `npm run audit:deps` to inspect root runtime deps, production transitive
   package count, largest installed packages, production audit summary, and
   packaged-file risk
