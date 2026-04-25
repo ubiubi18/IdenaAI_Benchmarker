@@ -25,6 +25,7 @@ const devNodeVerbosity = 4
 const peerAssistInitialDelayMs = 12 * 1000
 const peerAssistRetryIntervalMs = 30 * 1000
 const peerAssistRetryCooldownMs = 2 * 60 * 1000
+const peerAssistRpcUnavailableRetryMs = 5 * 1000
 const maxPersistedPeerHints = 32
 const nodeRpcProbeTimeoutMs = 1500
 
@@ -450,6 +451,30 @@ async function callNodeRpc(rpcClient, apiKey, method, params = []) {
   return data ? data.result : undefined
 }
 
+function isRpcMethodUnavailableError(error) {
+  const message = (error && error.message ? error.message : '').toLowerCase()
+  return (
+    message.includes('method') &&
+    (message.includes('does not exist') ||
+      message.includes('not available') ||
+      message.includes('not found'))
+  )
+}
+
+async function readNodePeers(rpcClient, apiKey) {
+  try {
+    return {
+      ready: true,
+      peers: toArray(await callNodeRpc(rpcClient, apiKey, 'net_peers')),
+    }
+  } catch (error) {
+    if (isRpcMethodUnavailableError(error)) {
+      return {ready: false, peers: []}
+    }
+    throw error
+  }
+}
+
 function getNodeVerbosity() {
   const explicitVerbosity = Number.parseInt(
     process.env.IDENA_NODE_VERBOSITY,
@@ -471,6 +496,7 @@ function startPeerAssist({port, apiKey, onLog, bootstrapNodes = []}) {
   let timer = null
   let stopped = false
   let running = false
+  let peerRpcWaitLogged = false
 
   const emitLog = (message) => {
     logger.info(message)
@@ -487,7 +513,21 @@ function startPeerAssist({port, apiKey, onLog, bootstrapNodes = []}) {
 
     try {
       const syncStatus = await callNodeRpc(rpcClient, apiKey, 'bcn_syncing')
-      const peers = toArray(await callNodeRpc(rpcClient, apiKey, 'net_peers'))
+      const {ready: peerRpcReady, peers} = await readNodePeers(
+        rpcClient,
+        apiKey
+      )
+
+      if (!peerRpcReady) {
+        if (!peerRpcWaitLogged) {
+          logger.info('peer assist waiting for full RPC peer namespace')
+          peerRpcWaitLogged = true
+        }
+        schedule(peerAssistRpcUnavailableRetryMs)
+        return
+      }
+
+      peerRpcWaitLogged = false
 
       if (syncStatus && syncStatus.syncing && peers.length > 0) {
         schedule(Math.min(peerAssistRetryIntervalMs, 5000))
