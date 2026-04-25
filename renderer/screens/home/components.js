@@ -15,9 +15,6 @@ import {
   Switch,
   Alert,
   AlertDescription,
-  List,
-  ListItem,
-  useDisclosure,
   Popover,
   PopoverTrigger,
   PopoverContent,
@@ -44,9 +41,6 @@ import {
   DrawerBody,
   DrawerFooter,
   Checkbox,
-  DialogFooter,
-  DialogBody,
-  Dialog,
   ErrorAlert,
   TextLink,
 } from '../../shared/components/components'
@@ -77,7 +71,6 @@ import {useTotalValidationScore} from '../validation/report/hooks'
 import {
   ChevronRightIcon,
   InfoIcon,
-  TelegramIcon,
   UserIcon,
   WalletIcon,
 } from '../../shared/components/icons'
@@ -826,183 +819,6 @@ export function KillForm({onSuccess, onFail}) {
         {t('Terminate')}
       </PrimaryButton>
     </Stack>
-  )
-}
-
-export function MyIdenaBotAlert({onConnect, onSkip}) {
-  const {t} = useTranslation()
-
-  const {state} = useIdentityState()
-
-  const myIdenaBotDisclosure = useDisclosure()
-
-  const [doNotShowAgain, setDoNotShowAgain] = React.useState()
-
-  const connectButtonRef = React.useRef()
-
-  // eslint-disable-next-line no-shadow
-  const eitherState = (...states) => states.some((s) => s === state)
-
-  return (
-    <>
-      <Alert
-        variant="solid"
-        justifyContent="center"
-        flexShrink={0}
-        boxShadow="0 3px 12px 0 rgb(255 163 102 /0.1), 0 2px 3px 0 rgb(255 163 102 /0.2)"
-        color="white"
-        cursor="pointer"
-        fontWeight={500}
-        rounded="md"
-        h={10}
-        mt={2}
-        mx={2}
-        w="auto"
-        onClick={myIdenaBotDisclosure.onOpen}
-      >
-        <Flex flexGrow={1}>
-          <Flex flexGrow={1} alignItems="center" justifyContent="center">
-            <Box ml={6}>
-              <TelegramIcon boxSize="6" mr="1" />
-              {t(`Subscribe to @MyIdenaBot to get personalized notifications based on
-        your status`)}
-            </Box>
-          </Flex>
-          <Flex ml="auto">
-            <Button
-              variant="link"
-              colorScheme="white"
-              width={12}
-              pl={2}
-              height={10}
-              fontWeight={500}
-              _hover={null}
-              _active={null}
-              onClick={(e) => {
-                e.stopPropagation()
-                onSkip()
-              }}
-            >
-              {t('Close')}
-            </Button>
-          </Flex>
-        </Flex>
-      </Alert>
-
-      <Dialog
-        title="Subscribe to @MyIdenaBot"
-        size="md"
-        initialFocusRef={connectButtonRef}
-        {...myIdenaBotDisclosure}
-      >
-        <DialogBody>
-          <Stack>
-            <Text>
-              {t(
-                `MyIdenaBot reminds you about important actions based on your
-              identity status:`,
-                {nsSeparator: '!!'}
-              )}
-            </Text>
-
-            {eitherState(IdentityStatus.Undefined) && (
-              <IdenaBotFeatureList
-                features={[
-                  'next validation reminder',
-                  'notification when you get an invite',
-                  'reminder to activate your invite',
-                  'your validation results when validation consensus is reached',
-                ]}
-              />
-            )}
-
-            {eitherState(IdentityStatus.Invite, IdentityStatus.Candidate) && (
-              <IdenaBotFeatureList
-                features={[
-                  'next validation reminder',
-                  'your validation results when validation consensus is reached',
-                ]}
-              />
-            )}
-
-            {eitherState(IdentityStatus.Newbie) && (
-              <IdenaBotFeatureList
-                features={[
-                  'next validation reminder',
-                  'reminder to create flips if you haven’t done it yet and the validation is coming',
-                  'your validation results when validation consensus is reached',
-                ]}
-              />
-            )}
-
-            {eitherState(IdentityStatus.Verified, IdentityStatus.Human) && (
-              <IdenaBotFeatureList
-                features={[
-                  'next validation reminder',
-                  'reminder to create flips',
-                  'your validation results when validation consensus is reached',
-                  'reminder to share your remaining invites',
-                  'reminder to submit extra flips to get more rewards',
-                  'status update of all your invitees to check if they are ready for the validation (activated invites, submitted flips)',
-                ]}
-              />
-            )}
-            {eitherState(IdentityStatus.Zombie, IdentityStatus.Suspended) && (
-              <IdenaBotFeatureList
-                features={[
-                  'next validation reminder',
-                  'your validation results when validation consensus is reached',
-                  'reminder to share your remaining invites',
-                  'reminder to submit extra flips to get more rewards',
-                  'status update of all your invitees to check if they are ready for the validation (activated invites, submitted flips)',
-                ]}
-              />
-            )}
-          </Stack>
-        </DialogBody>
-        <DialogFooter align="center">
-          <Checkbox
-            borderColor="gray.100"
-            isChecked={doNotShowAgain}
-            onChange={(e) => {
-              setDoNotShowAgain(e.target.checked)
-            }}
-          >
-            {t('Do not show again')}
-          </Checkbox>
-          <SecondaryButton
-            onClick={() => {
-              myIdenaBotDisclosure.onClose()
-              if (doNotShowAgain) onConnect()
-            }}
-          >
-            {t('Not now')}
-          </SecondaryButton>
-          <PrimaryButton
-            ref={connectButtonRef}
-            onClick={() => {
-              global.openExternal('https://t.me/MyIdenaBot')
-              onConnect()
-            }}
-          >
-            {t('Connect')}
-          </PrimaryButton>
-        </DialogFooter>
-      </Dialog>
-    </>
-  )
-}
-
-function IdenaBotFeatureList({features, listSeparator = ';'}) {
-  return (
-    <List spacing={1} styleType="'- '">
-      {features.map((feature, idx) => (
-        <ListItem key={feature} textTransform="lowercase">
-          {feature}
-          {idx < features.length - 1 ? listSeparator : '.'}
-        </ListItem>
-      ))}
-    </List>
   )
 }
 

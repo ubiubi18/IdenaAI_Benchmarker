@@ -1757,10 +1757,6 @@ const bridge = {
         .toDataURL()
     },
   },
-  home: {
-    getIdenaBotState: () => invokeCloneable('home.idenaBot.get'),
-    skipIdenaBot: () => ipcRenderer.send('home.idenaBot.skip'),
-  },
   social: {
     rpc: (payload) => invokeCloneable('social.rpc', payload),
   },

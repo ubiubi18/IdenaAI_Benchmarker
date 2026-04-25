@@ -3181,13 +3181,6 @@ handleTrusted('social.rpc', async (_event, payload) => {
   return performNodeRpc(payload)
 })
 
-const KEY_VALUE = {}
-
-handleTrusted('home.idenaBot.get', async () => KEY_VALUE['idena-bot'])
-onTrusted('home.idenaBot.skip', () => {
-  KEY_VALUE['idena-bot'] = true
-})
-
 handleTrusted('shell.openExternal.safe', async (_event, payload) =>
   openExternalSafely(payload && payload.url)
 )
