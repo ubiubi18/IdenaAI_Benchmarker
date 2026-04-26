@@ -6,7 +6,7 @@ import ipaddress
 import json
 import os
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
 
 
@@ -196,6 +196,24 @@ def extract_images_from_messages(messages):
                 images.append(part.get("image"))
 
     return images
+
+
+def read_generation_text(response):
+    if response is None:
+        return ""
+
+    return str(getattr(response, "text", response) or "").strip()
+
+
+def read_generation_int(response, attr_name, fallback=0):
+    value = getattr(response, attr_name, fallback)
+
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        value = fallback
+
+    return max(0, value)
 
 
 def read_config_value(source, *keys):
@@ -455,10 +473,10 @@ class MlxVlmChatBackend:
         allow_local_image_paths=False,
     ):
         try:
-            from mlx_vlm.utils import generate, load, prepare_inputs
+            from mlx_vlm.utils import generate, load
         except ImportError:
             from mlx_vlm.generate import generate
-            from mlx_vlm.utils import load, prepare_inputs
+            from mlx_vlm.utils import load
 
         self.model_source_id = str(model_id or "").strip()
         if not self.model_source_id:
@@ -468,7 +486,6 @@ class MlxVlmChatBackend:
         self.model_revision = str(model_revision or "").strip()
         self.allow_local_image_paths = allow_local_image_paths
         self.generate = generate
-        self.prepare_inputs = prepare_inputs
         self.model_source = resolve_model_source(
             self.model_source_id, self.model_revision
         )
@@ -541,44 +558,43 @@ class MlxVlmChatBackend:
             tokenize=False,
             add_generation_prompt=True,
         )
-        prepared = self.prepare_inputs(
-            processor=self.processor,
-            images=images,
-            prompts=[prompt],
-            image_token_index=resolve_image_token_index(self.model.config),
-        )
         generation_kwargs = self._generation_kwargs(payload)
         response = self.generate(
             self.model,
             self.processor,
             prompt,
-            pixel_values=prepared["pixel_values"],
-            input_ids=prepared["input_ids"],
-            mask=prepared["attention_mask"],
+            image=images or None,
             **generation_kwargs,
-            **{
-                key: value
-                for key, value in prepared.items()
-                if key not in {"pixel_values", "input_ids", "attention_mask"}
-            },
         )
-        generated_text = str(response or "").strip()
+        generated_text = read_generation_text(response)
 
         if not generated_text:
             raise ValueError("empty_generation")
 
-        prompt_tokens = int(prepared["input_ids"].shape[-1])
-        completion_tokens = 0
+        prompt_tokens = read_generation_int(response, "prompt_tokens")
+        completion_tokens = read_generation_int(response, "generation_tokens")
 
-        try:
-            completion_tokens = len(
-                self.processor.tokenizer.encode(
-                    generated_text,
-                    add_special_tokens=False,
+        if prompt_tokens <= 0:
+            try:
+                prompt_tokens = len(
+                    self.processor.tokenizer.encode(
+                        prompt,
+                        add_special_tokens=False,
+                    )
                 )
-            )
-        except Exception:
-            completion_tokens = 0
+            except Exception:
+                prompt_tokens = 0
+
+        if completion_tokens <= 0:
+            try:
+                completion_tokens = len(
+                    self.processor.tokenizer.encode(
+                        generated_text,
+                        add_special_tokens=False,
+                    )
+                )
+            except Exception:
+                completion_tokens = 0
 
         return {
             "id": f"chatcmpl-local-{int(time.time())}",
@@ -841,7 +857,7 @@ def main():
         )
 
     backend = create_backend(args)
-    server = ThreadingHTTPServer((args.host, args.port), LocalAiHandler)
+    server = HTTPServer((args.host, args.port), LocalAiHandler)
     server.backend = backend
     server.max_request_bytes = max(1024, int(args.max_request_bytes or DEFAULT_MAX_REQUEST_BYTES))
     server.auth_token = str(args.auth_token or os.environ.get(AUTH_TOKEN_ENV) or "").strip()

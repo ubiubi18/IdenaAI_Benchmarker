@@ -95,8 +95,18 @@ function createErrorMessage(
 ) {
   const status = error && error.response && error.response.status
   const data = error && error.response && error.response.data
+  const errorMessage =
+    data && data.error && typeof data.error === 'object'
+      ? data.error.message
+      : ''
+  const errorDetail =
+    data && data.error && typeof data.error === 'object'
+      ? data.error.detail
+      : ''
   const remoteMessage = String(
-    (data && data.error && data.error.message) ||
+    (errorDetail && errorMessage
+      ? `${errorMessage}: ${errorDetail}`
+      : errorDetail || errorMessage) ||
       (data && data.message) ||
       (error && error.message) ||
       fallback
