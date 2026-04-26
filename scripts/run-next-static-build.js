@@ -51,6 +51,8 @@ function cleanRendererBuildOutput() {
     fs.rmSync(path.join(projectRoot, relativePath), {
       recursive: true,
       force: true,
+      maxRetries: 5,
+      retryDelay: 200,
     })
   })
 }

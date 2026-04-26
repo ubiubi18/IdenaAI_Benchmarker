@@ -3,7 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const {spawnSync} = require('child_process')
-// eslint-disable-next-line import/no-extraneous-dependencies
+// eslint-disable-next-line import/no-extraneous-dependencies, import/no-unresolved
 const {rebuild} = require('@electron/rebuild')
 const pkg = require('../package.json')
 

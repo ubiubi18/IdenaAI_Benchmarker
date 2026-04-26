@@ -1,12 +1,12 @@
 const {
   LOCAL_AI_DEFAULT_BASE_URL,
-  LOCAL_AI_RUNTIME,
   LOCAL_AI_RUNTIME_BACKEND,
 } = require('./constants')
 const {
   LOCAL_AI_OLLAMA_DEFAULT_BASE_URL,
   LOCAL_AI_OLLAMA_RUNTIME,
   LOCAL_AI_OLLAMA_RUNTIME_BACKEND,
+  LOCAL_AI_SIDECAR_RUNTIME_BACKEND,
   resolveLocalAiRuntimeAdapter,
   resolveLocalAiRuntimeBackend,
 } = require('./runtime-adapter')
@@ -20,10 +20,10 @@ describe('local-ai runtime adapter', () => {
 
   it('maps sidecar-like runtime names into the neutral backend identifier', () => {
     expect(resolveLocalAiRuntimeBackend({runtime: 'local-ai-sidecar'})).toBe(
-      LOCAL_AI_RUNTIME_BACKEND
+      LOCAL_AI_SIDECAR_RUNTIME_BACKEND
     )
     expect(resolveLocalAiRuntimeBackend({runtimeType: 'phi-sidecar'})).toBe(
-      LOCAL_AI_RUNTIME_BACKEND
+      LOCAL_AI_SIDECAR_RUNTIME_BACKEND
     )
   })
 
@@ -55,11 +55,11 @@ describe('local-ai runtime adapter', () => {
     })
   })
 
-  it('keeps sidecar defaults when no explicit backend is provided', () => {
+  it('keeps ollama-direct defaults when no explicit backend is provided', () => {
     expect(resolveLocalAiRuntimeAdapter()).toMatchObject({
-      runtime: LOCAL_AI_RUNTIME,
+      runtime: LOCAL_AI_OLLAMA_RUNTIME,
       runtimeBackend: LOCAL_AI_RUNTIME_BACKEND,
-      runtimeType: 'sidecar',
+      runtimeType: 'ollama',
       baseUrl: LOCAL_AI_DEFAULT_BASE_URL,
     })
   })
