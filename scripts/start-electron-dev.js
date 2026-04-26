@@ -4,7 +4,6 @@
 const http = require('http')
 const fs = require('fs')
 const net = require('net')
-const os = require('os')
 const path = require('path')
 const {spawn} = require('child_process')
 
@@ -21,6 +20,14 @@ const DEV_HOST = process.env.IDENA_DESKTOP_RENDERER_HOST || '127.0.0.1'
 const DEV_SERVER_URL = `http://${DEV_HOST}:${DEV_PORT}`
 const STARTUP_TIMEOUT_MS = 120000
 const POLL_INTERVAL_MS = 1000
+const APP_USER_DATA_NAME =
+  process.env.IDENA_DESKTOP_APP_USER_DATA_NAME ||
+  (path.basename(ROOT) === 'IdenaAI_Benchmarker'
+    ? 'IdenaAI_Benchmarker'
+    : 'IdenaAI')
+const WORKSPACE_RUNTIME_DIR =
+  process.env.IDENA_DESKTOP_WORKSPACE_RUNTIME_DIR ||
+  path.join(path.dirname(ROOT), 'IdenaAI-runtime')
 
 let rendererProcess = null
 let electronProcess = null
@@ -46,12 +53,11 @@ function resolveDevUserDataDir(env) {
     return env.IDENA_DESKTOP_USER_DATA_DIR
   }
 
-  return path.join(
-    os.homedir(),
-    'Library',
-    'Application Support',
-    `IdenaAI-dev-${path.basename(ROOT)}`
-  )
+  return resolveDefaultUserDataDir()
+}
+
+function resolveDefaultUserDataDir() {
+  return path.join(WORKSPACE_RUNTIME_DIR, APP_USER_DATA_NAME)
 }
 
 function assertRendererPortFree() {
@@ -81,22 +87,7 @@ function resolveUserDataDir() {
     return process.env.IDENA_DESKTOP_USER_DATA_DIR
   }
 
-  const homeDir = os.homedir()
-
-  switch (process.platform) {
-    case 'darwin':
-      return path.join(homeDir, 'Library', 'Application Support', 'IdenaAI')
-    case 'win32':
-      return path.join(
-        process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming'),
-        'IdenaAI'
-      )
-    default:
-      return path.join(
-        process.env.XDG_CONFIG_HOME || path.join(homeDir, '.config'),
-        'IdenaAI'
-      )
-  }
+  return resolveDefaultUserDataDir()
 }
 
 function openElectronDevLogFd() {
