@@ -316,6 +316,30 @@ print(json.dumps(fold_system_messages_into_user_turns(messages)))
     expect(folded[1].role).toBe('assistant')
   })
 
+  it('merges repeated user turns before Molmo chat templating', async () => {
+    const output = await runPythonSnippet(`
+import json
+from local_ai_server import fold_system_messages_into_user_turns
+messages = [
+    {"role": "user", "content": [{"type": "text", "text": "first failed try"}]},
+    {"role": "user", "content": [{"type": "text", "text": "second try"}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+    {"role": "user", "content": [{"type": "text", "text": "follow up"}]},
+]
+print(json.dumps(fold_system_messages_into_user_turns(messages)))
+`)
+    const folded = JSON.parse(output)
+
+    expect(folded).toHaveLength(3)
+    expect(folded.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+    ])
+    expect(folded[0].content[0].text).toContain('first failed try')
+    expect(folded[0].content[0].text).toContain('second try')
+  })
+
   it('refuses non-loopback binds without --allow-remote', async () => {
     const remoteAttempt = spawnStub(['--host', '0.0.0.0', '--port', '59999'])
 

@@ -58,10 +58,26 @@ import {
   UndoIcon,
 } from '../../../shared/components/icons'
 
-const ImageEditor =
-  typeof window !== 'undefined'
-    ? require('@toast-ui/react-image-editor').default
-    : null
+function loadImageEditor() {
+  if (typeof window === 'undefined') return null
+
+  try {
+    // eslint-disable-next-line global-require
+    const imageEditorModule = require('@toast-ui/react-image-editor')
+    return imageEditorModule.default || imageEditorModule
+  } catch (error) {
+    if (global.logger && typeof global.logger.warn === 'function') {
+      global.logger.warn(
+        'flipEditor optional image editor unavailable',
+        (error && error.message) || error
+      )
+    }
+
+    return null
+  }
+}
+
+const ImageEditor = loadImageEditor()
 
 const BottomMenu = {
   Main: 0,
@@ -768,22 +784,41 @@ export default function FlipEditor({
             borderColor="brandGray.016"
             rounded="lg"
           >
-            <ImageEditor
-              key={idx}
-              ref={editorRefs.current[idx]}
-              cssMaxHeight={IMAGE_HEIGHT}
-              cssMaxWidth={IMAGE_WIDTH}
-              selectionStyle={{
-                cornerSize: 8,
-                rotatingPointOffset: 20,
-                lineWidth: '1',
-                cornerColor: colors.white,
-                cornerStrokeColor: colors.blue[500],
-                transparentCorners: false,
-                borderColor: colors.blue[500],
-              }}
-              usageStatistics={false}
-            />
+            {ImageEditor ? (
+              <ImageEditor
+                key={idx}
+                ref={editorRefs.current[idx]}
+                cssMaxHeight={IMAGE_HEIGHT}
+                cssMaxWidth={IMAGE_WIDTH}
+                selectionStyle={{
+                  cornerSize: 8,
+                  rotatingPointOffset: 20,
+                  lineWidth: '1',
+                  cornerColor: colors.white,
+                  cornerStrokeColor: colors.blue[500],
+                  transparentCorners: false,
+                  borderColor: colors.blue[500],
+                }}
+                usageStatistics={false}
+              />
+            ) : (
+              <Flex
+                h={rem(IMAGE_HEIGHT)}
+                w={rem(IMAGE_WIDTH)}
+                align="center"
+                justify="center"
+                rounded="lg"
+                bg="gray.50"
+                color="muted"
+                p={6}
+              >
+                <Text align="center">
+                  {t(
+                    'Image editor is unavailable in this build. Validation and autosolver remain available.'
+                  )}
+                </Text>
+              </Flex>
+            )}
             {idx === adversarialId && (
               <Flex
                 position="absolute"

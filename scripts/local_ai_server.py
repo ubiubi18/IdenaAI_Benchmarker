@@ -229,6 +229,45 @@ def prepend_text_to_message(message, prefix):
     return {**message, "content": next_parts}
 
 
+def append_message_content(message, extra_content, separator="\n\n"):
+    next_parts = list(message.get("content") or [])
+    extra_parts = list(extra_content or [])
+
+    for extra_part in extra_parts:
+        if not isinstance(extra_part, dict):
+            continue
+
+        extra_type = str(extra_part.get("type") or "").strip().lower()
+        if extra_type in ("text", "input_text"):
+            extra_text = str(extra_part.get("text") or "").strip()
+            if not extra_text:
+                continue
+
+            for index in range(len(next_parts) - 1, -1, -1):
+                part = next_parts[index]
+                if (
+                    isinstance(part, dict)
+                    and str(part.get("type") or "").strip().lower() == "text"
+                ):
+                    next_part = dict(part)
+                    existing = str(next_part.get("text") or "").strip()
+                    next_part["text"] = (
+                        f"{existing}{separator}{extra_text}"
+                        if existing
+                        else extra_text
+                    )
+                    next_parts[index] = next_part
+                    break
+            else:
+                next_parts.append({"type": "text", "text": extra_text})
+            continue
+
+        if extra_type == "image" and extra_part.get("image") is not None:
+            next_parts.append(extra_part)
+
+    return {**message, "content": next_parts}
+
+
 def fold_system_messages_into_user_turns(messages):
     """Molmo2's MLX chat template only accepts user/assistant alternation."""
 
@@ -252,11 +291,23 @@ def fold_system_messages_into_user_turns(messages):
             "role": "assistant" if role == "assistant" else "user",
         }
 
+        if not folded and next_message["role"] == "assistant":
+            next_message = prepend_text_to_message(
+                {**next_message, "role": "user"},
+                "Previous assistant context:",
+            )
+
         if pending_system_text and next_message["role"] == "user":
             next_message = prepend_text_to_message(
                 next_message, "\n\n".join(pending_system_text)
             )
             pending_system_text = []
+
+        if folded and folded[-1].get("role") == next_message["role"]:
+            folded[-1] = append_message_content(
+                folded[-1], next_message.get("content")
+            )
+            continue
 
         folded.append(next_message)
 
