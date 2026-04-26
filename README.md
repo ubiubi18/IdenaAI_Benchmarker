@@ -49,17 +49,25 @@ and accepting the possibility of incorrect results, do not use this build.
 Prerequisites:
 
 - `git`
-- `node` 20.20+ for source-run development
-- Node 22.12+ for clean Electron 41 packaging and rebuild tooling
+- Node 24 LTS; `.nvmrc` and `.node-version` pin `24.15.0`
 - `npm`
 - `python3`
 
-On macOS:
+With `nvm`:
+
+```bash
+nvm install
+nvm use
+node -v
+```
+
+On macOS with Homebrew:
 
 ```bash
 xcode-select --install
-brew install git node@22 python@3
-brew link --overwrite --force node@22
+brew install git node@24 python@3
+export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+node -v
 ```
 
 Clone and start:
@@ -164,9 +172,9 @@ Dependency policy:
 - keep heavier migrations, such as storage or UI framework replacement, as
   separate reviewed work
 - keep Electron upgrades as separate reviewed work. The current desktop line
-  pins Electron to `41.3.0`; development installs run on Node 20.20+, while the
-  current Electron build toolchain declares Node 22.12+ as its clean packaging
-  target
+  pins Electron to `41.3.0` and requires Node `24.15.0+` on Node 24 LTS;
+  `.nvmrc`, `.node-version`, and CI currently pin Node `24.15.0` for
+  reproducible installs and builds
 - use `npm run audit:deps` to inspect root runtime deps, production transitive
   package count, largest installed packages, production audit summary, and
   packaged-file risk
@@ -279,8 +287,8 @@ This section should stay current and act as a short roadmap of what has already 
   the desktop app now has a dependency-footprint audit, removes the direct
   `jimp` image stack, removes the root `idena-sdk-js` runtime dependency in
   favor of small audited internal helpers, upgrades the Electron runtime to
-  `41.3.0`, and treats new runtime npm dependencies as allowlist changes that
-  require explicit review.
+  `41.3.0`, pins source and CI installs to Node `24.15.0`, and treats new
+  runtime npm dependencies as allowlist changes that require explicit review.
 - Safety posture:
   none of the above changes make the project production-safe. The repo remains a
   research fork first.
@@ -486,6 +494,9 @@ Very short overview:
 - `Phase 8`: local AI setup was hardened with a compact 4B default, RAM-fit
   warnings, Hugging Face trust dialogs, abort/switch controls, and
   workspace-local benchmarker data paths
+- `Phase 9`: the install and CI runtime was standardized on Node `24.15.0`
+  through `.nvmrc`, `.node-version`, package `engines`, preinstall checks, and
+  GitHub Actions
 
 ## Related Repo
 

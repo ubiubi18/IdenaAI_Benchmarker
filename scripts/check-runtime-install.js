@@ -2,8 +2,8 @@
 
 const {devDependencies} = require('../package.json')
 
-const MIN_NODE_VERSION = [20, 20, 0]
-const RECOMMENDED_PACKAGING_NODE_VERSION = [22, 12, 0]
+const TARGET_NODE_MAJOR = 24
+const MIN_NODE_VERSION = [24, 15, 0]
 
 function parseNodeVersion(value) {
   return String(value || '')
@@ -31,27 +31,16 @@ function formatVersion(parts) {
 const nodeVersion = parseNodeVersion(process.versions.node)
 const electronVersion = devDependencies.electron
 const minNodeVersionLabel = formatVersion(MIN_NODE_VERSION)
-const recommendedPackagingNodeVersionLabel = formatVersion(
-  RECOMMENDED_PACKAGING_NODE_VERSION
-)
-
-if (compareVersions(nodeVersion, MIN_NODE_VERSION) < 0) {
+if (
+  nodeVersion[0] !== TARGET_NODE_MAJOR ||
+  compareVersions(nodeVersion, MIN_NODE_VERSION) < 0
+) {
   console.error(
     [
-      `This repo targets Electron ${electronVersion} and requires Node ${minNodeVersionLabel}+ for local development.`,
+      `This repo targets Electron ${electronVersion} and requires Node ${minNodeVersionLabel}+ on Node ${TARGET_NODE_MAJOR} LTS for reproducible installs and builds.`,
       `Current Node version: ${process.versions.node}`,
-      'Upgrade Node before running npm install or npm ci.',
+      'Run `nvm install && nvm use` from the repo root, or put Homebrew node@24 ahead of older Node versions in PATH.',
     ].join('\n')
   )
   process.exit(1)
-}
-
-if (compareVersions(nodeVersion, RECOMMENDED_PACKAGING_NODE_VERSION) < 0) {
-  console.warn(
-    [
-      `This repo can run development installs on Node ${minNodeVersionLabel}+, but Electron ${electronVersion} packaging is cleanest on Node ${recommendedPackagingNodeVersionLabel}+.`,
-      `Current Node version: ${process.versions.node}`,
-      'Use Node 22.12+ before producing release artifacts.',
-    ].join('\n')
-  )
 }
