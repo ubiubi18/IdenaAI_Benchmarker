@@ -4178,16 +4178,24 @@ function formatAiDecisionTrace(item = {}) {
     )
   }
 
+  if (item.finalAdjudicationUsed) {
+    parts.push('final adjudication')
+  }
+
   if (item.forcedDecision) {
-    parts.push(
-      item.forcedDecisionPolicy === 'random'
-        ? `random fallback${
-            item.forcedDecisionReason
-              ? ` (${String(item.forcedDecisionReason).replace(/_/g, ' ')})`
-              : ''
-          }`
-        : 'forced decision'
-    )
+    if (item.forcedDecisionPolicy === 'random') {
+      parts.push(
+        `random fallback${
+          item.forcedDecisionReason
+            ? ` (${String(item.forcedDecisionReason).replace(/_/g, ' ')})`
+            : ''
+        }`
+      )
+    } else if (item.forcedDecisionPolicy === 'low_confidence_lean') {
+      parts.push('low-confidence lean')
+    } else {
+      parts.push('forced decision')
+    }
   } else if (item.rawAnswerBeforeRemap === 'skip') {
     parts.push('raw skip')
   }
@@ -4258,6 +4266,10 @@ function formatAiDecisionReasoning(item = {}) {
 function formatAiSolveProgressSuffix(item = {}) {
   if (item.forcedDecisionPolicy === 'random') {
     return ' (random fallback)'
+  }
+
+  if (item.forcedDecisionPolicy === 'low_confidence_lean') {
+    return ' (low-confidence lean)'
   }
 
   if (item.uncertaintyRepromptUsed) {
@@ -4407,7 +4419,7 @@ function AiTelemetryPanel({
             <Text fontSize="xs" color={bodyColor}>
               {sessionType === 'short'
                 ? 'Solving short flips in parallel; human clicks stay in control.'
-                : 'Solving flips in sequence with rate-limit pacing...'}
+                : 'Solving long flips in a staggered background pipeline with rate-limit pacing...'}
             </Text>
           )}
 

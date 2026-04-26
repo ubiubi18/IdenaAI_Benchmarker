@@ -55,14 +55,32 @@ function buildAllowedAnswers(forceDecision) {
   return forceDecision ? 'a|b' : 'a|b|skip'
 }
 
-function buildDecisionRules({forceDecision, secondPass, repromptRule}) {
+function buildDecisionRules({
+  forceDecision,
+  secondPass,
+  finalAdjudication,
+  repromptRule,
+}) {
   const allowedAnswers = buildAllowedAnswers(forceDecision)
-  const uncertaintyRule = forceDecision
-    ? '- You must choose option A or B. If the evidence stays close, pick the better supported side, but never because it appeared first.'
-    : '- If the evidence is weak or conflicting, return "skip" instead of defaulting to the first shown side.'
-  const passRule = secondPass
-    ? '- This is a second-pass uncertainty review. Re-check both sides from scratch and do not anchor on the first listed candidate or your earlier lean.'
-    : '- This is the first-pass decision. Compare both candidates from scratch before answering.'
+  let uncertaintyRule =
+    '- If the evidence is weak or conflicting, return "skip" instead of defaulting to the first shown side.'
+  if (forceDecision && finalAdjudication) {
+    uncertaintyRule =
+      '- You must choose option A or B. If the evidence stays close, assign internal coherence scores and choose the side with any nonzero edge.'
+  } else if (forceDecision) {
+    uncertaintyRule =
+      '- You must choose option A or B. If the evidence stays close, pick the better supported side, but never because it appeared first.'
+  }
+
+  let passRule =
+    '- This is the first-pass decision. Compare both candidates from scratch before answering.'
+  if (finalAdjudication) {
+    passRule =
+      '- This is the final adjudication pass. Score OPTION A and OPTION B independently from 0 to 100; even 50.5 vs 49.5 is enough to choose the higher-scoring side.'
+  } else if (secondPass) {
+    passRule =
+      '- This is a second-pass uncertainty review. Re-check both sides from scratch and do not anchor on the first listed candidate or your earlier lean.'
+  }
 
   return {
     allowedAnswers,
@@ -98,6 +116,7 @@ function buildCompositePrompt({
 }) {
   const reportabilityRules = buildReportabilityRules()
   const antiPositionRules = buildAntiPositionRules()
+  const mustChoose = allowedAnswers === 'a|b'
   return `
 You are solving an Idena short-session flip benchmark.
 You are given two candidate 2x2 composite images:
@@ -126,6 +145,11 @@ Rules:
 ${antiPositionRules}
 - Keep reasoning concise and factual, and mention one concrete visual cue when possible.
 ${reportabilityRules}
+${
+  mustChoose
+    ? '- In forced answer mode, report risk lowers confidence but must not become "skip". Choose the more coherent side for the answer session.'
+    : ''
+}
 ${uncertaintyRule}
 ${passRule}
 ${repromptRule ? `- Extra instruction: ${repromptRule}` : ''}
@@ -143,6 +167,7 @@ function buildFramesSinglePassPrompt({
 }) {
   const reportabilityRules = buildReportabilityRules()
   const antiPositionRules = buildAntiPositionRules()
+  const mustChoose = allowedAnswers === 'a|b'
   return `
 You are solving an Idena short-session flip benchmark.
 You are given 8 ordered frame images:
@@ -166,6 +191,11 @@ Rules:
 - Keep reasoning concise and factual, and mention one concrete visual cue when possible.
 ${antiPositionRules}
 ${reportabilityRules}
+${
+  mustChoose
+    ? '- In forced answer mode, report risk lowers confidence but must not become "skip". Choose the more coherent side for the answer session.'
+    : ''
+}
 ${uncertaintyRule}
 ${passRule}
 ${repromptRule ? `- Extra instruction: ${repromptRule}` : ''}
@@ -235,19 +265,33 @@ function buildFramesDecisionPrompt({
   uncertaintyRule,
   passRule,
   repromptRule,
+  finalAdjudication,
 }) {
   const reportabilityRules = buildReportabilityRules()
   const antiPositionRules = buildAntiPositionRules()
+  const mustChoose = allowedAnswers === 'a|b'
   return `
 You are solving an Idena short-session flip benchmark.
 You are given pre-analysis JSON for OPTION A and OPTION B story frames.
 
 Task:
 1) Read the captions, extracted text, translations, story summaries, coherence scores, and report flags.
-2) If reportRisk is true, return skip unless the report signal is clearly invalid.
+2) ${
+    mustChoose
+      ? 'If reportRisk is true, lower confidence and note it, but still choose OPTION A or OPTION B for the answer session.'
+      : 'If reportRisk is true, return skip unless the report signal is clearly invalid.'
+  }
 3) Otherwise, choose the story with the better coherence and clearer causal chain.
-4) Prefer skip when both stories are similarly weak or ambiguous.
-5) Return JSON only.
+4) ${
+    mustChoose
+      ? 'If both stories are similarly weak or ambiguous, choose the narrowly better supported side and use low confidence.'
+      : 'Prefer skip when both stories are similarly weak or ambiguous.'
+  }
+5) ${
+    finalAdjudication
+      ? 'For final adjudication, include the approximate OPTION A and OPTION B scores in reasoning, then choose the higher score.'
+      : 'Return JSON only.'
+  }
 
 Allowed JSON schema:
 {"answer":"a|b|skip","confidence":0.0,"reasoning":"short optional note"}
@@ -258,6 +302,11 @@ Rules:
 - Keep reasoning concise and factual, and cite one key caption or reportability signal
 ${antiPositionRules}
 ${reportabilityRules}
+${
+  mustChoose
+    ? '- In forced answer mode, never return "skip"; the separate reporting phase handles reports.'
+    : ''
+}
 ${uncertaintyRule}
 ${passRule}
 ${repromptRule ? `- Extra instruction: ${repromptRule}` : ''}
@@ -273,6 +322,7 @@ function promptTemplate({
   hash,
   forceDecision = false,
   secondPass = false,
+  finalAdjudication = false,
   promptTemplateOverride = '',
   uncertaintyRepromptInstruction = '',
   flipVisionMode = 'composite',
@@ -286,6 +336,7 @@ function promptTemplate({
   const {allowedAnswers, uncertaintyRule, passRule} = buildDecisionRules({
     forceDecision,
     secondPass,
+    finalAdjudication,
     repromptRule,
   })
 
@@ -312,6 +363,7 @@ function promptTemplate({
       uncertaintyRule,
       passRule,
       repromptRule,
+      finalAdjudication,
     })
   }
 

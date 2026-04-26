@@ -1072,6 +1072,12 @@ describe('createAiProviderBridge', () => {
       .mockResolvedValueOnce(
         '{"answer":"skip","confidence":0.2,"reasoning":"still ambiguous after review"}'
       )
+      .mockResolvedValueOnce(
+        'Final adjudication notes: A and B remain effectively equal.'
+      )
+      .mockResolvedValueOnce(
+        '{"answer":"skip","confidence":0.2,"reasoning":"A 50.0, B 50.0"}'
+      )
 
     const bridge = createAiProviderBridge(mockLogger(), {
       invokeProvider,
@@ -1112,6 +1118,7 @@ describe('createAiProviderBridge', () => {
       expect(result.results[0]).toMatchObject({
         answer: 'left',
         uncertaintyRepromptUsed: true,
+        finalAdjudicationUsed: true,
         forcedDecision: true,
         forcedDecisionPolicy: 'random',
         forcedDecisionReason: 'uncertain_or_skip',
@@ -1121,6 +1128,77 @@ describe('createAiProviderBridge', () => {
     } finally {
       randomSpy.mockRestore()
     }
+  })
+
+  it('uses the low-confidence first-pass lean before random fallback', async () => {
+    const invokeProvider = jest
+      .fn()
+      .mockResolvedValueOnce(
+        '{"answer":"right","confidence":0.55,"reasoning":"right has a slightly clearer final state"}'
+      )
+      .mockResolvedValueOnce(
+        'Both stories remain close, but right keeps one repeated actor.'
+      )
+      .mockResolvedValueOnce(
+        '{"answer":"skip","confidence":0.2,"reasoning":"still close after review"}'
+      )
+      .mockResolvedValueOnce('Final adjudication notes: A 49.5, B 50.5.')
+      .mockResolvedValueOnce(
+        '{"answer":"skip","confidence":0.2,"reasoning":"A 49.5, B 50.5 but still close"}'
+      )
+
+    const bridge = createAiProviderBridge(mockLogger(), {
+      invokeProvider,
+      writeBenchmarkLog: jest.fn().mockResolvedValue(undefined),
+    })
+    bridge.setProviderKey({provider: 'openai', apiKey: 'sk-test'})
+
+    const result = await bridge.solveFlipBatch({
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      benchmarkProfile: 'custom',
+      forceDecision: true,
+      uncertaintyRepromptEnabled: true,
+      uncertaintyConfidenceThreshold: 0.7,
+      uncertaintyRepromptMinRemainingMs: 500,
+      flips: [
+        {
+          hash: 'flip-low-confidence-lean-1',
+          leftImage: 'data:image/png;base64,AAA=',
+          rightImage: 'data:image/png;base64,BBB=',
+          leftFrames: [
+            'data:image/png;base64,L1=',
+            'data:image/png;base64,L2=',
+            'data:image/png;base64,L3=',
+            'data:image/png;base64,L4=',
+          ],
+          rightFrames: [
+            'data:image/png;base64,R1=',
+            'data:image/png;base64,R2=',
+            'data:image/png;base64,R3=',
+            'data:image/png;base64,R4=',
+          ],
+        },
+      ],
+    })
+
+    expect(invokeProvider).toHaveBeenCalledTimes(5)
+    expect(invokeProvider.mock.calls[4][0].promptOptions).toMatchObject({
+      finalAdjudication: true,
+      forceDecision: true,
+      promptPhase: 'decision_from_frame_reasoning',
+    })
+    expect(result.results[0]).toMatchObject({
+      answer: 'right',
+      uncertaintyRepromptUsed: true,
+      finalAdjudicationUsed: true,
+      forcedDecision: true,
+      forcedDecisionPolicy: 'low_confidence_lean',
+      forcedDecisionReason: 'low_confidence_lean',
+    })
+    expect(result.results[0].reasoning).toContain(
+      'low-confidence first-pass lean right'
+    )
   })
 
   it('uses frame-by-frame single-pass mode when frame payload exists', async () => {

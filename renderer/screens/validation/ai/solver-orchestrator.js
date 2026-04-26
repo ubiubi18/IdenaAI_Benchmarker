@@ -1142,6 +1142,7 @@ export async function solveValidationSessionWithAi({
       costs: normalizeCostSummary(solved.costs),
       reasoning: solved.reasoning,
       uncertaintyRepromptUsed: Boolean(solved.uncertaintyRepromptUsed),
+      finalAdjudicationUsed: Boolean(solved.finalAdjudicationUsed),
       forcedDecision: Boolean(solved.forcedDecision),
       forcedDecisionPolicy: solved.forcedDecisionPolicy || null,
       forcedDecisionReason: solved.forcedDecisionReason || null,
