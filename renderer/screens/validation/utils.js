@@ -201,10 +201,14 @@ export function getValidationSessionPhaseDeadlineAt({
   shortSessionDuration,
   longSessionDuration = 0,
   sessionType = 'short',
+  shortSessionSubmitBufferSeconds = SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+  longSessionSubmitBufferSeconds = LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
 } = {}) {
   const startedAt = Number(validationStart)
   const shortSeconds = Number(shortSessionDuration)
   const longSeconds = Number(longSessionDuration)
+  const shortBufferSeconds = Number(shortSessionSubmitBufferSeconds)
+  const longBufferSeconds = Number(longSessionSubmitBufferSeconds)
 
   if (!Number.isFinite(startedAt) || !Number.isFinite(shortSeconds)) {
     return null
@@ -217,7 +221,9 @@ export function getValidationSessionPhaseDeadlineAt({
         0,
         shortSeconds +
           (Number.isFinite(longSeconds) ? longSeconds : 0) -
-          LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS
+          (Number.isFinite(longBufferSeconds)
+            ? longBufferSeconds
+            : LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS)
       ) *
         1000
     )
@@ -225,7 +231,14 @@ export function getValidationSessionPhaseDeadlineAt({
 
   return (
     startedAt +
-    Math.max(0, shortSeconds - SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS) * 1000
+    Math.max(
+      0,
+      shortSeconds -
+        (Number.isFinite(shortBufferSeconds)
+          ? shortBufferSeconds
+          : SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS)
+    ) *
+      1000
   )
 }
 
@@ -234,6 +247,8 @@ export function getValidationSessionPhaseRemainingMs({
   shortSessionDuration,
   longSessionDuration = 0,
   sessionType = 'short',
+  shortSessionSubmitBufferSeconds,
+  longSessionSubmitBufferSeconds,
   now = Date.now(),
 } = {}) {
   const deadlineAt = getValidationSessionPhaseDeadlineAt({
@@ -241,6 +256,8 @@ export function getValidationSessionPhaseRemainingMs({
     shortSessionDuration,
     longSessionDuration,
     sessionType,
+    shortSessionSubmitBufferSeconds,
+    longSessionSubmitBufferSeconds,
   })
 
   if (!Number.isFinite(deadlineAt)) {

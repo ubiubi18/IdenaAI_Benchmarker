@@ -39,6 +39,7 @@ import {
   isRenderableValidationFlip,
   hasRenderableValidationFlips,
   SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+  SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS,
   LONG_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
   AUTO_REPORT_REVIEW_RUNTIME_BUFFER_MS,
   SHORT_SESSION_RESULT_TELEMETRY_HOLD_MS,
@@ -348,6 +349,22 @@ describe('validation ceremony timing helpers', () => {
       })
     ).toBe(
       validationStart + (120 - SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS) * 1000
+    )
+  })
+
+  it('can compute the short-session AI solve deadline with the reliable submit buffer', () => {
+    expect(
+      getValidationSessionPhaseDeadlineAt({
+        validationStart,
+        shortSessionDuration: 120,
+        longSessionDuration: 300,
+        sessionType: 'short',
+        shortSessionSubmitBufferSeconds:
+          SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS,
+      })
+    ).toBe(
+      validationStart +
+        (120 - SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS) * 1000
     )
   })
 

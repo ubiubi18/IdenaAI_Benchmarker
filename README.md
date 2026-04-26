@@ -1,24 +1,39 @@
-# IdenaAI Benchmarker NOT PRODUCTION READY, DONT USE!
+# IdenaAI Benchmarker — NOT PRODUCTION READY
 
-`IdenaAI` is an experimental desktop fork of `idena-desktop` focused on:
+`IdenaAI_Benchmarker` is the research and benchmarking mirror of `IdenaAI`.
+It shares the desktop shell, but its purpose is controlled FLIP evaluation,
+rehearsal, local AI training experiments, and benchmark instrumentation.
 
-- local and hosted AI integration
+Use it for:
+
 - FLIP solving, generation, and benchmarking research
 - human-teacher annotation flows
 - local runtime and training experiments tied to the desktop app
 - validation rehearsal tooling for safer local protocol testing
 
-This is research software, not a hardened wallet release.
+It is not a production wallet, not a stable end-user app, and not a safe place
+for valuable identities.
 
 ## Experimental Warning
 
-Read this part first.
+Read this part first. This repository is explicitly not production ready.
 
 - no warranties
 - not audited
+- not externally security-reviewed
+- not tested enough for valuable mainnet identities, funds, stake, or invites
 - work in progress
 - experimental software with breaking changes, wrong behavior, and rough edges
 - not suitable for valuable identities, funds, unattended automation, or blind trust
+- not suitable for unattended on-chain validation or reporting
+- not guaranteed to submit answers or reports in time
+- not guaranteed to preserve wallet, node, or identity state across breaking changes
+- not guaranteed to estimate AI provider cost correctly
+- provider calls can spend real API budget
+- local AI downloads come from third-party model hosts and are the user's responsibility
+- benchmark datasets and labels can be incomplete, biased, stale, or wrong
+- rehearsal success does not prove on-chain success
+- packaged releases and source-run behavior can differ
 - do not install or run this if you do not understand what it is doing
 - use throwaway or low-value Idena addresses only
 - do not attach valuable identities to this fork
@@ -34,7 +49,8 @@ and accepting the possibility of incorrect results, do not use this build.
 Prerequisites:
 
 - `git`
-- `node` 20.20+ for development, or Node 22.12+ for clean Electron 41 packaging
+- `node` 20.20+ for source-run development
+- Node 22.12+ for clean Electron 41 packaging and rebuild tooling
 - `npm`
 - `python3`
 
@@ -49,8 +65,8 @@ brew link --overwrite --force node@22
 Clone and start:
 
 ```bash
-git clone https://github.com/ubiubi18/IdenaAI.git
-cd IdenaAI
+git clone https://github.com/ubiubi18/IdenaAI_Benchmarker.git
+cd IdenaAI_Benchmarker
 npm install
 npm start
 ```
@@ -78,6 +94,54 @@ npm run audit:deps
 npm test
 ```
 
+## Runtime and Data Paths
+
+The benchmarker is safest when run from source with its own isolated dev
+`userData` directory.
+
+Source runs started with `npm start` use `scripts/start-electron-dev.js`, which
+defaults to a workspace-local runtime root next to the checked-out repository:
+
+```text
+../IdenaAI-runtime/IdenaAI_Benchmarker/
+```
+
+For example, if the repository is checked out at:
+
+```text
+~/src/IdenaAI_Benchmarker/
+```
+
+the default source-run `userData` path is:
+
+```text
+~/src/IdenaAI-runtime/IdenaAI_Benchmarker/
+```
+
+This keeps benchmarker source runs separate from the main `IdenaAI` source-run
+profile:
+
+```text
+../IdenaAI-runtime/IdenaAI/
+```
+
+Packaged builds currently use the same runtime app name and storage name as the
+main app unless packaging metadata or `IDENA_DESKTOP_USER_DATA_DIR` is changed.
+For benchmark experiments, prefer source runs or set the runtime path
+explicitly:
+
+```bash
+IDENA_DESKTOP_USER_DATA_DIR=/absolute/path/to/idenaai-benchmarker-runtime npm start
+```
+
+Important subdirectories inside `userData`:
+
+- `node/datadir/`: built-in node database, key material, and node API key
+- `logs/`: Electron and app logs
+- `ai-benchmark/`: validation and AI benchmark telemetry
+- `validation-devnet/`: local rehearsal-network nodes and logs
+- `local-ai/`: local AI configuration, captures, and managed-runtime state
+
 ## Standalone Boundary and Dependency Footprint
 
 The project boundary is intentionally split:
@@ -99,7 +163,7 @@ Dependency policy:
   transaction decoding and devnet address derivation use narrow internal helpers
 - keep heavier migrations, such as storage or UI framework replacement, as
   separate reviewed work
-- keep Electron upgrades as separate reviewed work. This dependency diet branch
+- keep Electron upgrades as separate reviewed work. The current desktop line
   pins Electron to `41.3.0`; development installs run on Node 20.20+, while the
   current Electron build toolchain declares Node 22.12+ as its clean packaging
   target
@@ -182,10 +246,11 @@ This section should stay current and act as a short roadmap of what has already 
   staggered queue so completed answers are applied immediately and slow provider
   calls do not block the rest of the run.
 - Validation AI fallback and telemetry:
-  uncertain flips now escalate into an annotated frame-review second pass before
-  the solver gives up, and unresolved flips are forced into an explicit random
-  fallback vote that is surfaced in AI benchmark telemetry together with first-
-  pass traces, reasoning, token usage, and price estimates where available.
+  uncertain flips now escalate into annotated frame-review and final
+  adjudication passes before the solver gives up. If no usable directional lean
+  remains, or a provider fails, the app records the forced fallback decision in
+  AI benchmark telemetry together with first-pass traces, reasoning, token
+  usage, and price estimates where available.
 - Rehearsal result review:
   rehearsal runs now expose end-of-session benchmark stats, optional audit/review
   flows, persistent human annotations by flip hash, and validation AI cost
@@ -205,11 +270,17 @@ This section should stay current and act as a short roadmap of what has already 
   and pinned manifest verification now cover the active research lanes for
   `Molmo2-O`, `Molmo2-4B`, `InternVL3.5-1B`, and `InternVL3.5-8B`, with the
   lighter `InternVL3.5-1B` lane now validated as a realistic same-provider
-  managed-runtime candidate.
+  managed-runtime candidate. The default managed install path targets the
+  compact `Molmo2-4B` profile, and active managed setup/download jobs can be
+  aborted or superseded before switching to another profile. The install flow
+  now shows the exact model family, download size, RAM fit, and Hugging Face
+  trust warning before users start a managed download.
 - Dependency footprint:
   the desktop app now has a dependency-footprint audit, removes the direct
-  `jimp` image stack and several narrow helper packages, and treats new runtime
-  npm dependencies as allowlist changes that require explicit review.
+  `jimp` image stack, removes the root `idena-sdk-js` runtime dependency in
+  favor of small audited internal helpers, upgrades the Electron runtime to
+  `41.3.0`, and treats new runtime npm dependencies as allowlist changes that
+  require explicit review.
 - Safety posture:
   none of the above changes make the project production-safe. The repo remains a
   research fork first.
@@ -260,10 +331,11 @@ The app keeps local benchmark and validation-related metrics so experiments are 
 - local audits are written under `userData/ai-benchmark/audits/`
 - test-unit queue and run artifacts also live under the same local directory
 
-On macOS, this typically resolves under:
+For source runs from the standard workspace layout, `npm start` resolves
+`userData` under the workspace-local benchmarker runtime directory:
 
 ```text
-~/Library/Application Support/Idena/ai-benchmark/
+../IdenaAI-runtime/IdenaAI_Benchmarker/ai-benchmark/
 ```
 
 Treat these files as experimental diagnostics:
@@ -357,11 +429,12 @@ Current intended behavior:
 - optionally use an OpenAI-only short-session fast lane with Priority
   processing and reduced reasoning effort, while automatically degrading to the
   normal OpenAI plan if the API shape changes or fast-lane handling is rejected
-- refuse late AI runs when too little short- or long-session time remains
-- escalate uncertain flips into an annotated frame-review second pass instead of
-  silently leaving them as skips
-- if a flip still cannot be resolved after that second pass, apply a random
-  fallback vote and record that fact in telemetry rather than hiding the outcome
+- refuse late AI runs when too little short- or long-session time remains, with
+  short-session automation targeting submission before the final safety buffer
+- escalate uncertain flips into annotated frame-review and final adjudication
+  passes instead of silently leaving them as skips
+- if a flip still cannot be resolved after those passes, apply a forced fallback
+  vote and record that fact in telemetry rather than hiding the outcome
 - submit long-session answers automatically even when delayed AI report review is
   disabled, unsupported, or fails
 - start automatic report review early enough to keep a 3-minute safety window;
@@ -403,6 +476,16 @@ Very short overview:
 - `Phase 3`: provider benchmarking, solving, and generation were separated from local-model-training semantics
 - `Phase 4`: the old local base-model direction was reset and the project returned to embryo stage for local AI while `Molmo2-O` and alternative managed lanes are evaluated
 - `Phase 5`: local rehearsal devnet controls, live metrics, and explicit managed-runtime preparation lanes were added to tighten the research loop inside the app
+- `Phase 6`: benchmarker dependency footprint work removed the old direct `jimp`
+  and `idena-sdk-js` runtime paths, added dependency audits, and upgraded the
+  Electron runtime to `41.3.0`
+- `Phase 7`: rehearsal and session-auto benchmarking were hardened with
+  short-session parallel solving, long-session staggered solving, report-review
+  deadlines, local audit screens, AI cost telemetry, and explicit fallback
+  traces
+- `Phase 8`: local AI setup was hardened with a compact 4B default, RAM-fit
+  warnings, Hugging Face trust dialogs, abort/switch controls, and
+  workspace-local benchmarker data paths
 
 ## Related Repo
 

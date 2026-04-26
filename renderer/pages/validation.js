@@ -2032,12 +2032,16 @@ function ValidationSession({
         shortSessionDuration,
         longSessionDuration,
         sessionType,
+        shortSessionSubmitBufferSeconds:
+          SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS,
       })
       const remainingSolveMs = getValidationSessionPhaseRemainingMs({
         validationStart,
         shortSessionDuration,
         longSessionDuration,
         sessionType,
+        shortSessionSubmitBufferSeconds:
+          SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS,
       })
       const solveBudget = estimateValidationAiSolveBudget({
         sessionType,
@@ -2408,6 +2412,8 @@ function ValidationSession({
           shortSessionDuration,
           longSessionDuration,
           sessionType: 'short',
+          shortSessionSubmitBufferSeconds:
+            SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS,
         })
         const reachedSubmitCutoff =
           !Number.isFinite(remainingShortSolveMs) || remainingShortSolveMs <= 0
@@ -2439,13 +2445,13 @@ function ValidationSession({
                   {
                     answered: answerStats.answered,
                     total: answerStats.total,
-                    seconds: SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+                    seconds: SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS,
                   }
                 )
               : t(
                   'AI did not apply a short-session answer yet. It will retry while time remains before the final {{seconds}} seconds.',
                   {
-                    seconds: SHORT_SESSION_AUTO_SUBMIT_BUFFER_SECONDS,
+                    seconds: SHORT_SESSION_RELIABLE_SUBMIT_BUFFER_SECONDS,
                   }
                 )
           )
