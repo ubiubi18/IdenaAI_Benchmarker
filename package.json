@@ -1,7 +1,7 @@
 {
   "name": "idena-ai",
   "productName": "IdenaAI",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Idena desktop fork with optional experimental AI flip tooling and benchmark helpers.",
   "main": "main/index.js",
   "repository": {

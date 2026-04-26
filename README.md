@@ -1,8 +1,10 @@
-# IdenaAI Benchmarker — NOT PRODUCTION READY
+# IdenaAI Benchmarker v0.0.2 — NOT PRODUCTION READY
 
 `IdenaAI_Benchmarker` is the research and benchmarking mirror of `IdenaAI`.
-It shares the desktop shell, but its purpose is controlled FLIP evaluation,
-rehearsal, local AI training experiments, and benchmark instrumentation.
+Version `0.0.2` is a development snapshot of the recent dependency, runtime,
+local AI, rehearsal, autosolver, and benchmark instrumentation work. It shares
+the desktop shell, but its purpose is controlled FLIP evaluation, rehearsal,
+local AI training experiments, and benchmark instrumentation.
 
 Use it for:
 
@@ -21,9 +23,11 @@ Read this part first. This repository is explicitly not production ready.
 - no warranties
 - not audited
 - not externally security-reviewed
+- developed through broad, fast-moving, AI-assisted / vibe-coding iterations
 - not tested enough for valuable mainnet identities, funds, stake, or invites
 - work in progress
 - experimental software with breaking changes, wrong behavior, and rough edges
+- contains large cross-cutting changes that still need slower human review
 - not suitable for valuable identities, funds, unattended automation, or blind trust
 - not suitable for unattended on-chain validation or reporting
 - not guaranteed to submit answers or reports in time
@@ -48,6 +52,26 @@ Hosted API providers are included for user-controlled benchmarking and
 small-scale experimentation with the user's own API key. They are not a
 reliability guarantee for synchronized live validation windows. For serious use,
 prefer local models so capacity scales with your own hardware.
+
+## v0.0.2 Repo Status
+
+`v0.0.2` marks a cleaner-runtime benchmarker checkpoint after the Node 24 LTS and
+Electron 41 migration, dependency-footprint reduction, managed local AI
+hardening, rehearsal devnet fixes, autosolver/reporting telemetry work, and
+local benchmark audit improvements.
+
+It should be treated as an auditable research checkpoint, not a production
+release:
+
+- production dependency audit is currently clean, but dev tooling and the full
+  app surface still need deeper review
+- local AI, validation rehearsal, autosolver, reporting, and benchmark telemetry
+  paths have changed quickly and need more independent testing
+- the codebase was advanced through extensive AI-assisted iteration, so reviewers
+  should assume mistakes can exist even where tests pass
+- no guarantee is made that on-chain validation, reporting, wallet, node,
+  identity, model-runtime, or benchmark-training flows behave safely under real
+  user stakes
 
 ## Install and Run from Source
 
