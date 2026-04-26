@@ -44,6 +44,11 @@ Read this part first. This repository is explicitly not production ready.
 If you are not comfortable reviewing diffs, debugging broken flows, reading logs,
 and accepting the possibility of incorrect results, do not use this build.
 
+Hosted API providers are included for user-controlled benchmarking and
+small-scale experimentation with the user's own API key. They are not a
+reliability guarantee for synchronized live validation windows. For serious use,
+prefer local models so capacity scales with your own hardware.
+
 ## Install and Run from Source
 
 Prerequisites:
