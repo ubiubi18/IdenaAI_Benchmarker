@@ -198,6 +198,86 @@ def extract_images_from_messages(messages):
     return images
 
 
+def prepend_text_to_message(message, prefix):
+    prefix_text = str(prefix or "").strip()
+    if not prefix_text:
+        return message
+
+    parts = list(message.get("content") or [])
+    inserted = False
+    next_parts = []
+
+    for part in parts:
+        if (
+            not inserted
+            and isinstance(part, dict)
+            and str(part.get("type") or "").strip().lower() == "text"
+        ):
+            next_part = dict(part)
+            existing = str(next_part.get("text") or "").strip()
+            next_part["text"] = (
+                f"{prefix_text}\n\n{existing}" if existing else prefix_text
+            )
+            next_parts.append(next_part)
+            inserted = True
+        else:
+            next_parts.append(part)
+
+    if not inserted:
+        next_parts.insert(0, {"type": "text", "text": prefix_text})
+
+    return {**message, "content": next_parts}
+
+
+def fold_system_messages_into_user_turns(messages):
+    """Molmo2's MLX chat template only accepts user/assistant alternation."""
+
+    folded = []
+    pending_system_text = []
+
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+
+        role = str(message.get("role") or "user").strip().lower() or "user"
+
+        if role == "system":
+            text = extract_text_content(message.get("content"))
+            if text:
+                pending_system_text.append(f"System instruction:\n{text}")
+            continue
+
+        next_message = {
+            **message,
+            "role": "assistant" if role == "assistant" else "user",
+        }
+
+        if pending_system_text and next_message["role"] == "user":
+            next_message = prepend_text_to_message(
+                next_message, "\n\n".join(pending_system_text)
+            )
+            pending_system_text = []
+
+        folded.append(next_message)
+
+    if pending_system_text:
+        system_text = "\n\n".join(pending_system_text)
+        for index, message in enumerate(folded):
+            if message.get("role") == "user":
+                folded[index] = prepend_text_to_message(message, system_text)
+                break
+        else:
+            folded.insert(
+                0,
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": system_text}],
+                },
+            )
+
+    return folded
+
+
 def read_generation_text(response):
     if response is None:
         return ""
@@ -406,6 +486,7 @@ class TransformersChatBackend:
             payload.get("messages") or [],
             allow_local_image_paths=self.allow_local_image_paths,
         )
+        messages = fold_system_messages_into_user_turns(messages)
         if not messages:
             raise ValueError("messages_required")
 
@@ -549,6 +630,7 @@ class MlxVlmChatBackend:
             payload.get("messages") or [],
             allow_local_image_paths=self.allow_local_image_paths,
         )
+        messages = fold_system_messages_into_user_turns(messages)
         if not messages:
             raise ValueError("messages_required")
 

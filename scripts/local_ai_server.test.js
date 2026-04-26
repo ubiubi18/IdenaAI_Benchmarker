@@ -141,6 +141,37 @@ function spawnStub(args = [], extraEnv = {}) {
   }
 }
 
+function runPythonSnippet(snippet) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('python3', ['-c', snippet], {
+      cwd: path.resolve(__dirname, '..'),
+      env: {
+        ...process.env,
+        PYTHONPATH: path.resolve(__dirname),
+      },
+    })
+
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8')
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8')
+    })
+    child.once('error', reject)
+    child.once('exit', (code) => {
+      if (code === 0) {
+        resolve(stdout)
+        return
+      }
+
+      reject(new Error(stderr || `python exited with ${code}`))
+    })
+  })
+}
+
 function waitForExit(child, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -262,6 +293,27 @@ describe('local_ai_server.py', () => {
         type: 'invalid_request',
       },
     })
+  })
+
+  it('folds system prompts into Molmo-compatible user turns', async () => {
+    const output = await runPythonSnippet(`
+import json
+from local_ai_server import fold_system_messages_into_user_turns
+messages = [
+    {"role": "system", "content": [{"type": "text", "text": "Be concise."}]},
+    {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+    {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+]
+print(json.dumps(fold_system_messages_into_user_turns(messages)))
+`)
+    const folded = JSON.parse(output)
+
+    expect(folded).toHaveLength(2)
+    expect(folded[0].role).toBe('user')
+    expect(folded[0].content[0].text).toContain('System instruction:')
+    expect(folded[0].content[0].text).toContain('Be concise.')
+    expect(folded[0].content[0].text).toContain('hello')
+    expect(folded[1].role).toBe('assistant')
   })
 
   it('refuses non-loopback binds without --allow-remote', async () => {
