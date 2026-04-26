@@ -30,7 +30,10 @@ import {useIdentityState} from '../providers/identity-context'
 import {useEpochState} from '../providers/epoch-context'
 import {useChainState} from '../providers/chain-context'
 import {useNodeState} from '../providers/node-context'
-import {useSettingsState} from '../providers/settings-context'
+import {
+  isValidationRehearsalNodeSettings,
+  useSettingsState,
+} from '../providers/settings-context'
 import {useAutoUpdate} from '../providers/update-context'
 import {
   loadValidationState,
@@ -80,6 +83,12 @@ import {
   TimerIcon,
   WalletIcon,
 } from './icons'
+
+const REHEARSAL_NODE_VERSION = '1.1.2'
+
+function isMissingNodeVersion(version) {
+  return !version || version === APP_VERSION_FALLBACK
+}
 
 export default function Sidebar({
   isForkAvailable,
@@ -898,6 +907,8 @@ export function Version({
 }) {
   const {t} = useTranslation()
   const appVersion = getSharedGlobal('appVersion', APP_VERSION_FALLBACK)
+  const settings = useSettingsState()
+  const {nodeVersion} = useNodeState()
 
   const [
     {
@@ -913,17 +924,26 @@ export function Version({
   ] = useAutoUpdate()
 
   const [clientUpdating, setClientUpdating] = useState(false)
+  const isRehearsalNode = isValidationRehearsalNodeSettings(settings)
+  const displayedNodeVersion =
+    isRehearsalNode && isMissingNodeVersion(nodeVersion)
+      ? REHEARSAL_NODE_VERSION
+      : nodeVersion || nodeCurrentVersion
+  const nodeVersionCopy = isRehearsalNode
+    ? t('Rehearsal v{{version}}', {
+        version: displayedNodeVersion || REHEARSAL_NODE_VERSION,
+        nsSeparator: '!!',
+      })
+    : t('Node version: {{version}}', {
+        version: displayedNodeVersion,
+        nsSeparator: '!!',
+      })
 
   return (
     <Stack spacing="2">
       <Stack spacing="px" mx="2">
         <VersionText>{`IdenaAI v.${appVersion}`}</VersionText>
-        <VersionText>
-          {t('Node version: {{version}}', {
-            version: nodeCurrentVersion,
-            nsSeparator: '!!',
-          })}
-        </VersionText>
+        <VersionText>{nodeVersionCopy}</VersionText>
       </Stack>
       <Stack>
         {!canUpdateNode && !clientUpdating && canUpdateClient && (

@@ -25,6 +25,7 @@ const initialState = {
   nodeFailed: false,
   runningTroubleshooter: false,
   logs: [],
+  nodeVersion: null,
   nodeSessionKey: 0,
   nodeStartupPhase: NODE_STARTUP_PHASE.IDLE,
 }
@@ -40,9 +41,14 @@ function nodeReducer(state, action) {
       }
     }
     case NODE_READY: {
+      const nodeVersion =
+        typeof action.data === 'string' && action.data.trim()
+          ? action.data.trim()
+          : state.nodeVersion
       return {
         ...state,
         nodeReady: true,
+        nodeVersion,
       }
     }
     case NODE_START: {
