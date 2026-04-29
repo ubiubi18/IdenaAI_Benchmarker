@@ -1,5 +1,9 @@
 # IdenaAI Benchmarker v0.0.2 — NOT PRODUCTION READY
 
+`IdenaAI_Benchmarker` tests hosted AI providers and local AI models on Idena
+FLIP challenges, using on-chain FLIP data or a rehearsal network to benchmark
+accuracy, latency, cost, and reliability before live validation use.
+
 `IdenaAI_Benchmarker` is the research and benchmarking mirror of `IdenaAI`.
 Version `0.0.2` is a development snapshot of the recent dependency, runtime,
 local AI, rehearsal, autosolver, and benchmark instrumentation work. It shares
